@@ -1,6 +1,8 @@
 # Skein — план Tier 0
 
-Концептуальный набросок — `docs/concepts_ru.md`. Концептуальное основание —
+> Русское зеркало `docs/tier0_plan.md`.
+
+Концептуальный обзор — `docs/concepts_ru.md`. Концептуальное основание —
 `ankyra/docs/doxa_and_logos.tex` (докса/логос), `ankyra/docs/concepts_ru.md`
 (устройство движка). Этот документ фиксирует **решения и объём первого этапа**.
 Код пишется только после этого документа.
@@ -44,29 +46,30 @@ skein/
   .gitignore
   src/
     ir/
-      types.ts         # Node, Edge, Provenance, Status, Event
+      types.ts         # Node, Edge, Provenance, Status
       events.ts        # zod-схемы событий
       graph.ts         # fold(events) -> State (append-only)
       project.ts       # project(State, view) -> Context
+    config/
+      settings.ts      # env SKEIN_*
+    llm/
+      client.ts        # ChatOpenAI + reasoning off
+      schemas.ts       # zod-схемы предложений
+    tools/
+      workspace.ts     # fsWorkspace: read/write/version/grep/run
+      index.ts         # executeAction + запись событий
     loop/
       state.ts         # аннотации LangGraph State
-      graph.ts         # StateGraph: project -> propose -> classify -> execute -> route
       propose.ts       # один структурированный вызов LLM
       classify.ts      # детерминированная классификация
-      execute.ts       # выполнение инструмента + запись событий
-    tools/
-      read.ts  grep.ts  edit.ts  run.ts  track.ts  query.ts  finish.ts
-    llm/
-      client.ts        # ChatOpenAI + structured output
-      schemas.ts       # zod-схемы предложений
-    config/
-      settings.ts      # чтение env (SKEIN_*)
+      graph.ts         # StateGraph: project -> propose -> classify -> execute -> route
   fixtures/
-    bugfix/<id>/       # каждый — мини-пакет с падающим тестом
+    bugfix/<id>/       # мини-пакет с падающим тестом (node --test)
   tests/
     ir.test.ts         # golden: fold / project / staleness
-    gate.test.ts       # инварианты
-    live.test.ts       # прогон агента (opt-in)
+    loop.test.ts       # offline-прогон по скрипту
+    gate.test.ts       # инварианты (live, opt-in)
+    invariants.ts      # общие проверки инвариантов
 ```
 
 ## 5. Модель IR (`src/ir/`)
@@ -173,15 +176,15 @@ route ──done | budget | error──▶ END
 - **project** — чистая функция из `State`; никакого LLM.
 - **propose** — ровно один структурированный ответ (zod) вида
   `{ thought, action }`, где `action` — один из `track | read | grep | edit |
-  run | query | finish`. `thought` — нарратив волны, в IR **не** пишется.
+  run | query | finish`. `thought` — нарратив хода, в IR **не** пишется.
 - **classify** — детерминированно: `derivable | cited | hypothesis | rejected`
   (cited = подкреплено выводом инструмента/цитатой; rejected = противоречит
   `verified`-факту или constraint).
 - **execute** — детерминированно выполняет инструмент и пишет события.
 
 Состояние — `Annotation.Root`: `events` (reducer `concat` — append-only),
-`context`, `verdict`, `turns`, `done`. Различие проекции и состояния повторяет
-`WaveContext` / `build_hint` из Ankyra.
+`context`, `proposal`, `classification`, `turn`, `done`, `stopReason`. Различие
+проекции и состояния повторяет `WaveContext` / `build_hint` из Ankyra.
 
 ## 8. Инструменты (`src/tools/`)
 
@@ -189,9 +192,9 @@ route ──done | budget | error──▶ END
 |---|---|---|
 | `read(path, range?)` | artifact-факты с `version` | локализация; содержимое — эфемерное наблюдение |
 | `grep(pattern)` | индекс попаданий | локализация |
-| `edit(path, patch)` | `action` + `mutate` | мутация мира (немонотонность) |
-| `run(command)` | `record_check` | **свидетель**: verdict pass/fail |
-| `track(...)` | claim/decision/constraint/edge (`status=open`) | докса предлагает |
+| `edit(path, find, replace)` | `action` + `mutate` | мутация мира (немонотонность) |
+| `run(command, claims?)` | `record_check` | **свидетель**: verdict pass/fail |
+| `track(...)` | claim/decision/constraint (`status=open`) | докса предлагает |
 | `query(selector)` | ничего (одноразовый ответ) | запрос к IR |
 | `finish(summary)` | `action` | запрос остановки |
 
@@ -232,7 +235,7 @@ new ChatOpenAI({
 ## 10. Гейт: фикстуры, инварианты, проверка
 
 **Фикстуры.** `fixtures/bugfix/<id>/` — мини-пакет с одним падающим тестом
-(vitest). Цель прогона: «сделать тест зелёным, не сломав остальные».
+(`node --test`). Цель прогона: «сделать тест зелёным, не сломав остальные».
 Constraint: «не редактировать тестовые файлы». Срез — 3–5 своих задач, каждая
 понятна вручную.
 

@@ -1,30 +1,32 @@
 # Skein
 
-Агент кодирования с детерминированным IR контекста. Контекст — **проекция IR**,
-а не лента сообщений. Концептуальный каркас — докса/логос: LLM (докса) только
-предлагает, движок и свидетель (логос) решают, журнал и проекция — протокол.
+A coding agent with a deterministic IR context. The context is a **projection of
+the IR**, not a message tape. The conceptual frame is doxa/logos: the LLM (doxa)
+only proposes, the engine and the witness (logos) decide, the journal and the
+projection are the protocol.
 
-## Документы
+## Documents
 
-- `docs/concepts_ru.md` — концептуальный набросок.
-- `docs/implementation_plan_ru.md` — общий план, решения, роадмап, статус.
-- `docs/tier0_plan_ru.md` — детальный спек Tier 0.
+- `docs/concepts.md` — conceptual overview.
+- `docs/implementation_plan.md` — overall plan, decisions, roadmap, status.
+- `docs/tier0_plan.md` — detailed Tier 0 spec.
 
-## Команды
+## Commands
 
 - `npm run typecheck` — `tsc --noEmit`
-- `npm test` — vitest (live-гейт — только при `SKEIN_LIVE=true`)
+- `npm test` — vitest (live gate only when `SKEIN_LIVE=true`)
 
-## Инварианты (не нарушать)
+## Invariants (do not break)
 
-- claim не становится `verified` без `check`-provenance;
-- `stale`-факт не показывается как активное содержимое;
-- `project` детерминирован: одни события → один `Context`;
-- докса (LLM) только предлагает (`status=open`); логос решает;
-- секреты — только в `.env` (файл в `.gitignore`);
-- минимальный диф, без попутного рефакторинга и расширения задачи.
+- a claim never becomes `verified` without `check` provenance;
+- a `stale` fact is never shown as active content;
+- `project` is deterministic: same events → same `Context`;
+- doxa (the LLM) only proposes (`status=open`); logos decides;
+- secrets live only in `.env` (the file is in `.gitignore`);
+- minimal diff, no incidental refactoring or scope creep.
 
-## Порядок работы
+## Way of working
 
-Сначала план, потом код (см. глобальный `~/.config/opencode/AGENTS.md`). Текущий
-этап, порядок работ и открытые вопросы — в `docs/implementation_plan_ru.md`.
+Plan first, then code (see the global `~/.config/opencode/AGENTS.md`). The
+current stage, order of work, and open questions are in
+`docs/implementation_plan.md`.

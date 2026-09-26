@@ -1,5 +1,7 @@
 # Skein — общий план реализации
 
+> Русское зеркало `docs/implementation_plan.md`.
+
 Концепция — `docs/concepts_ru.md`. Концептуальный каркас — докса/логос в
 `ankyra/docs/doxa_and_logos.tex` и `ankyra/docs/concepts_ru.md`. Детальный спек
 текущего этапа — `docs/tier0_plan_ru.md`. Этот документ — общий план, решения,
@@ -30,7 +32,7 @@ Skein — агент кодирования, у которого контекс�
 staleness; объективный свидетель. Детали — `docs/tier0_plan_ru.md`.
 
 **Tier 1 — работа над задачей.**
-- `Decision` как first-class: выбор + отвергнутые альтернативы + обоснование.
+- `Decision` как first-class: выбор, отвергнутые альтернативы, обоснование.
 - `Check`/свидетель как явный узел с объективным вердиктом.
 - Подцели и их декомпозиция.
 
@@ -49,9 +51,9 @@ staleness; объективный свидетель. Детали — `docs/tie
 
 ## 4. Текущий статус
 
-Реализован Tier 0 (шаги 1–5 `tier0_plan_ru.md` §11): `src/ir`, `src/config`,
+Реализован Tier 0 (шаги 1–5 `docs/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
 `src/llm`, `src/tools`, `src/loop`, три фикстуры, offline- и live-гейт. Полный
-статус и осознанные упрощения — `tier0_plan_ru.md` §13.
+статус и осознанные упрощения — `docs/tier0_plan_ru.md` §13.
 
 Проверка: `npm run typecheck`; `npm test` — offline-тесты, live-гейт только при
 `SKEIN_LIVE=true`.

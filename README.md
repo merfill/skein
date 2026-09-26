@@ -1,34 +1,36 @@
 # Skein
 
-Агент кодирования, у которого контекст — **проекция IR**, а не лента сообщений.
-LLM (докса) только предлагает; детерминированный движок и свидетель (логос)
-решают; журнал событий и функция проекции — протокол. Концептуальное основание —
-разделение доксы и логоса (`ankyra/docs/doxa_and_logos.tex`).
+A coding agent whose context is a **projection of an IR**, not a message tape.
+The LLM (doxa) only proposes; a deterministic engine and the witness (logos)
+decide; the event journal and the projection function are the protocol. The
+conceptual ground is the doxa/logos distinction (`ankyra/docs/doxa_and_logos.tex`).
 
-## Идея
+## Idea
 
-В обычном агенте память — это растущая лента сообщений. В Skein память — это
-типизированный IR (граф), а то, что видит модель, — детерминированная функция
-проекции этого графа. Модель не «помнит» — она видит срез состояния.
+In an ordinary agent, memory is a growing message tape. In Skein, memory is a
+typed IR (a graph), and what the model sees is a deterministic projection of that
+graph. The model does not "remember" — it sees a slice of state.
 
-- **Докса (LLM)** входит в IR только как предложение: `provenance.kind = "llm"`,
-  `status = "open"`. Никогда сразу `verified`.
-- **Логос** — вердикты свидетелей (`check`) и замыкание artifact-графа.
-- **Протокол** — append-only журнал событий, `fold`, `project`, переходы статусов.
+- **Doxa (the LLM)** enters the IR only as a proposal: `provenance.kind = "llm"`,
+  `status = "open"`. Never immediately `verified`.
+- **Logos** — witness verdicts (`check`) and closure of the artifact graph.
+- **Protocol** — the append-only event journal, `fold`, `project`, status
+  transitions.
 
-## Как это работает
+## How it works
 
-IR — гибридный граф из двух пространств имён в одном:
+The IR is a hybrid graph with two namespaces in one:
 
-- `work` — цель, гипотезы/claims, решения, действия, наблюдения, ограничения;
-- `artifact` — файлы, символы, тесты.
+- `work` — goal, claims, decisions, actions, observations, constraints;
+- `artifact` — files, symbols, tests.
 
-Журнал событий append-only; состояние — `fold(events)`; проекция — чистая функция
-`project(state)`. Немонотонность кода решена **staleness по версии**: artifact-факт
-хранит хэш файла на момент чтения; мутация переводит факты старой версии в `stale`
-детерминированно, без ручного отката.
+The event journal is append-only; state is `fold(events)`; the projection is a
+pure function `project(state)`. Non-monotonicity of code is handled by
+**staleness by version**: an artifact fact stores the file hash at read time; a
+mutation deterministically marks facts about the old version `stale`, with no
+manual retraction.
 
-Цикл (LangGraph.js):
+Cycle (LangGraph.js):
 
 ```
 START → project → propose → classify → execute → route
@@ -36,84 +38,85 @@ route ──continue──▶ project
 route ──done | budget──▶ END
 ```
 
-- `project` — чистая функция из состояния; без LLM;
-- `propose` — один структурированный ответ `{ thought, action }` (zod);
-- `classify` — детерминированная проверка (например, constraint запрещает правку);
-- `execute` — детерминированно выполняет действие и пишет события.
+- `project` — a pure function of state; no LLM;
+- `propose` — one structured reply `{ thought, action }` (zod);
+- `classify` — deterministic checks (e.g. a constraint forbids an edit);
+- `execute` — deterministically performs the action and appends events.
 
-Действия: `read`, `grep`, `edit` (→ `mutate`), `run` (→ `check`/`record_check`),
-`track` (предложить claim/decision/constraint), `query`, `finish`.
+Actions: `read`, `grep`, `edit` (→ `mutate`), `run` (→ `check`/`record_check`),
+`track` (propose a claim/decision/constraint), `query`, `finish`.
 
-## Структура кода
+## Code layout
 
 ```
 src/
-  ir/         типы, zod-события, fold (append-only), project (проекция)
-  config/     настройки SKEIN_* (dotenv)
-  llm/        клиент провайдера + zod-схемы предложений
-  tools/      fsWorkspace и executeAction
+  ir/         types, zod events, fold (append-only), project (projection)
+  config/     SKEIN_* settings (dotenv)
+  llm/        provider client + zod schemas for proposals
+  tools/      fsWorkspace and executeAction
   loop/       LangGraph: state, propose, classify, graph, runAgent
-fixtures/bugfix/<id>/   мини-задачи с падающим тестом (node --test)
-tests/        golden-тесты IR, offline-прогон, live-гейт
-docs/         концепция, общий план, спек Tier 0
+fixtures/bugfix/<id>/   mini tasks with a failing test (node --test)
+tests/        IR golden tests, offline run, live gate
+docs/         concept, overall plan, Tier 0 spec
 ```
 
-## Установка
+## Install
 
-Требуется Node.js >= 22.
+Requires Node.js >= 22.
 
 ```bash
 npm install
-cp .env.example .env   # заполнить SKEIN_API_KEY
+cp .env.example .env   # fill in SKEIN_API_KEY
 ```
 
-## Команды
+## Commands
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # vitest: offline + live-гейт (при SKEIN_LIVE=true)
+npm test            # vitest: offline + live gate (when SKEIN_LIVE=true)
 npm run test:watch
 ```
 
-Live-прогон агента на фикстурах включается `SKEIN_LIVE=true` (нужен
+The live agent run over the fixtures is enabled by `SKEIN_LIVE=true` (needs
 `SKEIN_API_KEY`).
 
-## Настройки (`SKEIN_*`, `.env`)
+## Settings (`SKEIN_*`, `.env`)
 
-| Переменная | По умолчанию | Смысл |
+| Variable | Default | Meaning |
 |---|---|---|
-| `SKEIN_API_URL` | `https://routerai.ru/api/v1` | OpenAI-совместимый endpoint |
-| `SKEIN_API_KEY` | — | ключ (только в `.env`) |
-| `SKEIN_MODEL` | `~deepseek/deepseek-v4-flash-latest` | модель |
-| `SKEIN_TEMPERATURE` | `0.1` | температура |
-| `SKEIN_MAX_TOKENS` | `4096` | лимит ответа |
-| `SKEIN_REASONING_EFFORT` | `none` | размышления выключены |
-| `SKEIN_MAX_TURNS` | `24` | бюджет ходов |
-| `SKEIN_LIVE` | `false` | live-гейт |
+| `SKEIN_API_URL` | `https://routerai.ru/api/v1` | OpenAI-compatible endpoint |
+| `SKEIN_API_KEY` | — | key (only in `.env`) |
+| `SKEIN_MODEL` | `~deepseek/deepseek-v4-flash-latest` | model |
+| `SKEIN_TEMPERATURE` | `0.1` | temperature |
+| `SKEIN_MAX_TOKENS` | `4096` | reply cap |
+| `SKEIN_REASONING_EFFORT` | `none` | reasoning disabled |
+| `SKEIN_MAX_TURNS` | `24` | turn budget |
+| `SKEIN_LIVE` | `false` | live gate |
 
-Размышления выключены обязательно (как в Ankyra): `thinking.type=disabled` и
+Reasoning is disabled by design (as in Ankyra): `thinking.type=disabled` and
 `reasoning.effort=none`.
 
-## Гейт и инварианты
+## Gate and invariants
 
-Фикстуры `fixtures/bugfix/*` — мини-пакеты с падающим тестом; цель — сделать тест
-зелёным, не редактируя тесты. Свидетель объективен: test runner.
+The fixtures in `fixtures/bugfix/*` are mini packages with a failing test; the
+goal is to make the test green without editing tests. The witness is objective:
+the test runner.
 
-Инварианты:
+Invariants:
 
-- claim не становится `verified` без `check`-provenance;
-- `stale`-факт не показывается как активное содержимое;
-- `project` детерминирован: одни события → один `Context`;
-- constraint не нарушается; цель закрывается только при прохождении свидетеля.
+- a claim never becomes `verified` without `check` provenance;
+- a `stale` fact is never shown as active content;
+- `project` is deterministic: same events → same `Context`;
+- a constraint is never violated; the goal closes only when the witness passes.
 
-## Статус и документы
+## Status and documents
 
-Реализован Tier 0 (багфикс по падающему тесту).
+Tier 0 (bugfix by a failing test) is implemented.
 
-- `docs/implementation_plan_ru.md` — общий план, решения, роадмап, статус.
-- `docs/tier0_plan_ru.md` — детальный спек Tier 0.
-- `docs/concepts_ru.md` — концептуальный набросок.
+- `docs/implementation_plan.md` — overall plan, decisions, roadmap, status.
+- `docs/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/concepts.md` — conceptual overview.
 
-## Лицензия
+## License
 
-См. `LICENSE`.
+See `LICENSE`.
