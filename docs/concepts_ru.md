@@ -156,4 +156,4 @@ Skein различает два авторитета:
 ## Статус
 
 Реализован Tier 0 (багфикс по падающему тесту). План и роадмап —
-`docs/implementation_plan_ru.md`; детали этапа — `docs/tier0_plan_ru.md`.
+`docs/plans/implementation_plan_ru.md`; детали этапа — `docs/plans/tier0_plan_ru.md`.

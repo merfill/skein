@@ -1,10 +1,10 @@
 # Skein — общий план реализации
 
-> Русское зеркало `docs/implementation_plan.md`.
+> Русское зеркало `docs/plans/implementation_plan.md`.
 
 Концепция — `docs/concepts_ru.md`. Концептуальный каркас — докса/логос в
 `ankyra/docs/doxa_and_logos.tex` и `ankyra/docs/concepts_ru.md`. Детальный спек
-текущего этапа — `docs/tier0_plan_ru.md`. Этот документ — общий план, решения,
+текущего этапа — `docs/plans/tier0_plan_ru.md`. Этот документ — общий план, решения,
 роадмап и статус.
 
 ## 1. Суть
@@ -29,7 +29,7 @@ Skein — агент кодирования, у которого контекс�
 
 **Tier 0 — багфикс по падающему тесту (выполнен).**
 Замкнутый цикл `goal → locate → claim → action → check → done`; IR + проекция;
-staleness; объективный свидетель. Детали — `docs/tier0_plan_ru.md`.
+staleness; объективный свидетель. Детали — `docs/plans/tier0_plan_ru.md`.
 
 **Tier 1 — работа над задачей.**
 - `Decision` как first-class: выбор, отвергнутые альтернативы, обоснование.
@@ -44,16 +44,18 @@ staleness; объективный свидетель. Детали — `docs/tie
 
 **Ближайшие шаги.**
 1. Ужесточить классификацию: constraint должен запрещать обход через `run`
-   (shell), а не только через `edit`.
+   (shell), а не только через `edit`. **Сделано** — эффект-гард: `edit`
+   проверяется в `classify`; `run`, меняющий запрещённый файл, откатывается и
+   записывается нарушением (`docs/plans/constraint_guard_plan_ru.md`).
 2. Задачи на длинный горизонт, где проекция должна дать преимущество
    (многофайловые правки, 50+ шагов).
 3. Сравнение Skein vs opencode vs монотонный агент на одних задачах.
 
 ## 4. Текущий статус
 
-Реализован Tier 0 (шаги 1–5 `docs/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
+Реализован Tier 0 (шаги 1–5 `docs/plans/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
 `src/llm`, `src/tools`, `src/loop`, три фикстуры, offline- и live-гейт. Полный
-статус и осознанные упрощения — `docs/tier0_plan_ru.md` §13.
+статус и осознанные упрощения — `docs/plans/tier0_plan_ru.md` §13.
 
 Проверка: `npm run typecheck`; `npm test` — offline-тесты, live-гейт только при
 `SKEIN_LIVE=true`.
@@ -65,7 +67,6 @@ CSP/арифметика, UI, мультиязычность, несколько
 
 ## 6. Открытые вопросы
 
-- Обход constraint через `run` (см. ближайшие шаги).
 - Валидация предложений: жёсткий zod-контракт vs мягкий fallback JSON (как в
   `llm/structured.py` Ankyra).
 - Формат `payload` для `finish`/`run`: свободный текст vs типизированный предикат.

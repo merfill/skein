@@ -113,8 +113,8 @@ Invariants:
 
 Tier 0 (bugfix by a failing test) is implemented.
 
-- `docs/implementation_plan.md` — overall plan, decisions, roadmap, status.
-- `docs/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
+- `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
 - `docs/concepts.md` — conceptual overview.
 
 ## License

@@ -24,7 +24,7 @@ Reply with a short "thought" (it is shown but not stored in the IR) and exactly 
 - query { selector }: look up a node id or node kind in the IR;
 - finish { summary }: stop and hand the result to the witness.
 
-Do not edit files that constraints forbid. Do not claim a fix before a check confirms it.`;
+Do not change files that constraints forbid — neither with edit nor through a run command. Do not claim a fix before a check confirms it.`;
 
 export function renderContext(context: Context): string {
   return JSON.stringify(context, null, 2);

@@ -1,3 +1,4 @@
+import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
 import type { State } from "../ir/graph";
 import type { Turn } from "../ir/project";
@@ -169,7 +170,40 @@ export function executeAction(
     }
 
     case "run": {
+      const guards = new Map<string, { pattern: string; content: string }>();
+      for (const pattern of forbiddenPatterns(state)) {
+        for (const path of workspace.list()) {
+          if (!guards.has(path) && matchesPath(pattern, path)) {
+            guards.set(path, { pattern, content: workspace.read(path) });
+          }
+        }
+      }
+
       const result = workspace.run(action.command);
+
+      const changed = [...guards.entries()].filter(
+        ([path, guard]) => !workspace.exists(path) || workspace.read(path) !== guard.content,
+      );
+      if (changed.length > 0) {
+        for (const [path, guard] of changed) workspace.write(path, guard.content);
+        const paths = changed.map(([path]) => path).join(", ");
+        const first = changed[0];
+        const pattern = first ? first[1].pattern : "constraint";
+        const label = `constraint violation (${pattern}): reverted ${paths}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: `obs:${next()}`,
+            space: "work",
+            kind: "observation",
+            label,
+            payload: { pattern, paths: changed.map(([path]) => path), reverted: true },
+            seq: next(),
+          },
+        });
+        return { events, turn: proposalTurn(label), done: false, stopReason: null };
+      }
+
       const verdict = result.code === 0 ? "pass" : "fail";
       const claims =
         action.claims && action.claims.length > 0 ? action.claims : openClaimIds(state);

@@ -155,4 +155,4 @@ The original sketch left eight questions open. They are resolved as follows.
 ## Status
 
 Tier 0 (bugfix by a failing test) is implemented. Plan and roadmap:
-`docs/implementation_plan.md`; stage detail: `docs/tier0_plan.md`.
+`docs/plans/implementation_plan.md`; stage detail: `docs/plans/tier0_plan.md`.

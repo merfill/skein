@@ -2,7 +2,7 @@
 
 Concept — `docs/concepts.md`. Conceptual frame — doxa/logos in
 `ankyra/docs/doxa_and_logos.tex` and `ankyra/docs/concepts_ru.md`. Detailed spec
-of the current stage — `docs/tier0_plan.md`. This document is the overall plan,
+of the current stage — `docs/plans/tier0_plan.md`. This document is the overall plan,
 decisions, roadmap, and status.
 
 ## 1. Essence
@@ -28,7 +28,7 @@ function are the protocol.
 
 **Tier 0 — bugfix by a failing test (done).**
 Closed loop `goal → locate → claim → action → check → done`; IR and projection;
-staleness; objective witness. Details — `docs/tier0_plan.md`.
+staleness; objective witness. Details — `docs/plans/tier0_plan.md`.
 
 **Tier 1 — working on a task.**
 - `Decision` as first-class: choice, rejected alternatives, rationale.
@@ -44,16 +44,18 @@ staleness; objective witness. Details — `docs/tier0_plan.md`.
 
 **Immediate next steps.**
 1. Tighten classification: a constraint must forbid a `run` (shell) workaround,
-   not only `edit`.
+   not only `edit`. **Done** — effect guard: `edit` is checked in `classify`; a
+   `run` that changes a forbidden file is reverted and recorded as a violation
+   (`docs/plans/constraint_guard_plan.md`).
 2. Long-horizon tasks where the projection should give an advantage
    (multi-file edits, 50+ turns).
 3. Compare Skein vs opencode vs a monotonic agent on the same tasks.
 
 ## 4. Current status
 
-Tier 0 is implemented (steps 1–5 of `docs/tier0_plan.md` §11): `src/ir`,
+Tier 0 is implemented (steps 1–5 of `docs/plans/tier0_plan.md` §11): `src/ir`,
 `src/config`, `src/llm`, `src/tools`, `src/loop`, three fixtures, offline and live
-gates. Full status and deliberate simplifications — `docs/tier0_plan.md` §13.
+gates. Full status and deliberate simplifications — `docs/plans/tier0_plan.md` §13.
 
 Verification: `npm run typecheck`; `npm test` — offline tests, live gate only when
 `SKEIN_LIVE=true`.
@@ -65,7 +67,6 @@ CSP/arithmetic, UI, multilinguality, multiple LLM providers.
 
 ## 6. Open questions
 
-- Constraint workaround through `run` (see immediate next steps).
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`).
 - `payload` shape for `finish`/`run`: free text vs a typed predicate.

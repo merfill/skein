@@ -184,4 +184,38 @@ describe("runAgent (scripted, offline)", () => {
     expect(readFileSync(join(root, "test", "sum.test.mjs"), "utf8")).toBe(testBefore);
     expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(0);
   });
+
+  it("reverts a shell mutation of a file a constraint forbids", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    const testBefore = readFileSync(join(root, "test", "sum.test.mjs"), "utf8");
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "run", command: "printf '15\\n' > test/sum.test.mjs" },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      {
+        goal: { id: "g1", label: "make node --test pass" },
+        constraints: [
+          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
+        ],
+      },
+    );
+
+    expect(result.done).toBe(true);
+    expect(readFileSync(join(root, "test", "sum.test.mjs"), "utf8")).toBe(testBefore);
+    expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(0);
+    expect(result.events.filter((event) => event.type === "record_check")).toHaveLength(0);
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "add_node" && event.node.label.startsWith("constraint violation"),
+      ),
+    ).toBe(true);
+  });
 });

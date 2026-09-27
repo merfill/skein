@@ -8,7 +8,7 @@ stage**. Code is written only after this document.
 ## 1. Fixed decisions
 
 The full list of decisions and the roadmap are in
-`docs/implementation_plan.md`. The essentials for Tier 0: TypeScript (Node 22,
+`docs/plans/implementation_plan.md`. The essentials for Tier 0: TypeScript (Node 22,
 ESM), package manager npm; hybrid graph `work` + `artifact`; append-only journal
 plus deterministic projection; first slice is bugfix by a failing test;
 orchestration with LangGraph.js; LLM is the Ankyra provider with reasoning
@@ -297,6 +297,7 @@ The live path (`withStructuredOutput` + zod v4, `modelKwargs`) is verified: with
 `SKEIN_LIVE=true` the gate passes on all three fixtures (20 tests). Secrets live
 in `skein/.env`, which is in `.gitignore`.
 
-Loose end: a constraint is currently checked only on the `edit` action; the `run`
-command can bypass it through the shell. The witness (test plus unchanged test
-files) catches this, but classification does not. Tighten later.
+Resolved: a constraint is enforced by effect. `edit` is checked in `classify`;
+before a `run`, the files matching `payload.forbid` are snapshotted, and any
+change to them is reverted, recorded as a `constraint violation` observation, and
+never turned into a passing check. See `docs/plans/constraint_guard_plan.md`.

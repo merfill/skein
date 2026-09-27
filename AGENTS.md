@@ -8,8 +8,8 @@ projection are the protocol.
 ## Documents
 
 - `docs/concepts.md` — conceptual overview.
-- `docs/implementation_plan.md` — overall plan, decisions, roadmap, status.
-- `docs/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
+- `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
 
 ## Commands
 
@@ -29,4 +29,4 @@ projection are the protocol.
 
 Plan first, then code (see the global `~/.config/opencode/AGENTS.md`). The
 current stage, order of work, and open questions are in
-`docs/implementation_plan.md`.
+`docs/plans/implementation_plan.md`.

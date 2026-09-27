@@ -1,6 +1,6 @@
 # Skein — план Tier 0
 
-> Русское зеркало `docs/tier0_plan.md`.
+> Русское зеркало `docs/plans/tier0_plan.md`.
 
 Концептуальный обзор — `docs/concepts_ru.md`. Концептуальное основание —
 `ankyra/docs/doxa_and_logos.tex` (докса/логос), `ankyra/docs/concepts_ru.md`
@@ -9,7 +9,7 @@
 
 ## 1. Зафиксированные решения
 
-Полный список решений и роадмап — `docs/implementation_plan_ru.md`. Ключевое для
+Полный список решений и роадмап — `docs/plans/implementation_plan_ru.md`. Ключевое для
 Tier 0: TypeScript (Node 22, ESM), пакетный менеджер npm; гибридный граф
 `work` + `artifact`; append-only журнал + детерминированная проекция; первый
 срез — багфикс по падающему тесту; оркестрация LangGraph.js; LLM — провайдер
@@ -295,6 +295,7 @@ Live-путь (`withStructuredOutput` + zod v4, `modelKwargs`) проверен:
 `SKEIN_LIVE=true` гейт проходит на всех трёх фикстурах (20 тестов). Секреты — в
 `skein/.env`, файл в `.gitignore`.
 
-Висячий вопрос: constraint сейчас проверяется только на действии `edit`; команда
-`run` может обойти его через shell. Свидетель (тест + неизменность тестовых
-файлов) это ловит, но классификация — нет. Ужесточить позже.
+Решено: constraint проверяется по эффекту. `edit` проверяется в `classify`; перед
+командой `run` снимается снапшот файлов, подпадающих под `payload.forbid`, и любое
+их изменение откатывается, записывается наблюдением `constraint violation` и
+никогда не становится проходящим check. См. `docs/plans/constraint_guard_plan_ru.md`.
