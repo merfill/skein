@@ -116,6 +116,7 @@ Tier 0 (bugfix by a failing test) is implemented.
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
 - `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
 - `docs/concepts.md` — conceptual overview.
+- `docs/ir.md` — the IR: operations, state, and control.
 
 ## License
 

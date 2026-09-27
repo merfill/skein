@@ -29,7 +29,8 @@ The IR is protocol plus internal state; doxa itself is not stored in the IR.
 
 ## IR primitives
 
-A single graph with two namespaces:
+Details of the operations and the state model — `docs/ir.md`. In short: a single
+graph with two namespaces:
 
 - `work` — the work over the code: `goal`, `subgoal`, `claim`, `decision`,
   `action`, `observation`, `constraint`.
