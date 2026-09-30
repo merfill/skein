@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { EDGE_KINDS, NODE_KINDS, STATUSES } from "../ir/types";
+
 export const actionSchema = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("read"),
@@ -26,7 +28,15 @@ export const actionSchema = z.discriminatedUnion("tool", [
     rationale: z.string().optional(),
     forbid: z.array(z.string()).optional(),
   }),
-  z.object({ tool: z.literal("query"), selector: z.string() }),
+  z.object({
+    tool: z.literal("query"),
+    id: z.string().optional(),
+    kind: z.enum(NODE_KINDS).optional(),
+    status: z.enum(STATUSES).optional(),
+    edgesOf: z.string().optional(),
+    edgeKind: z.enum(EDGE_KINDS).optional(),
+    verdictOf: z.string().optional(),
+  }),
   z.object({ tool: z.literal("finish"), summary: z.string() }),
 ]);
 

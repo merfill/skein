@@ -1,7 +1,8 @@
 import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
-import type { State } from "../ir/graph";
+import type { CheckRecord, State } from "../ir/graph";
 import type { Turn } from "../ir/project";
+import type { Edge, Node, Status } from "../ir/types";
 import type { Action } from "../llm/schemas";
 import type { Workspace } from "./workspace";
 
@@ -25,6 +26,81 @@ function sliceLines(text: string, start?: number, end?: number): string {
   const from = start !== undefined && start > 0 ? start - 1 : 0;
   const to = end !== undefined && end > 0 ? end : lines.length;
   return lines.slice(from, to).join("\n");
+}
+
+function excerpt(text: string, ref: string, limit = OUTPUT_LIMIT): string {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit / 2);
+  const tail = limit - head;
+  const omitted = text.length - limit;
+  return `${text.slice(0, head)}\n…[${omitted} chars omitted; full output: ${ref}]…\n${text.slice(-tail)}`;
+}
+
+const QUERY_LIMIT = 50;
+
+function runQuery(state: State, action: Extract<Action, { tool: "query" }>): string {
+  const statusOf = (id: string): Status | undefined =>
+    state.statuses.get(id) ?? state.edgeStatuses.get(id);
+  const nodeRow = (node: Node) => ({
+    id: node.id,
+    kind: node.kind,
+    label: node.label,
+    status: statusOf(node.id),
+  });
+  const edgeRow = (edge: Edge) => ({
+    id: edge.id,
+    kind: edge.kind,
+    from: edge.from,
+    to: edge.to,
+    status: state.edgeStatuses.get(edge.id),
+  });
+
+  const nodes: ReturnType<typeof nodeRow>[] = [];
+  const edges: ReturnType<typeof edgeRow>[] = [];
+  const checks: CheckRecord[] = [];
+
+  if (action.verdictOf !== undefined) {
+    const claimId = action.verdictOf;
+    checks.push(...state.checks.filter((check) => check.claimIds.includes(claimId)));
+    for (const edge of state.edges.values()) {
+      if (edge.kind !== "verifies" || edge.to !== claimId) continue;
+      edges.push(edgeRow(edge));
+      const observation = state.nodes.get(edge.from);
+      if (observation) nodes.push(nodeRow(observation));
+    }
+  } else if (action.edgesOf !== undefined) {
+    const target = action.edgesOf;
+    for (const edge of state.edges.values()) {
+      if (edge.from !== target && edge.to !== target) continue;
+      if (action.edgeKind !== undefined && edge.kind !== action.edgeKind) continue;
+      edges.push(edgeRow(edge));
+    }
+  } else if (action.id !== undefined) {
+    const target = action.id;
+    const node = state.nodes.get(target);
+    if (node) nodes.push(nodeRow(node));
+    for (const edge of state.edges.values()) {
+      if (edge.from === target || edge.to === target) edges.push(edgeRow(edge));
+    }
+  } else if (action.kind !== undefined || action.status !== undefined) {
+    for (const node of state.nodes.values()) {
+      if (action.kind !== undefined && node.kind !== action.kind) continue;
+      if (action.status !== undefined && statusOf(node.id) !== action.status) continue;
+      nodes.push(nodeRow(node));
+    }
+  } else {
+    return "(no selector: pass id, kind, status, edgesOf, or verdictOf)";
+  }
+
+  if (nodes.length === 0 && edges.length === 0 && checks.length === 0) {
+    return "(nothing matches)";
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (nodes.length > 0) payload.nodes = nodes.slice(0, QUERY_LIMIT);
+  if (edges.length > 0) payload.edges = edges.slice(0, QUERY_LIMIT);
+  if (checks.length > 0) payload.checks = checks.slice(0, QUERY_LIMIT);
+  return JSON.stringify(payload, null, 2);
 }
 
 function openClaimIds(state: State): string[] {
@@ -207,6 +283,11 @@ export function executeAction(
       const verdict = result.code === 0 ? "pass" : "fail";
       const claims =
         action.claims && action.claims.length > 0 ? action.claims : openClaimIds(state);
+      const truncated = result.output.length > OUTPUT_LIMIT;
+      const outputRef = truncated ? `.skein/logs/run-${turn}.log` : undefined;
+      if (outputRef !== undefined) workspace.write(outputRef, result.output);
+      const output =
+        outputRef !== undefined ? excerpt(result.output, outputRef) : result.output;
       const observationId = `obs:${next()}`;
       events.push({
         type: "add_node",
@@ -215,7 +296,11 @@ export function executeAction(
           space: "work",
           kind: "observation",
           label: `run ${action.command}`,
-          payload: { code: result.code, verdict },
+          payload: {
+            code: result.code,
+            verdict,
+            ...(outputRef !== undefined ? { outputRef } : {}),
+          },
           seq: next(),
         },
       });
@@ -223,7 +308,8 @@ export function executeAction(
         type: "record_check",
         command: action.command,
         verdict,
-        output: clip(result.output),
+        output,
+        ...(outputRef !== undefined ? { outputRef } : {}),
         claimIds: claims,
       });
       for (const claimId of claims) {
@@ -234,12 +320,17 @@ export function executeAction(
             from: observationId,
             to: claimId,
             kind: "verifies",
-            provenance: { kind: "check", command: action.command, verdict },
+            provenance: {
+              kind: "check",
+              command: action.command,
+              verdict,
+              ...(outputRef !== undefined ? { outputRef } : {}),
+            },
             status: "open",
           },
         });
       }
-      const text = `$ ${action.command}\nexit ${result.code}\n${result.output}`;
+      const text = `$ ${action.command}\nexit ${result.code}\n${output}`;
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 
@@ -262,13 +353,12 @@ export function executeAction(
     }
 
     case "query": {
-      const matches = [...state.nodes.values()].filter(
-        (node) => node.id === action.selector || node.kind === action.selector,
-      );
-      const text = matches.length
-        ? JSON.stringify(matches, null, 2)
-        : `(nothing matches ${action.selector})`;
-      return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
+      return {
+        events,
+        turn: proposalTurn(clip(runQuery(state, action))),
+        done: false,
+        stopReason: null,
+      };
     }
 
     case "finish": {

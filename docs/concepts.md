@@ -20,7 +20,7 @@ The conceptual frame comes from the doxa/logos distinction (Ankyra,
 
 - **Doxa** is the LLM. It only *proposes*. Every proposal enters the IR as
   `provenance.kind = "llm"` and `status = "open"` — never immediately `verified`.
-- **Logos** is the deterministic side: witness verdicts (`check`) and closure of
+- **Logos** is the deterministic side: arbiter verdicts (`check`) and closure of
   the artifact graph.
 - **Protocol** is the environment: the append-only event journal, `fold`,
   `project`, and status transitions.
@@ -75,6 +75,7 @@ rules are deterministic, not LLM-driven:
 
 - `goal` — always;
 - active claims — in full;
+- verified claims — one line, id and label;
 - rejected claims — one line, id and reason;
 - observations — the latest per active claim;
 - artifacts — index only (id plus one line), never contents;
@@ -98,7 +99,7 @@ is **staleness by version**:
 So the knowledge log only grows, while the mutable code is a derived view of
 replayed actions. Cancellation needs no manual retraction.
 
-## The Witness
+## The Arbiter
 
 Skein distinguishes two authorities:
 
@@ -107,7 +108,7 @@ Skein distinguishes two authorities:
 - **subjective** — the user, through acceptance criteria. It decides whether the
   goal is achieved.
 
-Without a witness, Skein is an automaton; with one, it is a tool.
+Without an arbiter, Skein is an automaton; with one, it is a tool.
 
 ## How it differs from existing approaches
 
@@ -139,7 +140,7 @@ The original sketch left eight questions open. They are resolved as follows.
 6. **What is a turn?** One projection → propose → classify → execute cycle.
 7. **How to cache?** Only the header (goal, constraints, system prompt) is stable;
    the frontier changes each turn.
-8. **Where is the Witness?** Objective toolchain plus user acceptance.
+8. **Where is the Arbiter?** Objective toolchain plus user acceptance.
 
 ## Risks
 

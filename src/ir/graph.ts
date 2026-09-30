@@ -6,6 +6,7 @@ export interface CheckRecord {
   command: string;
   verdict: "pass" | "fail";
   output: string;
+  outputRef?: string;
   claimIds: string[];
 }
 
@@ -104,6 +105,7 @@ function applyEvent(state: State, event: Event): void {
         command: event.command,
         verdict: event.verdict,
         output: event.output,
+        outputRef: event.outputRef,
         claimIds: event.claimIds,
       });
       for (const id of event.claimIds) {

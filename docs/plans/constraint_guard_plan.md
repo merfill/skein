@@ -11,7 +11,7 @@ A `must` constraint is expressed as `payload.forbid` — a list of regexes over
 paths. Today `classify` applies them only to the `edit` action
 (`action.path`). The `run` action executes a shell command unchanged, so it can
 bypass the constraint, e.g. `printf ... > test/sum.test.mjs` or
-`sed -i ... test/sum.test.mjs`. The witness (test plus unchanged test files)
+`sed -i ... test/sum.test.mjs`. The arbiter (test plus unchanged test files)
 catches this after the run, but the engine ("logos") does not.
 
 ## 2. Decision

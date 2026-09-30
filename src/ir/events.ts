@@ -56,6 +56,7 @@ export const eventSchema = z.discriminatedUnion("type", [
     command: z.string(),
     verdict: verdictSchema,
     output: z.string(),
+    outputRef: z.string().optional(),
     claimIds: z.array(z.string()),
   }),
 ]);

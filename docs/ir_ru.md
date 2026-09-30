@@ -34,7 +34,7 @@ IR — это не один объект, а конвейер из четырё�
 
 Везде действует разделение докса/логос: LLM (докса) только предлагает; каждое
 предложение — `provenance.kind = "llm"`, `status = "open"`. Движок (логос)
-классифицирует и исполняет, и только свидетель может повысить claim.
+классифицирует и исполняет, и только арбитр может повысить claim.
 
 ## 2. Операции, которые фиксирует IR
 
@@ -47,7 +47,7 @@ IR — это не один объект, а конвейер из четырё�
 | `add_edge` | ввести типизированное ребро с provenance |
 | `set_status` | сменить статус узла или ребра (без причины) |
 | `mutate` | файл `ref` изменился до версии `version` (крючок немонотонности) |
-| `record_check` | свидетель выполнил `command` с вердиктом для `claimIds` |
+| `record_check` | арбитр выполнил `command` с вердиктом для `claimIds` |
 
 Узлы и рёбра типизированы закрытыми enum-ами (`src/ir/types.ts`). У узла есть
 `space` (`work` | `artifact`), `kind`, однострочный `label`, необязательный
@@ -68,18 +68,21 @@ IR — это не один объект, а конвейер из четырё�
 | `read(path)` | `add_node` file (в первый раз) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | артефакт-факт, привязанный к версии файла |
 | `grep(pattern)` | `add_node` observation | одноразовое наблюдение (содержимое эфемерно) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; старые read-факты уходят в `stale` |
-| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` на каждый claim | claims `verified`/`refuted` по свидетелю |
+| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` на каждый claim; при длинном выводе — спил и `outputRef` | claims `verified`/`refuted` по арбитру |
 | `run` (гард constraint) | `add_node` observation `constraint violation` | запрещённый файл откатывается; **без** `record_check` |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
-| `query(selector)` | ничего | одноразовый ответ, ничего не фиксируется |
+| `query(selectors)` | ничего | одноразовый ответ (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), ничего не фиксируется |
 | `finish(summary)` | `add_node` action | цикл останавливается (`stopReason = "finish"`) |
 
-Два следствия, которые стоит сказать прямо:
+Три следствия, которые стоит сказать прямо:
 
 - **Содержимое не хранится в IR.** Вывод `read`/`grep`/`run` живёт в эфемерных
   ходах `recent` (`Turn`), но не в payload узла. Артефакты — указатели плюс одна
   строка.
-- **Только свидетель верифицирует.** `verified` достижим только через
+- **Длинный вывод — за пределами IR.** Если вывод `run` превышает лимит выдержки,
+  он целиком пишется в `.skein/logs/`, а в IR остаётся `outputRef` и выдержка
+  head+tail; достаётся оконным `read`.
+- **Только арбитр верифицирует.** `verified` достижим только через
   `record_check` с `verdict = "pass"` (`src/ir/graph.ts:101`).
 
 ### Что объявлено в Tier 0, но пока не производится
@@ -119,7 +122,8 @@ IR — это не один объект, а конвейер из четырё�
 
 - `header` — цель и все constraints (стабильный префикс);
 - `frontier` — `claims` (`open`), `decisions` (`active`), последнее действие,
-  последнее наблюдение на каждый активный claim и отвергнутое одной строкой;
+  последнее наблюдение на каждый активный claim, подтверждённое и отвергнутое
+  одной строкой;
 - `artifacts` — только индекс (id + label + флаг `stale`);
 - `index` — каждый узел как `{ id, kind, label }`, чтобы агент знал, что есть;
 - `recent` — последние ходы дословно, для связности.
@@ -146,11 +150,11 @@ IR — это не один объект, а конвейер из четырё�
   записывается как `constraint violation`, а чек не пишется — значит, ничто не
   верифицируется (`src/tools/index.ts:172`). Запрет держится по эффекту, а не
   разбором shell.
-- **Истина только от свидетеля.** Ни один путь к `verified` не минует
+- **Истина только от арбитра.** Ни один путь к `verified` не минует
   `record_check`.
 - **Бюджеты и стоп.** Цикл маршрутизируется по `done`, лимиту ходов и
   `stopReason` (`src/loop/graph.ts:80`).
-- **Закрытие цели — извне.** Движок не ставит цели `achieved`; харнесс/свидетель
+- **Закрытие цели — извне.** Движок не ставит цели `achieved`; харнесс/арбитр
   проверяет, что тесты проходят и запрещённые файлы не изменены
   (`tests/gate.test.ts`). Узел цели остаётся `open` даже после успешного прогона
   (`tests/loop.test.ts`).
@@ -202,7 +206,7 @@ Seed (`src/loop/graph.ts:101`):
 `mutate` помечает `e:4` как `stale` — старое чтение больше не активно. Журнал не
 меняется; сдвинулся производный статус.
 
-Ход 4 — `run node --test` отдаёт решение свидетелю:
+Ход 4 — `run node --test` отдаёт решение арбитру:
 
 ```json
 { "type": "add_node", "node": { "id": "obs:8", "space": "work", "kind": "observation",
@@ -226,15 +230,17 @@ Seed (`src/loop/graph.ts:101`):
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ] },
   "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
-                "observations": [], "rejected": [] },
+                "observations": [], "verified": ["w:claim:5: loop stops one short"],
+                "rejected": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": [ /* все узлы: g1, k1, file:…, obs:3, w:claim:5, act:6, obs:8 */ ],
   "recent": [ /* последние ходы */ ]
 }
 ```
 
-Верифицированный claim ушёл из `frontier.claims`; артефакт показан, но помечен
-`stale`, потому что его последнее чтение старше правки.
+Верифицированный claim ушёл из `frontier.claims` и теперь виден в
+`frontier.verified`; артефакт показан, но помечен `stale`, потому что его
+последнее чтение старше правки.
 
 ### B. Запрещённое изменение через `run`
 

@@ -12,6 +12,7 @@ The context is a projection of the agent's IR, not a conversation. It contains:
 - header.goal: the user's objective;
 - header.constraints: invariants you must not violate (their payload.forbid lists regexes of forbidden paths);
 - frontier.claims: open beliefs you proposed; a claim is verified only by a passing check;
+- frontier.verified / frontier.rejected: settled claims, one line each;
 - frontier.decisions / frontier.recent: what is already settled and what just happened;
 - artifacts: an index of known files (no contents).
 
@@ -21,7 +22,7 @@ Reply with a short "thought" (it is shown but not stored in the IR) and exactly 
 - edit { path, find, replace }: replace the first occurrence of find with replace;
 - run { command, claims? }: run a shell command in the workspace; a command with exit code 0 is a passing check and verifies the listed claims (default: all open claims);
 - track { kind, label, rationale?, forbid? }: propose a claim, decision, or constraint;
-- query { selector }: look up a node id or node kind in the IR;
+- query { id | kind | status | edgesOf | verdictOf }: look up nodes by id/kind/status, the edges of a node, or the checks behind a claim;
 - finish { summary }: stop and hand the result to the witness.
 
 Do not change files that constraints forbid — neither with edit nor through a run command. Do not claim a fix before a check confirms it.`;

@@ -14,6 +14,7 @@ export interface Context {
     decisions: Node[];
     lastAction?: Node;
     observations: Node[];
+    verified: string[];
     rejected: string[];
   };
   artifacts: { id: string; label: string; stale: boolean }[];
@@ -76,6 +77,12 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   const observations = latestObservationPerClaim(state, claims);
 
+  const verified = nodes
+    .filter((node) => node.kind === "claim" && statusOf(node.id) === "verified")
+    .sort(bySeqDesc)
+    .slice(0, tail)
+    .map((node) => `${node.id}: ${node.label}`);
+
   const rejected = nodes
     .filter((node) => {
       const status = statusOf(node.id);
@@ -100,7 +107,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   return {
     header: { goal, constraints },
-    frontier: { claims, decisions, lastAction, observations, rejected },
+    frontier: { claims, decisions, lastAction, observations, verified, rejected },
     artifacts,
     index,
     recent,

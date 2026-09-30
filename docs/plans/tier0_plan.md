@@ -18,7 +18,7 @@ disabled.
 
 - **Doxa** — the LLM: it only *proposes*. Every proposal enters with
   `provenance.kind = "llm"` and `status = "open"`, never immediately `verified`.
-- **Logos** — internal operators: witness verdicts (`check`) and closure of the
+- **Logos** — internal operators: arbiter verdicts (`check`) and closure of the
   artifact graph (transitive dependencies, affected tests).
 - **Protocol** — the event journal, `fold`, `project`, status transitions.
 - The IR is **protocol plus internal state**; doxa is not stored in the IR.
@@ -26,7 +26,7 @@ disabled.
 ## 3. Tier 0 boundaries
 
 In scope: the closed loop `goal → locate → claim → action → check → done`, a
-deterministic projection, staleness by version, an objective witness.
+deterministic projection, staleness by version, an objective arbiter.
 
 Deliberately out of scope: AST/symbol table, embeddings/similarity retrieval,
 `analogy`, `intuition`, `specificity`, `Revision` as a separate type,
@@ -193,7 +193,7 @@ projection and state mirrors `WaveContext` / `build_hint` in Ankyra.
 | `read(path, range?)` | artifact facts with `version` | locate; contents are an ephemeral observation |
 | `grep(pattern)` | hit index | locate |
 | `edit(path, find, replace)` | `action` + `mutate` | mutate the world (non-monotonicity) |
-| `run(command, claims?)` | `record_check` | **witness**: verdict pass/fail |
+| `run(command, claims?)` | `record_check` | **arbiter**: verdict pass/fail |
 | `track(...)` | claim/decision/constraint (`status=open`) | doxa proposes |
 | `query(selector)` | nothing (one-shot answer) | query the IR |
 | `finish(summary)` | `action` | request to stop |
@@ -243,7 +243,7 @@ by hand.
 - a claim never becomes `verified` without `check` provenance;
 - a `stale` fact is never shown as active content;
 - `project` is deterministic: same events → same `Context`;
-- the goal closes only when the witness passes (`run` returned `pass`);
+- the goal closes only when the arbiter passes (`run` returned `pass`);
 - the `must` constraint is never violated (test files unchanged);
 - bounds on the number of turns/actions.
 
@@ -267,7 +267,7 @@ by hand.
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`). For Tier 0 — strict zod, fallback later.
 - `payload` shape for `finish`/`run`: free text vs a typed predicate. For Tier 0 —
-  free text, checked by the witness.
+  free text, checked by the arbiter.
 
 ## 13. Implementation status (Tier 0)
 
@@ -289,7 +289,7 @@ Tier 0 simplifications (deliberate, not bugs):
   in the action. The "which claim does the test confirm" semantics is coarse.
 - File contents are **not** stored in the IR: only the artifact index plus
   ephemeral `recent` turns.
-- The goal does not become `achieved` automatically; the harness (the witness)
+- The goal does not become `achieved` automatically; the harness (the arbiter)
   closes it.
 - `finish` does not check the goal — the gate does that after the run.
 

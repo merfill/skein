@@ -104,6 +104,7 @@ describe("record_check", () => {
     ]);
     expect(state.statuses.get("c1")).toBe("verified");
     expect(project(state).frontier.claims).toEqual([]);
+    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
   });
 
   it("refutes a claim on a failing check and reports it as one line", () => {
@@ -184,5 +185,26 @@ describe("project", () => {
     expect(context.header.constraints.map((node) => node.id)).toEqual(["k1"]);
     expect(context.index).toHaveLength(4);
     expect(context.recent.map((turn) => turn.seq)).toEqual([1, 2]);
+  });
+
+  it("lists verified claims newest first, bounded by tail", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
+      { type: "add_node", node: workNode("c1", "claim", "first", 1) },
+      { type: "add_node", node: workNode("c2", "claim", "second", 2) },
+      { type: "add_node", node: workNode("c3", "claim", "third", 3) },
+      {
+        type: "record_check",
+        command: "npm test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1", "c2", "c3"],
+      },
+    ]);
+
+    expect(project(state, { tail: 2 }).frontier.verified).toEqual([
+      "c3: third",
+      "c2: second",
+    ]);
   });
 });

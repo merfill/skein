@@ -33,7 +33,7 @@ The journal grows, `State` is recomputed from it, `Context` is recomputed from
 
 Throughout, the doxa/logos split holds: the LLM (doxa) only proposes; every
 proposal is `provenance.kind = "llm"`, `status = "open"`. The engine (logos)
-classifies and executes, and only the witness can promote a claim.
+classifies and executes, and only the arbiter can promote a claim.
 
 ## 2. Operations the IR fixes
 
@@ -46,7 +46,7 @@ five events (`src/ir/events.ts:39`):
 | `add_edge` | introduce a typed, provenance-carrying edge |
 | `set_status` | change a node's or edge's status (no reason needed) |
 | `mutate` | a file at `ref` changed to `version` (the non-monotonicity hook) |
-| `record_check` | a witness ran a `command` with a `verdict` for `claimIds` |
+| `record_check` | an arbiter ran a `command` with a `verdict` for `claimIds` |
 
 Nodes and edges are typed by closed enums (`src/ir/types.ts`). A node has a
 `space` (`work` | `artifact`), a `kind`, a one-line `label`, an optional
@@ -67,18 +67,21 @@ The tools are the only producers of events (`src/tools/index.ts`,
 | `read(path)` | `add_node` file (first time) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | an artifact fact tied to a file version |
 | `grep(pattern)` | `add_node` observation | a one-shot observation (contents are ephemeral) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
-| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim | claims `verified`/`refuted` by the witness |
+| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim; on long output, a spill plus `outputRef` | claims `verified`/`refuted` by the arbiter |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
-| `query(selector)` | none | a one-shot answer, nothing recorded |
+| `query(selectors)` | none | a one-shot answer (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), nothing recorded |
 | `finish(summary)` | `add_node` action | loop stops (`stopReason = "finish"`) |
 
-Two consequences worth stating plainly:
+Three consequences worth stating plainly:
 
 - **Contents are not in the IR.** `read`/`grep`/`run` outputs live in the
   ephemeral `recent` turns (`Turn`), never as node payload. Artifacts are
   pointers plus one line.
-- **Only the witness verifies.** `verified` is reachable only through a
+- **Long output lives outside the IR.** When `run` output exceeds the excerpt
+  limit, the full output is written to `.skein/logs/` and the IR keeps only an
+  `outputRef` plus a head+tail excerpt, retrievable through a windowed `read`.
+- **Only the arbiter verifies.** `verified` is reachable only through a
   `record_check` with `verdict = "pass"` (`src/ir/graph.ts:101`).
 
 ### What Tier 0 declares but does not yet produce
@@ -119,7 +122,7 @@ events always yield the same `Context`. It has fixed sections:
 
 - `header` — the goal and all constraints (the stable prefix);
 - `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, the
-  latest observation per active claim, and rejected items as one line;
+  latest observation per active claim, and verified/rejected claims as one line;
 - `artifacts` — index only (id + label + `stale` flag);
 - `index` — every node as `{ id, kind, label }`, so the agent knows what exists;
 - `recent` — the last few turns verbatim, for flow.
@@ -146,12 +149,12 @@ Control is not a separate layer — it is consumed directly from `State`:
   `constraint violation`, and no check is recorded — so nothing is verified
   (`src/tools/index.ts:172`). The constraint is enforced by effect, not by
   parsing the shell.
-- **Truth only from the witness.** No path to `verified` bypasses
+- **Truth only from the arbiter.** No path to `verified` bypasses
   `record_check`.
 - **Budgets and stop.** The loop routes on `done`, the turn budget, and
   `stopReason` (`src/loop/graph.ts:80`).
 - **Closing the goal is external.** The engine does not set the goal to
-  `achieved`; the harness/witness checks that the test suite passes and that
+  `achieved`; the harness/arbiter checks that the test suite passes and that
   forbidden files are unchanged (`tests/gate.test.ts`). The goal node stays
   `open` even after a successful run (`tests/loop.test.ts`).
 
@@ -202,7 +205,7 @@ Turn 3 — `edit src/sum.mjs` mutates the world:
 `mutate` marks `e:4` `stale` — the old read is no longer active. The journal is
 unchanged; a derived status moved.
 
-Turn 4 — `run node --test` lets the witness decide:
+Turn 4 — `run node --test` lets the arbiter decide:
 
 ```json
 { "type": "add_node", "node": { "id": "obs:8", "space": "work", "kind": "observation",
@@ -226,15 +229,17 @@ The projection after turn 4 is roughly:
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ] },
   "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
-                "observations": [], "rejected": [] },
+                "observations": [], "verified": ["w:claim:5: loop stops one short"],
+                "rejected": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": [ /* every node: g1, k1, file:…, obs:3, w:claim:5, act:6, obs:8 */ ],
   "recent": [ /* the last turns */ ]
 }
 ```
 
-The verified claim has left `frontier.claims`; the artifact is shown, but flagged
-`stale`, because its last read predates the edit.
+The verified claim has left `frontier.claims` and now appears in
+`frontier.verified`; the artifact is shown, but flagged `stale`, because its last
+read predates the edit.
 
 ### B. A forbidden change through `run`
 

@@ -1,7 +1,7 @@
 # Skein
 
 A coding agent whose context is a **projection of an IR**, not a message tape.
-The LLM (doxa) only proposes; a deterministic engine and the witness (logos)
+The LLM (doxa) only proposes; a deterministic engine and the arbiter (logos)
 decide; the event journal and the projection function are the protocol. The
 conceptual ground is the doxa/logos distinction (`ankyra/docs/doxa_and_logos.tex`).
 
@@ -13,7 +13,7 @@ graph. The model does not "remember" — it sees a slice of state.
 
 - **Doxa (the LLM)** enters the IR only as a proposal: `provenance.kind = "llm"`,
   `status = "open"`. Never immediately `verified`.
-- **Logos** — witness verdicts (`check`) and closure of the artifact graph.
+- **Logos** — arbiter verdicts (`check`) and closure of the artifact graph.
 - **Protocol** — the append-only event journal, `fold`, `project`, status
   transitions.
 
@@ -44,7 +44,8 @@ route ──done | budget──▶ END
 - `execute` — deterministically performs the action and appends events.
 
 Actions: `read`, `grep`, `edit` (→ `mutate`), `run` (→ `check`/`record_check`),
-`track` (propose a claim/decision/constraint), `query`, `finish`.
+`track` (propose a claim/decision/constraint), `query` (inspect nodes/edges/checks
+by id/kind/status/edgesOf/verdictOf), `finish`.
 
 ## Code layout
 
@@ -99,7 +100,7 @@ Reasoning is disabled by design (as in Ankyra): `thinking.type=disabled` and
 ## Gate and invariants
 
 The fixtures in `fixtures/bugfix/*` are mini packages with a failing test; the
-goal is to make the test green without editing tests. The witness is objective:
+goal is to make the test green without editing tests. The arbiter is objective:
 the test runner.
 
 Invariants:
@@ -107,7 +108,7 @@ Invariants:
 - a claim never becomes `verified` without `check` provenance;
 - a `stale` fact is never shown as active content;
 - `project` is deterministic: same events → same `Context`;
-- a constraint is never violated; the goal closes only when the witness passes.
+- a constraint is never violated; the goal closes only when the arbiter passes.
 
 ## Status and documents
 
@@ -115,6 +116,8 @@ Tier 0 (bugfix by a failing test) is implemented.
 
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
 - `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/plans/context_inspection_plan.md` — verified surfacing, inspection query,
+  output spill.
 - `docs/concepts.md` — conceptual overview.
 - `docs/ir.md` — the IR: operations, state, and control.
 

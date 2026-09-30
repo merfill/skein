@@ -11,6 +11,7 @@ import { reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
 import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
+import { executeAction } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
 import { verifiedWithoutCheck } from "./invariants";
 
@@ -98,6 +99,68 @@ describe("classify", () => {
       fold([]),
     );
     expect(verdict).toEqual({ category: "hypothesis", accept: true });
+  });
+});
+
+describe("query", () => {
+  const workspace = () => fsWorkspace(setup("off-by-one"));
+
+  it("filters claims by status and writes no events", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
+      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
+      { type: "add_node", node: { id: "c2", space: "work", kind: "claim", label: "other", seq: 2 } },
+      {
+        type: "record_check",
+        command: "npm test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+
+    const outcome = executeAction(
+      { tool: "query", kind: "claim", status: "verified" },
+      state,
+      workspace(),
+      0,
+    );
+
+    expect(outcome.events).toEqual([]);
+    expect(outcome.turn.text).toContain("c1");
+    expect(outcome.turn.text).not.toContain("c2");
+  });
+
+  it("returns the verdict trail for a claim", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
+      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
+      { type: "add_node", node: { id: "obs:2", space: "work", kind: "observation", label: "run npm test", seq: 2 } },
+      {
+        type: "add_edge",
+        edge: {
+          id: "e:3",
+          from: "obs:2",
+          to: "c1",
+          kind: "verifies",
+          provenance: { kind: "check", command: "npm test", verdict: "fail" },
+          status: "open",
+        },
+      },
+      {
+        type: "record_check",
+        command: "npm test",
+        verdict: "fail",
+        output: "boom",
+        claimIds: ["c1"],
+      },
+    ]);
+
+    const outcome = executeAction({ tool: "query", verdictOf: "c1" }, state, workspace(), 0);
+
+    expect(outcome.turn.text).toContain("boom");
+    expect(outcome.turn.text).toContain("checks");
+    expect(outcome.turn.text).toContain("obs:2");
   });
 });
 
@@ -217,5 +280,50 @@ describe("runAgent (scripted, offline)", () => {
           event.type === "add_node" && event.node.label.startsWith("constraint violation"),
       ),
     ).toBe(true);
+  });
+
+  it("spills truncated output to .skein and keeps head+tail in context", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    const command =
+      "node -e \"process.stdout.write('HEAD' + 'a'.repeat(20000) + 'TAIL')\"";
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "run", command },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    const check = result.events.find((event) => event.type === "record_check");
+    if (!check || check.type !== "record_check") throw new Error("no check recorded");
+    const ref = check.outputRef;
+    if (!ref) throw new Error("no output ref");
+    expect(check.output).toContain("HEAD");
+    expect(check.output).toContain("TAIL");
+    expect(check.output).toContain("full output");
+    expect(check.output.length).toBeLessThan(20000);
+
+    const full = workspace.read(ref);
+    expect(full.length).toBeGreaterThan(20000);
+    expect(full).toContain("HEAD");
+    expect(full).toContain("TAIL");
+    expect(workspace.list()).not.toContain(ref);
+
+    const observation = result.events.find(
+      (event) =>
+        event.type === "add_node" &&
+        event.node.kind === "observation" &&
+        event.node.label.startsWith("run "),
+    );
+    if (!observation || observation.type !== "add_node") {
+      throw new Error("no run observation");
+    }
+    expect(observation.node.payload).toMatchObject({ outputRef: ref });
   });
 });

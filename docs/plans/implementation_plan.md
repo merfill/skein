@@ -9,7 +9,7 @@ decisions, roadmap, and status.
 
 Skein is a coding agent whose context is a **projection of the IR**, not a message
 tape. The LLM is doxa: it only proposes (`status=open`). The deterministic engine
-and the witness are logos: they decide. The event journal and the projection
+and the arbiter are logos: they decide. The event journal and the projection
 function are the protocol.
 
 ## 2. Fixed decisions
@@ -19,20 +19,20 @@ function are the protocol.
 | Language | TypeScript (Node 22, ESM), package manager npm |
 | State model | hybrid graph `work` + `artifact`, append-only journal + deterministic projection |
 | Code non-monotonicity | staleness by version (file hash), no manual retraction |
-| First slice | bugfix by a failing test; witness is the test runner |
+| First slice | bugfix by a failing test; arbiter is the test runner |
 | Orchestration | LangGraph.js (`@langchain/langgraph`) |
 | LLM | as in Ankyra: OpenAI-compatible endpoint, **reasoning disabled** (`thinking.type=disabled`, `reasoning.effort=none`); secrets only in `.env` |
-| Witness | objective (test runner) plus subjective (user/acceptance) |
+| Arbiter | objective (test runner) plus subjective (user/acceptance) |
 
 ## 3. Roadmap
 
 **Tier 0 — bugfix by a failing test (done).**
 Closed loop `goal → locate → claim → action → check → done`; IR and projection;
-staleness; objective witness. Details — `docs/plans/tier0_plan.md`.
+staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 
 **Tier 1 — working on a task.**
 - `Decision` as first-class: choice, rejected alternatives, rationale.
-- `Check`/witness as an explicit node with an objective verdict.
+- `Check`/arbiter as an explicit node with an objective verdict.
 - Subgoals and their decomposition.
 
 **Tier 2 — non-monotonic knowledge.**
