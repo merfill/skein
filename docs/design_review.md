@@ -2,9 +2,11 @@
 
 > Russian mirror — `docs/design_review_ru.md`.
 
-Status: working note. Source: an external model's critique of
-`docs/ir.md` / `docs/concepts.md`, reviewed against the code after commit
-`4bb8a32` (verified frontier, structured query, output spill).
+Status: working note and record of outcomes. Source: an external model's critique
+of `docs/ir.md` / `docs/concepts.md`, reviewed against the code after commit
+`4bb8a32` (verified frontier, structured query, output spill). Most points are now
+applied; a consolidated summary is in `docs/concepts.md` §"Outcomes of the design
+review", and each point below carries its verdict and the plan that implements it.
 
 This document records, point by point, which of the critique's risks and
 recommendations we **accept**, **reframe**, or **reject**, and why. It is not a

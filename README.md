@@ -11,9 +11,10 @@ In an ordinary agent, memory is a growing message tape. In Skein, memory is a
 typed IR (a graph), and what the model sees is a deterministic projection of that
 graph. The model does not "remember" — it sees a slice of state.
 
-- **Doxa (the LLM)** enters the IR only as a proposal: `provenance.kind = "llm"`,
+- **Doxa (the LLM)** enters the IR only when the engine admits it, as a node with
   `status = "open"`. Never immediately `verified`.
-- **Logos** — arbiter verdicts (`check`) and closure of the artifact graph.
+- **Logos** — the gate and arbiter verdicts (`record_check`, `actor` objective or
+  user) plus state derivation (`fold` / `project`).
 - **Protocol** — the append-only event journal, `fold`, `project`, status
   transitions.
 

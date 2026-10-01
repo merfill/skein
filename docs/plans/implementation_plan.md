@@ -34,6 +34,8 @@ staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 - `Decision` as first-class: choice, rejected alternatives, rationale.
 - `Check`/arbiter as an explicit node with an objective verdict.
 - Subgoals and their decomposition.
+- Path-based relevance: reachability from the goal through decision/action edges
+  (C2); also the deferred staleness precision (an import graph).
 
 **Tier 2 — non-monotonic knowledge.**
 - Statuses `superseded`/`refuted`, specificity, `Revision` as a record.

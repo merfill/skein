@@ -26,26 +26,33 @@ that would create knowledge without one is a design error. A verdict guessed
 from a file change, a claim declared verified by the LLM, a belief with no
 origin — all violate the principle and must be rejected.
 
-Two consequences used throughout:
+Three consequences used throughout:
 
 - a file change is known only because a deterministic action produced it
   (`mutate`), never guessed;
 - `verified` comes only from an arbiter's check; a change of the code can
-  invalidate that check, but can never invent a verdict.
+  invalidate that check, but can never invent a verdict;
+- a refused proposal is recorded (`record_rejection`) with its reason, not merely
+  shown for a turn.
 
 ## Doxa and logos
 
 The conceptual frame comes from the doxa/logos distinction (Ankyra,
 `doxa_and_logos.tex`):
 
-- **Doxa** is the LLM. It only *proposes*. Every proposal enters the IR as
-  `provenance.kind = "llm"` and `status = "open"` — never immediately `verified`.
-- **Logos** is the deterministic side: arbiter verdicts (`check`) and closure of
-  the artifact graph.
+- **Doxa** is the LLM. It only *proposes*: one structured `{ thought, action }`
+  per turn. The thought is narrative and stays out of the IR (it goes to the
+  tail). A proposed belief becomes a node only when the engine admits it (`track`),
+  and then with `status = "open"` — never immediately `verified`.
+- **Logos** is the deterministic side: the gate (`classify`), arbiter verdicts
+  (`record_check`), and state derivation (`fold`, `project`).
 - **Protocol** is the environment: the append-only event journal, `fold`,
   `project`, and status transitions.
 
-The IR is protocol plus internal state; doxa itself is not stored in the IR.
+The IR stores the admitted, distilled state. Raw doxa — thoughts and rejected
+wording — is not stored in it. A node carries no provenance of its own; its source
+is the typed event that introduced it (for a claim, the proposal the engine
+admitted). The provenance kind `llm` is declared but not produced.
 
 ## IR primitives
 
@@ -66,8 +73,9 @@ observations; `active` / `applied` / `reverted` for decisions and actions;
 `achieved` / `abandoned` for goals; `must` for constraints; `believed` / `stale` /
 `confirmed` for artifacts.
 
-Every node and edge carries **provenance** (how it is known: `llm`, `user`,
-`read`, `grep`, `check`). This is what makes relevance computable later.
+**Provenance** lives on edges — *how the relation is known*: `llm`, `user`,
+`read`, `grep`, `check` — and on checks, through `actor` (`arbiter` or `user`).
+Nodes do not carry it. Some kinds (`llm`, `grep`) are declared but reserved.
 
 This is the evolved form of the original sketch: `hypothesis` became `claim`,
 `source` became the artifact index, and cancellation is a status change, not a
@@ -93,30 +101,41 @@ One proposal per turn, so every turn leaves a verifiable trace.
 Projection is the heart of Skein: not "what was said" but "what acts now". The
 rules are deterministic, not LLM-driven:
 
-- `goal` — always;
-- active claims — in full;
-- verified claims — one line, id and label;
-- rejected claims — one line, id and reason;
-- observations — the latest per active claim;
-- artifacts — index only (id plus one line), never contents;
-- the tail — the last few turns, verbatim, for flow.
+- `header` — the goal, the constraints, and the turn budget;
+- `frontier` — open claims in full; settled claims one line each (verified /
+  invalidated / rejected); refused proposals one line each, collapsed by
+  signature; decisions; the last action and the latest observation per active
+  claim;
+- `artifacts` — an index of files (id plus one line), never contents;
+- `index` — a bounded summary: counts by kind plus the newest few nodes;
+- `recent` — the last few turns, verbatim, for flow.
 
-"What is active" is **relevance by provenance**, not by similarity: a node is
-active iff it lies on a path from an open goal through active decisions and
-actions to open claims. Addressability is always guaranteed: every node is either
-shown or retrievable through `query`, so the agent can name what it does not see.
-The `index` is a bounded summary (counts by kind plus the newest few nodes), not a
-full listing; the full listing is a query away.
+Relevance is currently **by status and provenance**: what acts is the open goal,
+its constraints, open claims, active decisions, and the observations/actions
+attached to them. **Path-based** relevance — a node active iff it lies on a path
+from the open goal through decision/action edges — is a reserved direction, not
+implemented; it needs first-class subgoals/decisions with connecting edges (Tier 1).
+
+Addressability is always guaranteed: every node is either shown or retrievable
+through `query`, so the agent can name what it does not see. `index` is a summary,
+not a full listing; the full listing is a query away.
 
 ## Non-monotonicity: staleness by version
 
 Code knowledge is non-monotonic, but the journal must stay monotonic. The bridge
 is **staleness by version**:
 
-- every artifact fact (`read` / `grep`) records the file hash (`version`) at
-  assertion time;
-- a mutation (`edit`) emits `mutate`, which deterministically marks facts about
-  the old version `stale`.
+- a `read` fact records the file hash (`version`) at assertion time; a `grep`
+  observation is ephemeral and carries no version;
+- a mutation emits `mutate`, which deterministically marks facts about the old
+  version `stale`;
+- a check's source observation records a **witness** — the `ref → version`
+  snapshot it was obtained against; a later `mutate` stales the `verifies` edge, so
+  the claim moves to `invalidated`, never silently staying `verified`.
+
+The witness is a snapshot of the whole workspace, so any change invalidates a
+check — sound but coarse. Precision (an import graph, to avoid invalidating on
+unrelated changes) is deferred.
 
 So the knowledge log only grows, while the mutable code is a derived view of
 replayed actions. Cancellation needs no manual retraction.
@@ -126,7 +145,7 @@ replayed actions. Cancellation needs no manual retraction.
 Skein distinguishes two authorities:
 
 - **objective** — the toolchain: type checker, tests, repro scripts. It decides
-  whether a hypothesis is refuted and whether a check passed.
+  whether a hypothesis is refuted and whether a check passed;
 - **subjective** — the user, through acceptance criteria. It decides whether the
   goal is achieved.
 
@@ -145,7 +164,8 @@ Without an arbiter, Skein is an automaton; with one, it is a tool.
   remove it. Skein: cancellation is first-class.
 - **LangGraph state** — a typed dict for orchestration, not for context
   management. Skein: projection into context is the main function.
-- **RAG** — retrieval by similarity. Skein: structural relevance to active claims.
+- **RAG** — retrieval by similarity. Skein: deterministic relevance by status and
+  provenance, with path relevance reserved.
 
 The novelty: **context as projection**, with a formal state model and a
 deterministic projection.
@@ -157,9 +177,11 @@ The original sketch left eight questions open. They are resolved as follows.
 1. **What is "one action"?** One structured proposal `{ thought, action }`. The
    thought is narrative: it goes to the tail, not the IR.
 2. **How does the user enter the IR?** The user owns the goal; the goal is not
-   LLM content. A goal change is a revision, not silent history.
-3. **Who decides relevance?** Deterministic, by provenance: active means premises
-   of the open goal.
+   LLM content. A goal change is a revision, not silent history. The user also
+   enters through acceptance (a subjective check).
+3. **Who decides relevance?** Deterministic. Currently by status and provenance
+   (open claims, active decisions, their observations/actions); path-based
+   relevance is reserved (Tier 1).
 4. **What if the projection is wrong?** Addressability is always guaranteed: every
    node is either shown or retrievable through `query`, so the agent can see what
    exists and request it. The `index` is a bounded summary, not a full listing.
@@ -168,7 +190,48 @@ The original sketch left eight questions open. They are resolved as follows.
 6. **What is a turn?** One projection → propose → classify → execute cycle.
 7. **How to cache?** Only the header (goal, constraints, system prompt) is stable;
    the frontier changes each turn.
-8. **Where is the Arbiter?** Objective toolchain plus user acceptance.
+8. **Where is the Arbiter?** Objective toolchain plus user acceptance, both
+   recorded through `record_check`.
+
+## Outcomes of the design review
+
+An external critique of `docs/ir.md` / `docs/concepts.md` was triaged point by
+point in `docs/design_review.md`. The outcomes:
+
+**Applied** (with the plan that implements each):
+
+- **R1 index blow-up** — `index` is a bounded summary under the addressability
+  contract (`docs/plans/index_budget_plan.md`);
+- **R2 contents vs memory** — contents stay out of the IR; long command output is
+  spilled and referenced (`docs/plans/context_inspection_plan.md`);
+- **R3 stale checks / transitivity** — a check's observation carries a witness;
+  the witness lives once; transitivity is covered by the whole-workspace snapshot
+  (`docs/plans/check_soundness_plan.md`, `docs/plans/staleness_scope_plan.md`);
+- **C1 non-code arbitration** — a subjective verdict is a check with
+  `actor = "user"` (`docs/plans/user_approval_plan.md`);
+- **P3 rejected actions** — refusals are recorded as events
+  (`docs/plans/rejection_plan.md`), while the provenance split is rejected;
+- **P4 budget** — the turn budget is shown in `header`
+  (`docs/plans/index_budget_plan.md`).
+
+**Deferred to Tier 1:**
+
+- **C2 path-based relevance** — needs first-class subgoals/decisions with
+  connecting edges before the projection can compute reachability from the goal;
+- **R3b precision** — an import graph to avoid invalidating checks on unrelated
+  changes (the current snapshot is sound but coarse);
+- **P1 deterministic compaction** — largely subsumed by R1 and the output spill;
+  revisit only if an evaluation shows the need, and never as LLM summarization.
+
+**Rejected:**
+
+- **R4 engine-set `goal_achieved`** — closing the goal is external by design;
+- **C3 agent `set_status`** — doxa only proposes; logos decides;
+- **P2 `read_artifact`** — redundant with `read`/`query`;
+- **P3 provenance split** (`llm_proposal` / `llm_hallucination`) — speculative,
+  and `llm` provenance is not produced;
+- **an LLM critic as arbiter** — it would put doxa in the role of logos;
+- **narrowing the witness without read tracing** — unsound in general.
 
 ## Risks
 
@@ -184,5 +247,6 @@ The original sketch left eight questions open. They are resolved as follows.
 
 ## Status
 
-Tier 0 (bugfix by a failing test) is implemented. Plan and roadmap:
-`docs/plans/implementation_plan.md`; stage detail: `docs/plans/tier0_plan.md`.
+Tier 0 (bugfix by a failing test) is implemented, and the design-review points
+listed above are applied. Plan and roadmap: `docs/plans/implementation_plan.md`;
+stage detail: `docs/plans/tier0_plan.md`; triage: `docs/design_review.md`.

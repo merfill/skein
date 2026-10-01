@@ -36,9 +36,11 @@ against the filesystem (`src/loop/observe.ts`): an observed drift becomes a
 `mutate` event, so a change made outside the engine is still recorded with a
 source.
 
-Throughout, the doxa/logos split holds: the LLM (doxa) only proposes; every
-proposal is `provenance.kind = "llm"`, `status = "open"`. The engine (logos)
-classifies and executes, and only the arbiter can promote a claim.
+Throughout, the doxa/logos split holds: the LLM (doxa) only proposes; a proposed
+belief enters the IR only as a node with `status = "open"` (`track`), never
+immediately `verified`. The engine (logos) classifies and executes, and only an
+arbiter can promote a claim. (Nodes carry no provenance; `provenance.kind = "llm"`
+is declared but not produced.)
 
 ## 2. Operations the IR fixes
 
@@ -111,7 +113,9 @@ written in Tier 0:
 - edge kinds other than `locates` and `verifies`;
 - the `set_status` event (a status change is currently always a side effect of
   `record_check` or `mutate`, never an explicit event);
-- statuses `superseded`, `achieved`, `abandoned`, `confirmed`, `reverted`.
+- statuses `superseded`, `achieved`, `abandoned`, `confirmed`, `reverted`;
+- provenance kinds `llm` and `grep`; `user` is produced only as a check `actor`,
+  never as edge provenance.
 
 These are reserved, not dead: the projection already understands
 `refuted`/`superseded` (`src/ir/project.ts:114`). The document keeps the
@@ -160,14 +164,15 @@ events always yield the same `Context`. It has fixed sections:
 Addressability is the guarantee: every node is either shown or retrievable through
 `query`, so bounding `index` never makes a node unnameable.
 
-Relevance is **by provenance, not similarity**: what is active is what lies on a
-path from the open goal through active decisions/actions to open claims. The
-index is always present, so the agent can see that something exists and ask for
-it, even when its contents are not in the context.
+Relevance is currently **by status and provenance**: what acts is the open goal,
+its constraints, open claims, active decisions, and the observations/actions
+attached to them. **Path-based** relevance (active iff reachable from the goal
+through decision/action edges) is a reserved direction, not implemented — it needs
+first-class subgoals/decisions with connecting edges (Tier 1).
 
 Note what is deliberately absent: file contents, stale facts shown as active,
 and previous projections. A `stale` artifact is rendered as stale, never as
-current (`docs/tier0_plan.md` §6 invariants).
+current (`docs/plans/tier0_plan.md` §6 invariants).
 
 ## 5. How the IR controls the agent
 

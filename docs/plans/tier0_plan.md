@@ -16,8 +16,9 @@ disabled.
 
 ## 2. Mapping to the doxa/logos frame
 
-- **Doxa** — the LLM: it only *proposes*. Every proposal enters with
-  `provenance.kind = "llm"` and `status = "open"`, never immediately `verified`.
+- **Doxa** — the LLM: it only *proposes*. A proposed belief enters as a node with
+  `status = "open"`, never immediately `verified` (nodes carry no provenance; the
+  `llm` kind is reserved).
 - **Logos** — internal operators: arbiter verdicts (`check`) and closure of the
   artifact graph (transitive dependencies, affected tests).
 - **Protocol** — the event journal, `fold`, `project`, status transitions.
