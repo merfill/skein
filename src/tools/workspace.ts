@@ -60,10 +60,18 @@ export function fsWorkspace(root: string): Workspace {
 
   const read = (path: string): string => readFileSync(abs(path), "utf8");
 
+  // Files can appear and vanish under a concurrent build; a walk or a read that
+  // loses that race must not crash the agent, only skip the path.
   const list = (): string[] => {
     const out: string[] = [];
     const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
         if (entry.isDirectory()) {
           if (SKIP_DIRS.has(entry.name)) continue;
           walk(join(dir, entry.name));
@@ -81,7 +89,12 @@ export function fsWorkspace(root: string): Workspace {
     const matches: GrepMatch[] = [];
     for (const path of list()) {
       if (!TEXT_EXT.has(path.slice(path.lastIndexOf(".")))) continue;
-      const lines = read(path).split("\n");
+      let lines: string[];
+      try {
+        lines = read(path).split("\n");
+      } catch {
+        continue;
+      }
       lines.forEach((text, index) => {
         if (re.test(text)) matches.push({ path, line: index + 1, text });
       });

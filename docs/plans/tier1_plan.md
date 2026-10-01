@@ -438,7 +438,9 @@ their turn comes.
 - **Prompt cache.** The projection changes the `frontier` every turn, and rewriting
   the context breaks the provider's cache: the plugin measured input ×5–10 and cost
   up to 1.5 ₽. Mitigation — keep a large stable prefix (goal, constraints, settled
-  facts) and change only the tail; account for this in §5.
+  facts) and change only the tail; account for this in §5. Bench measurement
+  (`bench/`): only the system prefix is cached (1664 tokens), the projection is not;
+  the optimization is deferred (`implementation_plan.md` §4).
 - **Strong model and short tasks.** Where there is no loop there is no gain and the
   overhead grows (plugin subset: steps 25.5→31, ctx 47k→62k). Target only tasks with
   a loop (§8).

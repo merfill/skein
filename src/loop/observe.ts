@@ -41,14 +41,20 @@ export function reconcile(
     const path = ref.slice("file:".length);
     if (!workspace.exists(path)) continue;
 
-    const signature = workspace.signature(path);
-    const cached = cache.get(path);
+    let signature: string;
     let version: string;
-    if (cached !== undefined && cached.signature === signature) {
-      version = cached.version;
-    } else {
-      version = workspace.version(path);
-      cache.set(path, { signature, version });
+    try {
+      signature = workspace.signature(path);
+      const cached = cache.get(path);
+      if (cached !== undefined && cached.signature === signature) {
+        version = cached.version;
+      } else {
+        version = workspace.version(path);
+        cache.set(path, { signature, version });
+      }
+    } catch {
+      // The file vanished between the existence check and the read.
+      continue;
     }
 
     if (versions.has(version)) continue;

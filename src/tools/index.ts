@@ -117,7 +117,11 @@ function openClaimIds(state: State): string[] {
 function versionMap(workspace: Workspace): Map<string, string> {
   const versions = new Map<string, string>();
   for (const path of workspace.list()) {
-    versions.set(path, workspace.version(path));
+    try {
+      versions.set(path, workspace.version(path));
+    } catch {
+      // A build can delete a temporary file between listing and hashing.
+    }
   }
   return versions;
 }
@@ -190,8 +194,19 @@ export function executeAction(
         };
       }
       const ref = `file:${action.path}`;
-      const version = workspace.version(action.path);
-      const content = sliceLines(workspace.read(action.path), action.start, action.end);
+      let version: string;
+      let content: string;
+      try {
+        version = workspace.version(action.path);
+        content = sliceLines(workspace.read(action.path), action.start, action.end);
+      } catch {
+        return {
+          events,
+          turn: proposalTurn(`read failed: ${action.path} disappeared`),
+          done: false,
+          stopReason: null,
+        };
+      }
       ensureFile(action.path, ref);
       const observationId = `obs:${next()}`;
       events.push({
@@ -254,7 +269,17 @@ export function executeAction(
           stopReason: null,
         };
       }
-      const original = workspace.read(action.path);
+      let original: string;
+      try {
+        original = workspace.read(action.path);
+      } catch {
+        return {
+          events,
+          turn: proposalTurn(`edit failed: ${action.path} disappeared`),
+          done: false,
+          stopReason: null,
+        };
+      }
       if (!original.includes(action.find)) {
         return {
           events,

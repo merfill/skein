@@ -100,6 +100,15 @@ Beyond Tier 0, the current line adds:
 Verification: `npm run typecheck`; `npm test` (67 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
+**Deferred (backlog):**
+
+- **Stable projection prefix (prompt cache).** The `skein-plugin` bench (`bench/`)
+  showed the provider caches only the system prefix (exactly 1664 tokens per call)
+  while the projection is never cached: its stable prefix ends at
+  `goal`/`constraints`, immediately followed by the volatile `frontier`.
+  Optimization (volatile to the tail, settled facts and the file index append-only
+  at the front, bounded growth) is deferred as premature; it needs a separate study.
+
 ## 5. Boundaries
 
 Deliberately out of scope for the current stages: AST/symbol table, embeddings,

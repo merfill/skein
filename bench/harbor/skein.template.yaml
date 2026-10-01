@@ -1,0 +1,27 @@
+jobs_dir: __SKEIN_JOBS__
+n_attempts: 1
+timeout_multiplier: 2.0
+n_concurrent_trials: 1
+quiet: false
+environment:
+  type: docker
+  force_build: true
+  delete: true
+agents:
+  - name: langgraph
+    model_name: routerai/~deepseek/deepseek-v4-flash-latest
+    kwargs:
+      project_path: __SKEIN_PROJECT__
+      graph: skein
+      node_version: 22
+      model_kwargs:
+        model: "~deepseek/deepseek-v4-flash-latest"
+        configuration:
+          baseURL: "https://routerai.ru/api/v1"
+      configurable:
+        maxTurns: 60
+datasets:
+  - name: terminal-bench
+    version: "2.0"
+    task_names:
+      - fix-ocaml-gc

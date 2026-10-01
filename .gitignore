@@ -1,6 +1,9 @@
 node_modules/
 dist/
 coverage/
+.vitest/
 .env
 .skein/
+bench/runs/
+bench/harbor/skein.yaml
 *.log
