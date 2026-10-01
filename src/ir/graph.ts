@@ -10,12 +10,22 @@ export interface CheckRecord {
   claimIds: string[];
 }
 
+export interface RejectionRecord {
+  seq: number;
+  turn: number;
+  tool: string;
+  target: string;
+  reason: string;
+  constraintId?: string;
+}
+
 export interface State {
   nodes: Map<string, Node>;
   edges: Map<string, Edge>;
   statuses: Map<string, Status>;
   edgeStatuses: Map<string, Status>;
   checks: CheckRecord[];
+  rejections: RejectionRecord[];
   goalId?: string;
   seq: number;
 }
@@ -27,6 +37,7 @@ export function emptyState(): State {
     statuses: new Map(),
     edgeStatuses: new Map(),
     checks: [],
+    rejections: [],
     seq: 0,
   };
 }
@@ -55,6 +66,7 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     statuses: new Map(base.statuses),
     edgeStatuses: new Map(base.edgeStatuses),
     checks: [...base.checks],
+    rejections: [...base.rejections],
     goalId: base.goalId,
     seq: base.seq,
   };
@@ -104,6 +116,17 @@ function applyEvent(state: State, event: Event): void {
           state.edgeStatuses.set(edge.id, "stale");
         }
       }
+      break;
+    }
+    case "record_rejection": {
+      state.rejections.push({
+        seq: state.seq,
+        turn: event.turn,
+        tool: event.tool,
+        target: event.target,
+        reason: event.reason,
+        constraintId: event.constraintId,
+      });
       break;
     }
     case "record_check": {

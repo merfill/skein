@@ -248,6 +248,40 @@ describe("runAgent (scripted, offline)", () => {
     expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(0);
   });
 
+  it("records a refusal for a forbidden edit", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "edit", path: "test/sum.test.mjs", find: "15", replace: "10" },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      {
+        goal: { id: "g1", label: "make node --test pass" },
+        constraints: [
+          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
+        ],
+      },
+    );
+
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    if (!rejection || rejection.type !== "record_rejection") {
+      throw new Error("no rejection recorded");
+    }
+    expect(rejection.tool).toBe("edit");
+    expect(rejection.target).toBe("test/sum.test.mjs");
+    expect(rejection.reason).toBe("constraint_violation:\\.test\\.mjs$");
+    expect(rejection.constraintId).toBe("k1");
+    expect(project(fold(result.events)).frontier.refusals).toEqual([
+      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1)",
+    ]);
+  });
+
   it("reverts a shell mutation of a file a constraint forbids", async () => {
     const root = setup("off-by-one");
     const workspace = fsWorkspace(root);

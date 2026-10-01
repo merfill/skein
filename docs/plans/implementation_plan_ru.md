@@ -68,8 +68,11 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   движок сверяет активные `ref` перед каждой проекцией, с кэшем отпечатков;
   `fs.watch` оставлен для будущего стримингового режима
   (`docs/plans/observation_plan_ru.md`, `docs/plans/watcher_plan_ru.md`).
+- **Фиксация отказов** — отклонённое предложение пишется событием
+  `record_rejection` и показывается в `frontier.refusals`, поэтому переживает
+  вытеснение из хвоста и реплей (`docs/plans/rejection_plan_ru.md`).
 
-Проверка: `npm run typecheck`; `npm test` (35 тестов) — offline-тесты, live-гейт
+Проверка: `npm run typecheck`; `npm test` (40 тестов) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.
 
 ## 5. Границы

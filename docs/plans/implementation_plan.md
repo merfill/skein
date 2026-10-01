@@ -68,8 +68,11 @@ Beyond Tier 0, the current line adds:
   engine reconciles active `ref`s before each projection, with a signature cache;
   `fs.watch` is left for a future streaming mode
   (`docs/plans/observation_plan.md`, `docs/plans/watcher_plan.md`).
+- **Rejection recording** — a refused proposal is recorded as a
+  `record_rejection` event and shown under `frontier.refusals`, so it survives
+  tail eviction and replay (`docs/plans/rejection_plan.md`).
 
-Verification: `npm run typecheck`; `npm test` (35 tests) — offline tests, live gate
+Verification: `npm run typecheck`; `npm test` (40 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries

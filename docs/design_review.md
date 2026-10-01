@@ -26,7 +26,7 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 | C3 | No explicit `set_status` | Rejected (by design) |
 | P1 | Context compaction | Reframed; partly applied |
 | P2 | `read_artifact(id)` | Rejected (redundant) |
-| P3 | provenance split / record rejections | Split verdict |
+| P3 | provenance split / record rejections | Split verdict; rejections applied |
 | P4 | Budget in `Context` | Accepted (open) |
 
 ## Risks
@@ -165,14 +165,15 @@ the behaviour, the agent is deceived: the context says "settled".
 
 - **Proposal:** split `provenance.llm` into `llm_proposal` / `llm_hallucination`;
   record rejected actions as events.
-- **Verdict:** Split verdict.
+- **Verdict:** Split verdict; the rejection half is applied.
 - **Why:** the split is speculative — `provenance.kind = "llm"` is never
   produced in code today (`src/ir/types.ts:34` only declares it). But **recording
-  rejections** is a real, unaddressed gap: `classify` rejections go only to the
-  ephemeral `recent` (`src/loop/graph.ts:56-62`), so the model forgets and can
-  repeat a forbidden action.
-- **Action:** record rejections as events/nodes. This is the highest-value item
-  in this list after R3.
+  rejections** was a real gap: `classify` rejections went only to the ephemeral
+  `recent`, so the model could forget and repeat a forbidden action.
+- **Action:** done — a refusal is recorded as a `record_rejection` event with the
+  action signature and reason, and shown under `frontier.refusals`
+  (`docs/plans/rejection_plan.md`). No node is materialized and the provenance
+  split is not done.
 
 ### P4. Budget in `Context`
 

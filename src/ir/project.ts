@@ -1,4 +1,4 @@
-import type { State } from "./graph";
+import type { RejectionRecord, State } from "./graph";
 import type { Node, NodeKind, Status } from "./types";
 
 export interface Turn {
@@ -17,6 +17,7 @@ export interface Context {
     verified: string[];
     invalidated: string[];
     rejected: string[];
+    refusals: string[];
   };
   artifacts: { id: string; label: string; stale: boolean }[];
   index: { id: string; kind: NodeKind; label: string }[];
@@ -60,6 +61,36 @@ export function invalidatedClaimIds(state: State): Set<string> {
     if (!hasLive.has(id)) out.add(id);
   }
   return out;
+}
+
+function formatRefusal(rejection: RejectionRecord): string {
+  const owner = rejection.constraintId ? ` (${rejection.constraintId})` : "";
+  return `${rejection.tool} ${rejection.target} — ${rejection.reason}${owner}`;
+}
+
+function refusalLines(state: State, tail: number): string[] {
+  const bySignature = new Map<string, { line: string; count: number; seq: number }>();
+  for (const rejection of state.rejections) {
+    const signature = `${rejection.tool}\u0000${rejection.target}\u0000${rejection.reason}`;
+    const existing = bySignature.get(signature);
+    if (existing) {
+      existing.count += 1;
+      if (rejection.seq >= existing.seq) {
+        existing.seq = rejection.seq;
+        existing.line = formatRefusal(rejection);
+      }
+      continue;
+    }
+    bySignature.set(signature, {
+      line: formatRefusal(rejection),
+      count: 1,
+      seq: rejection.seq,
+    });
+  }
+  return [...bySignature.values()]
+    .sort((a, b) => b.seq - a.seq)
+    .slice(0, tail)
+    .map((entry) => (entry.count > 1 ? `${entry.line} ×${entry.count}` : entry.line));
 }
 
 function staleRefs(state: State): Set<string> {
@@ -115,6 +146,8 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     })
     .map((node) => `${node.id}: ${node.label}`);
 
+  const refusals = refusalLines(state, tail);
+
   const artifacts = nodes
     .filter((node) => node.space === "artifact")
     .map((node) => ({ id: node.id, label: node.label, stale: stale.has(node.id) }));
@@ -140,6 +173,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
       verified,
       invalidated: invalidatedLines,
       rejected,
+      refusals,
     },
     artifacts,
     index,

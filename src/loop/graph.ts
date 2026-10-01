@@ -3,12 +3,45 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 import type { Event } from "../ir/events";
 import { fold } from "../ir/graph";
 import { project } from "../ir/project";
+import type { Action } from "../llm/schemas";
 import { executeAction } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
 import type { Proposer } from "./propose";
 import { LoopState, type LoopStateType } from "./state";
+
+function describeTarget(action: Action): string {
+  let target: string;
+  switch (action.tool) {
+    case "read":
+    case "edit":
+      target = action.path;
+      break;
+    case "grep":
+      target = action.pattern;
+      break;
+    case "run":
+      target = action.command;
+      break;
+    case "track":
+      target = action.label.trim() === "" ? action.kind : `${action.kind}:${action.label}`;
+      break;
+    case "query":
+      target =
+        action.id ??
+        action.verdictOf ??
+        action.edgesOf ??
+        action.kind ??
+        action.status ??
+        "query";
+      break;
+    case "finish":
+      target = action.summary;
+      break;
+  }
+  return target.replace(/\s+/g, " ").trim().slice(0, 120);
+}
 
 export interface AgentDeps {
   propose: Proposer;
@@ -58,20 +91,36 @@ export function compileGraph(deps: AgentDeps) {
 
   const executeNode = (state: LoopStateType) => {
     const classification = state.classification;
-    if (!classification || !classification.accept || !state.proposal) {
+    const proposal = state.proposal;
+    if (!proposal || !classification) {
       return {
         turn: state.turn + 1,
         recent: [
-          {
-            seq: state.turn,
-            kind: "proposal" as const,
-            text: `rejected: ${classification?.reason ?? "no proposal"}`,
-          },
+          { seq: state.turn, kind: "proposal" as const, text: "rejected: no proposal" },
         ],
       };
     }
+    if (!classification.accept) {
+      const reason = classification.reason ?? "rejected";
+      return {
+        events: [
+          {
+            type: "record_rejection" as const,
+            tool: proposal.action.tool,
+            target: describeTarget(proposal.action),
+            reason,
+            ...(classification.constraintId !== undefined
+              ? { constraintId: classification.constraintId }
+              : {}),
+            turn: state.turn,
+          },
+        ],
+        turn: state.turn + 1,
+        recent: [{ seq: state.turn, kind: "proposal" as const, text: `rejected: ${reason}` }],
+      };
+    }
     const outcome = executeAction(
-      state.proposal.action,
+      proposal.action,
       fold(state.events),
       deps.workspace,
       state.turn,

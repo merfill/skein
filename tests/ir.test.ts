@@ -60,6 +60,18 @@ describe("events", () => {
     };
     expect(eventSchema.safeParse(event).success).toBe(true);
   });
+
+  it("accepts a rejection event", () => {
+    const event: Event = {
+      type: "record_rejection",
+      tool: "edit",
+      target: "test/sum.test.mjs",
+      reason: "constraint_violation:\\.test\\.mjs$",
+      constraintId: "k1",
+      turn: 3,
+    };
+    expect(eventSchema.safeParse(event).success).toBe(true);
+  });
 });
 
 describe("fold", () => {
@@ -132,6 +144,64 @@ describe("record_check", () => {
     ]);
     expect(state.statuses.get("c1")).toBe("refuted");
     expect(project(state).frontier.rejected).toEqual(["c1: off-by-one in loop"]);
+  });
+});
+
+describe("record_rejection", () => {
+  const base: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
+    {
+      type: "add_node",
+      node: workNode("k1", "constraint", "do not edit tests", 1),
+    },
+  ];
+  const refusal = (turn: number): Event => ({
+    type: "record_rejection",
+    tool: "edit",
+    target: "test/sum.test.mjs",
+    reason: "constraint_violation:\\.test\\.mjs$",
+    constraintId: "k1",
+    turn,
+  });
+
+  it("records the refusal in derived state", () => {
+    const state = fold([...base, refusal(3)]);
+    expect(state.rejections).toHaveLength(1);
+    expect(state.rejections[0]).toMatchObject({
+      tool: "edit",
+      target: "test/sum.test.mjs",
+      reason: "constraint_violation:\\.test\\.mjs$",
+      constraintId: "k1",
+      turn: 3,
+    });
+  });
+
+  it("shows a refusal as one line under frontier.refusals", () => {
+    const context = project(fold([...base, refusal(3)]));
+    expect(context.frontier.refusals).toEqual([
+      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1)",
+    ]);
+  });
+
+  it("collapses repeated refusals and bounds the section by tail", () => {
+    const state = fold([
+      ...base,
+      refusal(3),
+      refusal(5),
+      {
+        type: "record_rejection",
+        tool: "track",
+        target: "claim",
+        reason: "empty_label",
+        turn: 6,
+      },
+    ]);
+    expect(state.rejections).toHaveLength(3);
+    expect(project(state, { tail: 10 }).frontier.refusals).toEqual([
+      "track claim — empty_label",
+      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1) ×2",
+    ]);
+    expect(project(state, { tail: 1 }).frontier.refusals).toHaveLength(1);
   });
 });
 

@@ -55,6 +55,14 @@ export const eventSchema = z.discriminatedUnion("type", [
     actionId: z.string(),
   }),
   z.object({
+    type: z.literal("record_rejection"),
+    tool: z.string(),
+    target: z.string(),
+    reason: z.string(),
+    constraintId: z.string().optional(),
+    turn: z.number().int().nonnegative(),
+  }),
+  z.object({
     type: z.literal("record_check"),
     command: z.string(),
     verdict: verdictSchema,

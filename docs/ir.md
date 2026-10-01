@@ -43,7 +43,7 @@ classifies and executes, and only the arbiter can promote a claim.
 ## 2. Operations the IR fixes
 
 The IR has a **closed vocabulary**. The only way to change it is to append one of
-five events (`src/ir/events.ts:39`):
+six events (`src/ir/events.ts`):
 
 | Event | Meaning |
 |---|---|
@@ -52,6 +52,7 @@ five events (`src/ir/events.ts:39`):
 | `set_status` | change a node's or edge's status (no reason needed) |
 | `mutate` | a file at `ref` changed to `version` (the non-monotonicity hook) |
 | `record_check` | an arbiter ran a `command` with a `verdict` for `claimIds` |
+| `record_rejection` | the gate refused a proposed action (`tool`, `target`, `reason`) |
 
 Nodes and edges are typed by closed enums (`src/ir/types.ts`). A node has a
 `space` (`work` | `artifact`), a `kind`, a one-line `label`, an optional
@@ -65,8 +66,9 @@ so every piece of knowledge traces back to the experience that produced it.
 
 ### Tool → events
 
-The tools are the only producers of events (`src/tools/index.ts`,
-`src/loop/graph.ts`). What each one fixes:
+The tools and the engine's own steps are the only producers of events
+(`src/tools/index.ts`, `src/loop/graph.ts`, `src/loop/observe.ts`). What each one
+fixes:
 
 | Tool | Events written | Result in state |
 |---|---|---|
@@ -76,11 +78,12 @@ The tools are the only producers of events (`src/tools/index.ts`,
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
 | `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim, each carrying a witness (`ref → version` observed at run time); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
+| `classify` (logos gate) | `record_rejection` on a refusal | a `RejectionRecord` in `state.rejections` (no node) |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
 | `query(selectors)` | none | a one-shot answer (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), nothing recorded |
 | `finish(summary)` | `add_node` action | loop stops (`stopReason = "finish"`) |
 
-Three consequences worth stating plainly:
+Four consequences worth stating plainly:
 
 - **Contents are not in the IR.** `read`/`grep`/`run` outputs live in the
   ephemeral `recent` turns (`Turn`), never as node payload. Artifacts are
@@ -92,6 +95,10 @@ Three consequences worth stating plainly:
   `record_check` with `verdict = "pass"` (`src/ir/graph.ts:109`). A check carries
   the file versions it observed, so a later `mutate` can invalidate it — but it can
   never fabricate a verdict.
+- **A refusal is recorded, not just shown.** When the gate refuses a proposal, it
+  emits `record_rejection` with the action signature (`tool`, `target`, `reason`,
+  optional `constraintId`) into `state.rejections`; no node is created and the
+  full proposal is never stored.
 
 ### What Tier 0 declares but does not yet produce
 
@@ -139,9 +146,10 @@ events always yield the same `Context`. It has fixed sections:
 
 - `header` — the goal and all constraints (the stable prefix);
 - `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, the
-  latest observation per active claim, and verified / invalidated / rejected claims
-  as one line each. A verified claim whose checks have all gone `stale` appears
-  under `invalidated`, never under `verified`;
+  latest observation per active claim, verified / invalidated / rejected claims as
+  one line each, and `refusals` — actions the gate already refused, collapsed by
+  signature with a repeat count. A verified claim whose checks have all gone
+  `stale` appears under `invalidated`, never under `verified`;
 - `artifacts` — index only (id + label + `stale` flag);
 - `index` — every node as `{ id, kind, label }`, so the agent knows what exists;
 - `recent` — the last few turns verbatim, for flow.
@@ -260,7 +268,7 @@ The projection after turn 4 is roughly:
               "constraints": [ { "id": "k1" } ] },
   "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
                 "observations": [], "verified": ["w:claim:5: loop stops one short"],
-                "invalidated": [], "rejected": [] },
+                "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": [ /* every node: g1, k1, file:…, obs:3, w:claim:5, act:6, obs:8 */ ],
   "recent": [ /* the last turns */ ]
@@ -301,6 +309,25 @@ e:4  locates  file:src/sum.mjs → obs:3   believed → stale
 Replay the same events and you get the same `State` and the same `Context`. Code
 is mutable; the journal is not.
 
+### D. A refusal through the gate
+
+The LLM proposes `edit test/sum.test.mjs`; the gate refuses before executing
+anything. The engine appends:
+
+```json
+{ "type": "record_rejection", "tool": "edit", "target": "test/sum.test.mjs",
+  "reason": "constraint_violation:\\.test\\.mjs$", "constraintId": "k1", "turn": 3 }
+```
+
+No node is created, but the projection now carries it:
+
+```json
+"refusals": ["edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1)"]
+```
+
+The next projection rebuilds this from state, so the refusal survives eviction of
+the `recent` tail and a replay; a repeat collapses to one line with `×2`.
+
 ## 7. Invariants and Tier 0 boundaries
 
 Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
@@ -308,6 +335,8 @@ Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
 
 - a claim is `verified` only with `check` provenance;
 - a `stale` fact is never presented as active content;
+- a refused proposal is recorded with its reason (`record_rejection`), never
+  stored as a belief;
 - `project` is deterministic: same events → same `Context`;
 - doxa only proposes (`status = open`); logos decides.
 

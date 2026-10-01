@@ -40,7 +40,8 @@ route ──done | budget──▶ END
 
 - `project` — a pure function of state; no LLM;
 - `propose` — one structured reply `{ thought, action }` (zod);
-- `classify` — deterministic checks (e.g. a constraint forbids an edit);
+- `classify` — deterministic checks (e.g. a constraint forbids an edit); a refusal
+  is recorded as a `record_rejection` event and shown in `frontier.refusals`;
 - `execute` — deterministically performs the action and appends events.
 
 Actions: `read`, `grep`, `edit` (→ `mutate`), `run` (→ `check`/`record_check`),
@@ -118,6 +119,10 @@ Tier 0 (bugfix by a failing test) is implemented.
 - `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
 - `docs/plans/context_inspection_plan.md` — verified surfacing, inspection query,
   output spill.
+- `docs/plans/check_soundness_plan.md` — a check carries a witness; a change
+  invalidates it.
+- `docs/plans/observation_plan.md` — observing changes outside the engine.
+- `docs/plans/rejection_plan.md` — recording refused proposals.
 - `docs/concepts.md` — conceptual overview.
 - `docs/ir.md` — the IR: operations, state, and control.
 
