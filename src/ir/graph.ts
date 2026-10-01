@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, Node, Status } from "./types";
+import type { Edge, Node, Status, WitnessEntry } from "./types";
 
 export interface CheckRecord {
   seq: number;
@@ -7,6 +7,7 @@ export interface CheckRecord {
   verdict: "pass" | "fail";
   output: string;
   outputRef?: string;
+  actor: "arbiter" | "user";
   claimIds: string[];
 }
 
@@ -59,6 +60,12 @@ function defaultStatus(node: Node): Status {
   }
 }
 
+export function witnessOf(state: State, edge: Edge): WitnessEntry[] | undefined {
+  const observation = state.nodes.get(edge.from);
+  const payload = observation?.payload as { witness?: WitnessEntry[] } | undefined;
+  return payload?.witness;
+}
+
 export function fold(events: readonly Event[], base: State = emptyState()): State {
   const state: State = {
     nodes: new Map(base.nodes),
@@ -109,7 +116,7 @@ function applyEvent(state: State, event: Event): void {
           state.edgeStatuses.set(edge.id, "stale");
         } else if (
           provenance.kind === "check" &&
-          provenance.witness?.some(
+          witnessOf(state, edge)?.some(
             (entry) => entry.ref === event.ref && entry.version !== event.version,
           )
         ) {
@@ -136,6 +143,7 @@ function applyEvent(state: State, event: Event): void {
         verdict: event.verdict,
         output: event.output,
         outputRef: event.outputRef,
+        actor: event.actor ?? "arbiter",
         claimIds: event.claimIds,
       });
       for (const id of event.claimIds) {

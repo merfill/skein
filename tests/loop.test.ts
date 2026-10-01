@@ -161,6 +161,7 @@ describe("query", () => {
     expect(outcome.turn.text).toContain("boom");
     expect(outcome.turn.text).toContain("checks");
     expect(outcome.turn.text).toContain("obs:2");
+    expect(outcome.turn.text).toContain("arbiter");
   });
 
   it("still reaches a node omitted from the index window", () => {

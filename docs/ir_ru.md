@@ -52,7 +52,7 @@ IR — это не один объект, а конвейер из четырё�
 | `add_edge` | ввести типизированное ребро с provenance |
 | `set_status` | сменить статус узла или ребра (без причины) |
 | `mutate` | файл `ref` изменился до версии `version` (крючок немонотонности) |
-| `record_check` | арбитр выполнил `command` с вердиктом для `claimIds` |
+| `record_check` | арбитр (`actor`: `arbiter` или `user`) записал вердикт для `claimIds` |
 | `record_rejection` | врата отказали предложенному действию (`tool`, `target`, `reason`) |
 
 Узлы и рёбра типизированы закрытыми enum-ами (`src/ir/types.ts`). У узла есть
@@ -77,7 +77,7 @@ IR — это не один объект, а конвейер из четырё�
 | `read(path)` | `add_node` file (в первый раз) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | артефакт-факт, привязанный к версии файла |
 | `grep(pattern)` | `add_node` observation | одноразовое наблюдение (содержимое эфемерно) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; прежние факты чтения помечаются `stale` («устаревшими») |
-| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` на каждый claim, каждое со свидетельством (`ref → version`, снятым при прогоне); при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | claims `verified`/`refuted` по арбитру |
+| `run(command, claims?)` | `add_node` observation (со свидетельством `ref → version`, снятым при прогоне) + `record_check` + `add_edge` `verifies` на каждый claim; при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | claims `verified`/`refuted` по арбитру |
 | `run` (гард constraint) | `add_node` observation `constraint violation` | запрещённый файл откатывается; **без** `record_check` |
 | `classify` (врата логоса) | `record_rejection` при отказе | `RejectionRecord` в `state.rejections` (без узла) |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
@@ -93,9 +93,11 @@ IR — это не один объект, а конвейер из четырё�
   он целиком пишется в `.skein/logs/`, а в IR остаётся `outputRef` и выдержка
   head+tail; достаётся оконным `read`.
 - **Только арбитр верифицирует.** `verified` достижим только через
-  `record_check` с `verdict = "pass"` (`src/ir/graph.ts:109`). Проверка несёт
-  версии файлов, которые наблюдала, поэтому поздний `mutate` может её
-  обесценить — но выдумать вердикт не может.
+  `record_check` с `verdict = "pass"` (`src/ir/graph.ts:109`). Поле `actor`
+  называет авторитет: объективный тулчейн (`arbiter`) или пользователь (`user`,
+  через `src/ir/approval.ts`); LLM не может выдать проверку вовсе. Наблюдение-
+  источник несёт версии файлов, которые проверка наблюдала, поэтому поздний
+  `mutate` может её обесценить — но выдумать вердикт не может.
 - **Отказ фиксируется, а не просто показывается.** Когда врата отвергают
   предложение, движок пишет `record_rejection` с сигнатурой действия (`tool`,
   `target`, `reason`, необязательный `constraintId`) в `state.rejections`; узел
@@ -125,9 +127,9 @@ IR — это не один объект, а конвейер из четырё�
 - `record_check` переводит каждый названный claim в `verified` (pass) или
   `refuted` (fail) (`src/ir/graph.ts:119`).
 - `mutate` помечает `stale` («устаревшими») и рёбра чтения с тем же `ref` и
-  другой `version`, и рёбра `verifies`, в чьём свидетельстве есть изменившийся
-  `ref` с другой `version` (`src/ir/graph.ts:89`). Прежние события не трогаются;
-  меняется лишь их **производный статус**.
+  другой `version`, и рёбра `verifies`, в чьём наблюдении-источнике свидетельство
+  содержит изменившийся `ref` с другой `version` (`src/ir/graph.ts`). Прежние
+  события не трогаются; меняется лишь их **производный статус**.
 
 Так журнал остаётся монотонным, а знание о коде — немонотонным. Ручного отката
 нет: факт о старой версии файла просто перестаёт быть активным.
@@ -189,7 +191,8 @@ IR — это не один объект, а конвейер из четырё�
   `mtime`/`ctime`/размер избавляет от повторного хэширования файлов, чей
   отпечаток не изменился (`docs/plans/watcher_plan_ru.md`).
 - **Истина только от арбитра.** Ни один путь к `verified` не минует
-  `record_check`.
+  `record_check`; его `actor` — объективный тулчейн или пользователь
+  (субъективная приёмка), но никогда LLM.
 - **Бюджеты и стоп.** Цикл маршрутизируется по `done`, лимиту ходов и
   `stopReason` (`src/loop/graph.ts:86`). Бюджет — часть контекста
   (`header.budget`: `turn` / `maxTurns` / `remaining`), чтобы модель могла
@@ -254,13 +257,10 @@ Seed (`src/loop/graph.ts:107`):
   "payload": { "code": 0, "verdict": "pass",
     "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] } } }
 { "type": "record_check", "command": "node --test", "verdict": "pass",
-  "output": "…",
-  "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ],
-  "claimIds": ["w:claim:5"] }
+  "output": "…", "actor": "arbiter", "claimIds": ["w:claim:5"] }
 { "type": "add_edge", "edge": { "id": "e:9", "from": "obs:8", "to": "w:claim:5",
   "kind": "verifies",
-  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass",
-    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] },
+  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass" },
   "status": "open" } }
 ```
 

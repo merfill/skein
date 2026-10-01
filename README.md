@@ -126,6 +126,9 @@ Tier 0 (bugfix by a failing test) is implemented.
 - `docs/plans/rejection_plan.md` — recording refused proposals.
 - `docs/plans/index_budget_plan.md` — index as a bounded address space; turn
   budget in the header.
+- `docs/plans/user_approval_plan.md` — a subjective arbiter records a user check.
+- `docs/plans/staleness_scope_plan.md` — the witness lives once; transitivity by
+  a workspace-wide snapshot.
 - `docs/concepts.md` — conceptual overview.
 - `docs/ir.md` — the IR: operations, state, and control.
 

@@ -74,8 +74,14 @@ Beyond Tier 0, the current line adds:
 - **Context budget** — `index` is a bounded summary (counts + newest window) under
   the addressability contract; the turn budget is shown in `header.budget`
   (`docs/plans/index_budget_plan.md`).
+- **Subjective arbiter** — `userAcceptance` records a user check
+  (`actor: "user"`), so non-code work can reach a settled state
+  (`docs/plans/user_approval_plan.md`).
+- **Staleness scope** — transitivity is covered by a workspace-wide witness; the
+  witness now lives once, on the observation
+  (`docs/plans/staleness_scope_plan.md`).
 
-Verification: `npm run typecheck`; `npm test` (42 tests) — offline tests, live gate
+Verification: `npm run typecheck`; `npm test` (44 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries

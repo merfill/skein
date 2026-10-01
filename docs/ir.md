@@ -51,7 +51,7 @@ six events (`src/ir/events.ts`):
 | `add_edge` | introduce a typed, provenance-carrying edge |
 | `set_status` | change a node's or edge's status (no reason needed) |
 | `mutate` | a file at `ref` changed to `version` (the non-monotonicity hook) |
-| `record_check` | an arbiter ran a `command` with a `verdict` for `claimIds` |
+| `record_check` | an arbiter (`actor`: `arbiter` or `user`) recorded a `verdict` for `claimIds` |
 | `record_rejection` | the gate refused a proposed action (`tool`, `target`, `reason`) |
 
 Nodes and edges are typed by closed enums (`src/ir/types.ts`). A node has a
@@ -76,7 +76,7 @@ fixes:
 | `read(path)` | `add_node` file (first time) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | an artifact fact tied to a file version |
 | `grep(pattern)` | `add_node` observation | a one-shot observation (contents are ephemeral) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
-| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim, each carrying a witness (`ref → version` observed at run time); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
+| `run(command, claims?)` | `add_node` observation (carrying the witness, `ref → version` observed at run time) + `record_check` + `add_edge` `verifies` per claim; on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `classify` (logos gate) | `record_rejection` on a refusal | a `RejectionRecord` in `state.rejections` (no node) |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
@@ -91,10 +91,12 @@ Four consequences worth stating plainly:
 - **Long output lives outside the IR.** When `run` output exceeds the excerpt
   limit, the full output is written to `.skein/logs/` and the IR keeps only an
   `outputRef` plus a head+tail excerpt, retrievable through a windowed `read`.
-- **Only the arbiter verifies.** `verified` is reachable only through a
-  `record_check` with `verdict = "pass"` (`src/ir/graph.ts:109`). A check carries
-  the file versions it observed, so a later `mutate` can invalidate it — but it can
-  never fabricate a verdict.
+- **Only an arbiter verifies.** `verified` is reachable only through a
+  `record_check` with `verdict = "pass"` (`src/ir/graph.ts:109`). The check's
+  `actor` names the authority: the objective toolchain (`arbiter`) or the user
+  (`user`, through `src/ir/approval.ts`); the LLM cannot emit a check at all. The
+  source observation carries the file versions the check saw, so a later `mutate`
+  can invalidate it — but it can never fabricate a verdict.
 - **A refusal is recorded, not just shown.** When the gate refuses a proposal, it
   emits `record_rejection` with the action signature (`tool`, `target`, `reason`,
   optional `constraintId`) into `state.rejections`; no node is created and the
@@ -125,9 +127,9 @@ Statuses are **derived**, not set by hand:
 - `record_check` sets every named claim to `verified` (pass) or `refuted` (fail)
   (`src/ir/graph.ts:119`).
 - `mutate` marks `stale` both read-provenance edges with the same `ref` and a
-  different `version`, and `verifies` edges whose witness contains the changed
-  `ref` with another `version` (`src/ir/graph.ts:89`). The prior events are
-  untouched; only their **derived status** changes.
+  different `version`, and `verifies` edges whose source observation's witness
+  contains the changed `ref` with another `version` (`src/ir/graph.ts`). The prior
+  events are untouched; only their **derived status** changes.
 
 So the journal stays monotonic while code knowledge is non-monotonic. There is no
 manual retraction: a fact about an old file version simply stops being active.
@@ -186,8 +188,9 @@ Control is not a separate layer — it is consumed directly from `State`:
   drift becomes a `mutate`, so nothing relevant is built on unobserved change.
   A `mtime`/`ctime`/size signature cache avoids re-hashing files whose signature
   is unchanged (`docs/plans/watcher_plan.md`).
-- **Truth only from the arbiter.** No path to `verified` bypasses
-  `record_check`.
+- **Truth only from an arbiter.** No path to `verified` bypasses `record_check`;
+  its `actor` is the objective toolchain or the user (subjective acceptance),
+  never the LLM.
 - **Budgets and stop.** The loop routes on `done`, the turn budget, and
   `stopReason` (`src/loop/graph.ts:86`). The budget is part of the context
   (`header.budget`: `turn` / `maxTurns` / `remaining`), so the model can pace
@@ -252,13 +255,10 @@ Turn 4 — `run node --test` lets the arbiter decide:
   "payload": { "code": 0, "verdict": "pass",
     "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] } } }
 { "type": "record_check", "command": "node --test", "verdict": "pass",
-  "output": "…",
-  "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ],
-  "claimIds": ["w:claim:5"] }
+  "output": "…", "actor": "arbiter", "claimIds": ["w:claim:5"] }
 { "type": "add_edge", "edge": { "id": "e:9", "from": "obs:8", "to": "w:claim:5",
   "kind": "verifies",
-  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass",
-    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] },
+  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass" },
   "status": "open" } }
 ```
 

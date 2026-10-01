@@ -130,6 +130,11 @@ Skein distinguishes two authorities:
 - **subjective** — the user, through acceptance criteria. It decides whether the
   goal is achieved.
 
+A subjective verdict is recorded as a check with `actor = "user"`
+(`src/ir/approval.ts`); the LLM cannot produce it. Both authorities go through
+`record_check`, so `verified` still has exactly one path — this is how non-code
+work reaches a settled state.
+
 Without an arbiter, Skein is an automaton; with one, it is a tool.
 
 ## How it differs from existing approaches

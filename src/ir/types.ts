@@ -45,7 +45,6 @@ export type Provenance =
       command: string;
       verdict: Verdict;
       outputRef?: string;
-      witness?: WitnessEntry[];
     };
 
 export const STATUSES = [

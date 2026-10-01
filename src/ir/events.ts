@@ -4,8 +4,6 @@ import { EDGE_KINDS, NODE_KINDS, SPACES, STATUSES } from "./types";
 
 const verdictSchema = z.enum(["pass", "fail"]);
 
-const witnessSchema = z.array(z.object({ ref: z.string(), version: z.string() }));
-
 const nodeSchema = z.object({
   id: z.string(),
   space: z.enum(SPACES),
@@ -25,7 +23,6 @@ const provenanceSchema = z.discriminatedUnion("kind", [
     command: z.string(),
     verdict: verdictSchema,
     outputRef: z.string().optional(),
-    witness: witnessSchema.optional(),
   }),
 ]);
 
@@ -68,7 +65,7 @@ export const eventSchema = z.discriminatedUnion("type", [
     verdict: verdictSchema,
     output: z.string(),
     outputRef: z.string().optional(),
-    witness: witnessSchema.optional(),
+    actor: z.enum(["arbiter", "user"]).optional(),
     claimIds: z.array(z.string()),
   }),
 ]);

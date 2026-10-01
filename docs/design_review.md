@@ -19,9 +19,9 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 |---|---|---|
 | R1 | Index blow-up | Applied (contract A: address space) |
 | R2 | "Contents not in the IR" vs memory | Partly applied (command output) / reframed |
-| R3 | Transitive staleness and stale checks | Accepted; hole (a) fixed, (b) open |
+| R3 | Transitive staleness and stale checks | Applied (a); (b) covered by over-approximation |
 | R4 | Goal-closure paradox | Rejected as framed |
-| C1 | `record_check` tyranny for non-code | Reframed (open) |
+| C1 | `record_check` tyranny for non-code | Reframed; user-approval applied |
 | C2 | Graph or tree | Observation accepted; "simplify" rejected |
 | C3 | No explicit `set_status` | Rejected (by design) |
 | P1 | Context compaction | Reframed; partly applied |
@@ -94,10 +94,14 @@ records this as a soundness hole: `mutate` **never** invalidates
 At turn 5 the tests ran against `v2` while the code is `v3`. If the edit broke
 the behaviour, the agent is deceived: the context says "settled".
 
-- **Action:** hole (a) is closed (`docs/plans/check_soundness_plan.md`): a check
-  carries a witness; `mutate` stales the `verifies` edge; the projection shows a
-  claim as verified only with a live check and lists the rest under `invalidated`.
-  Transitivity (b) — a separate design.
+- **Action:** done. (a) A check's source observation carries a witness; `mutate`
+  stales the `verifies` edge; the projection shows a claim as verified only with a
+  live check and lists the rest under `invalidated`
+  (`docs/plans/check_soundness_plan.md`). (b) Transitivity is covered by
+  over-approximation — the witness is a snapshot of the whole workspace, so any
+  change, imported modules included, stales the check; the witness now lives once,
+  on the observation (`docs/plans/staleness_scope_plan.md`). Precision (an import
+  graph) is deliberately deferred.
 
 ### R4. Goal-closure paradox
 
@@ -117,12 +121,15 @@ the behaviour, the agent is deceived: the context says "settled".
 ### C1. `record_check` tyranny for non-code work
 
 - **Proposal:** human arbiter or an LLM critic that issues `record_check`.
-- **Verdict:** Reframed; open.
+- **Verdict:** Reframed; the user-approval path is applied.
 - **Why:** the model already names a **subjective arbiter** (user acceptance)
   beside the objective toolchain (`docs/concepts.md`). So "there is no arbiter"
-  is wrong; what is missing is a Tier 0 mechanism for user approval. An LLM
-  critic would re-introduce doxa as logos — unacceptable.
-- **Action:** Tier 1: a user-approval path that records a check, if needed.
+  was wrong; what was missing is a mechanism for user approval. An LLM critic
+  would re-introduce doxa as logos — unacceptable, so it stays rejected.
+- **Action:** done — `record_check` carries `actor: "arbiter" | "user"`, and
+  `userAcceptance` (`src/ir/approval.ts`) records a subjective verdict out of band.
+  The LLM cannot emit a check, so `verified` keeps exactly one path. No UI is
+  built; the harness calls the helper (`docs/plans/user_approval_plan.md`).
 
 ### C2. Graph or tree
 

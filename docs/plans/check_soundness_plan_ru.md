@@ -43,15 +43,14 @@
 
 ## 3. Дизайн
 
-- `src/ir/types.ts` — провенанс `check` получает
-  `witness?: { ref: string; version: string }[]`.
-- `src/ir/events.ts` — `record_check` и схема провенанса `check` несут `witness`.
 - `src/tools/index.ts`, `run` — перед записью снять версии всех отслеживаемых
-  файлов (`workspace.list()` + `workspace.version`, `.skein` исключён); приложить
-  свидетельство к payload наблюдения, к `record_check` и к каждому ребру
-  `verifies`.
-- `src/ir/graph.ts`, `mutate` — помечать `stale` и рёбра `verifies`, если в их
-  свидетельстве есть изменившийся `ref` с другой `version`.
+  файлов (`workspace.list()` + `workspace.version`, `.skein` исключён) в payload
+  наблюдения. (Изначально свидетельство также копировалось в `record_check` и в
+  каждое ребро `verifies`; эти копии убраны — см.
+  `docs/plans/staleness_scope_plan_ru.md`.)
+- `src/ir/graph.ts`, `mutate` — помечать `stale` рёбра `verifies`, если в
+  свидетельстве наблюдения-источника есть изменившийся `ref` с другой `version`
+  (через `witnessOf`).
 - `src/ir/project.ts` — `frontier.verified` требует живого ребра `verifies`;
   добавить `frontier.invalidated` (id + причина) для подтверждённых утверждений,
   у которых все рёбра устарели.
@@ -76,8 +75,10 @@
 
 ## 6. Границы
 
-- Транзитивная зависимость модулей (правка импортируемого файла) вне области:
-  свидетельство — это снимок на момент прогона, а не граф импортов.
+- Транзитивная зависимость модулей покрыта сверхприближением: свидетельство —
+  снимок всего воркспейса, поэтому любое изменение (включая импортируемый модуль)
+  гасит проверку. Точность через граф импортов отложена
+  (`docs/plans/staleness_scope_plan_ru.md`).
 - Внешние изменения — в `docs/plans/observation_plan_ru.md`.
 
 ## 7. Порядок работ
@@ -90,10 +91,10 @@
 
 ## 8. Статус
 
-Реализовано. Свидетельство — в провенансе `check` и в `record_check`
-(`src/ir/types.ts`, `src/ir/events.ts`); `run` его прикладывает
-(`src/tools/index.ts`); `mutate` гасит рёбра `verifies` (`src/ir/graph.ts`);
-`project` показывает инвалидированные утверждения, а `query` учитывает живость
-(`src/ir/project.ts`, `src/tools/index.ts`). `npm run typecheck` чист, `npm test`
-проходит (30 тестов). Доки обновлены: `docs/ir_ru.md` §2–4 и
-`docs/design_review_ru.md` (R3a).
+Реализовано. `run` снимает снимок воркспейса в payload наблюдения, а `mutate`
+гасит рёбра `verifies`, чьё наблюдение-источник засвидетельствовало изменение
+(`src/tools/index.ts`, `src/ir/graph.ts`); `project` показывает инвалидированные
+утверждения, а `query` учитывает живость (`src/ir/project.ts`,
+`src/tools/index.ts`). Свидетельство живёт один раз, в payload наблюдения
+(`docs/plans/staleness_scope_plan_ru.md`). `npm run typecheck` чист, `npm test`
+проходит. Доки обновлены: `docs/ir_ru.md` §2–4 и `docs/design_review_ru.md` (R3a).

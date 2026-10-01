@@ -41,16 +41,14 @@ only the latter.
 
 ## 3. Design
 
-- `src/ir/types.ts` — check provenance gains
-  `witness?: { ref: string; version: string }[]`.
-- `src/ir/events.ts` — `record_check` and the check provenance schema carry
-  `witness`.
 - `src/tools/index.ts`, `run` — before recording, snapshot every tracked file's
-  version (`workspace.list()` + `workspace.version`, `.skein` excluded); attach
-  the witness to the observation payload, `record_check`, and each `verifies`
-  edge.
-- `src/ir/graph.ts`, `mutate` — also mark `verifies` edges `stale` when their
-  witness has the changed `ref` with a different `version`.
+  version (`workspace.list()` + `workspace.version`, `.skein` excluded) into the
+  observation payload. (Originally the witness was also copied onto
+  `record_check` and each `verifies` edge; those copies were removed — see
+  `docs/plans/staleness_scope_plan.md`.)
+- `src/ir/graph.ts`, `mutate` — mark `verifies` edges `stale` when the source
+  observation's witness has the changed `ref` with a different `version` (via
+  `witnessOf`).
 - `src/ir/project.ts` — `frontier.verified` requires a live `verifies` edge; add
   `frontier.invalidated` (id + reason) for verified claims whose edges are all
   stale.
@@ -75,8 +73,10 @@ only the latter.
 
 ## 6. Boundaries
 
-- Transitive module dependency (a change to an imported file) is out of scope:
-  the witness is the run-time snapshot, not an import graph.
+- Transitive module dependency is covered by over-approximation: the witness is
+  a snapshot of the whole workspace, so any change (including an imported module)
+  stales the check. Precision via an import graph is deferred
+  (`docs/plans/staleness_scope_plan.md`).
 - External changes are handled in `docs/plans/observation_plan.md`.
 
 ## 7. Order of work
@@ -89,10 +89,10 @@ only the latter.
 
 ## 8. Status
 
-Implemented. The witness is on check provenance and `record_check`
-(`src/ir/types.ts`, `src/ir/events.ts`); `run` attaches it
-(`src/tools/index.ts`); `mutate` stales `verifies` edges (`src/ir/graph.ts`);
-`project` lists invalidated claims and `query` reflects liveness
-(`src/ir/project.ts`, `src/tools/index.ts`). `npm run typecheck` is clean and
-`npm test` passes (30 tests). Docs updated: `docs/ir.md` §2–4 and
-`docs/design_review.md` (R3a).
+Implemented. `run` snapshots the workspace into the observation payload and
+`mutate` stales `verifies` edges whose source observation witnessed the change
+(`src/tools/index.ts`, `src/ir/graph.ts`); `project` lists invalidated claims and
+`query` reflects liveness (`src/ir/project.ts`, `src/tools/index.ts`). The witness
+lives once, on the observation payload (`docs/plans/staleness_scope_plan.md`).
+`npm run typecheck` is clean and `npm test` passes. Docs updated: `docs/ir.md`
+§2–4 and `docs/design_review.md` (R3a).

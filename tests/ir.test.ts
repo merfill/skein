@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { userAcceptance } from "../src/ir/approval";
 import { eventSchema, type Event } from "../src/ir/events";
 import { emptyState, fold } from "../src/ir/graph";
 import { project } from "../src/ir/project";
@@ -49,16 +50,16 @@ describe("events", () => {
     expect(eventSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("accepts a check event carrying a witness", () => {
-    const event = {
+  it("accepts a check event from the user", () => {
+    const event = eventSchema.parse({
       type: "record_check",
-      command: "npm test",
+      command: "user acceptance",
       verdict: "pass",
-      output: "ok",
-      witness: [{ ref: "file:src/a.ts", version: "v1" }],
+      output: "",
+      actor: "user",
       claimIds: ["c1"],
-    };
-    expect(eventSchema.safeParse(event).success).toBe(true);
+    });
+    expect(event.type === "record_check" && event.actor).toBe("user");
   });
 
   it("accepts a rejection event", () => {
@@ -144,6 +145,34 @@ describe("record_check", () => {
     ]);
     expect(state.statuses.get("c1")).toBe("refuted");
     expect(project(state).frontier.rejected).toEqual(["c1: off-by-one in loop"]);
+  });
+});
+
+describe("user acceptance", () => {
+  const base: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "write the design note", 0) },
+    { type: "add_node", node: workNode("c1", "claim", "the note covers the API", 1) },
+  ];
+
+  it("verifies a claim through a user check and records the actor", () => {
+    const state = fold([...base, userAcceptance(["c1"], "pass", "looks good")]);
+    expect(state.statuses.get("c1")).toBe("verified");
+    expect(state.checks[0]).toMatchObject({ actor: "user", command: "looks good" });
+    expect(project(state).frontier.verified).toEqual(["c1: the note covers the API"]);
+  });
+
+  it("defaults the actor to the arbiter", () => {
+    const state = fold([
+      ...base,
+      {
+        type: "record_check",
+        command: "npm test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(state.checks[0]?.actor).toBe("arbiter");
   });
 });
 
@@ -250,7 +279,17 @@ describe("check invalidation by version", () => {
   const events: Event[] = [
     { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
     { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
-    { type: "add_node", node: workNode("o1", "observation", "run npm test", 2) },
+    {
+      type: "add_node",
+      node: {
+        id: "o1",
+        space: "work",
+        kind: "observation",
+        label: "run npm test",
+        payload: { witness: [{ ref: "file:src/a.ts", version: "v2" }] },
+        seq: 2,
+      },
+    },
     {
       type: "add_edge",
       edge: edge(
@@ -258,12 +297,7 @@ describe("check invalidation by version", () => {
         "o1",
         "c1",
         "verifies",
-        {
-          kind: "check",
-          command: "npm test",
-          verdict: "pass",
-          witness: [{ ref: "file:src/a.ts", version: "v2" }],
-        },
+        { kind: "check", command: "npm test", verdict: "pass" },
         "open",
       ),
     },
@@ -272,7 +306,6 @@ describe("check invalidation by version", () => {
       command: "npm test",
       verdict: "pass",
       output: "ok",
-      witness: [{ ref: "file:src/a.ts", version: "v2" }],
       claimIds: ["c1"],
     },
   ];
@@ -302,7 +335,17 @@ describe("check invalidation by version", () => {
     const state = fold([
       ...events,
       { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
-      { type: "add_node", node: workNode("o2", "observation", "run npm test", 3) },
+      {
+        type: "add_node",
+        node: {
+          id: "o2",
+          space: "work",
+          kind: "observation",
+          label: "run npm test",
+          payload: { witness: [{ ref: "file:src/a.ts", version: "v3" }] },
+          seq: 3,
+        },
+      },
       {
         type: "add_edge",
         edge: edge(
@@ -310,12 +353,7 @@ describe("check invalidation by version", () => {
           "o2",
           "c1",
           "verifies",
-          {
-            kind: "check",
-            command: "npm test",
-            verdict: "pass",
-            witness: [{ ref: "file:src/a.ts", version: "v3" }],
-          },
+          { kind: "check", command: "npm test", verdict: "pass" },
           "open",
         ),
       },
@@ -324,7 +362,6 @@ describe("check invalidation by version", () => {
         command: "npm test",
         verdict: "pass",
         output: "ok",
-        witness: [{ ref: "file:src/a.ts", version: "v3" }],
         claimIds: ["c1"],
       },
     ]);

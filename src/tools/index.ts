@@ -364,7 +364,7 @@ export function executeAction(
         verdict,
         output,
         ...(outputRef !== undefined ? { outputRef } : {}),
-        witness,
+        actor: "arbiter",
         claimIds: claims,
       });
       for (const claimId of claims) {
@@ -379,7 +379,6 @@ export function executeAction(
               kind: "check",
               command: action.command,
               verdict,
-              witness,
               ...(outputRef !== undefined ? { outputRef } : {}),
             },
             status: "open",

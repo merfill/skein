@@ -1,5 +1,5 @@
 import type { Event } from "../ir/events";
-import type { State } from "../ir/graph";
+import { witnessOf, type State } from "../ir/graph";
 import type { Workspace } from "../tools/workspace";
 
 export interface VersionCacheEntry {
@@ -23,7 +23,7 @@ function activeRefs(state: State): Map<string, Set<string>> {
     if (provenance.kind === "read") {
       add(provenance.ref, provenance.version);
     } else if (edge.kind === "verifies" && provenance.kind === "check") {
-      for (const entry of provenance.witness ?? []) add(entry.ref, entry.version);
+      for (const entry of witnessOf(state, edge) ?? []) add(entry.ref, entry.version);
     }
   }
 

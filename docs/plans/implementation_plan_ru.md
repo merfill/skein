@@ -74,8 +74,14 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - **Бюджет контекста** — `index` есть ограниченная сводка (счётчики + окно
   новейших) по контракту адресуемости; бюджет ходов показан в `header.budget`
   (`docs/plans/index_budget_plan_ru.md`).
+- **Субъективный арбитр** — `userAcceptance` фиксирует пользовательскую проверку
+  (`actor: "user"`), поэтому не-кодовая работа может достичь settled-состояния
+  (`docs/plans/user_approval_plan_ru.md`).
+- **Охват устаревания** — транзитивность покрыта снимком всего воркспейса;
+  свидетельство теперь живёт один раз, в наблюдении
+  (`docs/plans/staleness_scope_plan_ru.md`).
 
-Проверка: `npm run typecheck`; `npm test` (42 теста) — offline-тесты, live-гейт
+Проверка: `npm run typecheck`; `npm test` (44 теста) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.
 
 ## 5. Границы
