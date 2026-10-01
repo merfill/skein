@@ -1,7 +1,42 @@
 import { invalidatedClaimIds, type RejectionRecord, type State } from "./graph";
-import { NODE_KINDS, type Node, type NodeKind, type Status } from "./types";
+import { NODE_KINDS, type EdgeKind, type Node, type NodeKind, type Status } from "./types";
 
 export { invalidatedClaimIds };
+
+const PATH_EDGE_KINDS = new Set<EdgeKind>([
+  "decomposes",
+  "justifies",
+  "chosen_over",
+  "supports",
+]);
+
+export function reachableFromGoal(state: State): Set<string> {
+  const out = new Set<string>();
+  if (state.goalId === undefined) return out;
+  const adjacency = new Map<string, string[]>();
+  const link = (from: string, to: string): void => {
+    const list = adjacency.get(from);
+    if (list) list.push(to);
+    else adjacency.set(from, [to]);
+  };
+  for (const edge of state.edges.values()) {
+    if (!PATH_EDGE_KINDS.has(edge.kind)) continue;
+    link(edge.from, edge.to);
+    link(edge.to, edge.from);
+  }
+  const queue = [state.goalId];
+  out.add(state.goalId);
+  while (queue.length > 0) {
+    const id = queue.pop();
+    if (id === undefined) continue;
+    for (const next of adjacency.get(id) ?? []) {
+      if (out.has(next)) continue;
+      out.add(next);
+      queue.push(next);
+    }
+  }
+  return out;
+}
 
 export interface Turn {
   seq: number;
@@ -109,9 +144,11 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const stale = staleRefs(state);
   const statusOf = (id: string): Status | undefined =>
     state.statuses.get(id) ?? state.edgeStatuses.get(id);
+  const reachable = reachableFromGoal(state);
+  const onPath = (id: string): boolean => reachable.has(id);
 
   const openClaimNodes = nodes
-    .filter((node) => node.kind === "claim" && statusOf(node.id) === "open")
+    .filter((node) => node.kind === "claim" && statusOf(node.id) === "open" && onPath(node.id))
     .sort(bySeqDesc);
 
   const supportsOf = (claimId: string): string | undefined => {
@@ -135,18 +172,18 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   };
 
   const decisions = nodes
-    .filter((node) => node.kind === "decision" && statusOf(node.id) === "active")
+    .filter((node) => node.kind === "decision" && statusOf(node.id) === "active" && onPath(node.id))
     .sort(bySeqDesc)
     .map((node) => ({ id: node.id, label: node.label, over: overOf(node.id) }));
 
   const subgoals = nodes
-    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "open")
+    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "open" && onPath(node.id))
     .sort(bySeqDesc)
     .slice(0, tail)
     .map((node) => ({ id: node.id, label: node.label }));
 
   const achievedSubgoals = nodes
-    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "achieved")
+    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "achieved" && onPath(node.id))
     .sort(bySeqDesc)
     .slice(0, tail)
     .map((node) => `${node.id}: ${node.label}`);
@@ -160,7 +197,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const invalidated = invalidatedClaimIds(state);
 
   const verifiedClaims = nodes
-    .filter((node) => node.kind === "claim" && statusOf(node.id) === "verified")
+    .filter((node) => node.kind === "claim" && statusOf(node.id) === "verified" && onPath(node.id))
     .sort(bySeqDesc);
 
   const verified = verifiedClaims
@@ -175,7 +212,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const rejected = nodes
     .filter((node) => {
       const status = statusOf(node.id);
-      return status === "refuted" || status === "superseded";
+      return (status === "refuted" || status === "superseded") && onPath(node.id);
     })
     .map((node) => `${node.id}: ${node.label}`);
 

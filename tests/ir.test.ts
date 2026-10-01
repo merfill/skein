@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { userAcceptance } from "../src/ir/approval";
 import { eventSchema, type Event } from "../src/ir/events";
 import { emptyState, fold } from "../src/ir/graph";
-import { project } from "../src/ir/project";
+import { project, reachableFromGoal } from "../src/ir/project";
 import type {
   ArtifactKind,
   Edge,
@@ -109,6 +109,10 @@ describe("record_check", () => {
   const base: Event[] = [
     { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
     { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
+    {
+      type: "add_edge",
+      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+    },
   ];
 
   it("does not verify a claim without a check", () => {
@@ -152,6 +156,10 @@ describe("user acceptance", () => {
   const base: Event[] = [
     { type: "add_node", node: workNode("g1", "goal", "write the design note", 0) },
     { type: "add_node", node: workNode("c1", "claim", "the note covers the API", 1) },
+    {
+      type: "add_edge",
+      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+    },
   ];
 
   it("verifies a claim through a user check and records the actor", () => {
@@ -279,6 +287,10 @@ describe("check invalidation by version", () => {
   const events: Event[] = [
     { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
     { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
+    {
+      type: "add_edge",
+      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+    },
     {
       type: "add_node",
       node: {
@@ -422,6 +434,18 @@ describe("project", () => {
       { type: "add_node", node: workNode("c2", "claim", "second", 2) },
       { type: "add_node", node: workNode("c3", "claim", "third", 3) },
       {
+        type: "add_edge",
+        edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "add_edge",
+        edge: edge("es2", "c2", "g1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "add_edge",
+        edge: edge("es3", "c3", "g1", "supports", { kind: "llm" }, "open"),
+      },
+      {
         type: "record_check",
         command: "npm test",
         verdict: "pass",
@@ -440,8 +464,13 @@ describe("project", () => {
 describe("derived statuses (Tier 1.1)", () => {
   it("marks a chosen-over decision superseded and hides it from the frontier", () => {
     const state = fold([
-      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 0) },
-      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 1) },
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 1) },
+      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 2) },
+      {
+        type: "add_edge",
+        edge: edge("ej", "d1", "g1", "justifies", { kind: "llm" }, "open"),
+      },
       {
         type: "add_edge",
         edge: edge("e1", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
@@ -456,8 +485,13 @@ describe("derived statuses (Tier 1.1)", () => {
 
   it("derives achieved for a subgoal with a confirmed claim and no unfinished work", () => {
     const state = fold([
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+      {
+        type: "add_edge",
+        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
       {
         type: "add_edge",
         edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
@@ -477,9 +511,14 @@ describe("derived statuses (Tier 1.1)", () => {
 
   it("keeps a subgoal open while any attached claim is open", () => {
     const state = fold([
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
-      { type: "add_node", node: workNode("c2", "claim", "misses are computed", 2) },
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+      {
+        type: "add_edge",
+        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
+      { type: "add_node", node: workNode("c2", "claim", "misses are computed", 3) },
       {
         type: "add_edge",
         edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
@@ -504,8 +543,13 @@ describe("derived statuses (Tier 1.1)", () => {
 
   it("returns a subgoal to open when its only confirmed claim is invalidated", () => {
     const events: Event[] = [
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+      {
+        type: "add_edge",
+        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
       {
         type: "add_node",
         node: {
@@ -514,7 +558,7 @@ describe("derived statuses (Tier 1.1)", () => {
           kind: "observation",
           label: "run node --test",
           payload: { witness: [{ ref: "file:src/cache.mjs", version: "v2" }] },
-          seq: 2,
+          seq: 3,
         },
       },
       {
@@ -565,6 +609,10 @@ describe("derived statuses (Tier 1.1)", () => {
       { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 4) },
       {
         type: "add_edge",
+        edge: edge("ej", "d1", "g1", "justifies", { kind: "llm" }, "open"),
+      },
+      {
+        type: "add_edge",
         edge: edge("e3", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
       },
     ]);
@@ -576,5 +624,75 @@ describe("derived statuses (Tier 1.1)", () => {
     expect(frontier.decisions).toEqual([
       { id: "d1", label: "cache in the data layer", over: ["d2"] },
     ]);
+  });
+});
+
+describe("path relevance (Tier 1.2)", () => {
+  const orphaned: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+    { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+    {
+      type: "add_edge",
+      edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+    },
+    { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
+    {
+      type: "add_edge",
+      edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+    },
+    { type: "add_node", node: workNode("sg9", "subgoal", "old branch", 3) },
+    { type: "add_node", node: workNode("c9", "claim", "orphan belief", 4) },
+    {
+      type: "add_edge",
+      edge: edge("e9", "c9", "sg9", "supports", { kind: "llm" }, "open"),
+    },
+  ];
+
+  it("keeps only the nodes reachable from the goal in the frontier", () => {
+    const state = fold(orphaned);
+    const frontier = project(state).frontier;
+    expect(frontier.subgoals.map((entry) => entry.id)).toEqual(["sg1"]);
+    expect(frontier.claims.map((entry) => entry.id)).toEqual(["c1"]);
+  });
+
+  it("reaches the disconnected branch through the graph, not the projection", () => {
+    const state = fold(orphaned);
+    const reachable = reachableFromGoal(state);
+    expect(reachable.has("sg1")).toBe(true);
+    expect(reachable.has("c1")).toBe(true);
+    expect(reachable.has("sg9")).toBe(false);
+    expect(reachable.has("c9")).toBe(false);
+    // the node is still in state, so query can address it
+    expect(state.nodes.has("c9")).toBe(true);
+  });
+
+  it("never empties the closure: the goal is always reachable", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("c9", "claim", "orphan belief", 1) },
+    ]);
+    const context = project(state);
+    expect(reachableFromGoal(state)).toEqual(new Set(["g1"]));
+    expect(context.header.goal?.id).toBe("g1");
+    expect(context.frontier.claims).toEqual([]);
+  });
+
+  it("walks the path edges in both directions", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+      {
+        type: "add_edge",
+        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("d1", "decision", "data layer", 2) },
+      {
+        type: "add_edge",
+        edge: edge("ej", "d1", "sg1", "justifies", { kind: "llm" }, "open"),
+      },
+    ]);
+    const reachable = reachableFromGoal(state);
+    expect(reachable.has("d1")).toBe(true);
+    expect(project(state).frontier.decisions.map((entry) => entry.id)).toEqual(["d1"]);
   });
 });

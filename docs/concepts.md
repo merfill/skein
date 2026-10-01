@@ -103,8 +103,9 @@ Projection is the heart of Skein: not "what was said" but "what acts now". The
 rules are deterministic, not LLM-driven:
 
 - `header` — the goal, the constraints, and the turn budget;
-- `frontier` — subgoals and open claims in full (claims carry their parent,
-  `supports`); settled claims one line each (`verified` / `invalidated`); achieved
+- `frontier` — the closure from the goal: subgoals and open claims in full (claims
+  carry their parent, `supports`); settled claims one line each (`verified` /
+  `invalidated`); achieved
   subgoals one line each; rejected nodes (`refuted` / `superseded`) one line each;
   active decisions with their rejected alternatives (`over`); refused proposals one
   line each, collapsed by signature; the last action;
@@ -119,12 +120,11 @@ bounds the window `index.recent`, the `recent` stream, and the one-line
 `frontier.verified` and `frontier.refusals`. The overview `index.counts` is never
 clipped; the full listing is always retrievable through `query`.
 
-Relevance is currently **by status and provenance**: what acts is the open goal,
-its constraints, open claims, active decisions, and the observations/actions
-attached to them. **Path-based** relevance — a node active iff it lies on a path
-from the open goal through decision/action edges — is not implemented yet (T1.2):
-the work graph (subgoals, decisions, connecting edges) is already produced (T1.1),
-and the closure walk remains.
+Relevance is **path-based**: `frontier` shows the reachable closure from the open
+goal along `decomposes` / `justifies` / `chosen_over` / `supports` edges. A node
+outside the closure is not shown, but is still retrievable through `query` —
+addressability is not lost. `header`, `artifacts`, `index`, and `recent` are not
+filtered.
 
 Addressability is always guaranteed: every node is either shown or retrievable
 through `query`, so the agent can name what it does not see. `index` is a summary,
@@ -222,13 +222,12 @@ point in `docs/design_review.md`. The outcomes:
 - **P3 rejected actions** — refusals are recorded as events
   (`docs/plans/rejection_plan.md`), while the provenance split is rejected;
 - **P4 budget** — the turn budget is shown in `header`
-  (`docs/plans/index_budget_plan.md`).
+  (`docs/plans/index_budget_plan.md`);
+- **C2 path-based relevance** — the reachability closure from the goal in `project`
+  (`docs/plans/tier1_plan.md` §5).
 
 **Deferred:**
 
-- **C2 path-based relevance** (Tier 1) — the work graph of subgoals/decisions with
-  connecting edges is produced (T1.1); the reachability closure in the projection is
-  T1.2;
 - **R3b precision** (beyond Tier 1) — scope the witness via each ecosystem's
   tooling to avoid invalidating checks on unrelated changes; the current snapshot
   is sound but coarse (`docs/plans/tier1_plan.md` §7);
@@ -260,7 +259,8 @@ point in `docs/design_review.md`. The outcomes:
 ## Status
 
 Tier 0 (bugfix by a failing test) is implemented, the design-review points listed
-above are applied, and Tier 1 has begun: T1.1 (a produced work graph — subgoals,
-decisions, connecting edges) is implemented. Plan and roadmap:
+above are applied, and Tier 1 is progressing: T1.1 (a produced work graph —
+subgoals, decisions, connecting edges) and T1.2 (path-based closure in the
+projection) are implemented. Plan and roadmap:
 `docs/plans/implementation_plan.md`; Tier 0 detail: `docs/plans/tier0_plan.md`;
 Tier 1 detail: `docs/plans/tier1_plan.md`; triage: `docs/design_review.md`.

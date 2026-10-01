@@ -30,7 +30,7 @@ function are the protocol.
 Closed loop `goal → locate → claim → action → check → done`; IR and projection;
 staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 
-**Tier 1 — working on a task (T1.1 done).**
+**Tier 1 — working on a task (T1.1–T1.2 done).**
 - `Decision` as first-class: choice, rejected alternatives, rationale.
 - `Check`/arbiter as an explicit node with an objective verdict.
 - Subgoals and their decomposition.
@@ -90,8 +90,11 @@ Beyond Tier 0, the current line adds:
   `provenance.llm`; attachment to a parent is mandatory (the `classify` gate);
   `superseded`/`achieved` statuses are derived; the projection shows subgoals and
   links (`docs/plans/tier1_plan.md`).
+- **Path-based relevance (T1.2)** — `frontier` is the reachable closure from the
+  goal along path edges; the unreachable stays retrievable through `query`
+  (`docs/plans/tier1_plan.md` §5).
 
-Verification: `npm run typecheck`; `npm test` (58 tests) — offline tests, live gate
+Verification: `npm run typecheck`; `npm test` (62 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries

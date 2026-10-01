@@ -160,8 +160,9 @@ grows, and only the derived view loses force. A source fact is never rewritten.
 events always yield the same `Context`. It has fixed sections:
 
 - `header` — the goal, all constraints (the stable prefix), and the turn budget;
-- `frontier` — `subgoals` (`open`), `claims` (`open`, with their parent `supports`),
-  `decisions` (`active`, with their rejected alternatives `over`), the `lastAction`,
+- `frontier` — the closure from the goal: `subgoals` (`open`), `claims` (`open`,
+  with their parent `supports`), `decisions` (`active`, with their rejected
+  alternatives `over`), the `lastAction`,
   verified / invalidated claims as one line each, achieved subgoals as one line
   each, rejected nodes (`refuted` / `superseded`) one line each, and `refusals` —
   actions the gate already refused, collapsed by signature with a repeat count. A
@@ -180,11 +181,10 @@ one-line `frontier.verified` and `frontier.refusals`.
 Addressability is the guarantee: every node is either shown or retrievable through
 `query`, so bounding `index` never makes a node unnameable.
 
-Relevance is currently **by status and provenance**: what acts is the open goal,
-its constraints, open claims, active decisions, and the observations/actions
-attached to them. **Path-based** relevance (active iff reachable from the goal
-through `decomposes`/`justifies`/`chosen_over`/`supports` edges) is not implemented
-yet (T1.2): the work graph is already produced (T1.1).
+Relevance is **path-based**: `frontier` shows the reachable closure from the open
+goal along `decomposes`/`justifies`/`chosen_over`/`supports` edges (an undirected
+walk). A node outside the closure is not shown, but is still retrievable through
+`query`; `header`, `artifacts`, `index`, and `recent` are not filtered.
 
 Note what is deliberately absent: file contents, stale facts shown as active,
 and previous projections. A `stale` artifact is rendered as stale, never as
@@ -378,6 +378,8 @@ Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
   stored as a belief;
 - every produced work node (`subgoal`/`decision`/`claim`) is attached by a path
   edge (`decomposes`/`justifies`/`supports`/`chosen_over`);
+- `frontier` shows only what is reachable from the goal along path edges; the
+  unreachable is out of `frontier` but retrievable through `query`;
 - addressability: every node is shown or retrievable through `query`;
 - `project` is deterministic: same events → same `Context`;
 - doxa only proposes (`status = open`); logos decides.

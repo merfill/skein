@@ -31,7 +31,7 @@ Skein — агент кодирования, у которого контекс�
 Замкнутый цикл `goal → locate → claim → action → check → done`; IR + проекция;
 staleness; объективный арбитр. Детали — `docs/plans/tier0_plan_ru.md`.
 
-**Tier 1 — работа над задачей (T1.1 выполнен).**
+**Tier 1 — работа над задачей (T1.1–T1.2 выполнены).**
 - `Decision` как first-class: выбор, отвергнутые альтернативы, обоснование.
 - `Check`/арбитр как явный узел с объективным вердиктом.
 - Подцели и их декомпозиция.
@@ -90,8 +90,11 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   `provenance.llm`; привязка к родителю обязательна (врата `classify`); статусы
   `superseded`/`achieved` производны; проекция показывает подцели и связи
   (`docs/plans/tier1_plan_ru.md`).
+- **Path-based релевантность (T1.2)** — `frontier` есть достижимое замыкание от
+  цели по рёбрам пути; недостижимое остаётся доставаемым через `query`
+  (`docs/plans/tier1_plan_ru.md` §5).
 
-Проверка: `npm run typecheck`; `npm test` (58 тестов) — offline-тесты, live-гейт
+Проверка: `npm run typecheck`; `npm test` (62 теста) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.
 
 ## 5. Границы

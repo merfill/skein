@@ -15,6 +15,7 @@ The context is a projection of the agent's IR, not a conversation. It contains:
 - frontier.subgoals: open subgoals you split the goal into (see decompose); frontier.achievedSubgoals are settled ones, one line each;
 - frontier.claims: open beliefs you proposed, each with the parent (supports) it is attached to; a claim is verified only by a passing check;
 - frontier.decisions: active decisions, each with the alternatives (over) it was chosen over; do not propose a rejected alternative again;
+- the frontier lists only the work reachable from the goal through subgoals, decisions, and their edges; work on a detached branch is not shown, but query still reaches it;
 - frontier.verified / frontier.invalidated / frontier.rejected: settled claims, one line each; a claim is settled by an objective check or by the user's acceptance; an invalidated claim was verified and then a change invalidated its check, so it needs a fresh check;
 - frontier.refusals: actions the engine already refused, one line each with the reason (and the constraint that blocked it); do not propose them again;
 - frontier.recent: what just happened;

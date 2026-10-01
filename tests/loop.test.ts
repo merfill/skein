@@ -243,6 +243,17 @@ describe("graph actions", () => {
         type: "add_node",
         node: { id: "sg1", space: "work", kind: "subgoal", label: "cache read path", seq: 1 },
       },
+      {
+        type: "add_edge",
+        edge: {
+          id: "ed",
+          from: "g1",
+          to: "sg1",
+          kind: "decomposes",
+          provenance: { kind: "llm" },
+          status: "open",
+        },
+      },
     ]);
     const outcome = executeAction(
       {

@@ -449,6 +449,7 @@ their turn comes.
 
 ## 12. Status
 
-T1.1 (a produced work graph — subgoals, decisions, connecting edges) is
-implemented. T1.2 (path-based relevance) and T1.3 (explicit check node) have not
-started. This plan is a working document; each sub-stage is agreed before its code.
+T1.1 (a produced work graph — subgoals, decisions, connecting edges) and T1.2
+(path-based closure in the projection) are implemented. T1.3 (explicit check node)
+has not started. This plan is a working document; each sub-stage is agreed before
+its code.
