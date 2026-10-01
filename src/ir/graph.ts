@@ -95,6 +95,13 @@ function applyEvent(state: State, event: Event): void {
           provenance.version !== event.version
         ) {
           state.edgeStatuses.set(edge.id, "stale");
+        } else if (
+          provenance.kind === "check" &&
+          provenance.witness?.some(
+            (entry) => entry.ref === event.ref && entry.version !== event.version,
+          )
+        ) {
+          state.edgeStatuses.set(edge.id, "stale");
         }
       }
       break;

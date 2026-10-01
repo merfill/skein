@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -24,6 +25,7 @@ export interface Workspace {
   root: string;
   read(path: string): string;
   version(path: string): string;
+  signature(path: string): string;
   write(path: string, content: string): void;
   exists(path: string): boolean;
   list(): string[];
@@ -113,6 +115,10 @@ export function fsWorkspace(root: string): Workspace {
     root: base,
     read,
     version: (path) => createHash("sha1").update(read(path)).digest("hex"),
+    signature: (path) => {
+      const stat = statSync(abs(path));
+      return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+    },
     write: (path, content) => {
       const full = abs(path);
       mkdirSync(dirname(full), { recursive: true });

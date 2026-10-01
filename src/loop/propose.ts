@@ -12,7 +12,7 @@ The context is a projection of the agent's IR, not a conversation. It contains:
 - header.goal: the user's objective;
 - header.constraints: invariants you must not violate (their payload.forbid lists regexes of forbidden paths);
 - frontier.claims: open beliefs you proposed; a claim is verified only by a passing check;
-- frontier.verified / frontier.rejected: settled claims, one line each;
+- frontier.verified / frontier.invalidated / frontier.rejected: settled claims, one line each; an invalidated claim was verified and then a change invalidated its check, so it needs a fresh check;
 - frontier.decisions / frontier.recent: what is already settled and what just happened;
 - artifacts: an index of known files (no contents).
 

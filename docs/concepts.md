@@ -13,6 +13,26 @@ for communication with the LLM. Memory lives in the IR. The LLM does not
 A consequence: the context does not accumulate. Every turn is a fresh projection;
 the LLM does not see previous projections, it sees the current state.
 
+## First principle: knowledge has a source
+
+Every event in the journal is a piece of knowledge obtained from experience:
+a reading, a search, a check, a user statement, or the engine's own
+deterministic action. No knowledge appears out of nowhere, and every fact can
+be traced back to the experience that produced it — its **source**.
+
+This is the foundation of the system, and of the IR in particular, not a
+convention. The IR is built so that every event traces to a source; anything
+that would create knowledge without one is a design error. A verdict guessed
+from a file change, a claim declared verified by the LLM, a belief with no
+origin — all violate the principle and must be rejected.
+
+Two consequences used throughout:
+
+- a file change is known only because a deterministic action produced it
+  (`mutate`), never guessed;
+- `verified` comes only from an arbiter's check; a change of the code can
+  invalidate that check, but can never invent a verdict.
+
 ## Doxa and logos
 
 The conceptual frame comes from the doxa/logos distinction (Ankyra,

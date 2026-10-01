@@ -57,8 +57,20 @@ Tier 0 is implemented (steps 1–5 of `docs/plans/tier0_plan.md` §11): `src/ir`
 `src/config`, `src/llm`, `src/tools`, `src/loop`, three fixtures, offline and live
 gates. Full status and deliberate simplifications — `docs/plans/tier0_plan.md` §13.
 
-Verification: `npm run typecheck`; `npm test` — offline tests, live gate only when
-`SKEIN_LIVE=true`.
+Beyond Tier 0, the current line adds:
+
+- **First principle** — every event is knowledge obtained from experience and
+  traces to a source (`docs/concepts.md`).
+- **Check soundness** — a check carries a witness; a later change stales it and
+  the claim moves to `frontier.invalidated`
+  (`docs/plans/check_soundness_plan.md`).
+- **Observation of change** — `run` records a `mutate` per changed file; the
+  engine reconciles active `ref`s before each projection, with a signature cache;
+  `fs.watch` is left for a future streaming mode
+  (`docs/plans/observation_plan.md`, `docs/plans/watcher_plan.md`).
+
+Verification: `npm run typecheck`; `npm test` (35 tests) — offline tests, live gate
+only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries
 

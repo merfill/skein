@@ -6,6 +6,7 @@ import { project } from "../ir/project";
 import { executeAction } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
+import { reconcile, type VersionCache } from "./observe";
 import type { Proposer } from "./propose";
 import { LoopState, type LoopStateType } from "./state";
 
@@ -28,9 +29,16 @@ export interface AgentResult {
 }
 
 export function compileGraph(deps: AgentDeps) {
-  const projectNode = (state: LoopStateType) => ({
-    context: project(fold(state.events), { recent: state.recent, tail: 6 }),
-  });
+  const signatures: VersionCache = new Map();
+
+  const projectNode = (state: LoopStateType) => {
+    const base = fold(state.events);
+    const drift = reconcile(base, deps.workspace, signatures);
+    return {
+      events: drift,
+      context: project(fold(drift, base), { recent: state.recent, tail: 6 }),
+    };
+  };
 
   const proposeNode = async (state: LoopStateType) => {
     const context =

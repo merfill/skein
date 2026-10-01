@@ -1,8 +1,8 @@
 import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
 import type { CheckRecord, State } from "../ir/graph";
-import type { Turn } from "../ir/project";
-import type { Edge, Node, Status } from "../ir/types";
+import { invalidatedClaimIds, type Turn } from "../ir/project";
+import type { Edge, Node, Status, WitnessEntry } from "../ir/types";
 import type { Action } from "../llm/schemas";
 import type { Workspace } from "./workspace";
 
@@ -41,11 +41,13 @@ const QUERY_LIMIT = 50;
 function runQuery(state: State, action: Extract<Action, { tool: "query" }>): string {
   const statusOf = (id: string): Status | undefined =>
     state.statuses.get(id) ?? state.edgeStatuses.get(id);
+  const invalidated = invalidatedClaimIds(state);
   const nodeRow = (node: Node) => ({
     id: node.id,
     kind: node.kind,
     label: node.label,
     status: statusOf(node.id),
+    ...(invalidated.has(node.id) ? { invalidated: true } : {}),
   });
   const edgeRow = (edge: Edge) => ({
     id: edge.id,
@@ -86,6 +88,7 @@ function runQuery(state: State, action: Extract<Action, { tool: "query" }>): str
     for (const node of state.nodes.values()) {
       if (action.kind !== undefined && node.kind !== action.kind) continue;
       if (action.status !== undefined && statusOf(node.id) !== action.status) continue;
+      if (action.status === "verified" && invalidated.has(node.id)) continue;
       nodes.push(nodeRow(node));
     }
   } else {
@@ -113,6 +116,29 @@ function openClaimIds(state: State): string[] {
   return ids;
 }
 
+function versionMap(workspace: Workspace): Map<string, string> {
+  const versions = new Map<string, string>();
+  for (const path of workspace.list()) {
+    versions.set(path, workspace.version(path));
+  }
+  return versions;
+}
+
+function witnessFromVersions(versions: Map<string, string>): WitnessEntry[] {
+  return [...versions].map(([path, version]) => ({ ref: `file:${path}`, version }));
+}
+
+function diffVersions(
+  before: Map<string, string>,
+  after: Map<string, string>,
+): WitnessEntry[] {
+  const changed: WitnessEntry[] = [];
+  for (const [path, version] of after) {
+    if (before.get(path) !== version) changed.push({ ref: `file:${path}`, version });
+  }
+  return changed;
+}
+
 export function executeAction(
   action: Action,
   state: State,
@@ -134,6 +160,25 @@ export function executeAction(
       type: "add_node",
       node: { id: ref, space: "artifact", kind: "file", label: path, seq: next() },
     });
+  };
+
+  const recordMutations = (mutations: WitnessEntry[], command: string): void => {
+    if (mutations.length === 0) return;
+    const actionId = `act:${next()}`;
+    events.push({
+      type: "add_node",
+      node: {
+        id: actionId,
+        space: "work",
+        kind: "action",
+        label: `run ${command}`,
+        payload: { command, changed: mutations.map((entry) => entry.ref) },
+        seq: next(),
+      },
+    });
+    for (const entry of mutations) {
+      events.push({ type: "mutate", ref: entry.ref, version: entry.version, actionId });
+    }
   };
 
   switch (action.tool) {
@@ -255,15 +300,21 @@ export function executeAction(
         }
       }
 
+      const before = versionMap(workspace);
       const result = workspace.run(action.command);
 
-      const changed = [...guards.entries()].filter(
+      const violated = [...guards.entries()].filter(
         ([path, guard]) => !workspace.exists(path) || workspace.read(path) !== guard.content,
       );
-      if (changed.length > 0) {
-        for (const [path, guard] of changed) workspace.write(path, guard.content);
-        const paths = changed.map(([path]) => path).join(", ");
-        const first = changed[0];
+      for (const [path, guard] of violated) workspace.write(path, guard.content);
+
+      const after = versionMap(workspace);
+      const witness = witnessFromVersions(after);
+      const mutations = diffVersions(before, after);
+
+      if (violated.length > 0) {
+        const paths = violated.map(([path]) => path).join(", ");
+        const first = violated[0];
         const pattern = first ? first[1].pattern : "constraint";
         const label = `constraint violation (${pattern}): reverted ${paths}`;
         events.push({
@@ -273,10 +324,11 @@ export function executeAction(
             space: "work",
             kind: "observation",
             label,
-            payload: { pattern, paths: changed.map(([path]) => path), reverted: true },
+            payload: { pattern, paths: violated.map(([path]) => path), reverted: true },
             seq: next(),
           },
         });
+        recordMutations(mutations, action.command);
         return { events, turn: proposalTurn(label), done: false, stopReason: null };
       }
 
@@ -299,17 +351,20 @@ export function executeAction(
           payload: {
             code: result.code,
             verdict,
+            witness,
             ...(outputRef !== undefined ? { outputRef } : {}),
           },
           seq: next(),
         },
       });
+      recordMutations(mutations, action.command);
       events.push({
         type: "record_check",
         command: action.command,
         verdict,
         output,
         ...(outputRef !== undefined ? { outputRef } : {}),
+        witness,
         claimIds: claims,
       });
       for (const claimId of claims) {
@@ -324,6 +379,7 @@ export function executeAction(
               kind: "check",
               command: action.command,
               verdict,
+              witness,
               ...(outputRef !== undefined ? { outputRef } : {}),
             },
             status: "open",

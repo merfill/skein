@@ -57,8 +57,20 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 `src/llm`, `src/tools`, `src/loop`, три фикстуры, offline- и live-гейт. Полный
 статус и осознанные упрощения — `docs/plans/tier0_plan_ru.md` §13.
 
-Проверка: `npm run typecheck`; `npm test` — offline-тесты, live-гейт только при
-`SKEIN_LIVE=true`.
+Поверх Tier 0 текущая линия добавляет:
+
+- **Первый принцип** — каждое событие есть знание, полученное из опыта, и
+  прослеживается до источника (`docs/concepts_ru.md`).
+- **Достоверность проверок** — проверка несёт свидетельство; позднее изменение
+  обесценивает его, и утверждение уходит в `frontier.invalidated`
+  (`docs/plans/check_soundness_plan_ru.md`).
+- **Наблюдение изменений** — `run` пишет `mutate` на каждый изменённый файл;
+  движок сверяет активные `ref` перед каждой проекцией, с кэшем отпечатков;
+  `fs.watch` оставлен для будущего стримингового режима
+  (`docs/plans/observation_plan_ru.md`, `docs/plans/watcher_plan_ru.md`).
+
+Проверка: `npm run typecheck`; `npm test` (35 тестов) — offline-тесты, live-гейт
+только при `SKEIN_LIVE=true`.
 
 ## 5. Границы
 

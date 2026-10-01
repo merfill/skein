@@ -30,12 +30,23 @@ export interface Node {
 
 export type Verdict = "pass" | "fail";
 
+export interface WitnessEntry {
+  ref: string;
+  version: string;
+}
+
 export type Provenance =
   | { kind: "llm" }
   | { kind: "user"; turnId: string }
   | { kind: "read"; ref: string; version: string }
   | { kind: "grep"; pattern: string }
-  | { kind: "check"; command: string; verdict: Verdict; outputRef?: string };
+  | {
+      kind: "check";
+      command: string;
+      verdict: Verdict;
+      outputRef?: string;
+      witness?: WitnessEntry[];
+    };
 
 export const STATUSES = [
   "open",

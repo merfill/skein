@@ -31,6 +31,11 @@ transcript**. The LLM never sees earlier projections, only the current state.
 The journal grows, `State` is recomputed from it, `Context` is recomputed from
 `State`. Nothing is "remembered" by accumulation.
 
+Before `project`, the engine reconciles the facts that current activity depends on
+against the filesystem (`src/loop/observe.ts`): an observed drift becomes a
+`mutate` event, so a change made outside the engine is still recorded with a
+source.
+
 Throughout, the doxa/logos split holds: the LLM (doxa) only proposes; every
 proposal is `provenance.kind = "llm"`, `status = "open"`. The engine (logos)
 classifies and executes, and only the arbiter can promote a claim.
@@ -54,7 +59,9 @@ Nodes and edges are typed by closed enums (`src/ir/types.ts`). A node has a
 `user`, `read` (with the file `version`), `grep`, or `check`.
 
 The vocabulary is the protocol. New behavior means a new event or a new
-projection rule — never an ad-hoc edit of `State`.
+projection rule — never an ad-hoc edit of `State`. This is how the first
+principle (`docs/concepts.md`) is enforced: state changes only through events,
+so every piece of knowledge traces back to the experience that produced it.
 
 ### Tool → events
 
@@ -67,7 +74,7 @@ The tools are the only producers of events (`src/tools/index.ts`,
 | `read(path)` | `add_node` file (first time) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | an artifact fact tied to a file version |
 | `grep(pattern)` | `add_node` observation | a one-shot observation (contents are ephemeral) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
-| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim; on long output, a spill plus `outputRef` | claims `verified`/`refuted` by the arbiter |
+| `run(command, claims?)` | `add_node` observation + `record_check` + `add_edge` `verifies` per claim, each carrying a witness (`ref → version` observed at run time); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
 | `query(selectors)` | none | a one-shot answer (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), nothing recorded |
@@ -82,7 +89,9 @@ Three consequences worth stating plainly:
   limit, the full output is written to `.skein/logs/` and the IR keeps only an
   `outputRef` plus a head+tail excerpt, retrievable through a windowed `read`.
 - **Only the arbiter verifies.** `verified` is reachable only through a
-  `record_check` with `verdict = "pass"` (`src/ir/graph.ts:101`).
+  `record_check` with `verdict = "pass"` (`src/ir/graph.ts:109`). A check carries
+  the file versions it observed, so a later `mutate` can invalidate it — but it can
+  never fabricate a verdict.
 
 ### What Tier 0 declares but does not yet produce
 
@@ -96,7 +105,7 @@ written in Tier 0:
 - statuses `superseded`, `achieved`, `abandoned`, `confirmed`, `reverted`.
 
 These are reserved, not dead: the projection already understands
-`refuted`/`superseded` (`src/ir/project.ts:79`). The document keeps the
+`refuted`/`superseded` (`src/ir/project.ts:114`). The document keeps the
 distinction so the spec does not overclaim the implementation.
 
 ## 3. Status transitions
@@ -107,22 +116,32 @@ Statuses are **derived**, not set by hand:
   goals/claims/observations, `active` for decisions, `applied` for actions,
   `must` for constraints, `believed` for artifacts.
 - `record_check` sets every named claim to `verified` (pass) or `refuted` (fail)
-  (`src/ir/graph.ts:109`).
-- `mutate` walks read-provenance edges with the same `ref` and a different
-  `version`, and marks them `stale` (`src/ir/graph.ts:88`). The prior events are
+  (`src/ir/graph.ts:119`).
+- `mutate` marks `stale` both read-provenance edges with the same `ref` and a
+  different `version`, and `verifies` edges whose witness contains the changed
+  `ref` with another `version` (`src/ir/graph.ts:89`). The prior events are
   untouched; only their **derived status** changes.
 
 So the journal stays monotonic while code knowledge is non-monotonic. There is no
 manual retraction: a fact about an old file version simply stops being active.
 
+A **derived** status is not a record. `fold` rebuilds `statuses` and
+`edgeStatuses` from the journal on every call, so changing one — marking an edge
+`stale`, for instance — overwrites a computed value, not history. The original
+`add_edge` / `record_check` fields stay in the journal, and replaying the events
+reproduces the earlier status. The journal is the only monotone record: it only
+grows, and only the derived view loses force. A source fact is never rewritten.
+
 ## 4. Projection: how state becomes context
 
-`project(state)` (`src/ir/project.ts:58`) is pure and deterministic: the same
+`project(state)` (`src/ir/project.ts:75`) is pure and deterministic: the same
 events always yield the same `Context`. It has fixed sections:
 
 - `header` — the goal and all constraints (the stable prefix);
 - `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, the
-  latest observation per active claim, and verified/rejected claims as one line;
+  latest observation per active claim, and verified / invalidated / rejected claims
+  as one line each. A verified claim whose checks have all gone `stale` appears
+  under `invalidated`, never under `verified`;
 - `artifacts` — index only (id + label + `stale` flag);
 - `index` — every node as `{ id, kind, label }`, so the agent knows what exists;
 - `recent` — the last few turns verbatim, for flow.
@@ -147,12 +166,18 @@ Control is not a separate layer — it is consumed directly from `State`:
 - **The effect guard.** Before a `run`, the engine snapshots the files matching
   `payload.forbid`; if the command changes one, it is reverted and recorded as a
   `constraint violation`, and no check is recorded — so nothing is verified
-  (`src/tools/index.ts:172`). The constraint is enforced by effect, not by
+  (`src/tools/index.ts:295`). The constraint is enforced by effect, not by
   parsing the shell.
+- **Observation before projection.** At the start of each turn the engine
+  reconciles the `ref`s that current activity depends on (witnesses of live
+  checks and live read facts) against the filesystem (`src/loop/observe.ts`); a
+  drift becomes a `mutate`, so nothing relevant is built on unobserved change.
+  A `mtime`/`ctime`/size signature cache avoids re-hashing files whose signature
+  is unchanged (`docs/plans/watcher_plan.md`).
 - **Truth only from the arbiter.** No path to `verified` bypasses
   `record_check`.
 - **Budgets and stop.** The loop routes on `done`, the turn budget, and
-  `stopReason` (`src/loop/graph.ts:80`).
+  `stopReason` (`src/loop/graph.ts:86`).
 - **Closing the goal is external.** The engine does not set the goal to
   `achieved`; the harness/arbiter checks that the test suite passes and that
   forbidden files are unchanged (`tests/gate.test.ts`). The goal node stays
@@ -164,7 +189,7 @@ Ids and `seq` values below are illustrative; shapes and fields match the code.
 
 ### A. A fix, turn by turn (`fixtures/bugfix/off-by-one`)
 
-Seed (`src/loop/graph.ts:101`):
+Seed (`src/loop/graph.ts:107`):
 
 ```json
 { "type": "add_node", "node": { "id": "g1", "space": "work", "kind": "goal",
@@ -209,12 +234,17 @@ Turn 4 — `run node --test` lets the arbiter decide:
 
 ```json
 { "type": "add_node", "node": { "id": "obs:8", "space": "work", "kind": "observation",
-  "label": "run node --test", "payload": { "code": 0, "verdict": "pass" } } }
+  "label": "run node --test",
+  "payload": { "code": 0, "verdict": "pass",
+    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] } } }
 { "type": "record_check", "command": "node --test", "verdict": "pass",
-  "output": "…", "claimIds": ["w:claim:5"] }
+  "output": "…",
+  "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ],
+  "claimIds": ["w:claim:5"] }
 { "type": "add_edge", "edge": { "id": "e:9", "from": "obs:8", "to": "w:claim:5",
   "kind": "verifies",
-  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass" },
+  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass",
+    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] },
   "status": "open" } }
 ```
 
@@ -230,7 +260,7 @@ The projection after turn 4 is roughly:
               "constraints": [ { "id": "k1" } ] },
   "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
                 "observations": [], "verified": ["w:claim:5: loop stops one short"],
-                "rejected": [] },
+                "invalidated": [], "rejected": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": [ /* every node: g1, k1, file:…, obs:3, w:claim:5, act:6, obs:8 */ ],
   "recent": [ /* the last turns */ ]
@@ -244,7 +274,7 @@ read predates the edit.
 ### B. A forbidden change through `run`
 
 Instead of `edit`, the LLM runs
-`printf '15\n' > test/sum.test.mjs`. The engine (`src/tools/index.ts:172`):
+`printf '15\n' > test/sum.test.mjs`. The engine (`src/tools/index.ts:295`):
 
 1. snapshots every file matching `\.test\.mjs$` (the test file's content);
 2. runs the command;

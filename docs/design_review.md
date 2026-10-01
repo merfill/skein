@@ -19,7 +19,7 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 |---|---|---|
 | R1 | Index blow-up | Accepted (open) |
 | R2 | "Contents not in the IR" vs memory | Partly applied (command output) / reframed |
-| R3 | Transitive staleness | Accepted (open, Tier 1) |
+| R3 | Transitive staleness and stale checks | Accepted; hole (a) fixed, (b) open |
 | R4 | Goal-closure paradox | Rejected as framed |
 | C1 | `record_check` tyranny for non-code | Reframed (open) |
 | C2 | Graph or tree | Observation accepted; "simplify" rejected |
@@ -35,7 +35,7 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 
 - **Proposal:** paginate `index`, hide it behind `query`, or aggregate it.
 - **Verdict:** Accepted; the tool half is already partly there.
-- **Why:** `project` still emits every node (`src/ir/project.ts:90`). The new
+- **Why:** `project` still emits every node (`src/ir/project.ts:122`). The new
   `query` (`id`/`kind`/`status`/`edgesOf`/`verdictOf`, `QUERY_LIMIT = 50`) gives
   a bounded way to ask for what exists, so the pressure is lower — but `index`
   itself remains unbounded.
@@ -54,18 +54,48 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 - **Action:** none now. If it bites, extend the spill-and-pointer pattern, or
   make a pure re-read not emit new nodes.
 
-### R3. Transitive staleness
+### R3. Transitive staleness and stale checks
 
 - **Proposal:** a file-dependency graph, or "any change stales related modules".
-- **Verdict:** Accepted; open, Tier 1.
-- **Why:** `mutate` marks `stale` only read-edges with the same `ref`
-  (`src/ir/graph.ts:88`). There is no dependency graph: only `locates` and
-  `verifies` edges are produced (`src/tools/index.ts`). Note the earlier
-  discussion: this is deeper than one rule — the projection also has no
-  path-based relevance.
-- **Action:** design separately. Also note the soundness hole: verification
-  (`verifies`/check provenance) is **never** invalidated by a later `mutate`,
-  which is more urgent than transitive staleness.
+- **Verdict:** Accepted; open, Tier 1. The point has two parts of unequal urgency:
+  (a) a hole in the staleness rule itself — urgent; (b) transitivity across
+  modules — design separately.
+- **Why:** see below.
+
+**What "staleness" is and why it exists.** The event journal only grows: nothing
+can be deleted or rewritten, or there is neither history nor reproducibility.
+But knowledge about code is mutable: a file is edited, and an old fact about it
+no longer matches the current contents. The fact cannot be deleted, yet showing
+it as current would be a lie. So the fact stays in the journal but is marked
+**stale**: "this was true for that file version; the file has changed since".
+A *version* is a fingerprint of a file's contents; equal files yield one
+version. Thus the journal stays fixed while code knowledge honestly loses force —
+the bridge between "the journal only grows" and "code changes".
+
+**Where the hole is.** Today only facts recorded by **reading** a file go stale:
+only they carry a version (`src/ir/graph.ts:89`). A **check** record (e.g. "the
+tests passed") has no version, so the file-change event never notices it, and a
+verified claim stays verified though the code beneath it has changed. The review
+records this as a soundness hole: `mutate` **never** invalidates
+`verifies`/`check`.
+
+**Illustration** (fixture `off-by-one`):
+
+| Turn | Action | What happens |
+|---|---|---|
+| 1 | read `src/sum.mjs` | the fact is bound to version `v1` |
+| 2 | track "loop stops one short" | the claim is open |
+| 3 | fix the loop (`i < n` → `i <= n`) | file is now `v2`; the read fact is marked stale — correct |
+| 4 | run `node --test`, tests pass | the claim becomes verified; but it is not recorded against which version |
+| 5 | edit the file again | file is now `v3`; the claim is **still shown as verified** |
+
+At turn 5 the tests ran against `v2` while the code is `v3`. If the edit broke
+the behaviour, the agent is deceived: the context says "settled".
+
+- **Action:** hole (a) is closed (`docs/plans/check_soundness_plan.md`): a check
+  carries a witness; `mutate` stales the `verifies` edge; the projection shows a
+  claim as verified only with a live check and lists the rest under `invalidated`.
+  Transitivity (b) — a separate design.
 
 ### R4. Goal-closure paradox
 

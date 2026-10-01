@@ -48,6 +48,18 @@ describe("events", () => {
     };
     expect(eventSchema.safeParse(bad).success).toBe(false);
   });
+
+  it("accepts a check event carrying a witness", () => {
+    const event = {
+      type: "record_check",
+      command: "npm test",
+      verdict: "pass",
+      output: "ok",
+      witness: [{ ref: "file:src/a.ts", version: "v1" }],
+      claimIds: ["c1"],
+    };
+    expect(eventSchema.safeParse(event).success).toBe(true);
+  });
 });
 
 describe("fold", () => {
@@ -161,6 +173,93 @@ describe("staleness by version", () => {
     ]);
     expect(state.edgeStatuses.get("e1")).toBe("believed");
     expect(project(state).artifacts.every((item) => !item.stale)).toBe(true);
+  });
+});
+
+describe("check invalidation by version", () => {
+  const events: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
+    { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
+    { type: "add_node", node: workNode("o1", "observation", "run npm test", 2) },
+    {
+      type: "add_edge",
+      edge: edge(
+        "e1",
+        "o1",
+        "c1",
+        "verifies",
+        {
+          kind: "check",
+          command: "npm test",
+          verdict: "pass",
+          witness: [{ ref: "file:src/a.ts", version: "v2" }],
+        },
+        "open",
+      ),
+    },
+    {
+      type: "record_check",
+      command: "npm test",
+      verdict: "pass",
+      output: "ok",
+      witness: [{ ref: "file:src/a.ts", version: "v2" }],
+      claimIds: ["c1"],
+    },
+  ];
+
+  it("invalidates a verification when a witnessed file changes", () => {
+    const state = fold([
+      ...events,
+      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
+    ]);
+    expect(state.edgeStatuses.get("e1")).toBe("stale");
+    const { verified, invalidated } = project(state).frontier;
+    expect(verified).toEqual([]);
+    expect(invalidated).toEqual(["c1: off-by-one in loop"]);
+  });
+
+  it("keeps a verification live when the version matches", () => {
+    const state = fold([
+      ...events,
+      { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
+    ]);
+    expect(state.edgeStatuses.get("e1")).toBe("open");
+    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
+    expect(project(state).frontier.invalidated).toEqual([]);
+  });
+
+  it("re-verifies after a fresh passing check", () => {
+    const state = fold([
+      ...events,
+      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
+      { type: "add_node", node: workNode("o2", "observation", "run npm test", 3) },
+      {
+        type: "add_edge",
+        edge: edge(
+          "e2",
+          "o2",
+          "c1",
+          "verifies",
+          {
+            kind: "check",
+            command: "npm test",
+            verdict: "pass",
+            witness: [{ ref: "file:src/a.ts", version: "v3" }],
+          },
+          "open",
+        ),
+      },
+      {
+        type: "record_check",
+        command: "npm test",
+        verdict: "pass",
+        output: "ok",
+        witness: [{ ref: "file:src/a.ts", version: "v3" }],
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
+    expect(project(state).frontier.invalidated).toEqual([]);
   });
 });
 

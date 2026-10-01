@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
 import { fold } from "../src/ir/graph";
-import type { Context } from "../src/ir/project";
+import { project, type Context } from "../src/ir/project";
 import { reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
 import { classify } from "../src/loop/classify";
@@ -325,5 +325,94 @@ describe("runAgent (scripted, offline)", () => {
       throw new Error("no run observation");
     }
     expect(observation.node.payload).toMatchObject({ outputRef: ref });
+  });
+
+  it("invalidates a verified claim when the code changes again", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "read", path: "src/sum.mjs" },
+          { tool: "track", kind: "claim", label: "loop stops one short" },
+          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
+          { tool: "run", command: "node --test" },
+          {
+            tool: "edit",
+            path: "src/sum.mjs",
+            find: "let total = 0;",
+            replace: "let total = 0; // sum",
+          },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 10,
+      },
+      { goal: { id: "g1", label: "make node --test pass" } },
+    );
+
+    const state = fold(result.events);
+    const frontier = project(state).frontier;
+    expect(frontier.verified).toEqual([]);
+    expect(frontier.invalidated).toHaveLength(1);
+    expect(
+      [...state.edgeStatuses.entries()].some(
+        ([id, status]) =>
+          status === "stale" && state.edges.get(id)?.kind === "verifies",
+      ),
+    ).toBe(true);
+  });
+
+  it("records a mutate for a non-forbidden file a run changed", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "run", command: "printf 'note\\n' > src/note.txt" },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    expect(
+      result.events.some(
+        (event) => event.type === "mutate" && event.ref === "file:src/note.txt",
+      ),
+    ).toBe(true);
+  });
+
+  it("observes an external change and records a mutate", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    let step = 0;
+    const proposer = async (): Promise<Proposal> => {
+      const current = step;
+      step += 1;
+      if (current === 0) {
+        return { thought: "read", action: { tool: "read", path: "src/sum.mjs" } };
+      }
+      if (current === 1) {
+        workspace.write("src/sum.mjs", "export function sumTo() { return 0; }\n");
+        return { thought: "look", action: { tool: "grep", pattern: "sumTo" } };
+      }
+      return { thought: "done", action: { tool: "finish", summary: "done" } };
+    };
+
+    const result = await runAgent(
+      { propose: proposer, workspace, maxTurns: 5 },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    expect(
+      result.events.some(
+        (event) => event.type === "mutate" && event.actionId.startsWith("reconcile"),
+      ),
+    ).toBe(true);
   });
 });

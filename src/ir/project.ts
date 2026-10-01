@@ -15,6 +15,7 @@ export interface Context {
     lastAction?: Node;
     observations: Node[];
     verified: string[];
+    invalidated: string[];
     rejected: string[];
   };
   artifacts: { id: string; label: string; stale: boolean }[];
@@ -42,6 +43,21 @@ function latestObservationPerClaim(state: State, claims: readonly Node[]): Node[
       if (best === undefined || observation.seq > best.seq) best = observation;
     }
     if (best !== undefined) out.push(best);
+  }
+  return out;
+}
+
+export function invalidatedClaimIds(state: State): Set<string> {
+  const hasLive = new Set<string>();
+  const staleOnly = new Set<string>();
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "verifies") continue;
+    if (state.edgeStatuses.get(edge.id) === "stale") staleOnly.add(edge.to);
+    else hasLive.add(edge.to);
+  }
+  const out = new Set<string>();
+  for (const id of staleOnly) {
+    if (!hasLive.has(id)) out.add(id);
   }
   return out;
 }
@@ -77,10 +93,19 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   const observations = latestObservationPerClaim(state, claims);
 
-  const verified = nodes
+  const invalidated = invalidatedClaimIds(state);
+
+  const verifiedClaims = nodes
     .filter((node) => node.kind === "claim" && statusOf(node.id) === "verified")
-    .sort(bySeqDesc)
+    .sort(bySeqDesc);
+
+  const verified = verifiedClaims
+    .filter((node) => !invalidated.has(node.id))
     .slice(0, tail)
+    .map((node) => `${node.id}: ${node.label}`);
+
+  const invalidatedLines = verifiedClaims
+    .filter((node) => invalidated.has(node.id))
     .map((node) => `${node.id}: ${node.label}`);
 
   const rejected = nodes
@@ -107,7 +132,15 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   return {
     header: { goal, constraints },
-    frontier: { claims, decisions, lastAction, observations, verified, rejected },
+    frontier: {
+      claims,
+      decisions,
+      lastAction,
+      observations,
+      verified,
+      invalidated: invalidatedLines,
+      rejected,
+    },
     artifacts,
     index,
     recent,
