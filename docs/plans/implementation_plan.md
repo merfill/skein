@@ -35,10 +35,13 @@ staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 - `Check`/arbiter as an explicit node with an objective verdict.
 - Subgoals and their decomposition.
 - Path-based relevance: reachability from the goal through decision/action edges
-  (C2); also the deferred staleness precision (an import graph).
+  (C2).
+  Details and order of work — `docs/plans/tier1_plan.md`.
 
 **Tier 2 — non-monotonic knowledge.**
 - Statuses `superseded`/`refuted`, specificity, `Revision` as a record.
+- Staleness precision (R3b): scope the witness to a dependency closure, via each
+  ecosystem's tooling; deferred from Tier 1 (`docs/plans/tier1_plan.md` §7).
 
 **Tier 3 — doxastic operators.**
 - `analogy`, `intuition` — asking the LLM for the non-derivable, as explicit

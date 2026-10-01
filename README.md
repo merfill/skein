@@ -119,6 +119,7 @@ Tier 0 (bugfix by a failing test) is implemented.
 
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
 - `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/plans/tier1_plan.md` — Tier 1 scope and order of work (not started).
 - `docs/plans/context_inspection_plan.md` — verified surfacing, inspection query,
   output spill.
 - `docs/plans/check_soundness_plan.md` — a check carries a witness; a change

@@ -220,12 +220,13 @@ point in `docs/design_review.md`. The outcomes:
 - **P4 budget** — the turn budget is shown in `header`
   (`docs/plans/index_budget_plan.md`).
 
-**Deferred to Tier 1:**
+**Deferred:**
 
-- **C2 path-based relevance** — needs first-class subgoals/decisions with
+- **C2 path-based relevance** (Tier 1) — needs first-class subgoals/decisions with
   connecting edges before the projection can compute reachability from the goal;
-- **R3b precision** — an import graph to avoid invalidating checks on unrelated
-  changes (the current snapshot is sound but coarse);
+- **R3b precision** (beyond Tier 1) — scope the witness via each ecosystem's
+  tooling to avoid invalidating checks on unrelated changes; the current snapshot
+  is sound but coarse (`docs/plans/tier1_plan.md` §7);
 - **P1 deterministic compaction** — largely subsumed by R1 and the output spill;
   revisit only if an evaluation shows the need, and never as LLM summarization.
 
