@@ -222,7 +222,7 @@ describe("record_rejection", () => {
     ]);
   });
 
-  it("collapses repeated refusals and bounds the section by tail", () => {
+  it("collapses repeated refusals without dropping distinct ones", () => {
     const state = fold([
       ...base,
       refusal(3),
@@ -236,11 +236,10 @@ describe("record_rejection", () => {
       },
     ]);
     expect(state.rejections).toHaveLength(3);
-    expect(project(state, { tail: 10 }).frontier.refusals).toEqual([
+    expect(project(state).frontier.refusals).toEqual([
       "track claim — empty_label",
       "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1) ×2",
     ]);
-    expect(project(state, { tail: 1 }).frontier.refusals).toHaveLength(1);
   });
 });
 
@@ -410,22 +409,25 @@ describe("check node (Tier 1.3)", () => {
 });
 
 describe("project", () => {
-  it("summarizes nodes in index and slices the recent tail", () => {
+  it("summarizes nodes in index and bounds the recent flow by characters", () => {
     const state = fold([
       { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
       { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1) },
       { type: "add_node", node: workNode("c1", "claim", "off-by-one", 2) },
       { type: "add_node", node: workNode("o1", "observation", "test output", 3) },
     ]);
-    const context = project(state, {
-      tail: 2,
-      recent: [
-        { seq: 0, kind: "proposal", text: "read a.ts" },
-        { seq: 1, kind: "tool", text: "a.ts contents" },
-        { seq: 2, kind: "proposal", text: "edit a.ts" },
-      ],
-    });
+    const recent = [
+      { seq: 0, kind: "proposal" as const, text: "read a.ts" },
+      { seq: 1, kind: "tool" as const, text: "a.ts contents" },
+      { seq: 2, kind: "proposal" as const, text: "edit a.ts" },
+    ];
 
+    expect(project(state, { indexWindow: 2 }).index.recent.map((entry) => entry.id)).toEqual([
+      "o1",
+      "c1",
+    ]);
+
+    const context = project(state, { recent, recentBudget: 25 });
     expect(context.header.goal?.id).toBe("g1");
     expect(context.header.constraints.map((node) => node.id)).toEqual(["k1"]);
     expect(context.index.counts).toEqual({
@@ -434,7 +436,6 @@ describe("project", () => {
       observation: 1,
       constraint: 1,
     });
-    expect(context.index.recent.map((entry) => entry.id)).toEqual(["o1", "c1"]);
     expect(context.recent.map((turn) => turn.seq)).toEqual([1, 2]);
   });
 
@@ -454,7 +455,7 @@ describe("project", () => {
     });
   });
 
-  it("lists verified claims newest first, bounded by tail", () => {
+  it("lists verified claims newest first without dropping any", () => {
     const state = fold([
       { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
       { type: "add_node", node: workNode("c1", "claim", "first", 1) },
@@ -481,9 +482,10 @@ describe("project", () => {
       },
     ]);
 
-    expect(project(state, { tail: 2 }).frontier.verified).toEqual([
+    expect(project(state).frontier.verified).toEqual([
       "c3: third",
       "c2: second",
+      "c1: first",
     ]);
   });
 });

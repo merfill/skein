@@ -476,7 +476,7 @@ describe("query", () => {
     expect(outcome.turn.text).toContain("npm test");
   });
 
-  it("still reaches a node omitted from the index window", () => {
+  it("still reaches a work node the frontier omits", () => {
     const nodes = [1, 2, 3, 4].map((n) => ({
       type: "add_node" as const,
       node: {
@@ -488,8 +488,7 @@ describe("query", () => {
       },
     }));
     const state = fold(nodes);
-    const context = project(state, { tail: 1 });
-    expect(context.index.recent.map((entry) => entry.id)).toEqual(["obs:4"]);
+    expect(project(state).frontier.observations).toEqual([]);
 
     const outcome = executeAction({ tool: "query", id: "obs:1" }, state, workspace(), 0);
     expect(outcome.turn.text).toContain("obs:1");
@@ -668,14 +667,20 @@ describe("runAgent (scripted, offline)", () => {
       { goal: { id: "g1", label: "noop" } },
     );
 
-    const check = result.events.find((event) => event.type === "record_check");
-    if (!check || check.type !== "record_check") throw new Error("no check recorded");
-    const ref = check.outputRef;
+    const observation = result.events.find(
+      (event) => event.type === "add_node" && event.node.kind === "observation",
+    );
+    if (!observation || observation.type !== "add_node") {
+      throw new Error("no observation recorded");
+    }
+    const payload = observation.node.payload as { outputRef?: string; output?: string };
+    const ref = payload.outputRef;
+    const output = payload.output ?? "";
     if (!ref) throw new Error("no output ref");
-    expect(check.output).toContain("HEAD");
-    expect(check.output).toContain("TAIL");
-    expect(check.output).toContain("full output");
-    expect(check.output.length).toBeLessThan(20000);
+    expect(output).toContain("HEAD");
+    expect(output).toContain("TAIL");
+    expect(output).toContain("full output");
+    expect(output.length).toBeLessThan(20000);
 
     const full = workspace.read(ref);
     expect(full.length).toBeGreaterThan(20000);
@@ -683,10 +688,7 @@ describe("runAgent (scripted, offline)", () => {
     expect(full).toContain("TAIL");
     expect(workspace.list()).not.toContain(ref);
 
-    const checkNode = [...fold(result.events).nodes.values()].find(
-      (node) => node.kind === "check",
-    );
-    expect(checkNode?.payload).toMatchObject({ outputRef: ref });
+    expect(observation.node.payload).toMatchObject({ outputRef: ref });
   });
 
   it("invalidates a verified claim when the code changes again", async () => {

@@ -114,31 +114,56 @@ function openClaimIds(state: State): string[] {
   return ids;
 }
 
-function versionMap(workspace: Workspace): Map<string, string> {
-  const versions = new Map<string, string>();
+function signatureMap(workspace: Workspace): Map<string, string> {
+  const signatures = new Map<string, string>();
   for (const path of workspace.list()) {
     try {
-      versions.set(path, workspace.version(path));
+      signatures.set(path, workspace.signature(path));
+    } catch {
+      // A build can delete a temporary file between listing and stat.
+    }
+  }
+  return signatures;
+}
+
+function witnessOfWorkspace(workspace: Workspace): WitnessEntry[] {
+  const witness: WitnessEntry[] = [];
+  for (const path of workspace.list()) {
+    try {
+      witness.push({ ref: `file:${path}`, version: workspace.version(path) });
     } catch {
       // A build can delete a temporary file between listing and hashing.
     }
   }
-  return versions;
+  return witness;
 }
 
-function witnessFromVersions(versions: Map<string, string>): WitnessEntry[] {
-  return [...versions].map(([path, version]) => ({ ref: `file:${path}`, version }));
-}
-
-function diffVersions(
+function changedMutations(
+  workspace: Workspace,
   before: Map<string, string>,
   after: Map<string, string>,
+  excluded: ReadonlySet<string>,
 ): WitnessEntry[] {
-  const changed: WitnessEntry[] = [];
-  for (const [path, version] of after) {
-    if (before.get(path) !== version) changed.push({ ref: `file:${path}`, version });
+  const changed = new Set<string>();
+  for (const [path, signature] of after) {
+    if (before.get(path) !== signature) changed.add(path);
   }
-  return changed;
+  for (const path of before.keys()) {
+    if (!after.has(path)) changed.add(path);
+  }
+  for (const path of excluded) changed.delete(path);
+
+  const mutations: WitnessEntry[] = [];
+  for (const path of changed) {
+    let version: string;
+    try {
+      version = workspace.version(path);
+    } catch {
+      version = "absent";
+    }
+    mutations.push({ ref: `file:${path}`, version });
+  }
+  return mutations;
 }
 
 export function executeAction(
@@ -314,26 +339,39 @@ export function executeAction(
     }
 
     case "run": {
+      const readIfPresent = (path: string): string | undefined => {
+        try {
+          return workspace.read(path);
+        } catch {
+          return undefined;
+        }
+      };
+
       const guards = new Map<string, { pattern: string; content: string }>();
       for (const pattern of forbiddenPatterns(state)) {
         for (const path of workspace.list()) {
-          if (!guards.has(path) && matchesPath(pattern, path)) {
-            guards.set(path, { pattern, content: workspace.read(path) });
-          }
+          if (guards.has(path) || !matchesPath(pattern, path)) continue;
+          const content = readIfPresent(path);
+          if (content !== undefined) guards.set(path, { pattern, content });
         }
       }
 
-      const before = versionMap(workspace);
+      const before = signatureMap(workspace);
       const result = workspace.run(action.command);
 
-      const violated = [...guards.entries()].filter(
-        ([path, guard]) => !workspace.exists(path) || workspace.read(path) !== guard.content,
-      );
+      const violated = [...guards.entries()].filter(([path, guard]) => {
+        const content = readIfPresent(path);
+        return content === undefined || content !== guard.content;
+      });
       for (const [path, guard] of violated) workspace.write(path, guard.content);
 
-      const after = versionMap(workspace);
-      const witness = witnessFromVersions(after);
-      const mutations = diffVersions(before, after);
+      const after = signatureMap(workspace);
+      const mutations = changedMutations(
+        workspace,
+        before,
+        after,
+        new Set(violated.map(([path]) => path)),
+      );
 
       if (violated.length > 0) {
         const paths = violated.map(([path]) => path).join(", ");
@@ -363,7 +401,29 @@ export function executeAction(
       if (outputRef !== undefined) workspace.write(outputRef, result.output);
       const output =
         outputRef !== undefined ? excerpt(result.output, outputRef) : result.output;
+      const text = `$ ${action.command}\nexit ${result.code}\n${output}`;
       recordMutations(mutations, action.command);
+
+      if (claims.length === 0) {
+        events.push({
+          type: "add_node",
+          node: {
+            id: `obs:${next()}`,
+            space: "work",
+            kind: "observation",
+            label: `run ${action.command}`,
+            payload: {
+              command: action.command,
+              verdict,
+              output,
+              ...(outputRef !== undefined ? { outputRef } : {}),
+            },
+            seq: next(),
+          },
+        });
+        return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
+      }
+
       events.push({
         type: "record_check",
         command: action.command,
@@ -371,10 +431,9 @@ export function executeAction(
         output,
         ...(outputRef !== undefined ? { outputRef } : {}),
         actor: "arbiter",
-        witness,
+        witness: witnessOfWorkspace(workspace),
         claimIds: claims,
       });
-      const text = `$ ${action.command}\nexit ${result.code}\n${output}`;
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 

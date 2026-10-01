@@ -75,8 +75,28 @@ export interface Context {
 
 export interface ProjectOptions {
   recent?: readonly Turn[];
-  tail?: number;
+  recentBudget?: number;
+  indexWindow?: number;
   budget?: { turn: number; maxTurns: number };
+}
+
+export const DEFAULT_RECENT_BUDGET = 6000;
+export const DEFAULT_INDEX_WINDOW = 10;
+
+// The flow is the one section that carries raw tool output, so it is bounded by
+// characters rather than by a list length: keep turns newest-first while they
+// fit the budget, and always keep the newest turn (clipped upstream) even alone.
+function recentFlow(turns: readonly Turn[], budget: number): Turn[] {
+  const out: Turn[] = [];
+  let total = 0;
+  for (let index = turns.length - 1; index >= 0; index--) {
+    const turn = turns[index];
+    if (turn === undefined) continue;
+    if (out.length > 0 && total + turn.text.length > budget) break;
+    out.unshift(turn);
+    total += turn.text.length;
+  }
+  return out;
 }
 
 function bySeqDesc(a: Node, b: Node): number {
@@ -103,7 +123,7 @@ function formatRefusal(rejection: RejectionRecord): string {
   return `${rejection.tool} ${rejection.target} — ${rejection.reason}${owner}`;
 }
 
-function refusalLines(state: State, tail: number): string[] {
+function refusalLines(state: State): string[] {
   const bySignature = new Map<string, { line: string; count: number; seq: number }>();
   for (const rejection of state.rejections) {
     const signature = `${rejection.tool}\u0000${rejection.target}\u0000${rejection.reason}`;
@@ -124,7 +144,6 @@ function refusalLines(state: State, tail: number): string[] {
   }
   return [...bySignature.values()]
     .sort((a, b) => b.seq - a.seq)
-    .slice(0, tail)
     .map((entry) => (entry.count > 1 ? `${entry.line} ×${entry.count}` : entry.line));
 }
 
@@ -139,7 +158,8 @@ function staleRefs(state: State): Set<string> {
 }
 
 export function project(state: State, options: ProjectOptions = {}): Context {
-  const tail = options.tail ?? 6;
+  const recentBudget = options.recentBudget ?? DEFAULT_RECENT_BUDGET;
+  const indexWindow = options.indexWindow ?? DEFAULT_INDEX_WINDOW;
   const nodes = [...state.nodes.values()];
   const stale = staleRefs(state);
   const statusOf = (id: string): Status | undefined =>
@@ -179,13 +199,11 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const subgoals = nodes
     .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "open" && onPath(node.id))
     .sort(bySeqDesc)
-    .slice(0, tail)
     .map((node) => ({ id: node.id, label: node.label }));
 
   const achievedSubgoals = nodes
     .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "achieved" && onPath(node.id))
     .sort(bySeqDesc)
-    .slice(0, tail)
     .map((node) => `${node.id}: ${node.label}`);
 
   const lastAction = nodes
@@ -202,7 +220,6 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   const verified = verifiedClaims
     .filter((node) => !invalidated.has(node.id))
-    .slice(0, tail)
     .map((node) => `${node.id}: ${node.label}`);
 
   const invalidatedLines = verifiedClaims
@@ -216,7 +233,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     })
     .map((node) => `${node.id}: ${node.label}`);
 
-  const refusals = refusalLines(state, tail);
+  const refusals = refusalLines(state);
 
   const artifacts = nodes
     .filter((node) => node.space === "artifact")
@@ -232,14 +249,14 @@ export function project(state: State, options: ProjectOptions = {}): Context {
 
   const index = {
     counts,
-    recent: [...nodes].sort(bySeqDesc).slice(0, tail).map((node) => ({
+    recent: [...nodes].sort(bySeqDesc).slice(0, indexWindow).map((node) => ({
       id: node.id,
       kind: node.kind,
       label: node.label,
     })),
   };
 
-  const recent = [...(options.recent ?? [])].slice(-tail);
+  const recent = recentFlow(options.recent ?? [], recentBudget);
 
   const goal = state.goalId !== undefined ? state.nodes.get(state.goalId) ?? null : null;
   const constraints = nodes.filter((node) => node.kind === "constraint");

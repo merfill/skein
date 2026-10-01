@@ -77,7 +77,6 @@ export function compileGraph(deps: AgentDeps) {
       events: drift,
       context: project(fold(drift, base), {
         recent: state.recent,
-        tail: 6,
         budget: { turn: state.turn, maxTurns: deps.maxTurns },
       }),
     };
@@ -88,7 +87,6 @@ export function compileGraph(deps: AgentDeps) {
       state.context ??
       project(fold(state.events), {
         recent: state.recent,
-        tail: 6,
         budget: { turn: state.turn, maxTurns: deps.maxTurns },
       });
     const proposal = await deps.propose(context);
