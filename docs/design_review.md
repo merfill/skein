@@ -17,7 +17,7 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 
 | # | Point | Verdict |
 |---|---|---|
-| R1 | Index blow-up | Accepted (open) |
+| R1 | Index blow-up | Applied (contract A: address space) |
 | R2 | "Contents not in the IR" vs memory | Partly applied (command output) / reframed |
 | R3 | Transitive staleness and stale checks | Accepted; hole (a) fixed, (b) open |
 | R4 | Goal-closure paradox | Rejected as framed |
@@ -27,20 +27,22 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
 | P1 | Context compaction | Reframed; partly applied |
 | P2 | `read_artifact(id)` | Rejected (redundant) |
 | P3 | provenance split / record rejections | Split verdict; rejections applied |
-| P4 | Budget in `Context` | Accepted (open) |
+| P4 | Budget in `Context` | Applied |
 
 ## Risks
 
 ### R1. Index blow-up
 
 - **Proposal:** paginate `index`, hide it behind `query`, or aggregate it.
-- **Verdict:** Accepted; the tool half is already partly there.
-- **Why:** `project` still emits every node (`src/ir/project.ts:122`). The new
-  `query` (`id`/`kind`/`status`/`edgesOf`/`verdictOf`, `QUERY_LIMIT = 50`) gives
-  a bounded way to ask for what exists, so the pressure is lower — but `index`
-  itself remains unbounded.
-- **Action:** in Tier 1, bound or aggregate `index` (e.g. only frontier +
-  constraints by default, the rest via `query`). Not done now.
+- **Verdict:** Applied, under the address-space contract (A).
+- **Why:** `index` was the only unbounded section and its role was unspecified.
+  The contract fixes the role: every node is either shown or retrievable through
+  `query` (`id`/`kind`/`status`/`edgesOf`/`verdictOf`, `QUERY_LIMIT = 50`), so
+  enumeration is not required for the guarantee. `index` is now `{ counts, recent }`
+  — a bounded summary plus a window of the newest `tail` nodes.
+- **Action:** done (`docs/plans/index_budget_plan.md`); resolved Q4 in
+  `docs/concepts.md` reworded from "always includes the index" to "always
+  guarantees addressability".
 
 ### R2. "Contents not in the IR" vs memory
 
@@ -178,10 +180,12 @@ the behaviour, the agent is deceived: the context says "settled".
 ### P4. Budget in `Context`
 
 - **Proposal:** show remaining turns/tokens in `header`.
-- **Verdict:** Accepted; open.
+- **Verdict:** Applied.
 - **Why:** `maxTurns` lives in the loop, not in `Context` (`src/loop/graph.ts`).
   Turn count is trivial and deterministic; token counts are not.
-- **Action:** expose remaining turns in `header`; leave token accounting out.
+- **Action:** done — the loop passes `{ turn, maxTurns }` as a projection option
+  and `header.budget` exposes `{ turn, maxTurns, remaining }`; token accounting is
+  left out (`docs/plans/index_budget_plan.md`).
 
 ## What the recent commit changed here
 

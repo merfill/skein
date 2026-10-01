@@ -334,7 +334,7 @@ describe("check invalidation by version", () => {
 });
 
 describe("project", () => {
-  it("indexes every node and slices the recent tail", () => {
+  it("summarizes nodes in index and slices the recent tail", () => {
     const state = fold([
       { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
       { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1) },
@@ -352,8 +352,30 @@ describe("project", () => {
 
     expect(context.header.goal?.id).toBe("g1");
     expect(context.header.constraints.map((node) => node.id)).toEqual(["k1"]);
-    expect(context.index).toHaveLength(4);
+    expect(context.index.counts).toEqual({
+      goal: 1,
+      claim: 1,
+      observation: 1,
+      constraint: 1,
+    });
+    expect(context.index.recent.map((entry) => entry.id)).toEqual(["o1", "c1"]);
     expect(context.recent.map((turn) => turn.seq)).toEqual([1, 2]);
+  });
+
+  it("exposes the turn budget in the header when provided", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
+    ]);
+
+    expect(project(state).header.budget).toBeUndefined();
+    expect(project(state, { budget: { turn: 3, maxTurns: 10 } }).header.budget).toEqual({
+      turn: 3,
+      maxTurns: 10,
+      remaining: 7,
+    });
+    expect(project(state, { budget: { turn: 12, maxTurns: 10 } }).header.budget).toMatchObject({
+      remaining: 0,
+    });
   });
 
   it("lists verified claims newest first, bounded by tail", () => {

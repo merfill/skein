@@ -71,8 +71,11 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - **Фиксация отказов** — отклонённое предложение пишется событием
   `record_rejection` и показывается в `frontier.refusals`, поэтому переживает
   вытеснение из хвоста и реплей (`docs/plans/rejection_plan_ru.md`).
+- **Бюджет контекста** — `index` есть ограниченная сводка (счётчики + окно
+  новейших) по контракту адресуемости; бюджет ходов показан в `header.budget`
+  (`docs/plans/index_budget_plan_ru.md`).
 
-Проверка: `npm run typecheck`; `npm test` (40 тестов) — offline-тесты, live-гейт
+Проверка: `npm run typecheck`; `npm test` (42 теста) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.
 
 ## 5. Границы

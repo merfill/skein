@@ -108,6 +108,7 @@ Invariants:
 
 - a claim never becomes `verified` without `check` provenance;
 - a `stale` fact is never shown as active content;
+- every node is addressable: shown in the context or retrievable via `query`;
 - `project` is deterministic: same events → same `Context`;
 - a constraint is never violated; the goal closes only when the arbiter passes.
 
@@ -123,6 +124,8 @@ Tier 0 (bugfix by a failing test) is implemented.
   invalidates it.
 - `docs/plans/observation_plan.md` — observing changes outside the engine.
 - `docs/plans/rejection_plan.md` — recording refused proposals.
+- `docs/plans/index_budget_plan.md` — index as a bounded address space; turn
+  budget in the header.
 - `docs/concepts.md` — conceptual overview.
 - `docs/ir.md` — the IR: operations, state, and control.
 

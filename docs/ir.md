@@ -151,8 +151,12 @@ events always yield the same `Context`. It has fixed sections:
   signature with a repeat count. A verified claim whose checks have all gone
   `stale` appears under `invalidated`, never under `verified`;
 - `artifacts` — index only (id + label + `stale` flag);
-- `index` — every node as `{ id, kind, label }`, so the agent knows what exists;
+- `index` — a bounded summary: `counts` by kind plus the newest `tail` nodes as
+  `{ id, kind, label }`; the full listing is retrievable through `query`;
 - `recent` — the last few turns verbatim, for flow.
+
+Addressability is the guarantee: every node is either shown or retrievable through
+`query`, so bounding `index` never makes a node unnameable.
 
 Relevance is **by provenance, not similarity**: what is active is what lies on a
 path from the open goal through active decisions/actions to open claims. The
@@ -185,7 +189,9 @@ Control is not a separate layer — it is consumed directly from `State`:
 - **Truth only from the arbiter.** No path to `verified` bypasses
   `record_check`.
 - **Budgets and stop.** The loop routes on `done`, the turn budget, and
-  `stopReason` (`src/loop/graph.ts:86`).
+  `stopReason` (`src/loop/graph.ts:86`). The budget is part of the context
+  (`header.budget`: `turn` / `maxTurns` / `remaining`), so the model can pace
+  itself; token accounting is deliberately absent.
 - **Closing the goal is external.** The engine does not set the goal to
   `achieved`; the harness/arbiter checks that the test suite passes and that
   forbidden files are unchanged (`tests/gate.test.ts`). The goal node stays
@@ -265,12 +271,16 @@ The projection after turn 4 is roughly:
 ```json
 {
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
-              "constraints": [ { "id": "k1" } ] },
+              "constraints": [ { "id": "k1" } ],
+              "budget": { "turn": 4, "maxTurns": 24, "remaining": 20 } },
   "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
                 "observations": [], "verified": ["w:claim:5: loop stops one short"],
                 "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
-  "index": [ /* every node: g1, k1, file:…, obs:3, w:claim:5, act:6, obs:8 */ ],
+  "index": {
+    "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 2, "claim": 1, "action": 1 },
+    "recent": [ /* the newest tail nodes as { id, kind, label } */ ]
+  },
   "recent": [ /* the last turns */ ]
 }
 ```
@@ -337,6 +347,7 @@ Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
 - a `stale` fact is never presented as active content;
 - a refused proposal is recorded with its reason (`record_rejection`), never
   stored as a belief;
+- addressability: every node is shown or retrievable through `query`;
 - `project` is deterministic: same events → same `Context`;
 - doxa only proposes (`status = open`); logos decides.
 

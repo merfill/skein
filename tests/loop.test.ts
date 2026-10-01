@@ -162,6 +162,26 @@ describe("query", () => {
     expect(outcome.turn.text).toContain("checks");
     expect(outcome.turn.text).toContain("obs:2");
   });
+
+  it("still reaches a node omitted from the index window", () => {
+    const nodes = [1, 2, 3, 4].map((n) => ({
+      type: "add_node" as const,
+      node: {
+        id: `obs:${n}`,
+        space: "work" as const,
+        kind: "observation" as const,
+        label: `step ${n}`,
+        seq: n,
+      },
+    }));
+    const state = fold(nodes);
+    const context = project(state, { tail: 1 });
+    expect(context.index.recent.map((entry) => entry.id)).toEqual(["obs:4"]);
+
+    const outcome = executeAction({ tool: "query", id: "obs:1" }, state, workspace(), 0);
+    expect(outcome.turn.text).toContain("obs:1");
+    expect(outcome.turn.text).not.toContain("obs:4");
+  });
 });
 
 describe("runAgent (scripted, offline)", () => {

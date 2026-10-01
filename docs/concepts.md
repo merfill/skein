@@ -103,8 +103,10 @@ rules are deterministic, not LLM-driven:
 
 "What is active" is **relevance by provenance**, not by similarity: a node is
 active iff it lies on a path from an open goal through active decisions and
-actions to open claims. The IR index is always included, so the agent knows what
-exists even when it does not see contents.
+actions to open claims. Addressability is always guaranteed: every node is either
+shown or retrievable through `query`, so the agent can name what it does not see.
+The `index` is a bounded summary (counts by kind plus the newest few nodes), not a
+full listing; the full listing is a query away.
 
 ## Non-monotonicity: staleness by version
 
@@ -153,8 +155,9 @@ The original sketch left eight questions open. They are resolved as follows.
    LLM content. A goal change is a revision, not silent history.
 3. **Who decides relevance?** Deterministic, by provenance: active means premises
    of the open goal.
-4. **What if the projection is wrong?** The projection always includes the IR
-   index, so the agent can see what exists and request it.
+4. **What if the projection is wrong?** Addressability is always guaranteed: every
+   node is either shown or retrievable through `query`, so the agent can see what
+   exists and request it. The `index` is a bounded summary, not a full listing.
 5. **What about long files?** File contents never enter the IR; artifacts are
    pointers, reads are ephemeral.
 6. **What is a turn?** One projection → propose → classify → execute cycle.

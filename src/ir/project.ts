@@ -1,5 +1,5 @@
 import type { RejectionRecord, State } from "./graph";
-import type { Node, NodeKind, Status } from "./types";
+import { NODE_KINDS, type Node, type NodeKind, type Status } from "./types";
 
 export interface Turn {
   seq: number;
@@ -7,8 +7,18 @@ export interface Turn {
   text: string;
 }
 
+export interface IndexEntry {
+  id: string;
+  kind: NodeKind;
+  label: string;
+}
+
 export interface Context {
-  header: { goal: Node | null; constraints: Node[] };
+  header: {
+    goal: Node | null;
+    constraints: Node[];
+    budget?: { turn: number; maxTurns: number; remaining: number };
+  };
   frontier: {
     claims: Node[];
     decisions: Node[];
@@ -20,13 +30,14 @@ export interface Context {
     refusals: string[];
   };
   artifacts: { id: string; label: string; stale: boolean }[];
-  index: { id: string; kind: NodeKind; label: string }[];
+  index: { counts: Partial<Record<NodeKind, number>>; recent: IndexEntry[] };
   recent: Turn[];
 }
 
 export interface ProjectOptions {
   recent?: readonly Turn[];
   tail?: number;
+  budget?: { turn: number; maxTurns: number };
 }
 
 function bySeqDesc(a: Node, b: Node): number {
@@ -152,19 +163,39 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     .filter((node) => node.space === "artifact")
     .map((node) => ({ id: node.id, label: node.label, stale: stale.has(node.id) }));
 
-  const index = nodes.map((node) => ({
-    id: node.id,
-    kind: node.kind,
-    label: node.label,
-  }));
+  const tally = new Map<NodeKind, number>();
+  for (const node of nodes) tally.set(node.kind, (tally.get(node.kind) ?? 0) + 1);
+  const counts: Partial<Record<NodeKind, number>> = {};
+  for (const kind of NODE_KINDS) {
+    const count = tally.get(kind);
+    if (count !== undefined) counts[kind] = count;
+  }
+
+  const index = {
+    counts,
+    recent: [...nodes].sort(bySeqDesc).slice(0, tail).map((node) => ({
+      id: node.id,
+      kind: node.kind,
+      label: node.label,
+    })),
+  };
 
   const recent = [...(options.recent ?? [])].slice(-tail);
 
   const goal = state.goalId !== undefined ? state.nodes.get(state.goalId) ?? null : null;
   const constraints = nodes.filter((node) => node.kind === "constraint");
 
+  const budget =
+    options.budget === undefined
+      ? undefined
+      : {
+          turn: options.budget.turn,
+          maxTurns: options.budget.maxTurns,
+          remaining: Math.max(0, options.budget.maxTurns - options.budget.turn),
+        };
+
   return {
-    header: { goal, constraints },
+    header: { goal, constraints, ...(budget !== undefined ? { budget } : {}) },
     frontier: {
       claims,
       decisions,

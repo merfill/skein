@@ -71,8 +71,11 @@ Beyond Tier 0, the current line adds:
 - **Rejection recording** — a refused proposal is recorded as a
   `record_rejection` event and shown under `frontier.refusals`, so it survives
   tail eviction and replay (`docs/plans/rejection_plan.md`).
+- **Context budget** — `index` is a bounded summary (counts + newest window) under
+  the addressability contract; the turn budget is shown in `header.budget`
+  (`docs/plans/index_budget_plan.md`).
 
-Verification: `npm run typecheck`; `npm test` (40 tests) — offline tests, live gate
+Verification: `npm run typecheck`; `npm test` (42 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries

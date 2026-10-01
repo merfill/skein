@@ -69,13 +69,22 @@ export function compileGraph(deps: AgentDeps) {
     const drift = reconcile(base, deps.workspace, signatures);
     return {
       events: drift,
-      context: project(fold(drift, base), { recent: state.recent, tail: 6 }),
+      context: project(fold(drift, base), {
+        recent: state.recent,
+        tail: 6,
+        budget: { turn: state.turn, maxTurns: deps.maxTurns },
+      }),
     };
   };
 
   const proposeNode = async (state: LoopStateType) => {
     const context =
-      state.context ?? project(fold(state.events), { recent: state.recent, tail: 6 });
+      state.context ??
+      project(fold(state.events), {
+        recent: state.recent,
+        tail: 6,
+        budget: { turn: state.turn, maxTurns: deps.maxTurns },
+      });
     const proposal = await deps.propose(context);
     return {
       context,
