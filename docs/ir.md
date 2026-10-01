@@ -121,6 +121,9 @@ These are reserved, not dead: the projection already understands
 `refuted`/`superseded` (`src/ir/project.ts:114`). The document keeps the
 distinction so the spec does not overclaim the implementation.
 
+Separately: `frontier.observations` is declared in `Context` but collected over
+`verifies` edges to open claims, which never have such edges, so it is always empty.
+
 ## 3. Status transitions
 
 Statuses are **derived**, not set by hand:
@@ -150,16 +153,20 @@ grows, and only the derived view loses force. A source fact is never rewritten.
 `project(state)` (`src/ir/project.ts:75`) is pure and deterministic: the same
 events always yield the same `Context`. It has fixed sections:
 
-- `header` — the goal and all constraints (the stable prefix);
-- `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, the
-  latest observation per active claim, verified / invalidated / rejected claims as
+- `header` — the goal, all constraints (the stable prefix), and the turn budget;
+- `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, verified
+  / invalidated claims as one line each, rejected nodes (`refuted` / `superseded`)
   one line each, and `refusals` — actions the gate already refused, collapsed by
   signature with a repeat count. A verified claim whose checks have all gone
   `stale` appears under `invalidated`, never under `verified`;
 - `artifacts` — index only (id + label + `stale` flag);
-- `index` — a bounded summary: `counts` by kind plus the newest `tail` nodes as
-  `{ id, kind, label }`; the full listing is retrievable through `query`;
-- `recent` — the last few turns verbatim, for flow.
+- `index` — an overview of the space: `counts` by kind plus a window of the newest
+  `tail` nodes as `{ id, kind, label }`; the full listing is retrievable through
+  `query`;
+- `recent` — the last `tail` turns verbatim, for flow.
+
+One arbitrary parameter, `tail`, bounds the window `index.recent`, the `recent`
+stream, and the one-line `frontier.verified` and `frontier.refusals`.
 
 Addressability is the guarantee: every node is either shown or retrievable through
 `query`, so bounding `index` never makes a node unnameable.

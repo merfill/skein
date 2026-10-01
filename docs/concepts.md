@@ -42,8 +42,8 @@ The conceptual frame comes from the doxa/logos distinction (Ankyra,
 
 - **Doxa** is the LLM. It only *proposes*: one structured `{ thought, action }`
   per turn. The thought is narrative and stays out of the IR (it goes to the
-  tail). A proposed belief becomes a node only when the engine admits it (`track`),
-  and then with `status = "open"` — never immediately `verified`.
+  `recent` stream). A proposed belief becomes a node only when the engine admits
+  it (`track`), and then with `status = "open"` — never immediately `verified`.
 - **Logos** is the deterministic side: the gate (`classify`), arbiter verdicts
   (`record_check`), and state derivation (`fold`, `project`).
 - **Protocol** is the environment: the append-only event journal, `fold`,
@@ -102,13 +102,19 @@ Projection is the heart of Skein: not "what was said" but "what acts now". The
 rules are deterministic, not LLM-driven:
 
 - `header` — the goal, the constraints, and the turn budget;
-- `frontier` — open claims in full; settled claims one line each (verified /
-  invalidated / rejected); refused proposals one line each, collapsed by
-  signature; decisions; the last action and the latest observation per active
-  claim;
+- `frontier` — open claims in full; settled claims one line each (`verified` /
+  `invalidated`); rejected nodes (`refuted` / `superseded`) one line each; refused
+  proposals one line each, collapsed by signature; decisions; the last action;
 - `artifacts` — an index of files (id plus one line), never contents;
-- `index` — a bounded summary: counts by kind plus the newest few nodes;
-- `recent` — the last few turns, verbatim, for flow.
+- `index` — an overview of the space: counts by kind (`counts`) plus a window of
+  the newest nodes (`recent`) as `{ id, kind, label }`;
+- `recent` — the last turns verbatim, for flow: the doxa's thought and the tool's
+  result.
+
+One arbitrary parameter, `tail` (six by default), sets the visibility budget: it
+bounds the window `index.recent`, the `recent` stream, and the one-line
+`frontier.verified` and `frontier.refusals`. The overview `index.counts` is never
+clipped; the full listing is always retrievable through `query`.
 
 Relevance is currently **by status and provenance**: what acts is the open goal,
 its constraints, open claims, active decisions, and the observations/actions
@@ -175,7 +181,7 @@ deterministic projection.
 The original sketch left eight questions open. They are resolved as follows.
 
 1. **What is "one action"?** One structured proposal `{ thought, action }`. The
-   thought is narrative: it goes to the tail, not the IR.
+   thought is narrative: it goes to `recent`, not the IR.
 2. **How does the user enter the IR?** The user owns the goal; the goal is not
    LLM content. A goal change is a revision, not silent history. The user also
    enters through acceptance (a subjective check).
@@ -235,8 +241,8 @@ point in `docs/design_review.md`. The outcomes:
 
 ## Risks
 
-- **Loss of thread.** The LLM does not see its previous thought. Mitigation: the
-  tail, and narrative kept out of the IR.
+- **Loss of thread.** The LLM does not see its previous thought. Mitigation:
+  `recent`, and narrative kept out of the IR.
 - **Projection overhead.** If projection were LLM-summarized, the savings would
   vanish. Mitigation: deterministic rules.
 - **Complexity.** The IR must be maintained and the LLM taught to use it; the
