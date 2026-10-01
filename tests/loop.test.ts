@@ -417,15 +417,14 @@ describe("query", () => {
     const state = fold([
       { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
       { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
-      { type: "add_node", node: { id: "obs:2", space: "work", kind: "observation", label: "run npm test", seq: 2 } },
       {
         type: "add_edge",
         edge: {
-          id: "e:3",
-          from: "obs:2",
-          to: "c1",
-          kind: "verifies",
-          provenance: { kind: "check", command: "npm test", verdict: "fail" },
+          id: "e:sup",
+          from: "c1",
+          to: "g1",
+          kind: "supports",
+          provenance: { kind: "llm" },
           status: "open",
         },
       },
@@ -434,6 +433,7 @@ describe("query", () => {
         command: "npm test",
         verdict: "fail",
         output: "boom",
+        actor: "arbiter",
         claimIds: ["c1"],
       },
     ]);
@@ -441,9 +441,39 @@ describe("query", () => {
     const outcome = executeAction({ tool: "query", verdictOf: "c1" }, state, workspace(), 0);
 
     expect(outcome.turn.text).toContain("boom");
-    expect(outcome.turn.text).toContain("checks");
-    expect(outcome.turn.text).toContain("obs:2");
+    expect(outcome.turn.text).toContain("check");
+    expect(outcome.turn.text).toContain("npm test");
     expect(outcome.turn.text).toContain("arbiter");
+  });
+
+  it("lists check nodes by kind", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
+      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
+      {
+        type: "add_edge",
+        edge: {
+          id: "e:sup",
+          from: "c1",
+          to: "g1",
+          kind: "supports",
+          provenance: { kind: "llm" },
+          status: "open",
+        },
+      },
+      {
+        type: "record_check",
+        id: "chk1",
+        command: "npm test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+
+    const outcome = executeAction({ tool: "query", kind: "check" }, state, workspace(), 0);
+    expect(outcome.turn.text).toContain("chk1");
+    expect(outcome.turn.text).toContain("npm test");
   });
 
   it("still reaches a node omitted from the index window", () => {
@@ -653,16 +683,10 @@ describe("runAgent (scripted, offline)", () => {
     expect(full).toContain("TAIL");
     expect(workspace.list()).not.toContain(ref);
 
-    const observation = result.events.find(
-      (event) =>
-        event.type === "add_node" &&
-        event.node.kind === "observation" &&
-        event.node.label.startsWith("run "),
+    const checkNode = [...fold(result.events).nodes.values()].find(
+      (node) => node.kind === "check",
     );
-    if (!observation || observation.type !== "add_node") {
-      throw new Error("no run observation");
-    }
-    expect(observation.node.payload).toMatchObject({ outputRef: ref });
+    expect(checkNode?.payload).toMatchObject({ outputRef: ref });
   });
 
   it("invalidates a verified claim when the code changes again", async () => {

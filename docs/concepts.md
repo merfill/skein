@@ -61,7 +61,7 @@ Details of the operations and the state model — `docs/ir.md`. In short: a sing
 graph with two namespaces:
 
 - `work` — the work over the code: `goal`, `subgoal`, `claim`, `decision`,
-  `action`, `observation`, `constraint`.
+  `action`, `observation`, `check`, `constraint`.
 - `artifact` — the code world: `file`, `symbol`, `test`. Canonical ids:
   `file:src/foo.ts`, `sym:src/foo.ts#bar`, `test:...`.
 
@@ -162,7 +162,8 @@ Skein distinguishes two authorities:
 A subjective verdict is recorded as a check with `actor = "user"`
 (`src/ir/approval.ts`); the LLM cannot produce it. Both authorities go through
 `record_check`, so `verified` still has exactly one path — this is how non-code
-work reaches a settled state.
+work reaches a settled state. Every check is an addressable `check` node (command,
+verdict, witness, `actor`), pointed at by a `verifies` edge to the claim.
 
 Without an arbiter, Skein is an automaton; with one, it is a tool.
 
@@ -260,7 +261,7 @@ point in `docs/design_review.md`. The outcomes:
 
 Tier 0 (bugfix by a failing test) is implemented, the design-review points listed
 above are applied, and Tier 1 is progressing: T1.1 (a produced work graph —
-subgoals, decisions, connecting edges) and T1.2 (path-based closure in the
-projection) are implemented. Plan and roadmap:
+subgoals, decisions, connecting edges), T1.2 (path-based closure in the
+projection), and T1.3 (an explicit check node) are implemented. Plan and roadmap:
 `docs/plans/implementation_plan.md`; Tier 0 detail: `docs/plans/tier0_plan.md`;
 Tier 1 detail: `docs/plans/tier1_plan.md`; triage: `docs/design_review.md`.

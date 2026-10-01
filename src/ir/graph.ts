@@ -1,16 +1,6 @@
 import type { Event } from "./events";
 import type { Edge, Node, Status, WitnessEntry } from "./types";
 
-export interface CheckRecord {
-  seq: number;
-  command: string;
-  verdict: "pass" | "fail";
-  output: string;
-  outputRef?: string;
-  actor: "arbiter" | "user";
-  claimIds: string[];
-}
-
 export interface RejectionRecord {
   seq: number;
   turn: number;
@@ -25,7 +15,6 @@ export interface State {
   edges: Map<string, Edge>;
   statuses: Map<string, Status>;
   edgeStatuses: Map<string, Status>;
-  checks: CheckRecord[];
   rejections: RejectionRecord[];
   goalId?: string;
   seq: number;
@@ -37,7 +26,6 @@ export function emptyState(): State {
     edges: new Map(),
     statuses: new Map(),
     edgeStatuses: new Map(),
-    checks: [],
     rejections: [],
     seq: 0,
   };
@@ -125,7 +113,6 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     edges: new Map(base.edges),
     statuses: new Map(base.statuses),
     edgeStatuses: new Map(base.edgeStatuses),
-    checks: [...base.checks],
     rejections: [...base.rejections],
     goalId: base.goalId,
     seq: base.seq,
@@ -192,18 +179,43 @@ function applyEvent(state: State, event: Event): void {
       break;
     }
     case "record_check": {
-      state.checks.push({
-        seq: state.seq,
-        command: event.command,
-        verdict: event.verdict,
-        output: event.output,
-        outputRef: event.outputRef,
-        actor: event.actor ?? "arbiter",
-        claimIds: event.claimIds,
-      });
-      for (const id of event.claimIds) {
-        state.statuses.set(id, event.verdict === "pass" ? "verified" : "refuted");
+      const checkId = event.id ?? `chk:${state.seq}`;
+      if (!state.nodes.has(checkId)) {
+        state.nodes.set(checkId, {
+          id: checkId,
+          space: "work",
+          kind: "check",
+          label: event.command,
+          payload: {
+            command: event.command,
+            verdict: event.verdict,
+            output: event.output,
+            actor: event.actor ?? "arbiter",
+            ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
+            ...(event.witness !== undefined ? { witness: event.witness } : {}),
+          },
+          seq: state.seq,
+        });
+        state.statuses.set(checkId, "open");
       }
+      event.claimIds.forEach((id, index) => {
+        state.statuses.set(id, event.verdict === "pass" ? "verified" : "refuted");
+        const edgeId = `${checkId}:v:${index}`;
+        state.edges.set(edgeId, {
+          id: edgeId,
+          from: checkId,
+          to: id,
+          kind: "verifies",
+          provenance: {
+            kind: "check",
+            command: event.command,
+            verdict: event.verdict,
+            ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
+          },
+          status: "open",
+        });
+        state.edgeStatuses.set(edgeId, "open");
+      });
       break;
     }
   }

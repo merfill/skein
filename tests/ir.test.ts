@@ -165,7 +165,8 @@ describe("user acceptance", () => {
   it("verifies a claim through a user check and records the actor", () => {
     const state = fold([...base, userAcceptance(["c1"], "pass", "looks good")]);
     expect(state.statuses.get("c1")).toBe("verified");
-    expect(state.checks[0]).toMatchObject({ actor: "user", command: "looks good" });
+    const check = [...state.nodes.values()].find((node) => node.kind === "check");
+    expect(check?.payload).toMatchObject({ actor: "user", command: "looks good" });
     expect(project(state).frontier.verified).toEqual(["c1: the note covers the API"]);
   });
 
@@ -180,7 +181,8 @@ describe("user acceptance", () => {
         claimIds: ["c1"],
       },
     ]);
-    expect(state.checks[0]?.actor).toBe("arbiter");
+    const check = [...state.nodes.values()].find((node) => node.kind === "check");
+    expect(check?.payload).toMatchObject({ actor: "arbiter" });
   });
 });
 
@@ -292,42 +294,28 @@ describe("check invalidation by version", () => {
       edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
     },
     {
-      type: "add_node",
-      node: {
-        id: "o1",
-        space: "work",
-        kind: "observation",
-        label: "run npm test",
-        payload: { witness: [{ ref: "file:src/a.ts", version: "v2" }] },
-        seq: 2,
-      },
-    },
-    {
-      type: "add_edge",
-      edge: edge(
-        "e1",
-        "o1",
-        "c1",
-        "verifies",
-        { kind: "check", command: "npm test", verdict: "pass" },
-        "open",
-      ),
-    },
-    {
       type: "record_check",
       command: "npm test",
       verdict: "pass",
       output: "ok",
+      witness: [{ ref: "file:src/a.ts", version: "v2" }],
       claimIds: ["c1"],
     },
   ];
+
+  const verifiesEdgeId = (state: ReturnType<typeof fold>): string => {
+    for (const candidate of state.edges.values()) {
+      if (candidate.kind === "verifies") return candidate.id;
+    }
+    throw new Error("no verifies edge");
+  };
 
   it("invalidates a verification when a witnessed file changes", () => {
     const state = fold([
       ...events,
       { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
     ]);
-    expect(state.edgeStatuses.get("e1")).toBe("stale");
+    expect(state.edgeStatuses.get(verifiesEdgeId(state))).toBe("stale");
     const { verified, invalidated } = project(state).frontier;
     expect(verified).toEqual([]);
     expect(invalidated).toEqual(["c1: off-by-one in loop"]);
@@ -338,7 +326,7 @@ describe("check invalidation by version", () => {
       ...events,
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
     ]);
-    expect(state.edgeStatuses.get("e1")).toBe("open");
+    expect(state.edgeStatuses.get(verifiesEdgeId(state))).toBe("open");
     expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
     expect(project(state).frontier.invalidated).toEqual([]);
   });
@@ -348,37 +336,76 @@ describe("check invalidation by version", () => {
       ...events,
       { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
       {
-        type: "add_node",
-        node: {
-          id: "o2",
-          space: "work",
-          kind: "observation",
-          label: "run npm test",
-          payload: { witness: [{ ref: "file:src/a.ts", version: "v3" }] },
-          seq: 3,
-        },
-      },
-      {
-        type: "add_edge",
-        edge: edge(
-          "e2",
-          "o2",
-          "c1",
-          "verifies",
-          { kind: "check", command: "npm test", verdict: "pass" },
-          "open",
-        ),
-      },
-      {
         type: "record_check",
         command: "npm test",
         verdict: "pass",
         output: "ok",
+        witness: [{ ref: "file:src/a.ts", version: "v3" }],
         claimIds: ["c1"],
       },
     ]);
     expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
     expect(project(state).frontier.invalidated).toEqual([]);
+  });
+});
+
+describe("check node (Tier 1.3)", () => {
+  const events: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
+    { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) },
+    {
+      type: "add_edge",
+      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+    },
+    {
+      type: "record_check",
+      id: "chk1",
+      command: "npm test",
+      verdict: "pass",
+      output: "ok",
+      witness: [{ ref: "file:src/a.ts", version: "v1" }],
+      claimIds: ["c1"],
+    },
+  ];
+
+  it("materializes an addressable check node", () => {
+    const state = fold(events);
+    expect(state.nodes.get("chk1")).toMatchObject({
+      id: "chk1",
+      space: "work",
+      kind: "check",
+      label: "npm test",
+    });
+    expect(state.nodes.get("chk1")?.payload).toMatchObject({
+      command: "npm test",
+      verdict: "pass",
+      actor: "arbiter",
+      witness: [{ ref: "file:src/a.ts", version: "v1" }],
+    });
+  });
+
+  it("links the check to the claim with a verifies edge", () => {
+    const state = fold(events);
+    const verifies = [...state.edges.values()].find((candidate) => candidate.kind === "verifies");
+    expect(verifies).toMatchObject({ from: "chk1", to: "c1" });
+    expect(verifies?.provenance).toMatchObject({
+      kind: "check",
+      command: "npm test",
+      verdict: "pass",
+    });
+  });
+
+  it("counts the check kind in the index", () => {
+    expect(project(fold(events)).index.counts.check).toBe(1);
+  });
+
+  it("reads the single check node for a claim", () => {
+    const state = fold(events);
+    const check = state.nodes.get("chk1");
+    const verifies = [...state.edges.values()].filter(
+      (candidate) => candidate.kind === "verifies" && candidate.to === "c1",
+    );
+    expect(verifies.map((candidate) => candidate.from)).toEqual([check?.id]);
   });
 });
 
@@ -551,36 +578,15 @@ describe("derived statuses (Tier 1.1)", () => {
       },
       { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
       {
-        type: "add_node",
-        node: {
-          id: "o1",
-          space: "work",
-          kind: "observation",
-          label: "run node --test",
-          payload: { witness: [{ ref: "file:src/cache.mjs", version: "v2" }] },
-          seq: 3,
-        },
-      },
-      {
         type: "add_edge",
         edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge(
-          "e2",
-          "o1",
-          "c1",
-          "verifies",
-          { kind: "check", command: "node --test", verdict: "pass" },
-          "open",
-        ),
       },
       {
         type: "record_check",
         command: "node --test",
         verdict: "pass",
         output: "ok",
+        witness: [{ ref: "file:src/cache.mjs", version: "v2" }],
         claimIds: ["c1"],
       },
     ];

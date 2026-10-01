@@ -78,7 +78,7 @@ fixes:
 | `read(path)` | `add_node` file (first time) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | an artifact fact tied to a file version |
 | `grep(pattern)` | `add_node` observation | a one-shot observation (contents are ephemeral) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
-| `run(command, claims?)` | `add_node` observation (carrying the witness, `ref → version` observed at run time) + `record_check` + `add_edge` `verifies` per claim; on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
+| `run(command, claims?)` | `record_check` (command, verdict, witness `ref → version`, `actor: arbiter`); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | `fold` materializes a `check` node and a `verifies` `check → claim` edge; claims `verified`/`refuted` |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `classify` (logos gate) | `record_rejection` on a refusal | a `RejectionRecord` in `state.rejections` (no node) |
 | `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | subgoal `open`, grows from the parent |
@@ -96,11 +96,11 @@ Four consequences worth stating plainly:
   limit, the full output is written to `.skein/logs/` and the IR keeps only an
   `outputRef` plus a head+tail excerpt, retrievable through a windowed `read`.
 - **Only an arbiter verifies.** `verified` is reachable only through a
-  `record_check` with `verdict = "pass"` (`src/ir/graph.ts:109`). The check's
-  `actor` names the authority: the objective toolchain (`arbiter`) or the user
-  (`user`, through `src/ir/approval.ts`); the LLM cannot emit a check at all. The
-  source observation carries the file versions the check saw, so a later `mutate`
-  can invalidate it — but it can never fabricate a verdict.
+  `record_check` with `verdict = "pass"`. The check's `actor` names the authority:
+  the objective toolchain (`arbiter`) or the user (`user`, through
+  `src/ir/approval.ts`); the LLM cannot emit a check at all. `fold` turns each
+  check into a `check` node carrying the file versions (the witness), so a later
+  `mutate` can invalidate it — but it can never fabricate a verdict.
 - **A refusal is recorded, not just shown.** When the gate refuses a proposal, it
   emits `record_rejection` with the action signature (`tool`, `target`, `reason`,
   optional `constraintId`) into `state.rejections`; no node is created and the
@@ -135,7 +135,9 @@ Statuses are **derived**, not set by hand:
 - `add_node` assigns a default by kind (`src/ir/graph.ts`): `open` for
   goals/subgoals/claims/observations, `active` for decisions, `applied` for actions,
   `must` for constraints, `believed` for artifacts.
-- `record_check` sets every named claim to `verified` (pass) or `refuted` (fail).
+- `record_check` materializes a `check` node (payload: command, verdict, witness,
+  `actor`) and a `verifies` `check → claim` edge, then sets every named claim to
+  `verified` (pass) or `refuted` (fail).
 - `mutate` marks `stale` both read-provenance edges with the same `ref` and a
   different `version`, and `verifies` edges whose source observation's witness
   contains the changed `ref` with another `version` (`src/ir/graph.ts`). The prior
@@ -173,6 +175,10 @@ events always yield the same `Context`. It has fixed sections:
   `tail` nodes as `{ id, kind, label }`; the full listing is retrievable through
   `query`;
 - `recent` — the last `tail` turns verbatim, for flow.
+
+Checks are `check` nodes (verdict, command, witness, `actor`); `verifies` edges
+point at them, and they are retrieved through `query { verdictOf }`; there is no
+separate `frontier` section for them.
 
 One arbitrary parameter, `tail`, bounds the window `index.recent`, the `recent`
 stream, the `frontier.subgoals` and `frontier.achievedSubgoals` lists, and the
@@ -278,19 +284,15 @@ unchanged; a derived status moved.
 Turn 4 — `run node --test` lets the arbiter decide:
 
 ```json
-{ "type": "add_node", "node": { "id": "obs:8", "space": "work", "kind": "observation",
-  "label": "run node --test",
-  "payload": { "code": 0, "verdict": "pass",
-    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] } } }
 { "type": "record_check", "command": "node --test", "verdict": "pass",
-  "output": "…", "actor": "arbiter", "claimIds": ["w:claim:5"] }
-{ "type": "add_edge", "edge": { "id": "e:9", "from": "obs:8", "to": "w:claim:5",
-  "kind": "verifies",
-  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass" },
-  "status": "open" } }
+  "output": "…", "actor": "arbiter",
+  "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ],
+  "claimIds": ["w:claim:5"] }
 ```
 
-`record_check` sets `w:claim:5` to `verified`.
+`fold` materializes a `check` node (payload: command, verdict, witness, `actor`)
+and a `verifies` `check → w:claim:5` edge; `record_check` sets `w:claim:5` to
+`verified`.
 
 Turn 5 — `finish` records one action and stops.
 
@@ -307,7 +309,7 @@ The projection after turn 4 is roughly:
                 "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
-    "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 2, "claim": 1, "action": 1 },
+    "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 1, "check": 1, "claim": 1, "action": 1 },
     "recent": [ /* the newest tail nodes as { id, kind, label } */ ]
   },
   "recent": [ /* the last turns */ ]
@@ -373,6 +375,8 @@ Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
 `tests/gate.test.ts`):
 
 - a claim is `verified` only with `check` provenance;
+- a check is a `check` node (command, verdict, witness, `actor`) that a `verifies`
+  edge points at from the claim;
 - a `stale` fact is never presented as active content;
 - a refused proposal is recorded with its reason (`record_rejection`), never
   stored as a belief;

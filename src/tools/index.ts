@@ -1,6 +1,6 @@
 import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
-import type { CheckRecord, State } from "../ir/graph";
+import type { State } from "../ir/graph";
 import { invalidatedClaimIds, type Turn } from "../ir/project";
 import type { Edge, Node, Status, WitnessEntry } from "../ir/types";
 import type { Action } from "../llm/schemas";
@@ -47,6 +47,7 @@ function runQuery(state: State, action: Extract<Action, { tool: "query" }>): str
     kind: node.kind,
     label: node.label,
     status: statusOf(node.id),
+    ...(node.payload !== undefined ? { payload: node.payload } : {}),
     ...(invalidated.has(node.id) ? { invalidated: true } : {}),
   });
   const edgeRow = (edge: Edge) => ({
@@ -59,16 +60,14 @@ function runQuery(state: State, action: Extract<Action, { tool: "query" }>): str
 
   const nodes: ReturnType<typeof nodeRow>[] = [];
   const edges: ReturnType<typeof edgeRow>[] = [];
-  const checks: CheckRecord[] = [];
 
   if (action.verdictOf !== undefined) {
     const claimId = action.verdictOf;
-    checks.push(...state.checks.filter((check) => check.claimIds.includes(claimId)));
     for (const edge of state.edges.values()) {
       if (edge.kind !== "verifies" || edge.to !== claimId) continue;
       edges.push(edgeRow(edge));
-      const observation = state.nodes.get(edge.from);
-      if (observation) nodes.push(nodeRow(observation));
+      const check = state.nodes.get(edge.from);
+      if (check) nodes.push(nodeRow(check));
     }
   } else if (action.edgesOf !== undefined) {
     const target = action.edgesOf;
@@ -95,14 +94,13 @@ function runQuery(state: State, action: Extract<Action, { tool: "query" }>): str
     return "(no selector: pass id, kind, status, edgesOf, or verdictOf)";
   }
 
-  if (nodes.length === 0 && edges.length === 0 && checks.length === 0) {
+  if (nodes.length === 0 && edges.length === 0) {
     return "(nothing matches)";
   }
 
   const payload: Record<string, unknown> = {};
   if (nodes.length > 0) payload.nodes = nodes.slice(0, QUERY_LIMIT);
   if (edges.length > 0) payload.edges = edges.slice(0, QUERY_LIMIT);
-  if (checks.length > 0) payload.checks = checks.slice(0, QUERY_LIMIT);
   return JSON.stringify(payload, null, 2);
 }
 
@@ -340,23 +338,6 @@ export function executeAction(
       if (outputRef !== undefined) workspace.write(outputRef, result.output);
       const output =
         outputRef !== undefined ? excerpt(result.output, outputRef) : result.output;
-      const observationId = `obs:${next()}`;
-      events.push({
-        type: "add_node",
-        node: {
-          id: observationId,
-          space: "work",
-          kind: "observation",
-          label: `run ${action.command}`,
-          payload: {
-            code: result.code,
-            verdict,
-            witness,
-            ...(outputRef !== undefined ? { outputRef } : {}),
-          },
-          seq: next(),
-        },
-      });
       recordMutations(mutations, action.command);
       events.push({
         type: "record_check",
@@ -365,26 +346,9 @@ export function executeAction(
         output,
         ...(outputRef !== undefined ? { outputRef } : {}),
         actor: "arbiter",
+        witness,
         claimIds: claims,
       });
-      for (const claimId of claims) {
-        events.push({
-          type: "add_edge",
-          edge: {
-            id: `e:${next()}`,
-            from: observationId,
-            to: claimId,
-            kind: "verifies",
-            provenance: {
-              kind: "check",
-              command: action.command,
-              verdict,
-              ...(outputRef !== undefined ? { outputRef } : {}),
-            },
-            status: "open",
-          },
-        });
-      }
       const text = `$ ${action.command}\nexit ${result.code}\n${output}`;
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }

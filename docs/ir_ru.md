@@ -79,7 +79,7 @@ IR — это не один объект, а конвейер из четырё�
 | `read(path)` | `add_node` file (в первый раз) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | артефакт-факт, привязанный к версии файла |
 | `grep(pattern)` | `add_node` observation | одноразовое наблюдение (содержимое эфемерно) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; прежние факты чтения помечаются `stale` («устаревшими») |
-| `run(command, claims?)` | `add_node` observation (со свидетельством `ref → version`, снятым при прогоне) + `record_check` + `add_edge` `verifies` на каждый claim; при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | claims `verified`/`refuted` по арбитру |
+| `run(command, claims?)` | `record_check` (команда, вердикт, свидетельство `ref → version`, `actor: arbiter`); при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | `fold` материализует узел `check` и ребро `verifies` `check → claim`; claims `verified`/`refuted` |
 | `run` (гард constraint) | `add_node` observation `constraint violation` | запрещённый файл откатывается; **без** `record_check` |
 | `classify` (врата логоса) | `record_rejection` при отказе | `RejectionRecord` в `state.rejections` (без узла) |
 | `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | подцель `open`, растёт из родителя |
@@ -97,11 +97,11 @@ IR — это не один объект, а конвейер из четырё�
   он целиком пишется в `.skein/logs/`, а в IR остаётся `outputRef` и выдержка
   head+tail; достаётся оконным `read`.
 - **Только арбитр верифицирует.** `verified` достижим только через
-  `record_check` с `verdict = "pass"` (`src/ir/graph.ts:109`). Поле `actor`
-  называет авторитет: объективный тулчейн (`arbiter`) или пользователь (`user`,
-  через `src/ir/approval.ts`); LLM не может выдать проверку вовсе. Наблюдение-
-  источник несёт версии файлов, которые проверка наблюдала, поэтому поздний
-  `mutate` может её обесценить — но выдумать вердикт не может.
+  `record_check` с `verdict = "pass"`. Поле `actor` называет авторитет:
+  объективный тулчейн (`arbiter`) или пользователь (`user`, через
+  `src/ir/approval.ts`); LLM не может выдать проверку вовсе. `fold` превращает
+  каждую проверку в узел `check`, который несёт версии файлов (свидетельство),
+  поэтому поздний `mutate` может её обесценить — но выдумать вердикт не может.
 - **Отказ фиксируется, а не просто показывается.** Когда врата отвергают
   предложение, движок пишет `record_rejection` с сигнатурой действия (`tool`,
   `target`, `reason`, необязательный `constraintId`) в `state.rejections`; узел
@@ -136,8 +136,9 @@ IR — это не один объект, а конвейер из четырё�
 - `add_node` назначает дефолт по kind (`src/ir/graph.ts`): `open` для
   goals/subgoals/claims/observations, `active` для decisions, `applied` для
   actions, `must` для constraints, `believed` для артефактов.
-- `record_check` переводит каждый названный claim в `verified` (pass) или
-  `refuted` (fail).
+- `record_check` материализует узел `check` (payload: команда, вердикт,
+  свидетельство, `actor`) и ребро `verifies` `check → claim`, затем переводит
+  каждый названный claim в `verified` (pass) или `refuted` (fail).
 - `mutate` помечает `stale` («устаревшими») и рёбра чтения с тем же `ref` и
   другой `version`, и рёбра `verifies`, в чьём наблюдении-источнике свидетельство
   содержит изменившийся `ref` с другой `version` (`src/ir/graph.ts`). Прежние
@@ -176,6 +177,10 @@ IR — это не один объект, а конвейер из четырё�
 - `index` — обзор пространства: `counts` по видам плюс окно новейших `tail` узлов
   как `{ id, kind, label }`; полный список достаётся через `query`;
 - `recent` — последние `tail` ходов дословно, для связности.
+
+Проверки — узлы `check` (вердикт, команда, свидетельство, `actor`); на них
+ссылаются рёбра `verifies`, а достаются они через `query { verdictOf }`; отдельной
+секции во `frontier` нет.
 
 Один произвольный параметр `tail` ограничивает окно `index.recent`, поток `recent`,
 списки `frontier.subgoals` и `frontier.achievedSubgoals`, а также однострочные
@@ -281,19 +286,15 @@ claim привязан к цели ребром `supports`; без него вр
 Ход 4 — `run node --test` отдаёт решение арбитру:
 
 ```json
-{ "type": "add_node", "node": { "id": "obs:8", "space": "work", "kind": "observation",
-  "label": "run node --test",
-  "payload": { "code": 0, "verdict": "pass",
-    "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ] } } }
 { "type": "record_check", "command": "node --test", "verdict": "pass",
-  "output": "…", "actor": "arbiter", "claimIds": ["w:claim:5"] }
-{ "type": "add_edge", "edge": { "id": "e:9", "from": "obs:8", "to": "w:claim:5",
-  "kind": "verifies",
-  "provenance": { "kind": "check", "command": "node --test", "verdict": "pass" },
-  "status": "open" } }
+  "output": "…", "actor": "arbiter",
+  "witness": [ { "ref": "file:src/sum.mjs", "version": "<new sha1>" } ],
+  "claimIds": ["w:claim:5"] }
 ```
 
-`record_check` переводит `w:claim:5` в `verified`.
+`fold` материализует узел `check` (payload: команда, вердикт, свидетельство,
+`actor`) и ребро `verifies` `check → w:claim:5`; `record_check` переводит
+`w:claim:5` в `verified`.
 
 Ход 5 — `finish` фиксирует одно действие и останавливает цикл.
 
@@ -310,7 +311,7 @@ claim привязан к цели ребром `supports`; без него вр
                 "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
-    "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 2, "claim": 1, "action": 1 },
+    "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 1, "check": 1, "claim": 1, "action": 1 },
     "recent": [ /* новейшие tail узлов как { id, kind, label } */ ]
   },
   "recent": [ /* последние ходы */ ]
@@ -376,6 +377,8 @@ LLM предлагает `edit test/sum.test.mjs`; врата отказываю
 `tests/gate.test.ts`):
 
 - claim становится `verified` только с `check`-provenance;
+- проверка — узел `check` (команда, вердикт, свидетельство, `actor`), на который
+  ссылается ребро `verifies` к claim;
 - устаревший факт (`stale`) никогда не подаётся как активное содержимое;
 - отклонённое предложение фиксируется с причиной (`record_rejection`) и никогда
   не хранится как вера;

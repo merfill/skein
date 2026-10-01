@@ -4,6 +4,8 @@ import { EDGE_KINDS, NODE_KINDS, SPACES, STATUSES } from "./types";
 
 const verdictSchema = z.enum(["pass", "fail"]);
 
+const witnessEntrySchema = z.object({ ref: z.string(), version: z.string() });
+
 const nodeSchema = z.object({
   id: z.string(),
   space: z.enum(SPACES),
@@ -61,11 +63,13 @@ export const eventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("record_check"),
+    id: z.string().optional(),
     command: z.string(),
     verdict: verdictSchema,
     output: z.string(),
     outputRef: z.string().optional(),
     actor: z.enum(["arbiter", "user"]).optional(),
+    witness: z.array(witnessEntrySchema).optional(),
     claimIds: z.array(z.string()),
   }),
 ]);

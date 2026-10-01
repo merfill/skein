@@ -445,11 +445,12 @@ their turn comes.
 
 ## 11. Open forks
 
-- `check` as a node kind vs an observation payload.
+- `check` as a node kind vs an observation payload — resolved in T1.3: a check is a
+  `check` node, `record_check` materializes it, and `verifies` runs `check → claim`.
 
 ## 12. Status
 
-T1.1 (a produced work graph — subgoals, decisions, connecting edges) and T1.2
-(path-based closure in the projection) are implemented. T1.3 (explicit check node)
-has not started. This plan is a working document; each sub-stage is agreed before
-its code.
+T1.1 (a produced work graph — subgoals, decisions, connecting edges), T1.2
+(path-based closure in the projection), and T1.3 (an explicit check node) are
+implemented. Tier 1 is complete. This plan is a working document; each sub-stage is
+agreed before its code.

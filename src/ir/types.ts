@@ -9,6 +9,7 @@ export const WORK_KINDS = [
   "decision",
   "action",
   "observation",
+  "check",
   "constraint",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
