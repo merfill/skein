@@ -40,7 +40,7 @@ Throughout, the doxa/logos split holds: the LLM (doxa) only proposes; a proposed
 belief enters the IR only as a node with `status = "open"` (`track`), never
 immediately `verified`. The engine (logos) classifies and executes, and only an
 arbiter can promote a claim. (Nodes carry no provenance; `provenance.kind = "llm"`
-is declared but not produced.)
+is carried by edges born from admitted doxa proposals.)
 
 ## 2. Operations the IR fixes
 
@@ -81,7 +81,9 @@ fixes:
 | `run(command, claims?)` | `add_node` observation (carrying the witness, `ref → version` observed at run time) + `record_check` + `add_edge` `verifies` per claim; on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | claims `verified`/`refuted` by the arbiter |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `classify` (logos gate) | `record_rejection` on a refusal | a `RejectionRecord` in `state.rejections` (no node) |
-| `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
+| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | subgoal `open`, grows from the parent |
+| `decide(parent, label, alternatives?, rationale)` | `add_node` decision (chosen + one per alternative) + `add_edge` `justifies`/`chosen_over` (`provenance.llm`) | chosen `active`, rejected `superseded` |
+| `track(kind, label, parent?, …)` | `add_node` claim/constraint; for a claim, `add_edge` `supports` (`provenance.llm`) | claim `open` (attached), constraint `must` (global) |
 | `query(selectors)` | none | a one-shot answer (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), nothing recorded |
 | `finish(summary)` | `add_node` action | loop stops (`stopReason = "finish"`) |
 
@@ -104,22 +106,24 @@ Four consequences worth stating plainly:
   optional `constraintId`) into `state.rejections`; no node is created and the
   full proposal is never stored.
 
-### What Tier 0 declares but does not yet produce
+### What is declared but not yet produced
 
 The model is broader than the current behavior. Declared in `types.ts` but never
-written in Tier 0:
+written:
 
-- node kinds `subgoal`, `symbol`, `test`;
-- edge kinds other than `locates` and `verifies`;
+- node kinds `symbol`, `test` (`subgoal` is produced since T1.1);
+- edge kinds other than `locates`, `verifies`, `decomposes`, `justifies`,
+  `chosen_over`, `supports`;
 - the `set_status` event (a status change is currently always a side effect of
-  `record_check` or `mutate`, never an explicit event);
-- statuses `superseded`, `achieved`, `abandoned`, `confirmed`, `reverted`;
-- provenance kinds `llm` and `grep`; `user` is produced only as a check `actor`,
-  never as edge provenance.
+  `record_check`, `mutate`, or `fold` derivation, never an explicit event);
+- statuses `abandoned`, `confirmed`, `reverted` (`superseded` and `achieved` are
+  derived since T1.1);
+- provenance kind `grep`; `user` is produced only as a check `actor`, never as
+  edge provenance.
 
 These are reserved, not dead: the projection already understands
-`refuted`/`superseded` (`src/ir/project.ts:114`). The document keeps the
-distinction so the spec does not overclaim the implementation.
+`refuted`/`superseded`. The document keeps the distinction so the spec does not
+overclaim the implementation.
 
 Separately: `frontier.observations` is declared in `Context` but collected over
 `verifies` edges to open claims, which never have such edges, so it is always empty.
@@ -128,15 +132,17 @@ Separately: `frontier.observations` is declared in `Context` but collected over
 
 Statuses are **derived**, not set by hand:
 
-- `add_node` assigns a default by kind (`src/ir/graph.ts:33`): `open` for
-  goals/claims/observations, `active` for decisions, `applied` for actions,
+- `add_node` assigns a default by kind (`src/ir/graph.ts`): `open` for
+  goals/subgoals/claims/observations, `active` for decisions, `applied` for actions,
   `must` for constraints, `believed` for artifacts.
-- `record_check` sets every named claim to `verified` (pass) or `refuted` (fail)
-  (`src/ir/graph.ts:119`).
+- `record_check` sets every named claim to `verified` (pass) or `refuted` (fail).
 - `mutate` marks `stale` both read-provenance edges with the same `ref` and a
   different `version`, and `verifies` edges whose source observation's witness
   contains the changed `ref` with another `version` (`src/ir/graph.ts`). The prior
   events are untouched; only their **derived status** changes.
+- `fold` derives the graph statuses: a decision a `chosen_over` edge points at is
+  `superseded` (otherwise `active`); a subgoal is `achieved` if it has at least one
+  `verified` attached claim and no `open`/`invalidated` ones, else `open`.
 
 So the journal stays monotonic while code knowledge is non-monotonic. There is no
 manual retraction: a fact about an old file version simply stops being active.
@@ -154,11 +160,13 @@ grows, and only the derived view loses force. A source fact is never rewritten.
 events always yield the same `Context`. It has fixed sections:
 
 - `header` — the goal, all constraints (the stable prefix), and the turn budget;
-- `frontier` — `claims` (`open`), `decisions` (`active`), the `lastAction`, verified
-  / invalidated claims as one line each, rejected nodes (`refuted` / `superseded`)
-  one line each, and `refusals` — actions the gate already refused, collapsed by
-  signature with a repeat count. A verified claim whose checks have all gone
-  `stale` appears under `invalidated`, never under `verified`;
+- `frontier` — `subgoals` (`open`), `claims` (`open`, with their parent `supports`),
+  `decisions` (`active`, with their rejected alternatives `over`), the `lastAction`,
+  verified / invalidated claims as one line each, achieved subgoals as one line
+  each, rejected nodes (`refuted` / `superseded`) one line each, and `refusals` —
+  actions the gate already refused, collapsed by signature with a repeat count. A
+  verified claim whose checks have all gone `stale` appears under `invalidated`,
+  never under `verified`;
 - `artifacts` — index only (id + label + `stale` flag);
 - `index` — an overview of the space: `counts` by kind plus a window of the newest
   `tail` nodes as `{ id, kind, label }`; the full listing is retrievable through
@@ -166,7 +174,8 @@ events always yield the same `Context`. It has fixed sections:
 - `recent` — the last `tail` turns verbatim, for flow.
 
 One arbitrary parameter, `tail`, bounds the window `index.recent`, the `recent`
-stream, and the one-line `frontier.verified` and `frontier.refusals`.
+stream, the `frontier.subgoals` and `frontier.achievedSubgoals` lists, and the
+one-line `frontier.verified` and `frontier.refusals`.
 
 Addressability is the guarantee: every node is either shown or retrievable through
 `query`, so bounding `index` never makes a node unnameable.
@@ -174,8 +183,8 @@ Addressability is the guarantee: every node is either shown or retrievable throu
 Relevance is currently **by status and provenance**: what acts is the open goal,
 its constraints, open claims, active decisions, and the observations/actions
 attached to them. **Path-based** relevance (active iff reachable from the goal
-through decision/action edges) is a reserved direction, not implemented — it needs
-first-class subgoals/decisions with connecting edges (Tier 1).
+through `decomposes`/`justifies`/`chosen_over`/`supports` edges) is not implemented
+yet (T1.2): the work graph is already produced (T1.1).
 
 Note what is deliberately absent: file contents, stale facts shown as active,
 and previous projections. A `stale` artifact is rendered as stale, never as
@@ -188,7 +197,9 @@ Control is not a separate layer — it is consumed directly from `State`:
 - **What the LLM sees.** `propose` sends exactly the current `Context`
   (`src/loop/propose.ts:33`). Change the projection, change the behavior.
 - **The logos gate.** `classify` reads constraints from `State` and rejects an
-  `edit` that targets a forbidden path (`src/loop/classify.ts`).
+  `edit` that targets a forbidden path, and requires an explicit valid `parent`
+  (goal or subgoal) on `decompose`/`decide`/`track`-claim — otherwise it records a
+  `missing_parent`/`invalid_parent` refusal (`src/loop/classify.ts`).
 - **The effect guard.** Before a `run`, the engine snapshots the files matching
   `payload.forbid`; if the command changes one, it is reverted and recorded as a
   `constraint violation`, and no check is recorded — so nothing is verified
@@ -245,7 +256,12 @@ Turn 2 — `track` a hypothesis (doxa enters at `open`):
 ```json
 { "type": "add_node", "node": { "id": "w:claim:5", "space": "work", "kind": "claim",
   "label": "loop stops one short", "payload": { "rationale": "" } } }
+{ "type": "add_edge", "edge": { "id": "e:6", "from": "w:claim:5", "to": "g1",
+  "kind": "supports", "provenance": { "kind": "llm" }, "status": "open" } }
 ```
+
+The claim is attached to the goal by a `supports` edge; without it the gate would
+refuse the `track`.
 
 Turn 3 — `edit src/sum.mjs` mutates the world:
 
@@ -285,8 +301,9 @@ The projection after turn 4 is roughly:
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ],
               "budget": { "turn": 4, "maxTurns": 24, "remaining": 20 } },
-  "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
-                "observations": [], "verified": ["w:claim:5: loop stops one short"],
+  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "decisions": [],
+                "lastAction": { "id": "act:6" }, "observations": [],
+                "verified": ["w:claim:5: loop stops one short"],
                 "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
@@ -350,7 +367,7 @@ No node is created, but the projection now carries it:
 The next projection rebuilds this from state, so the refusal survives eviction of
 the `recent` tail and a replay; a repeat collapses to one line with `×2`.
 
-## 7. Invariants and Tier 0 boundaries
+## 7. Invariants and boundaries
 
 Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
 `tests/gate.test.ts`):
@@ -359,10 +376,12 @@ Guaranteed by the IR and checked in tests (`tests/invariants.ts`,
 - a `stale` fact is never presented as active content;
 - a refused proposal is recorded with its reason (`record_rejection`), never
   stored as a belief;
+- every produced work node (`subgoal`/`decision`/`claim`) is attached by a path
+  edge (`decomposes`/`justifies`/`supports`/`chosen_over`);
 - addressability: every node is shown or retrievable through `query`;
 - `project` is deterministic: same events → same `Context`;
 - doxa only proposes (`status = open`); logos decides.
 
-Deliberately outside Tier 0: file contents in the IR, an explicit `set_status`
-event, `subgoal`/`symbol`/`test` nodes, the unused edge kinds, goal closure inside
-the engine, and a shell sandbox (the `run` guard is post-hoc, with revert).
+Deliberately outside the current stage: file contents in the IR, an explicit
+`set_status` event, `symbol`/`test` nodes, the unused edge kinds, goal closure
+inside the engine, and a shell sandbox (the `run` guard is post-hoc, with revert).

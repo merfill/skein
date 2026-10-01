@@ -24,6 +24,12 @@ function describeTarget(action: Action): string {
     case "run":
       target = action.command;
       break;
+    case "decompose":
+      target = `subgoal:${action.label}`;
+      break;
+    case "decide":
+      target = `decision:${action.label}`;
+      break;
     case "track":
       target = action.label.trim() === "" ? action.kind : `${action.kind}:${action.label}`;
       break;

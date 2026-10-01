@@ -52,7 +52,8 @@ The conceptual frame comes from the doxa/logos distinction (Ankyra,
 The IR stores the admitted, distilled state. Raw doxa — thoughts and rejected
 wording — is not stored in it. A node carries no provenance of its own; its source
 is the typed event that introduced it (for a claim, the proposal the engine
-admitted). The provenance kind `llm` is declared but not produced.
+admitted). The provenance kind `llm` is carried by edges born from admitted doxa
+proposals (`decompose` / `decide` / `track`).
 
 ## IR primitives
 
@@ -70,12 +71,12 @@ graph with two namespaces:
 
 **Statuses.** `open` / `verified` / `refuted` / `superseded` for claims and
 observations; `active` / `applied` / `reverted` for decisions and actions;
-`achieved` / `abandoned` for goals; `must` for constraints; `believed` / `stale` /
+`achieved` / `abandoned` for subgoals; `must` for constraints; `believed` / `stale` /
 `confirmed` for artifacts.
 
 **Provenance** lives on edges — *how the relation is known*: `llm`, `user`,
 `read`, `grep`, `check` — and on checks, through `actor` (`arbiter` or `user`).
-Nodes do not carry it. Some kinds (`llm`, `grep`) are declared but reserved.
+Nodes do not carry it. The kind `grep` is declared but reserved.
 
 This is the evolved form of the original sketch: `hypothesis` became `claim`,
 `source` became the artifact index, and cancellation is a status change, not a
@@ -102,9 +103,11 @@ Projection is the heart of Skein: not "what was said" but "what acts now". The
 rules are deterministic, not LLM-driven:
 
 - `header` — the goal, the constraints, and the turn budget;
-- `frontier` — open claims in full; settled claims one line each (`verified` /
-  `invalidated`); rejected nodes (`refuted` / `superseded`) one line each; refused
-  proposals one line each, collapsed by signature; decisions; the last action;
+- `frontier` — subgoals and open claims in full (claims carry their parent,
+  `supports`); settled claims one line each (`verified` / `invalidated`); achieved
+  subgoals one line each; rejected nodes (`refuted` / `superseded`) one line each;
+  active decisions with their rejected alternatives (`over`); refused proposals one
+  line each, collapsed by signature; the last action;
 - `artifacts` — an index of files (id plus one line), never contents;
 - `index` — an overview of the space: counts by kind (`counts`) plus a window of
   the newest nodes (`recent`) as `{ id, kind, label }`;
@@ -119,8 +122,9 @@ clipped; the full listing is always retrievable through `query`.
 Relevance is currently **by status and provenance**: what acts is the open goal,
 its constraints, open claims, active decisions, and the observations/actions
 attached to them. **Path-based** relevance — a node active iff it lies on a path
-from the open goal through decision/action edges — is a reserved direction, not
-implemented; it needs first-class subgoals/decisions with connecting edges (Tier 1).
+from the open goal through decision/action edges — is not implemented yet (T1.2):
+the work graph (subgoals, decisions, connecting edges) is already produced (T1.1),
+and the closure walk remains.
 
 Addressability is always guaranteed: every node is either shown or retrievable
 through `query`, so the agent can name what it does not see. `index` is a summary,
@@ -222,8 +226,9 @@ point in `docs/design_review.md`. The outcomes:
 
 **Deferred:**
 
-- **C2 path-based relevance** (Tier 1) — needs first-class subgoals/decisions with
-  connecting edges before the projection can compute reachability from the goal;
+- **C2 path-based relevance** (Tier 1) — the work graph of subgoals/decisions with
+  connecting edges is produced (T1.1); the reachability closure in the projection is
+  T1.2;
 - **R3b precision** (beyond Tier 1) — scope the witness via each ecosystem's
   tooling to avoid invalidating checks on unrelated changes; the current snapshot
   is sound but coarse (`docs/plans/tier1_plan.md` §7);
@@ -235,8 +240,8 @@ point in `docs/design_review.md`. The outcomes:
 - **R4 engine-set `goal_achieved`** — closing the goal is external by design;
 - **C3 agent `set_status`** — doxa only proposes; logos decides;
 - **P2 `read_artifact`** — redundant with `read`/`query`;
-- **P3 provenance split** (`llm_proposal` / `llm_hallucination`) — speculative,
-  and `llm` provenance is not produced;
+- **P3 provenance split** (`llm_proposal` / `llm_hallucination`) — speculative; a
+  separate kind is unnecessary, `llm` already means "doxa proposed it";
 - **an LLM critic as arbiter** — it would put doxa in the role of logos;
 - **narrowing the witness without read tracing** — unsound in general.
 
@@ -254,6 +259,8 @@ point in `docs/design_review.md`. The outcomes:
 
 ## Status
 
-Tier 0 (bugfix by a failing test) is implemented, and the design-review points
-listed above are applied. Plan and roadmap: `docs/plans/implementation_plan.md`;
-stage detail: `docs/plans/tier0_plan.md`; triage: `docs/design_review.md`.
+Tier 0 (bugfix by a failing test) is implemented, the design-review points listed
+above are applied, and Tier 1 has begun: T1.1 (a produced work graph — subgoals,
+decisions, connecting edges) is implemented. Plan and roadmap:
+`docs/plans/implementation_plan.md`; Tier 0 detail: `docs/plans/tier0_plan.md`;
+Tier 1 detail: `docs/plans/tier1_plan.md`; triage: `docs/design_review.md`.

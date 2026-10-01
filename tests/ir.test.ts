@@ -436,3 +436,145 @@ describe("project", () => {
     ]);
   });
 });
+
+describe("derived statuses (Tier 1.1)", () => {
+  it("marks a chosen-over decision superseded and hides it from the frontier", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 0) },
+      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 1) },
+      {
+        type: "add_edge",
+        edge: edge("e1", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
+      },
+    ]);
+    expect(state.statuses.get("d1")).toBe("active");
+    expect(state.statuses.get("d2")).toBe("superseded");
+    const frontier = project(state).frontier;
+    expect(frontier.decisions).toEqual([{ id: "d1", label: "cache in the data layer", over: ["d2"] }]);
+    expect(frontier.rejected).toContain("d2: cache via middleware");
+  });
+
+  it("derives achieved for a subgoal with a confirmed claim and no unfinished work", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
+      {
+        type: "add_edge",
+        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "record_check",
+        command: "node --test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(state.statuses.get("sg1")).toBe("achieved");
+    expect(project(state).frontier.achievedSubgoals).toEqual(["sg1: cache the read path"]);
+    expect(project(state).frontier.subgoals).toEqual([]);
+  });
+
+  it("keeps a subgoal open while any attached claim is open", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
+      { type: "add_node", node: workNode("c2", "claim", "misses are computed", 2) },
+      {
+        type: "add_edge",
+        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "add_edge",
+        edge: edge("e2", "c2", "sg1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "record_check",
+        command: "node --test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(state.statuses.get("sg1")).toBe("open");
+    expect(project(state).frontier.subgoals).toEqual([
+      { id: "sg1", label: "cache the read path" },
+    ]);
+  });
+
+  it("returns a subgoal to open when its only confirmed claim is invalidated", () => {
+    const events: Event[] = [
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 0) },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 1) },
+      {
+        type: "add_node",
+        node: {
+          id: "o1",
+          space: "work",
+          kind: "observation",
+          label: "run node --test",
+          payload: { witness: [{ ref: "file:src/cache.mjs", version: "v2" }] },
+          seq: 2,
+        },
+      },
+      {
+        type: "add_edge",
+        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+      },
+      {
+        type: "add_edge",
+        edge: edge(
+          "e2",
+          "o1",
+          "c1",
+          "verifies",
+          { kind: "check", command: "node --test", verdict: "pass" },
+          "open",
+        ),
+      },
+      {
+        type: "record_check",
+        command: "node --test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ];
+    expect(fold(events).statuses.get("sg1")).toBe("achieved");
+    const invalidated = fold([
+      ...events,
+      { type: "mutate", ref: "file:src/cache.mjs", version: "v3", actionId: "a1" },
+    ]);
+    expect(invalidated.statuses.get("sg1")).toBe("open");
+  });
+
+  it("exposes subgoals, claim parents, and rejected alternatives in the frontier", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
+      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
+      {
+        type: "add_edge",
+        edge: edge("e1", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
+      {
+        type: "add_edge",
+        edge: edge("e2", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+      },
+      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 3) },
+      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 4) },
+      {
+        type: "add_edge",
+        edge: edge("e3", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
+      },
+    ]);
+    const frontier = project(state).frontier;
+    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "cache the read path" }]);
+    expect(frontier.claims).toEqual([
+      { id: "c1", label: "hits are served from memory", supports: "sg1" },
+    ]);
+    expect(frontier.decisions).toEqual([
+      { id: "d1", label: "cache in the data layer", over: ["d2"] },
+    ]);
+  });
+});

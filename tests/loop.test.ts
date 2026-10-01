@@ -13,7 +13,7 @@ import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
 import { executeAction } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
-import { verifiedWithoutCheck } from "./invariants";
+import { unboundWorkNodes, verifiedWithoutCheck } from "./invariants";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures", "bugfix");
 
@@ -90,15 +90,286 @@ describe("classify", () => {
     expect(verdict.category).toBe("rejected");
   });
 
-  it("accepts a track proposal as a hypothesis", () => {
+  it("accepts a bound track proposal as a hypothesis", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
     const verdict = classify(
       {
         thought: "",
-        action: { tool: "track", kind: "claim", label: "off-by-one" },
+        action: { tool: "track", kind: "claim", label: "off-by-one", parent: "g1" },
       },
-      fold([]),
+      state,
     );
     expect(verdict).toEqual({ category: "hypothesis", accept: true });
+  });
+
+  it("refuses a claim without a parent", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      { thought: "", action: { tool: "track", kind: "claim", label: "off-by-one" } },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "missing_parent",
+    });
+  });
+
+  it("refuses a parent that is neither a goal nor a subgoal", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "c1", space: "work", kind: "claim", label: "existing", seq: 1 },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: { tool: "decompose", parent: "c1", label: "cache read path" },
+      },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "invalid_parent",
+    });
+  });
+
+  it("refuses a decision whose alternative repeats its label", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: {
+          tool: "decide",
+          parent: "g1",
+          label: "cache in the data layer",
+          alternatives: ["cache in the data layer"],
+          rationale: "simpler",
+        },
+      },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "alternative_equals_label",
+    });
+  });
+
+  it("accepts a bound decompose and decide", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "sg1", space: "work", kind: "subgoal", label: "read path", seq: 1 },
+      },
+    ]);
+    expect(
+      classify(
+        { thought: "", action: { tool: "decompose", parent: "g1", label: "cache read path" } },
+        state,
+      ),
+    ).toEqual({ category: "hypothesis", accept: true });
+    expect(
+      classify(
+        {
+          thought: "",
+          action: { tool: "decide", parent: "sg1", label: "data layer", rationale: "simpler" },
+        },
+        state,
+      ),
+    ).toEqual({ category: "hypothesis", accept: true });
+  });
+});
+
+describe("graph actions", () => {
+  const workspace = () => fsWorkspace(setup("off-by-one"));
+
+  it("decompose creates a subgoal and a decomposes edge with llm provenance", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
+      },
+    ]);
+    const outcome = executeAction(
+      { tool: "decompose", parent: "g1", label: "cache the read path" },
+      state,
+      workspace(),
+      0,
+    );
+    const next = fold(outcome.events, state);
+    const subgoal = [...next.nodes.values()].find((node) => node.kind === "subgoal");
+    const decomposes = [...next.edges.values()].find((e) => e.kind === "decomposes");
+    expect(subgoal?.label).toBe("cache the read path");
+    expect(decomposes).toMatchObject({
+      from: "g1",
+      to: subgoal?.id,
+      provenance: { kind: "llm" },
+    });
+  });
+
+  it("decide creates a decision, its alternatives, and path edges", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "sg1", space: "work", kind: "subgoal", label: "cache read path", seq: 1 },
+      },
+    ]);
+    const outcome = executeAction(
+      {
+        tool: "decide",
+        parent: "sg1",
+        label: "cache in the data layer",
+        alternatives: ["cache via middleware", "cache in the data layer"],
+        rationale: "simpler",
+      },
+      state,
+      workspace(),
+      0,
+    );
+    const next = fold(outcome.events, state);
+    const decisions = [...next.nodes.values()].filter((node) => node.kind === "decision");
+    const chosen = decisions.find((node) => node.label === "cache in the data layer");
+    const rejected = decisions.find((node) => node.label === "cache via middleware");
+    if (!chosen || !rejected) throw new Error("decisions not recorded");
+    expect(decisions).toHaveLength(2);
+    expect(next.statuses.get(chosen.id)).toBe("active");
+    expect(next.statuses.get(rejected.id)).toBe("superseded");
+    expect(chosen.payload).toEqual({
+      options: ["cache in the data layer", "cache via middleware"],
+      chosen: "cache in the data layer",
+      rationale: "simpler",
+    });
+    const justifies = [...next.edges.values()].find((e) => e.kind === "justifies");
+    const chosenOver = [...next.edges.values()].find((e) => e.kind === "chosen_over");
+    expect(justifies).toMatchObject({
+      from: chosen.id,
+      to: "sg1",
+      provenance: { kind: "llm" },
+    });
+    expect(chosenOver).toMatchObject({
+      from: chosen.id,
+      to: rejected.id,
+      provenance: { kind: "llm" },
+    });
+    expect(project(next).frontier.decisions).toEqual([
+      { id: chosen.id, label: "cache in the data layer", over: [rejected.id] },
+    ]);
+  });
+
+  it("reuses an existing decision node when a later decision rejects it", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
+      },
+    ]);
+    const first = executeAction(
+      { tool: "decide", parent: "g1", label: "cache in the data layer", rationale: "r" },
+      state,
+      workspace(),
+      0,
+    );
+    const afterFirst = fold(first.events, state);
+    const original = [...afterFirst.nodes.values()].find((node) => node.kind === "decision");
+    if (!original) throw new Error("no decision recorded");
+    const second = executeAction(
+      {
+        tool: "decide",
+        parent: "g1",
+        label: "cache via middleware",
+        alternatives: ["cache in the data layer"],
+        rationale: "r",
+      },
+      afterFirst,
+      workspace(),
+      1,
+    );
+    const afterSecond = fold(second.events, afterFirst);
+    expect(afterSecond.statuses.get(original.id)).toBe("superseded");
+    expect(
+      [...afterSecond.nodes.values()].filter(
+        (node) => node.kind === "decision" && afterSecond.statuses.get(node.id) === "active",
+      ),
+    ).toMatchObject([{ label: "cache via middleware" }]);
+    expect(
+      [...afterSecond.nodes.values()].filter((node) => node.kind === "decision"),
+    ).toHaveLength(2);
+  });
+
+  it("track attaches a claim to its parent with a supports edge", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
+      },
+    ]);
+    const outcome = executeAction(
+      {
+        tool: "track",
+        kind: "claim",
+        label: "hits are served from memory",
+        parent: "g1",
+        rationale: "r",
+      },
+      state,
+      workspace(),
+      0,
+    );
+    const next = fold(outcome.events, state);
+    const claim = [...next.nodes.values()].find((node) => node.kind === "claim");
+    if (!claim) throw new Error("no claim recorded");
+    const supports = [...next.edges.values()].find((e) => e.kind === "supports");
+    expect(supports).toMatchObject({ from: claim.id, to: "g1", provenance: { kind: "llm" } });
+    expect(project(next).frontier.claims).toEqual([
+      { id: claim.id, label: "hits are served from memory", supports: "g1" },
+    ]);
+  });
+
+  it("track keeps a constraint global", () => {
+    const outcome = executeAction(
+      {
+        tool: "track",
+        kind: "constraint",
+        label: "do not edit tests",
+        forbid: ["\\.test\\.mjs$"],
+      },
+      fold([]),
+      workspace(),
+      0,
+    );
+    const next = fold(outcome.events);
+    expect([...next.edges.values()].filter((e) => e.kind === "supports")).toHaveLength(0);
+    expect(next.statuses.get("w:constraint:1")).toBe("must");
   });
 });
 
@@ -197,7 +468,7 @@ describe("runAgent (scripted, offline)", () => {
       {
         propose: scripted([
           { tool: "read", path: "src/sum.mjs" },
-          { tool: "track", kind: "claim", label: "loop stops one short" },
+          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
           {
             tool: "edit",
             path: "src/sum.mjs",
@@ -235,6 +506,7 @@ describe("runAgent (scripted, offline)", () => {
     expect(state.statuses.get("g1")).toBe("open");
     expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(1);
     expect(verifiedWithoutCheck(result.events)).toEqual([]);
+    expect(unboundWorkNodes(result.events)).toEqual([]);
   });
 
   it("does not touch a file a constraint forbids", async () => {
@@ -390,7 +662,7 @@ describe("runAgent (scripted, offline)", () => {
       {
         propose: scripted([
           { tool: "read", path: "src/sum.mjs" },
-          { tool: "track", kind: "claim", label: "loop stops one short" },
+          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
           { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
           { tool: "run", command: "node --test" },
           {

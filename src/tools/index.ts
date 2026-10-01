@@ -389,19 +389,164 @@ export function executeAction(
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 
-    case "track": {
-      const id = `w:${action.kind}:${next()}`;
-      const payload =
-        action.kind === "constraint"
-          ? { forbid: action.forbid ?? [] }
-          : { rationale: action.rationale ?? "" };
+    case "decompose": {
+      const id = `w:subgoal:${next()}`;
       events.push({
         type: "add_node",
-        node: { id, space: "work", kind: action.kind, label: action.label, payload, seq: next() },
+        node: {
+          id,
+          space: "work",
+          kind: "subgoal",
+          label: action.label,
+          seq: next(),
+        },
+      });
+      events.push({
+        type: "add_edge",
+        edge: {
+          id: `e:${next()}`,
+          from: action.parent,
+          to: id,
+          kind: "decomposes",
+          provenance: { kind: "llm" },
+          status: "open",
+        },
       });
       return {
         events,
-        turn: proposalTurn(`tracked ${action.kind}: ${action.label}`),
+        turn: proposalTurn(`decomposed: ${action.label}`),
+        done: false,
+        stopReason: null,
+      };
+    }
+
+    case "decide": {
+      const alternatives = [...new Set(action.alternatives ?? [])].filter(
+        (alternative) => alternative !== action.label,
+      );
+      const chosenId = `w:decision:${next()}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: chosenId,
+          space: "work",
+          kind: "decision",
+          label: action.label,
+          payload: {
+            options: [action.label, ...alternatives],
+            chosen: action.label,
+            rationale: action.rationale,
+          },
+          seq: next(),
+        },
+      });
+      events.push({
+        type: "add_edge",
+        edge: {
+          id: `e:${next()}`,
+          from: chosenId,
+          to: action.parent,
+          kind: "justifies",
+          provenance: { kind: "llm" },
+          status: "open",
+        },
+      });
+      const findDecision = (key: string): string | undefined => {
+        for (const node of state.nodes.values()) {
+          if (node.kind === "decision" && node.id === key) return node.id;
+        }
+        for (const node of state.nodes.values()) {
+          if (node.kind === "decision" && node.label === key) return node.id;
+        }
+        return undefined;
+      };
+      const targets = new Set<string>();
+      for (const alternative of alternatives) {
+        let targetId = findDecision(alternative);
+        if (targetId === undefined) {
+          targetId = `w:decision:${next()}`;
+          events.push({
+            type: "add_node",
+            node: {
+              id: targetId,
+              space: "work",
+              kind: "decision",
+              label: alternative,
+              seq: next(),
+            },
+          });
+        }
+        if (targets.has(targetId)) continue;
+        targets.add(targetId);
+        events.push({
+          type: "add_edge",
+          edge: {
+            id: `e:${next()}`,
+            from: chosenId,
+            to: targetId,
+            kind: "chosen_over",
+            provenance: { kind: "llm" },
+            status: "open",
+          },
+        });
+      }
+      return {
+        events,
+        turn: proposalTurn(`decided: ${action.label}`),
+        done: false,
+        stopReason: null,
+      };
+    }
+
+    case "track": {
+      if (action.kind === "constraint") {
+        const id = `w:constraint:${next()}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id,
+            space: "work",
+            kind: "constraint",
+            label: action.label,
+            payload: { forbid: action.forbid ?? [] },
+            seq: next(),
+          },
+        });
+        return {
+          events,
+          turn: proposalTurn(`tracked constraint: ${action.label}`),
+          done: false,
+          stopReason: null,
+        };
+      }
+      const id = `w:claim:${next()}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id,
+          space: "work",
+          kind: "claim",
+          label: action.label,
+          payload: { rationale: action.rationale ?? "" },
+          seq: next(),
+        },
+      });
+      if (action.parent !== undefined) {
+        events.push({
+          type: "add_edge",
+          edge: {
+            id: `e:${next()}`,
+            from: id,
+            to: action.parent,
+            kind: "supports",
+            provenance: { kind: "llm" },
+            status: "open",
+          },
+        });
+      }
+      return {
+        events,
+        turn: proposalTurn(`tracked claim: ${action.label}`),
         done: false,
         stopReason: null,
       };

@@ -30,7 +30,7 @@ function are the protocol.
 Closed loop `goal → locate → claim → action → check → done`; IR and projection;
 staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 
-**Tier 1 — working on a task.**
+**Tier 1 — working on a task (T1.1 done).**
 - `Decision` as first-class: choice, rejected alternatives, rationale.
 - `Check`/arbiter as an explicit node with an objective verdict.
 - Subgoals and their decomposition.
@@ -85,8 +85,13 @@ Beyond Tier 0, the current line adds:
 - **Staleness scope** — transitivity is covered by a workspace-wide witness; the
   witness now lives once, on the observation
   (`docs/plans/staleness_scope_plan.md`).
+- **Work graph (T1.1)** — `decompose`/`decide` produce subgoals, decisions, and
+  connecting edges (`decomposes`/`justifies`/`chosen_over`/`supports`) with
+  `provenance.llm`; attachment to a parent is mandatory (the `classify` gate);
+  `superseded`/`achieved` statuses are derived; the projection shows subgoals and
+  links (`docs/plans/tier1_plan.md`).
 
-Verification: `npm run typecheck`; `npm test` (44 tests) — offline tests, live gate
+Verification: `npm run typecheck`; `npm test` (58 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.
 
 ## 5. Boundaries

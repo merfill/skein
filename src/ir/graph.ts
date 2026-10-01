@@ -66,6 +66,59 @@ export function witnessOf(state: State, edge: Edge): WitnessEntry[] | undefined 
   return payload?.witness;
 }
 
+export function invalidatedClaimIds(state: State): Set<string> {
+  const hasLive = new Set<string>();
+  const staleOnly = new Set<string>();
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "verifies") continue;
+    if (state.edgeStatuses.get(edge.id) === "stale") staleOnly.add(edge.to);
+    else hasLive.add(edge.to);
+  }
+  const out = new Set<string>();
+  for (const id of staleOnly) {
+    if (!hasLive.has(id)) out.add(id);
+  }
+  return out;
+}
+
+function deriveStatuses(state: State): void {
+  const superseded = new Set<string>();
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "chosen_over") superseded.add(edge.to);
+  }
+  for (const node of state.nodes.values()) {
+    if (node.kind === "decision") {
+      state.statuses.set(node.id, superseded.has(node.id) ? "superseded" : "active");
+    }
+  }
+
+  const invalidated = invalidatedClaimIds(state);
+  const supportedBy = new Map<string, string[]>();
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "supports") continue;
+    const claims = supportedBy.get(edge.to);
+    if (claims) claims.push(edge.from);
+    else supportedBy.set(edge.to, [edge.from]);
+  }
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "subgoal") continue;
+    let verified = false;
+    let unfinished = false;
+    for (const claimId of supportedBy.get(node.id) ?? []) {
+      const claim = state.nodes.get(claimId);
+      if (!claim || claim.kind !== "claim") continue;
+      if (invalidated.has(claimId)) {
+        unfinished = true;
+        continue;
+      }
+      const status = state.statuses.get(claimId);
+      if (status === "open") unfinished = true;
+      else if (status === "verified") verified = true;
+    }
+    state.statuses.set(node.id, verified && !unfinished ? "achieved" : "open");
+  }
+}
+
 export function fold(events: readonly Event[], base: State = emptyState()): State {
   const state: State = {
     nodes: new Map(base.nodes),
@@ -79,6 +132,8 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
   };
 
   for (const event of events) applyEvent(state, event);
+
+  deriveStatuses(state);
 
   return state;
 }

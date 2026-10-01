@@ -40,8 +40,8 @@ IR — это не один объект, а конвейер из четырё�
 Везде действует разделение докса/логос: LLM (докса) только предлагает;
 предложенное убеждение входит в IR только узлом со `status = "open"` (`track`),
 никогда сразу `verified`. Движок (логос) классифицирует и исполняет, и только
-арбитр может повысить claim. (Узлы не несут provenance;
-`provenance.kind = "llm"` объявлен, но не производится.)
+арбитр может повысить claim. (Узлы не несут provenance; `provenance.kind = "llm"`
+несут рёбра, рождённые допущенными предложениями доксы.)
 
 ## 2. Операции, которые фиксирует IR
 
@@ -82,7 +82,9 @@ IR — это не один объект, а конвейер из четырё�
 | `run(command, claims?)` | `add_node` observation (со свидетельством `ref → version`, снятым при прогоне) + `record_check` + `add_edge` `verifies` на каждый claim; при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | claims `verified`/`refuted` по арбитру |
 | `run` (гард constraint) | `add_node` observation `constraint violation` | запрещённый файл откатывается; **без** `record_check` |
 | `classify` (врата логоса) | `record_rejection` при отказе | `RejectionRecord` в `state.rejections` (без узла) |
-| `track(kind, label, …)` | `add_node` claim/decision/constraint | `open` / `active` / `must` |
+| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | подцель `open`, растёт из родителя |
+| `decide(parent, label, alternatives?, rationale)` | `add_node` decision (выбранное + по узлу на альтернативу) + `add_edge` `justifies`/`chosen_over` (`provenance.llm`) | выбранное `active`, отвергнутые `superseded` |
+| `track(kind, label, parent?, …)` | `add_node` claim/constraint; для claim — `add_edge` `supports` (`provenance.llm`) | claim `open` (привязан), constraint `must` (глобальный) |
 | `query(selectors)` | ничего | одноразовый ответ (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), ничего не фиксируется |
 | `finish(summary)` | `add_node` action | цикл останавливается (`stopReason = "finish"`) |
 
@@ -105,21 +107,23 @@ IR — это не один объект, а конвейер из четырё�
   `target`, `reason`, необязательный `constraintId`) в `state.rejections`; узел
   не создаётся, полное предложение не хранится.
 
-### Что объявлено в Tier 0, но пока не производится
+### Что объявлено, но пока не производится
 
-Модель шире текущего поведения. Объявлено в `types.ts`, но в Tier 0 не пишется:
+Модель шире текущего поведения. Объявлено в `types.ts`, но не пишется:
 
-- kinds узлов `subgoal`, `symbol`, `test`;
-- виды рёбер кроме `locates` и `verifies`;
+- kinds узлов `symbol`, `test` (`subgoal` производится с T1.1);
+- виды рёбер кроме `locates`, `verifies`, `decomposes`, `justifies`,
+  `chosen_over`, `supports`;
 - событие `set_status` (смена статуса сейчас всегда побочный эффект
-  `record_check` или `mutate`, не явное событие);
-- статусы `superseded`, `achieved`, `abandoned`, `confirmed`, `reverted`;
-- провенанс-виды `llm` и `grep`; `user` производится только как `actor` проверки,
-  никогда как провенанс ребра.
+  `record_check`, `mutate` или вывода `fold`, не явное событие);
+- статусы `abandoned`, `confirmed`, `reverted` (`superseded` и `achieved`
+  выводятся с T1.1);
+- провенанс-вид `grep`; `user` производится только как `actor` проверки, никогда
+  как провенанс ребра.
 
-Это зарезервировано, а не мёртво: проекция уже понимает `refuted`/`superseded`
-(`src/ir/project.ts:114`). Документ держит это различие, чтобы спецификация не
-обещала больше, чем реализовано.
+Это зарезервировано, а не мёртво: проекция уже понимает `refuted`/`superseded`.
+Документ держит это различие, чтобы спецификация не обещала больше, чем
+реализовано.
 
 Отдельно: `frontier.observations` объявлена в `Context`, но собирается по
 `verifies`-рёбрам к открытым claims, у которых таких рёбер не бывает, поэтому
@@ -129,15 +133,19 @@ IR — это не один объект, а конвейер из четырё�
 
 Статусы **производные**, их не ставят руками:
 
-- `add_node` назначает дефолт по kind (`src/ir/graph.ts:33`): `open` для
-  goals/claims/observations, `active` для decisions, `applied` для actions,
-  `must` для constraints, `believed` для артефактов.
+- `add_node` назначает дефолт по kind (`src/ir/graph.ts`): `open` для
+  goals/subgoals/claims/observations, `active` для decisions, `applied` для
+  actions, `must` для constraints, `believed` для артефактов.
 - `record_check` переводит каждый названный claim в `verified` (pass) или
-  `refuted` (fail) (`src/ir/graph.ts:119`).
+  `refuted` (fail).
 - `mutate` помечает `stale` («устаревшими») и рёбра чтения с тем же `ref` и
   другой `version`, и рёбра `verifies`, в чьём наблюдении-источнике свидетельство
   содержит изменившийся `ref` с другой `version` (`src/ir/graph.ts`). Прежние
   события не трогаются; меняется лишь их **производный статус**.
+- `fold` выводит производные статусы графа: решение, на которое указывает ребро
+  `chosen_over`, — `superseded` (иначе `active`); подцель — `achieved`, если у неё
+  есть хотя бы один `verified` привязанный claim и нет `open`/`invalidated`, иначе
+  `open`.
 
 Так журнал остаётся монотонным, а знание о коде — немонотонным. Ручного отката
 нет: факт о старой версии файла просто перестаёт быть активным.
@@ -156,19 +164,21 @@ IR — это не один объект, а конвейер из четырё�
 события всегда дают один `Context`. У него фиксированные секции:
 
 - `header` — цель, все constraints (стабильный префикс) и бюджет ходов;
-- `frontier` — `claims` (`open`), `decisions` (`active`), последнее действие,
-  подтверждённое / инвалидированное одной строкой каждое, отвергнутые узлы
-  (`refuted` / `superseded`) одной строкой, а также `refusals` — действия, которые
-  врата уже отклонили, схлопнутые по сигнатуре со счётчиком повторов.
-  Подтверждённое утверждение, у которого все проверки устарели, попадает в
-  `invalidated`, но никогда в `verified`;
+- `frontier` — `subgoals` (`open`), `claims` (`open`, с родителем `supports`),
+  `decisions` (`active`, с отвергнутыми альтернативами `over`), последнее действие,
+  подтверждённое / инвалидированное одной строкой каждое, достигнутые подцели одной
+  строкой, отвергнутые узлы (`refuted` / `superseded`) одной строкой, а также
+  `refusals` — действия, которые врата уже отклонили, схлопнутые по сигнатуре со
+  счётчиком повторов. Подтверждённое утверждение, у которого все проверки устарели,
+  попадает в `invalidated`, но никогда в `verified`;
 - `artifacts` — только индекс (id + label + флаг `stale` («устарел»));
 - `index` — обзор пространства: `counts` по видам плюс окно новейших `tail` узлов
   как `{ id, kind, label }`; полный список достаётся через `query`;
 - `recent` — последние `tail` ходов дословно, для связности.
 
 Один произвольный параметр `tail` ограничивает окно `index.recent`, поток `recent`,
-а также однострочные `frontier.verified` и `frontier.refusals`.
+списки `frontier.subgoals` и `frontier.achievedSubgoals`, а также однострочные
+`frontier.verified` и `frontier.refusals`.
 
 Гарантия — адресуемость: каждый узел либо показан, либо доставаем через `query`,
 поэтому ограничение `index` никогда не делает узел неназываемым.
@@ -176,8 +186,8 @@ IR — это не один объект, а конвейер из четырё�
 Релевантность сейчас — **по статусу и provenance**: действует открытая цель, её
 constraints, открытые claims, активные decisions и привязанные к ним
 наблюдения/действия. **Path-based** релевантность (узел активен, если достижим от
-цели через рёбра решений/действий) — зарезервированное направление, не
-реализована: нужны first-class подцели/решения со связующими рёбрами (Tier 1).
+цели через рёбра `decomposes`/`justifies`/`chosen_over`/`supports`) пока не
+реализована (T1.2): граф работы уже производится (T1.1).
 
 Что сознательно отсутствует: содержимое файлов, устаревшие факты в виде активного
 содержимого и предыдущие проекции. Устаревший артефакт показывается как
@@ -190,7 +200,9 @@ constraints, открытые claims, активные decisions и привяз
 - **Что видит LLM.** `propose` отправляет ровно текущий `Context`
   (`src/loop/propose.ts:33`). Меняешь проекцию — меняешь поведение.
 - **Врата логоса.** `classify` читает constraints из `State` и отклоняет `edit`
-  по запрещённому пути (`src/loop/classify.ts`).
+  по запрещённому пути, а также требует явного допустимого `parent` (цель или
+  подцель) у `decompose`/`decide`/`track`-claim — иначе `record_rejection` с
+  `missing_parent`/`invalid_parent` (`src/loop/classify.ts`).
 - **Эффект-гард.** Перед `run` движок снимает снапшот файлов, подпадающих под
   `payload.forbid`; если команда изменила такой файл, он откатывается и
   записывается как `constraint violation`, а чек не пишется — значит, ничто не
@@ -247,7 +259,11 @@ Seed (`src/loop/graph.ts:107`):
 ```json
 { "type": "add_node", "node": { "id": "w:claim:5", "space": "work", "kind": "claim",
   "label": "loop stops one short", "payload": { "rationale": "" } } }
+{ "type": "add_edge", "edge": { "id": "e:6", "from": "w:claim:5", "to": "g1",
+  "kind": "supports", "provenance": { "kind": "llm" }, "status": "open" } }
 ```
+
+claim привязан к цели ребром `supports`; без него врата отклонили бы `track`.
 
 Ход 3 — `edit src/sum.mjs` мутирует мир:
 
@@ -287,8 +303,9 @@ Seed (`src/loop/graph.ts:107`):
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ],
               "budget": { "turn": 4, "maxTurns": 24, "remaining": 20 } },
-  "frontier": { "claims": [], "decisions": [], "lastAction": { "id": "act:6" },
-                "observations": [], "verified": ["w:claim:5: loop stops one short"],
+  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "decisions": [],
+                "lastAction": { "id": "act:6" }, "observations": [],
+                "verified": ["w:claim:5: loop stops one short"],
                 "invalidated": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
@@ -352,7 +369,7 @@ LLM предлагает `edit test/sum.test.mjs`; врата отказываю
 Следующая проекция пересобирает это из состояния, поэтому отказ переживает
 вытеснение из хвоста `recent` и реплей; повтор схлопывается в одну строку с `×2`.
 
-## 7. Инварианты и границы Tier 0
+## 7. Инварианты и границы
 
 Гарантируется IR и проверяется тестами (`tests/invariants.ts`,
 `tests/gate.test.ts`):
@@ -361,10 +378,12 @@ LLM предлагает `edit test/sum.test.mjs`; врата отказываю
 - устаревший факт (`stale`) никогда не подаётся как активное содержимое;
 - отклонённое предложение фиксируется с причиной (`record_rejection`) и никогда
   не хранится как вера;
+- каждый произведённый узел работы (`subgoal`/`decision`/`claim`) привязан ребром
+  пути (`decomposes`/`justifies`/`supports`/`chosen_over`);
 - адресуемость: каждый узел показан или доставаем через `query`;
 - `project` детерминирован: одни события → один `Context`;
 - докса только предлагает (`status = open`); логос решает.
 
-Сознательно вне Tier 0: содержимое файлов в IR, явное событие `set_status`,
-узлы `subgoal`/`symbol`/`test`, неиспользуемые виды рёбер, закрытие цели внутри
+Сознательно вне текущего этапа: содержимое файлов в IR, явное событие
+`set_status`, узлы `symbol`/`test`, неиспользуемые виды рёбер, закрытие цели внутри
 движка и shell-песочница (гард для `run` — пост-фактум, с откатом).
