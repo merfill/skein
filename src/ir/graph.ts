@@ -16,6 +16,7 @@ export interface State {
   statuses: Map<string, Status>;
   edgeStatuses: Map<string, Status>;
   rejections: RejectionRecord[];
+  branch: string[];
   goalId?: string;
   seq: number;
 }
@@ -27,6 +28,7 @@ export function emptyState(): State {
     statuses: new Map(),
     edgeStatuses: new Map(),
     rejections: [],
+    branch: [],
     seq: 0,
   };
 }
@@ -114,6 +116,7 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     statuses: new Map(base.statuses),
     edgeStatuses: new Map(base.edgeStatuses),
     rejections: [...base.rejections],
+    branch: [...base.branch],
     goalId: base.goalId,
     seq: base.seq,
   };
@@ -145,6 +148,14 @@ function applyEvent(state: State, event: Event): void {
     case "set_status": {
       if (state.nodes.has(event.id)) state.statuses.set(event.id, event.status);
       else state.edgeStatuses.set(event.id, event.status);
+      break;
+    }
+    case "descend": {
+      if (state.branch[state.branch.length - 1] !== event.node) state.branch.push(event.node);
+      break;
+    }
+    case "return": {
+      state.branch.pop();
       break;
     }
     case "mutate": {

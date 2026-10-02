@@ -1,3 +1,4 @@
+import { FRAGMENT } from "./fragment";
 import { invalidatedClaimIds, type RejectionRecord, type State } from "./graph";
 import { NODE_KINDS, type EdgeKind, type Node, type NodeKind, type Status } from "./types";
 
@@ -38,6 +39,70 @@ export function reachableFromGoal(state: State): Set<string> {
   return out;
 }
 
+export const MODES = ["explore", "act", "check", "revise"] as const;
+export type Mode = (typeof MODES)[number];
+
+export function deriveMode(state: State): Mode {
+  const topId = state.branch[state.branch.length - 1];
+  const top = topId !== undefined ? state.nodes.get(topId) : undefined;
+  if (top !== undefined) {
+    return top.kind === "claim" ? claimMode(state, top) : "explore";
+  }
+
+  const reachable = reachableFromGoal(state);
+  let newest: Node | undefined;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "claim") continue;
+    if (!reachable.has(node.id)) continue;
+    if (newest === undefined || node.seq > newest.seq) newest = node;
+  }
+  return newest === undefined ? "explore" : claimMode(state, newest);
+}
+
+function claimMode(state: State, claim: Node): Mode {
+  const status = state.statuses.get(claim.id);
+  if (status === "refuted") return "revise";
+  if (status !== "open") return "explore";
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "action" || !node.label.startsWith("edit ")) continue;
+    if (node.seq > claim.seq) return "check";
+  }
+  return "act";
+}
+
+function parentId(state: State, node: Node): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "supports" && edge.from === node.id) return edge.to;
+    if (edge.kind === "justifies" && edge.from === node.id) return edge.to;
+    if (edge.kind === "decomposes" && edge.to === node.id) return edge.from;
+  }
+  return undefined;
+}
+
+function ancestorChain(state: State, focus: string): Set<string> {
+  const chain = new Set<string>();
+  let current: string | undefined = focus;
+  while (current !== undefined && !chain.has(current)) {
+    chain.add(current);
+    const node = state.nodes.get(current);
+    if (node === undefined || node.kind === "goal") break;
+    current = parentId(state, node);
+  }
+  if (state.goalId !== undefined) chain.add(state.goalId);
+  return chain;
+}
+
+function activeFocus(state: State, reachable: ReadonlySet<string>): string | undefined {
+  let focus: Node | undefined;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "claim" && node.kind !== "subgoal") continue;
+    if (state.statuses.get(node.id) !== "open") continue;
+    if (!reachable.has(node.id)) continue;
+    if (focus === undefined || node.seq > focus.seq) focus = node;
+  }
+  return focus?.id;
+}
+
 export interface Turn {
   seq: number;
   kind: "proposal" | "tool";
@@ -54,17 +119,22 @@ export interface Context {
   header: {
     goal: Node | null;
     constraints: Node[];
+    mode: Mode;
+    fragment: { id: string; label: string }[];
     budget?: { turn: number; maxTurns: number; remaining: number };
   };
   frontier: {
     subgoals: { id: string; label: string }[];
     achievedSubgoals: string[];
     claims: { id: string; label: string; supports?: string }[];
+    facts: { id: string; label: string; cite: string; supports?: string }[];
     decisions: { id: string; label: string; over: string[] }[];
+    backtrack: { id: string; label: string; kind: NodeKind }[];
     lastAction?: Node;
     observations: Node[];
     verified: string[];
     invalidated: string[];
+    revisions: string[];
     rejected: string[];
     refusals: string[];
   };
@@ -171,6 +241,24 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     .filter((node) => node.kind === "claim" && statusOf(node.id) === "open" && onPath(node.id))
     .sort(bySeqDesc);
 
+  const focusId = state.branch[state.branch.length - 1] ?? activeFocus(state, reachable);
+  const branch = new Set<string>(
+    focusId !== undefined
+      ? ancestorChain(state, focusId)
+      : state.goalId !== undefined
+        ? [state.goalId]
+        : [],
+  );
+  const inBranch = (id: string): boolean => branch.has(id);
+  const parentInBranch = (node: Node): boolean => {
+    const parent = parentId(state, node);
+    return parent !== undefined && branch.has(parent);
+  };
+
+  const activeClaimNodes = openClaimNodes.filter(
+    (node) => inBranch(node.id) || parentInBranch(node),
+  );
+
   const supportsOf = (claimId: string): string | undefined => {
     for (const edge of state.edges.values()) {
       if (edge.kind === "supports" && edge.from === claimId) return edge.to;
@@ -178,9 +266,31 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     return undefined;
   };
 
-  const claims = openClaimNodes.map((node) => {
+  const citeOf = (id: string): string | undefined => {
+    const payload = state.nodes.get(id)?.payload as { cite?: unknown } | undefined;
+    return typeof payload?.cite === "string" && payload.cite.trim() !== ""
+      ? payload.cite
+      : undefined;
+  };
+
+  const claims = activeClaimNodes.flatMap((node) => {
+    if (citeOf(node.id) !== undefined) return [];
     const supports = supportsOf(node.id);
-    return { id: node.id, label: node.label, ...(supports !== undefined ? { supports } : {}) };
+    return [{ id: node.id, label: node.label, ...(supports !== undefined ? { supports } : {}) }];
+  });
+
+  const facts = activeClaimNodes.flatMap((node) => {
+    const cite = citeOf(node.id);
+    if (cite === undefined) return [];
+    const supports = supportsOf(node.id);
+    return [
+      {
+        id: node.id,
+        label: node.label,
+        cite,
+        ...(supports !== undefined ? { supports } : {}),
+      },
+    ];
   });
 
   const overOf = (decisionId: string): string[] => {
@@ -192,14 +302,42 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   };
 
   const decisions = nodes
-    .filter((node) => node.kind === "decision" && statusOf(node.id) === "active" && onPath(node.id))
+    .filter(
+      (node) =>
+        node.kind === "decision" &&
+        statusOf(node.id) === "active" &&
+        onPath(node.id) &&
+        (inBranch(node.id) || parentInBranch(node)),
+    )
     .sort(bySeqDesc)
     .map((node) => ({ id: node.id, label: node.label, over: overOf(node.id) }));
 
   const subgoals = nodes
-    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "open" && onPath(node.id))
+    .filter(
+      (node) =>
+        node.kind === "subgoal" &&
+        statusOf(node.id) === "open" &&
+        onPath(node.id) &&
+        inBranch(node.id),
+    )
     .sort(bySeqDesc)
     .map((node) => ({ id: node.id, label: node.label }));
+
+  const activeIds = new Set<string>([
+    ...subgoals.map((entry) => entry.id),
+    ...activeClaimNodes.map((node) => node.id),
+    ...decisions.map((entry) => entry.id),
+  ]);
+
+  const backtrack = nodes
+    .filter((node) => {
+      if (!onPath(node.id)) return false;
+      if (node.kind !== "subgoal" && node.kind !== "claim") return false;
+      if (statusOf(node.id) !== "open") return false;
+      return !activeIds.has(node.id);
+    })
+    .sort(bySeqDesc)
+    .map((node) => ({ id: node.id, label: node.label, kind: node.kind }));
 
   const achievedSubgoals = nodes
     .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "achieved" && onPath(node.id))
@@ -210,7 +348,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     .filter((node) => node.kind === "action")
     .sort(bySeqDesc)[0];
 
-  const observations = latestObservationPerClaim(state, openClaimNodes);
+  const observations = latestObservationPerClaim(state, activeClaimNodes);
 
   const invalidated = invalidatedClaimIds(state);
 
@@ -225,6 +363,22 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const invalidatedLines = verifiedClaims
     .filter((node) => invalidated.has(node.id))
     .map((node) => `${node.id}: ${node.label}`);
+
+  const revisions = verifiedClaims
+    .filter((node) => invalidated.has(node.id))
+    .map((node) => {
+      for (const edge of state.edges.values()) {
+        if (edge.kind !== "verifies" || edge.to !== node.id) continue;
+        if (state.edgeStatuses.get(edge.id) !== "stale") continue;
+        const check = state.nodes.get(edge.from);
+        const payload = check?.payload as { command?: unknown } | undefined;
+        const command = typeof payload?.command === "string" ? payload.command : undefined;
+        return command !== undefined
+          ? `${node.id}: ${node.label} — verification after "${command}" no longer holds`
+          : `${node.id}: ${node.label} — verification no longer holds`;
+      }
+      return `${node.id}: ${node.label} — verification no longer holds`;
+    });
 
   const rejected = nodes
     .filter((node) => {
@@ -271,16 +425,25 @@ export function project(state: State, options: ProjectOptions = {}): Context {
         };
 
   return {
-    header: { goal, constraints, ...(budget !== undefined ? { budget } : {}) },
+    header: {
+      goal,
+      constraints,
+      mode: deriveMode(state),
+      fragment: FRAGMENT.map((capability) => ({ id: capability.id, label: capability.label })),
+      ...(budget !== undefined ? { budget } : {}),
+    },
     frontier: {
       subgoals,
       achievedSubgoals,
       claims,
+      facts,
       decisions,
+      backtrack,
       lastAction,
       observations,
       verified,
       invalidated: invalidatedLines,
+      revisions,
       rejected,
       refusals,
     },

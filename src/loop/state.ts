@@ -25,6 +25,8 @@ export const LoopState = Annotation.Root({
   turn: Annotation<number>(last(0)),
   done: Annotation<boolean>(last(false)),
   stopReason: Annotation<string | null>(last<string | null>(null)),
+  progressKey: Annotation<string>(last("")),
+  stall: Annotation<number>(last(0)),
 });
 
 export type LoopStateType = typeof LoopState.State;

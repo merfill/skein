@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "tolerance": 1.2,
+  "cases": {
+    "moving-target": {
+      "reward": 1,
+      "steps": 7,
+      "inputTokens": 17782,
+      "outputTokens": 600,
+      "costRub": 0.080728,
+      "peakContextChars": 3526,
+      "source": "bench/runs/2026-10-01T13-29-40-960Z-moving-target-skein/metrics.json"
+    },
+    "hidden-hypotheses": {
+      "reward": 1,
+      "steps": 9,
+      "source": "bench/runs/2026-10-01T13-15-12-079Z-hidden-hypotheses-skein/metrics.json"
+    }
+  }
+}

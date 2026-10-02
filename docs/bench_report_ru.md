@@ -66,6 +66,31 @@ Skein, два прогона:
 сойдясь, и закончил `finish`. Нестабильность высокая: та же задача в прогоне 1
 прошла, в прогоне 2 — нет.
 
+Повторный прогон после шагов 1–6 роадмапа (джоб `2026-10-02__09-47-57`, 3 задачи ×
+2 попытки, langgraph-адаптер): `fix-ocaml-gc` — **0/2**, оба раза `no_progress`,
+0 subgoals / 0 claims / 0 checks, только read/grep/run, ни одной правки;
+`db-wal-recovery` — 1/2 (успех на `finish`); `custom-memory-heap-crash` — ошибка
+инфраструктуры (Docker build/start timeout 1200 с, не поведение агента). Эталон
+формы прогона и разбор расхождений — `docs/fix_ocaml_gc_ideal_ru.md`.
+
+### 4.3 Гейт недеградации (baseline)
+
+Чтобы шаги роадмапа (`docs/plans/logos_roadmap_plan_ru.md`) не ухудшали короткие
+задачи, введён детерминированный офлайн-гейт:
+
+- `bench/baseline.json` — замороженный референс простого набора (синтетика) со
+  снятыми `reward`, шагами, токенами, стоимостью и пиком контекста;
+- `bench/compare.ts` — чистая функция `compareRun(baseline, run)`: `reward` не
+  ниже референса, а шаги/токены/стоимость/пик — не выше референса ×`tolerance`
+  (по умолчанию 1.2);
+- CLI: `npm run bench:gate -- <runDir|metrics.json>` — читает `metrics.json`
+  прогона, печатает дельты и завершается кодом 1 при регрессии.
+
+Это дымовая проверка, а не статистический тест: прогоны LLM шумят, поэтому порог
+намеренно мягкий, а референс пополняется по мере появления прогонов. Длинный
+сценарий (`fix-ocaml-gc`) в гейт не входит: там baseline Skein пока `reward 0`, а
+цель — сходимость, а не недеградация; он отслеживается в §4.2.
+
 ## 5. Проблемы (что сломалось/мешает)
 
 1. **Рабочий граф не задействован на длинной задаче.** 0 claims, 0 decisions,
@@ -126,3 +151,5 @@ Skein, два прогона:
 - Harbor: `~/.skein-bench/harbor/<job>/<trial>/` (`agent/langgraph-run.log` c
   `SKEIN_TURN`/`SKEIN_METRICS`, `verifier/reward.txt`, `result.json`).
 - Baseline плагина: `skein-plugin/pilot/harbor/jobs/2026-09-26__11-50-39/`.
+- Гейт недеградации: `bench/baseline.json`, `bench/compare.ts`, `bench/gate.ts`
+  (`npm run bench:gate -- <runDir>`), тест `tests/bench_gate.test.ts`.

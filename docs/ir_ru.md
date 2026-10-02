@@ -7,6 +7,12 @@
 с состоянием, как состояние становится контекстом и как этот контекст управляет
 агентом.
 
+> **Статус (важно).** Этот документ описывает **текущий код** — до приведения к
+> семантике. Он ещё хранит старую модель (`claim`/`decision`, статусы-поля, `stale`,
+> режимы-шаги). Целевая модель — `docs/ir_semantics_ru.md`; расхождения — предмет
+> приведения кода к семантике, а не ошибка этого документа. Приведение кода и
+> переписывание этого описания идут вместе.
+
 ## 1. Четыре уровня
 
 IR — это не один объект, а конвейер из четырёх уровней:
@@ -45,7 +51,7 @@ IR — это не один объект, а конвейер из четырё�
 
 ## 2. Операции, которые фиксирует IR
 
-У IR **закрытый словарь**. Изменить его можно, только дописав одно из шести
+У IR **закрытый словарь**. Изменить его можно, только дописав одно из восьми
 событий (`src/ir/events.ts`):
 
 | Событие | Смысл |
@@ -53,6 +59,8 @@ IR — это не один объект, а конвейер из четырё�
 | `add_node` | ввести узел (любой kind, любое пространство) |
 | `add_edge` | ввести типизированное ребро с provenance |
 | `set_status` | сменить статус узла или ребра (без причины) |
+| `descend` | положить узел на стек обхода `state.branch` (спуск по ветке) |
+| `return` | снять узел со стека обхода (откат на шаг назад) |
 | `mutate` | файл `ref` изменился до версии `version` (крючок немонотонности) |
 | `record_check` | арбитр (`actor`: `arbiter` или `user`) записал вердикт для `claimIds` |
 | `record_rejection` | врата отказали предложенному действию (`tool`, `target`, `reason`) |
@@ -79,14 +87,15 @@ IR — это не один объект, а конвейер из четырё�
 | `read(path)` | `add_node` file (в первый раз) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | артефакт-факт, привязанный к версии файла |
 | `grep(pattern)` | `add_node` observation | одноразовое наблюдение (содержимое эфемерно) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; прежние факты чтения помечаются `stale` («устаревшими») |
-| `run(command, claims?)` | `record_check` (команда, вердикт, свидетельство `ref → version`, `actor: arbiter`); при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | `fold` материализует узел `check` и ребро `verifies` `check → claim`; claims `verified`/`refuted` |
+| `run(command, claims?)` | `record_check` (команда, вердикт, свидетельство `ref → version`, `actor: arbiter`); при длинном выводе — спил и `outputRef`; `mutate` на каждый отслеживаемый файл, который изменила команда | `fold` материализует узел `check` и ребро `verifies` `check → claim`; claims `verified`/`refuted`; успешная проверка снимает протестированную гипотезу со стека (`return`) |
 | `run` (гард constraint) | `add_node` observation `constraint violation` | запрещённый файл откатывается; **без** `record_check` |
 | `classify` (врата логоса) | `record_rejection` при отказе | `RejectionRecord` в `state.rejections` (без узла) |
-| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | подцель `open`, растёт из родителя |
+| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) + `descend` | подцель `open`, растёт из родителя; подцель кладётся на стек |
 | `decide(parent, label, alternatives?, rationale)` | `add_node` decision (выбранное + по узлу на альтернативу) + `add_edge` `justifies`/`chosen_over` (`provenance.llm`) | выбранное `active`, отвергнутые `superseded` |
-| `track(kind, label, parent?, …)` | `add_node` claim/constraint; для claim — `add_edge` `supports` (`provenance.llm`) | claim `open` (привязан), constraint `must` (глобальный) |
+| `track(kind, label, parent?, cite?, …)` | `add_node` claim/constraint; для claim — `add_edge` `supports` (`provenance.llm`) + `descend`, а `cite` кладётся в `payload` | claim `open` (привязан; с `cite` — заземлённый факт, иначе гипотеза) на стеке, constraint `must` (глобальный) |
 | `query(selectors)` | ничего | одноразовый ответ (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), ничего не фиксируется |
 | `finish(summary)` | `add_node` action | цикл останавливается (`stopReason = "finish"`) |
+| `abstain(missing, reason)` | `add_node` action `out_of_fragment` | цикл останавливается (`stopReason = "out_of_fragment"`); возможность из `header.fragment` врата отклоняют (`capability_available`) |
 
 Четыре следствия, которые стоит сказать прямо:
 
@@ -102,6 +111,9 @@ IR — это не один объект, а конвейер из четырё�
   `src/ir/approval.ts`); LLM не может выдать проверку вовсе. `fold` превращает
   каждую проверку в узел `check`, который несёт версии файлов (свидетельство),
   поэтому поздний `mutate` может её обесценить — но выдумать вердикт не может.
+  Свидетель строится по отслеживаемым файлам, однако генерируемые и сборочные
+  каталоги (`_build`, `target`, кэши и т.п.) из обхода исключены (`SKIP_DIRS`),
+  чтобы сама сборка не гасила проверки.
 - **Отказ фиксируется, а не просто показывается.** Когда врата отвергают
   предложение, движок пишет `record_rejection` с сигнатурой действия (`tool`,
   `target`, `reason`, необязательный `constraintId`) в `state.rejections`; узел
@@ -164,11 +176,18 @@ IR — это не один объект, а конвейер из четырё�
 `project(state)` (`src/ir/project.ts:75`) чист и детерминирован: одни и те же
 события всегда дают один `Context`. У него фиксированные секции:
 
-- `header` — цель, все constraints (стабильный префикс) и бюджет ходов;
-- `frontier` — замыкание от цели: `subgoals` (`open`), `claims` (`open`, с
-  родителем `supports`), `decisions` (`active`, с отвергнутыми альтернативами
-  `over`), последнее действие,
-  подтверждённое / инвалидированное одной строкой каждое, достигнутые подцели одной
+- `header` — цель, все constraints (стабильный префикс), режим шага (`explore` /
+  `act` / `check` / `revise`, производный от состояния через `deriveMode`),
+  объявленный фрагмент (`header.fragment`: доступные возможности) и бюджет ходов;
+- `frontier` — активная ветка (фокус — новейшее открытое обязательство, ветка —
+  цепочка предков до цели): `subgoals` (`open` на ветке), `claims`
+  (`open`-гипотезы ветки, с родителем `supports`), `facts` (`open`-утверждения
+  ветки, заземлённые прочитанным кодом, с `cite`), `decisions` (`active` ветки, с
+  отвергнутыми альтернативами   `over`), `backtrack` (открытое достижимое вне ветки —
+  точки отката), последнее действие,
+  подтверждённое / инвалидированное одной строкой каждое, `revisions` — причина
+  потери силы каждой инвалидированной проверки (какая команда перестала
+  держаться), достигнутые подцели одной
   строкой, отвергнутые узлы (`refuted` / `superseded`) одной строкой, а также
   `refusals` — действия, которые врата уже отклонили, схлопнутые по сигнатуре со
   счётчиком повторов. Подтверждённое утверждение, у которого все проверки устарели,
@@ -224,9 +243,13 @@ IR — это не один объект, а конвейер из четырё�
   `record_check`; его `actor` — объективный тулчейн или пользователь
   (субъективная приёмка), но никогда LLM.
 - **Бюджеты и стоп.** Цикл маршрутизируется по `done`, лимиту ходов и
-  `stopReason` (`src/loop/graph.ts:86`). Бюджет — часть контекста
+  `stopReason` (`src/loop/graph.ts`). Бюджет — часть контекста
   (`header.budget`: `turn` / `maxTurns` / `remaining`), чтобы модель могла
-  планировать; бухгалтерии токенов сознательно нет.
+  планировать; бухгалтерии токенов сознательно нет. Отдельно шаг `progress`
+  (`knowledgeKey` в `src/ir/progress.ts`) останавливает цикл с `stopReason`
+  `no_progress`, если за N ходов не появилось нового знания: новых
+  claim/subgoal/decision/check, смены статуса или нового файла. Наблюдения и
+  действия не считаются, поэтому повторное чтение или прогон застоя не скрывают.
 - **Закрытие цели — извне.** Движок не ставит цели `achieved`; харнесс/арбитр
   проверяет, что тесты проходят и запрещённые файлы не изменены
   (`tests/gate.test.ts`). Узел цели остаётся `open` даже после успешного прогона
@@ -304,11 +327,13 @@ claim привязан к цели ребром `supports`; без него вр
 {
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ],
+              "mode": "check",
               "budget": { "turn": 4, "maxTurns": 24, "remaining": 20 } },
-  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "decisions": [],
+  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "facts": [],
+                "decisions": [], "backtrack": [],
                 "lastAction": { "id": "act:6" }, "observations": [],
                 "verified": ["w:claim:5: loop stops one short"],
-                "invalidated": [], "rejected": [], "refusals": [] },
+                "invalidated": [], "revisions": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
     "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 1, "check": 1, "claim": 1, "action": 1 },

@@ -1,7 +1,7 @@
 jobs_dir: __SKEIN_JOBS__
-n_attempts: 1
+n_attempts: 2
 timeout_multiplier: 2.0
-n_concurrent_trials: 1
+n_concurrent_trials: 3
 quiet: false
 environment:
   type: docker
@@ -25,3 +25,5 @@ datasets:
     version: "2.0"
     task_names:
       - fix-ocaml-gc
+      - db-wal-recovery
+      - custom-memory-heap-crash

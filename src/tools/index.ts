@@ -138,6 +138,14 @@ function witnessOfWorkspace(workspace: Workspace): WitnessEntry[] {
   return witness;
 }
 
+function descendTo(state: State, parent: string | undefined, node: string): Event[] {
+  const index = parent === undefined ? -1 : state.branch.lastIndexOf(parent);
+  const events: Event[] = [];
+  for (let i = state.branch.length - 1; i > index; i--) events.push({ type: "return" });
+  events.push({ type: "descend", node });
+  return events;
+}
+
 function changedMutations(
   workspace: Workspace,
   before: Map<string, string>,
@@ -434,6 +442,10 @@ export function executeAction(
         witness: witnessOfWorkspace(workspace),
         claimIds: claims,
       });
+      const top = state.branch[state.branch.length - 1];
+      if (verdict === "pass" && top !== undefined && claims.includes(top)) {
+        events.push({ type: "return" });
+      }
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 
@@ -460,6 +472,7 @@ export function executeAction(
           status: "open",
         },
       });
+      events.push(...descendTo(state, action.parent, id));
       return {
         events,
         turn: proposalTurn(`decomposed: ${action.label}`),
@@ -575,7 +588,10 @@ export function executeAction(
           space: "work",
           kind: "claim",
           label: action.label,
-          payload: { rationale: action.rationale ?? "" },
+          payload: {
+            rationale: action.rationale ?? "",
+            ...(action.cite !== undefined ? { cite: action.cite } : {}),
+          },
           seq: next(),
         },
       });
@@ -591,6 +607,7 @@ export function executeAction(
             status: "open",
           },
         });
+        events.push(...descendTo(state, action.parent, id));
       }
       return {
         events,
@@ -627,6 +644,27 @@ export function executeAction(
         turn: proposalTurn(action.summary),
         done: true,
         stopReason: "finish",
+      };
+    }
+
+    case "abstain": {
+      const actionId = `w:abstain:${next()}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: actionId,
+          space: "work",
+          kind: "action",
+          label: `out_of_fragment: ${action.missing}`,
+          payload: { missing: action.missing, reason: action.reason },
+          seq: next(),
+        },
+      });
+      return {
+        events,
+        turn: proposalTurn(`out of fragment: ${action.missing} — ${action.reason}`),
+        done: true,
+        stopReason: "out_of_fragment",
       };
     }
   }

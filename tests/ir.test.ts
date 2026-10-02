@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { userAcceptance } from "../src/ir/approval";
 import { eventSchema, type Event } from "../src/ir/events";
 import { emptyState, fold } from "../src/ir/graph";
-import { project, reachableFromGoal } from "../src/ir/project";
+import { project, reachableFromGoal, deriveMode } from "../src/ir/project";
+import { knowledgeKey } from "../src/ir/progress";
 import type {
   ArtifactKind,
   Edge,
@@ -345,6 +346,18 @@ describe("check invalidation by version", () => {
     ]);
     expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
     expect(project(state).frontier.invalidated).toEqual([]);
+  });
+
+  it("explains a change of answer as a revision (projection, not new state)", () => {
+    const state = fold([
+      ...events,
+      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
+    ]);
+    const frontier = project(state).frontier;
+    expect(frontier.invalidated).toEqual(["c1: off-by-one in loop"]);
+    expect(frontier.revisions).toHaveLength(1);
+    expect(frontier.revisions[0]).toContain("c1");
+    expect(frontier.revisions[0]).toContain("npm test");
   });
 });
 
@@ -702,5 +715,211 @@ describe("path relevance (Tier 1.2)", () => {
     const reachable = reachableFromGoal(state);
     expect(reachable.has("d1")).toBe(true);
     expect(project(state).frontier.decisions.map((entry) => entry.id)).toEqual(["d1"]);
+  });
+});
+
+describe("step mode (W, step 1)", () => {
+  const goal: Event = { type: "add_node", node: workNode("g1", "goal", "green", 0) };
+  const claim: Event = { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) };
+  const supports: Event = {
+    type: "add_edge",
+    edge: edge("e1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+  };
+
+  it("is explore without an open hypothesis and exposes it in the header", () => {
+    const state = fold([goal]);
+    expect(deriveMode(state)).toBe("explore");
+    expect(project(state).header.mode).toBe("explore");
+  });
+
+  it("is act once an attached hypothesis is open", () => {
+    const state = fold([goal, claim, supports]);
+    expect(deriveMode(state)).toBe("act");
+    expect(project(state).header.mode).toBe("act");
+  });
+
+  it("is check once an edit is recorded after the hypothesis", () => {
+    const state = fold([
+      goal,
+      claim,
+      supports,
+      { type: "add_node", node: workNode("a1", "action", "edit src/sum.mjs", 2) },
+    ]);
+    expect(deriveMode(state)).toBe("check");
+    expect(project(state).header.mode).toBe("check");
+  });
+
+  it("stays explore for a hypothesis detached from the goal", () => {
+    const state = fold([goal, claim]);
+    expect(deriveMode(state)).toBe("explore");
+  });
+
+  it("is revise once the branch hypothesis is refuted", () => {
+    const state = fold([
+      goal,
+      claim,
+      supports,
+      { type: "descend", node: "c1" },
+      {
+        type: "record_check",
+        command: "node --test",
+        verdict: "fail",
+        output: "boom",
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(deriveMode(state)).toBe("revise");
+    expect(project(state).header.mode).toBe("revise");
+  });
+});
+
+describe("active branch (W, step 3)", () => {
+  const twoBranches: Event[] = [
+    { type: "add_node", node: workNode("g1", "goal", "green", 0) },
+    { type: "add_node", node: workNode("sg1", "subgoal", "branch a", 1) },
+    { type: "add_node", node: workNode("c1", "claim", "hypothesis a", 2) },
+    { type: "add_node", node: workNode("sg2", "subgoal", "branch b", 3) },
+    { type: "add_node", node: workNode("c2", "claim", "hypothesis b", 4) },
+    {
+      type: "add_edge",
+      edge: edge("d1", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
+    },
+    {
+      type: "add_edge",
+      edge: edge("d2", "g1", "sg2", "decomposes", { kind: "llm" }, "open"),
+    },
+    {
+      type: "add_edge",
+      edge: edge("s1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
+    },
+    {
+      type: "add_edge",
+      edge: edge("s2", "c2", "sg2", "supports", { kind: "llm" }, "open"),
+    },
+  ];
+
+  it("shows only the newest open obligation's branch", () => {
+    const frontier = project(fold(twoBranches)).frontier;
+    expect(frontier.subgoals).toEqual([{ id: "sg2", label: "branch b" }]);
+    expect(frontier.claims).toEqual([
+      { id: "c2", label: "hypothesis b", supports: "sg2" },
+    ]);
+  });
+
+  it("keeps the other reachable branch as a backtrack point", () => {
+    const frontier = project(fold(twoBranches)).frontier;
+    expect(frontier.backtrack).toEqual([
+      { id: "c1", label: "hypothesis a", kind: "claim" },
+      { id: "sg1", label: "branch a", kind: "subgoal" },
+    ]);
+  });
+
+  it("has no backtrack points when only one branch is open", () => {
+    const oneBranch = twoBranches.filter(
+      (event) =>
+        !(
+          event.type === "add_node" &&
+          (event.node.id === "sg2" || event.node.id === "c2")
+        ) &&
+        !(
+          event.type === "add_edge" &&
+          (event.edge.id === "d2" || event.edge.id === "s2")
+        ),
+    );
+    const frontier = project(fold(oneBranch)).frontier;
+    expect(frontier.backtrack).toEqual([]);
+    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "branch a" }]);
+    expect(frontier.claims).toEqual([
+      { id: "c1", label: "hypothesis a", supports: "sg1" },
+    ]);
+  });
+
+  it("pushes and pops the explicit branch", () => {
+    const pushed = fold([
+      twoBranches[0] as Event,
+      { type: "descend", node: "sg1" },
+      { type: "descend", node: "c1" },
+    ]);
+    expect(pushed.branch).toEqual(["sg1", "c1"]);
+    expect(fold([{ type: "return" }], pushed).branch).toEqual(["sg1"]);
+  });
+
+  it("follows the explicit stack over the newest obligation", () => {
+    const state = fold([
+      ...twoBranches,
+      { type: "descend", node: "sg1" },
+      { type: "descend", node: "c1" },
+    ]);
+    const frontier = project(state).frontier;
+    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "branch a" }]);
+    expect(frontier.claims).toEqual([
+      { id: "c1", label: "hypothesis a", supports: "sg1" },
+    ]);
+    expect(frontier.backtrack).toEqual([
+      { id: "c2", label: "hypothesis b", kind: "claim" },
+      { id: "sg2", label: "branch b", kind: "subgoal" },
+    ]);
+  });
+});
+
+describe("progress key (W, step 4)", () => {
+  const goal: Event = { type: "add_node", node: workNode("g1", "goal", "green", 0) };
+  const claim: Event = { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) };
+  const supports: Event = {
+    type: "add_edge",
+    edge: edge("e1", "c1", "g1", "supports", { kind: "llm" }, "open"),
+  };
+
+  it("changes when a hypothesis or a file is added", () => {
+    const base = fold([goal]);
+    const withClaim = fold([goal, claim, supports]);
+    const withFile = fold([
+      goal,
+      { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 1) },
+    ]);
+    expect(knowledgeKey(withClaim)).not.toBe(knowledgeKey(base));
+    expect(knowledgeKey(withFile)).not.toBe(knowledgeKey(base));
+  });
+
+  it("does not change on a repeated observation", () => {
+    const obs = (seq: number): Event => ({
+      type: "add_node",
+      node: workNode(`obs:${seq}`, "observation", `read ${seq}`, seq),
+    });
+    const first = fold([goal, obs(1)]);
+    const second = fold([goal, obs(1), obs(2)]);
+    expect(knowledgeKey(second)).toBe(knowledgeKey(first));
+  });
+
+  it("changes when a claim is settled", () => {
+    const before = fold([goal, claim, supports]);
+    const after = fold([
+      goal,
+      claim,
+      supports,
+      {
+        type: "record_check",
+        command: "node --test",
+        verdict: "pass",
+        output: "ok",
+        claimIds: ["c1"],
+      },
+    ]);
+    expect(knowledgeKey(after)).not.toBe(knowledgeKey(before));
+  });
+});
+
+describe("declared fragment (W, step 6)", () => {
+  it("exposes the declared capabilities in the header", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("g1", "goal", "green", 0) },
+    ]);
+    expect(project(state).header.fragment.map((capability) => capability.id)).toEqual([
+      "inspect",
+      "modify",
+      "execute",
+      "verify",
+      "abduce",
+    ]);
   });
 });

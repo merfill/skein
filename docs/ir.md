@@ -6,6 +6,12 @@ Conceptual overview — `docs/concepts.md`. This document looks at the same syst
 from the IR's point of view: which operations it fixes, what each operation does
 to state, how state becomes context, and how that context controls the agent.
 
+> **Status (important).** This document describes the **current code** — before it is
+> brought to the semantics. It still carries the old model (`claim`/`decision`, status
+> fields, `stale`, step modes). The target model is `docs/ir_semantics.md`; the
+> divergences are the subject of bringing the code to the semantics, not a fault of
+> this document. Bringing the code and rewriting this description go together.
+
 ## 1. Four levels
 
 The IR is not one object but a pipeline of four levels:
@@ -45,13 +51,15 @@ is carried by edges born from admitted doxa proposals.)
 ## 2. Operations the IR fixes
 
 The IR has a **closed vocabulary**. The only way to change it is to append one of
-six events (`src/ir/events.ts`):
+eight events (`src/ir/events.ts`):
 
 | Event | Meaning |
 |---|---|
 | `add_node` | introduce a node (any kind, any space) |
 | `add_edge` | introduce a typed, provenance-carrying edge |
 | `set_status` | change a node's or edge's status (no reason needed) |
+| `descend` | push a node onto the traversal stack `state.branch` |
+| `return` | pop a node off the traversal stack (step back) |
 | `mutate` | a file at `ref` changed to `version` (the non-monotonicity hook) |
 | `record_check` | an arbiter (`actor`: `arbiter` or `user`) recorded a `verdict` for `claimIds` |
 | `record_rejection` | the gate refused a proposed action (`tool`, `target`, `reason`) |
@@ -78,14 +86,15 @@ fixes:
 | `read(path)` | `add_node` file (first time) + `add_node` observation + `add_edge` `locates` (`provenance.read` + `version`) | an artifact fact tied to a file version |
 | `grep(pattern)` | `add_node` observation | a one-shot observation (contents are ephemeral) |
 | `edit(path, find, replace)` | `add_node` action + `mutate` | action `applied`; old read facts go `stale` |
-| `run(command, claims?)` | `record_check` (command, verdict, witness `ref → version`, `actor: arbiter`); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | `fold` materializes a `check` node and a `verifies` `check → claim` edge; claims `verified`/`refuted` |
+| `run(command, claims?)` | `record_check` (command, verdict, witness `ref → version`, `actor: arbiter`); on long output, a spill plus `outputRef`; a `mutate` per tracked file the command changed | `fold` materializes a `check` node and a `verifies` `check → claim` edge; claims `verified`/`refuted`; a passing check pops the tested hypothesis off the stack (`return`) |
 | `run` (constraint guard) | `add_node` observation `constraint violation` | a forbidden file is reverted; **no** `record_check` |
 | `classify` (logos gate) | `record_rejection` on a refusal | a `RejectionRecord` in `state.rejections` (no node) |
-| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) | subgoal `open`, grows from the parent |
+| `decompose(parent, label)` | `add_node` subgoal + `add_edge` `decomposes` (`provenance.llm`) + `descend` | subgoal `open`, grows from the parent and is pushed onto the stack |
 | `decide(parent, label, alternatives?, rationale)` | `add_node` decision (chosen + one per alternative) + `add_edge` `justifies`/`chosen_over` (`provenance.llm`) | chosen `active`, rejected `superseded` |
-| `track(kind, label, parent?, …)` | `add_node` claim/constraint; for a claim, `add_edge` `supports` (`provenance.llm`) | claim `open` (attached), constraint `must` (global) |
+| `track(kind, label, parent?, cite?, …)` | `add_node` claim/constraint; for a claim, `add_edge` `supports` (`provenance.llm`) + `descend`, and `cite` in the `payload` | claim `open` (attached; with `cite` a grounded fact, otherwise a hypothesis) on the stack, constraint `must` (global) |
 | `query(selectors)` | none | a one-shot answer (`id`/`kind`/`status`/`edgesOf`/`verdictOf`), nothing recorded |
 | `finish(summary)` | `add_node` action | loop stops (`stopReason = "finish"`) |
+| `abstain(missing, reason)` | `add_node` action `out_of_fragment` | loop stops (`stopReason = "out_of_fragment"`); a capability in `header.fragment` is refused by the gate (`capability_available`) |
 
 Four consequences worth stating plainly:
 
@@ -100,7 +109,10 @@ Four consequences worth stating plainly:
   the objective toolchain (`arbiter`) or the user (`user`, through
   `src/ir/approval.ts`); the LLM cannot emit a check at all. `fold` turns each
   check into a `check` node carrying the file versions (the witness), so a later
-  `mutate` can invalidate it — but it can never fabricate a verdict.
+  `mutate` can invalidate it — but it can never fabricate a verdict. The witness is
+  built from tracked files, but generated and build directories (`_build`,
+  `target`, caches, etc.) are excluded from the walk (`SKIP_DIRS`) so that the
+  build itself does not invalidate checks.
 - **A refusal is recorded, not just shown.** When the gate refuses a proposal, it
   emits `record_rejection` with the action signature (`tool`, `target`, `reason`,
   optional `constraintId`) into `state.rejections`; no node is created and the
@@ -161,11 +173,19 @@ grows, and only the derived view loses force. A source fact is never rewritten.
 `project(state)` (`src/ir/project.ts:75`) is pure and deterministic: the same
 events always yield the same `Context`. It has fixed sections:
 
-- `header` — the goal, all constraints (the stable prefix), and the turn budget;
-- `frontier` — the closure from the goal: `subgoals` (`open`), `claims` (`open`,
-  with their parent `supports`), `decisions` (`active`, with their rejected
-  alternatives `over`), the `lastAction`,
-  verified / invalidated claims as one line each, achieved subgoals as one line
+- `header` — the goal, all constraints (the stable prefix), the step mode
+  (`explore` / `act` / `check` / `revise`, derived from state via `deriveMode`), the
+  declared fragment (`header.fragment`: the available capabilities), and the turn
+  budget;
+- `frontier` — the active branch (the focus is the newest open obligation, the
+  branch is the chain of ancestors up to the goal): `subgoals` (`open` on the
+  branch), `claims` (`open` hypotheses of the branch, with their parent `supports`),
+  `facts` (`open` statements of the branch grounded in read code, with a `cite`),
+  `decisions` (`active` on the branch, with their rejected alternatives `over`),
+  `backtrack` (reachable open work outside the branch — points to return to), the
+  `lastAction`,
+  verified / invalidated claims as one line each, `revisions` explaining why each
+  invalidated check no longer holds, achieved subgoals as one line
   each, rejected nodes (`refuted` / `superseded`) one line each, and `refusals` —
   actions the gate already refused, collapsed by signature with a repeat count. A
   verified claim whose checks have all gone `stale` appears under `invalidated`,
@@ -221,9 +241,13 @@ Control is not a separate layer — it is consumed directly from `State`:
   its `actor` is the objective toolchain or the user (subjective acceptance),
   never the LLM.
 - **Budgets and stop.** The loop routes on `done`, the turn budget, and
-  `stopReason` (`src/loop/graph.ts:86`). The budget is part of the context
+  `stopReason` (`src/loop/graph.ts`). The budget is part of the context
   (`header.budget`: `turn` / `maxTurns` / `remaining`), so the model can pace
-  itself; token accounting is deliberately absent.
+  itself; token accounting is deliberately absent. Separately, a `progress` step
+  (`knowledgeKey` in `src/ir/progress.ts`) stops the loop with `stopReason`
+  `no_progress` when N turns add no new knowledge: no new
+  claim/subgoal/decision/check, no status change, no new file. Observations and
+  actions do not count, so repeated reads or runs cannot hide the stagnation.
 - **Closing the goal is external.** The engine does not set the goal to
   `achieved`; the harness/arbiter checks that the test suite passes and that
   forbidden files are unchanged (`tests/gate.test.ts`). The goal node stays
@@ -302,11 +326,13 @@ The projection after turn 4 is roughly:
 {
   "header": { "goal": { "id": "g1", "label": "make node --test pass" },
               "constraints": [ { "id": "k1" } ],
+              "mode": "check",
               "budget": { "turn": 4, "maxTurns": 24, "remaining": 20 } },
-  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "decisions": [],
+  "frontier": { "subgoals": [], "achievedSubgoals": [], "claims": [], "facts": [],
+                "decisions": [], "backtrack": [],
                 "lastAction": { "id": "act:6" }, "observations": [],
                 "verified": ["w:claim:5: loop stops one short"],
-                "invalidated": [], "rejected": [], "refusals": [] },
+                "invalidated": [], "revisions": [], "rejected": [], "refusals": [] },
   "artifacts": [ { "id": "file:src/sum.mjs", "label": "src/sum.mjs", "stale": true } ],
   "index": {
     "counts": { "goal": 1, "constraint": 1, "file": 1, "observation": 1, "check": 1, "claim": 1, "action": 1 },

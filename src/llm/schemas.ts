@@ -40,6 +40,7 @@ export const actionSchema = z.discriminatedUnion("tool", [
     parent: z.string().optional(),
     rationale: z.string().optional(),
     forbid: z.array(z.string()).optional(),
+    cite: z.string().optional(),
   }),
   z.object({
     tool: z.literal("query"),
@@ -51,6 +52,11 @@ export const actionSchema = z.discriminatedUnion("tool", [
     verdictOf: z.string().optional(),
   }),
   z.object({ tool: z.literal("finish"), summary: z.string() }),
+  z.object({
+    tool: z.literal("abstain"),
+    missing: z.string(),
+    reason: z.string(),
+  }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;

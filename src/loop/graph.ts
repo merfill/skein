@@ -2,6 +2,7 @@ import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
 import { fold } from "../ir/graph";
+import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import type { Action } from "../llm/schemas";
 import { executeAction } from "../tools";
@@ -45,6 +46,9 @@ function describeTarget(action: Action): string {
     case "finish":
       target = action.summary;
       break;
+    case "abstain":
+      target = `out_of_fragment:${action.missing}`;
+      break;
   }
   return target.replace(/\s+/g, " ").trim().slice(0, 120);
 }
@@ -53,6 +57,7 @@ export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
   maxTurns: number;
+  noProgress?: number;
 }
 
 export interface AgentInput {
@@ -69,6 +74,7 @@ export interface AgentResult {
 
 export function compileGraph(deps: AgentDeps) {
   const signatures: VersionCache = new Map();
+  const noProgress = deps.noProgress ?? 10;
 
   const projectNode = (state: LoopStateType) => {
     const base = fold(state.events);
@@ -147,6 +153,17 @@ export function compileGraph(deps: AgentDeps) {
     };
   };
 
+  const progressNode = (state: LoopStateType) => {
+    if (state.done) return {};
+    const key = knowledgeKey(fold(state.events));
+    if (key === state.progressKey) {
+      const stall = state.stall + 1;
+      if (stall >= noProgress) return { stall, done: true, stopReason: "no_progress" };
+      return { stall };
+    }
+    return { progressKey: key, stall: 0 };
+  };
+
   const route = (state: LoopStateType): "project" | typeof END => {
     if (state.done) return END;
     if (state.turn >= deps.maxTurns) return END;
@@ -158,11 +175,13 @@ export function compileGraph(deps: AgentDeps) {
     .addNode("propose", proposeNode)
     .addNode("classify", classifyNode)
     .addNode("execute", executeNode)
+    .addNode("progress", progressNode)
     .addEdge(START, "project")
     .addEdge("project", "propose")
     .addEdge("propose", "classify")
     .addEdge("classify", "execute")
-    .addConditionalEdges("execute", route)
+    .addEdge("execute", "progress")
+    .addConditionalEdges("progress", route)
     .compile();
 }
 
@@ -195,8 +214,8 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   }
 
   const final = await graph.invoke(
-    { events: seed, recent: [], turn: 0, done: false, stopReason: null },
-    { recursionLimit: deps.maxTurns * 4 + 10 },
+    { events: seed, recent: [], turn: 0, done: false, stopReason: null, progressKey: "", stall: 0 },
+    { recursionLimit: deps.maxTurns * 5 + 20 },
   );
 
   return {

@@ -67,6 +67,32 @@ Bottom line: the agent made one `edit` and then churned through ~58 turns of
 read/grep/run without converging, then `finish`ed. Variance is high: the same task
 passed in run 1 and failed in run 2.
 
+A repeat after steps 1–6 of the roadmap (job `2026-10-02__09-47-57`, 3 tasks × 2
+attempts, langgraph adapter): `fix-ocaml-gc` — **0/2**, both `no_progress`, 0
+subgoals / 0 claims / 0 checks, only read/grep/run, no edit; `db-wal-recovery` —
+1/2 (a success on `finish`); `custom-memory-heap-crash` — infrastructure error
+(Docker build/start timeout 1200 s, not agent behaviour). The reference shape of the
+route and the gap analysis — `docs/fix_ocaml_gc_ideal.md`.
+
+### 4.3 Non-degradation gate (baseline)
+
+So that the roadmap steps (`docs/plans/logos_roadmap_plan.md`) do not worsen short
+tasks, a deterministic offline gate was introduced:
+
+- `bench/baseline.json` — a frozen reference for the simple set (synthetic) with
+  the recorded `reward`, steps, tokens, cost and context peak;
+- `bench/compare.ts` — a pure `compareRun(baseline, run)`: `reward` not below the
+  reference, and steps/tokens/cost/peak not above the reference ×`tolerance`
+  (1.2 by default);
+- CLI: `npm run bench:gate -- <runDir|metrics.json>` — reads a run's `metrics.json`,
+  prints the deltas and exits with code 1 on a regression.
+
+This is a smoke check, not a statistical test: LLM runs are noisy, so the threshold
+is deliberately soft and the reference is extended as runs appear. The long
+scenario (`fix-ocaml-gc`) is not part of the gate: Skein's baseline there is
+currently `reward 0`, and the goal is convergence, not non-degradation; it is
+tracked in §4.2.
+
 ## 5. Problems (what broke or hurts)
 
 1. **The work graph is unused on a long task.** 0 claims, 0 decisions, 0 subgoals.
@@ -126,3 +152,5 @@ Separately deferred: optimizing the projection for a stable prefix/cache
 - Harbor: `~/.skein-bench/harbor/<job>/<trial>/` (`agent/langgraph-run.log` with
   `SKEIN_TURN`/`SKEIN_METRICS`, `verifier/reward.txt`, `result.json`).
 - Plugin baseline: `skein-plugin/pilot/harbor/jobs/2026-09-26__11-50-39/`.
+- Non-degradation gate: `bench/baseline.json`, `bench/compare.ts`, `bench/gate.ts`
+  (`npm run bench:gate -- <runDir>`), test `tests/bench_gate.test.ts`.

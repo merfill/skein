@@ -47,6 +47,8 @@ export const eventSchema = z.discriminatedUnion("type", [
     status: z.enum(STATUSES),
     reason: z.string().optional(),
   }),
+  z.object({ type: z.literal("descend"), node: z.string() }),
+  z.object({ type: z.literal("return") }),
   z.object({
     type: z.literal("mutate"),
     ref: z.string(),

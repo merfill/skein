@@ -204,6 +204,223 @@ describe("classify", () => {
       ),
     ).toEqual({ category: "hypothesis", accept: true });
   });
+
+  it("refuses an edit without an open hypothesis", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      { thought: "", action: { tool: "edit", path: "src/sum.mjs", find: "a", replace: "b" } },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "no_open_hypothesis",
+    });
+  });
+
+  it("accepts an edit once an attached hypothesis is open", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "c1", space: "work", kind: "claim", label: "off-by-one", seq: 1 },
+      },
+      {
+        type: "add_edge",
+        edge: {
+          id: "e1",
+          from: "c1",
+          to: "g1",
+          kind: "supports",
+          provenance: { kind: "llm" },
+          status: "open",
+        },
+      },
+    ]);
+    const verdict = classify(
+      { thought: "", action: { tool: "edit", path: "src/sum.mjs", find: "a", replace: "b" } },
+      state,
+    );
+    expect(verdict).toEqual({ category: "derivable", accept: true });
+  });
+
+  it("keeps the constraint refusal ahead of the hypothesis gate", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: {
+          id: "k1",
+          space: "work",
+          kind: "constraint",
+          label: "do not edit tests",
+          payload: { forbid: ["\\.test\\.mjs$"] },
+          seq: 1,
+        },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: { tool: "edit", path: "test/sum.test.mjs", find: "a", replace: "b" },
+      },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "constraint_violation:\\.test\\.mjs$",
+      constraintId: "k1",
+    });
+  });
+
+  it("accepts a read-grounded claim as cited", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: {
+          id: "obs:1",
+          space: "work",
+          kind: "observation",
+          label: "read src/sum.mjs",
+          payload: { ref: "file:src/sum.mjs", version: "v1", bytes: 10 },
+          seq: 1,
+        },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: {
+          tool: "track",
+          kind: "claim",
+          label: "line 42 uses <",
+          parent: "g1",
+          cite: "obs:1",
+        },
+      },
+      state,
+    );
+    expect(verdict).toEqual({ category: "cited", accept: true });
+  });
+
+  it("accepts a file cite that has a live read fact", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "file:src/sum.mjs", space: "artifact", kind: "file", label: "src/sum.mjs", seq: 1 },
+      },
+      {
+        type: "add_edge",
+        edge: {
+          id: "e:read",
+          from: "file:src/sum.mjs",
+          to: "obs:1",
+          kind: "locates",
+          provenance: { kind: "read", ref: "file:src/sum.mjs", version: "v1" },
+          status: "believed",
+        },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: {
+          tool: "track",
+          kind: "claim",
+          label: "line 42 uses <",
+          parent: "g1",
+          cite: "src/sum.mjs",
+        },
+      },
+      state,
+    );
+    expect(verdict).toEqual({ category: "cited", accept: true });
+  });
+
+  it("refuses a claim whose cite is not grounded in a read", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: {
+          tool: "track",
+          kind: "claim",
+          label: "line 42 uses <",
+          parent: "g1",
+          cite: "src/sum.mjs",
+        },
+      },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "invalid_cite",
+    });
+  });
+
+  it("accepts an abstain for a capability outside the declared fragment", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: { tool: "abstain", missing: "network", reason: "no network access" },
+      },
+      state,
+    );
+    expect(verdict).toEqual({ category: "derivable", accept: true });
+  });
+
+  it("refuses abstaining for a capability the agent has", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+      },
+    ]);
+    const verdict = classify(
+      {
+        thought: "",
+        action: { tool: "abstain", missing: "execute", reason: "hard" },
+      },
+      state,
+    );
+    expect(verdict).toEqual({
+      category: "rejected",
+      accept: false,
+      reason: "capability_available",
+    });
+  });
 });
 
 describe("graph actions", () => {
@@ -364,6 +581,46 @@ describe("graph actions", () => {
     expect(project(next).frontier.claims).toEqual([
       { id: claim.id, label: "hits are served from memory", supports: "g1" },
     ]);
+  });
+
+  it("stores a cite and projects the claim as a fact, not a hypothesis", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: {
+          id: "obs:1",
+          space: "work",
+          kind: "observation",
+          label: "read src/sum.mjs",
+          payload: { ref: "file:src/sum.mjs", version: "v1", bytes: 10 },
+          seq: 1,
+        },
+      },
+    ]);
+    const outcome = executeAction(
+      {
+        tool: "track",
+        kind: "claim",
+        label: "line 42 uses <",
+        parent: "g1",
+        cite: "obs:1",
+      },
+      state,
+      workspace(),
+      0,
+    );
+    const next = fold(outcome.events, state);
+    const claim = [...next.nodes.values()].find((node) => node.kind === "claim");
+    if (!claim) throw new Error("no claim recorded");
+    expect(claim.payload).toMatchObject({ cite: "obs:1" });
+    expect(project(next).frontier.facts).toEqual([
+      { id: claim.id, label: "line 42 uses <", cite: "obs:1", supports: "g1" },
+    ]);
+    expect(project(next).frontier.claims).toEqual([]);
   });
 
   it("track keeps a constraint global", () => {
@@ -703,6 +960,12 @@ describe("runAgent (scripted, offline)", () => {
           { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
           { tool: "run", command: "node --test" },
           {
+            tool: "track",
+            kind: "claim",
+            label: "the total comment changes the source",
+            parent: "g1",
+          },
+          {
             tool: "edit",
             path: "src/sum.mjs",
             find: "let total = 0;",
@@ -776,6 +1039,186 @@ describe("runAgent (scripted, offline)", () => {
     expect(
       result.events.some(
         (event) => event.type === "mutate" && event.actionId.startsWith("reconcile"),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses an edit before a hypothesis, then accepts it after tracking", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
+          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
+          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
+          { tool: "run", command: "node --test" },
+          { tool: "finish", summary: "fixed" },
+        ]),
+        workspace,
+        maxTurns: 10,
+      },
+      { goal: { id: "g1", label: "make node --test pass" } },
+    );
+
+    const refusal = result.events.find((event) => event.type === "record_rejection");
+    if (!refusal || refusal.type !== "record_rejection") {
+      throw new Error("no rejection recorded");
+    }
+    expect(refusal.tool).toBe("edit");
+    expect(refusal.reason).toBe("no_open_hypothesis");
+    expect(workspace.run("node --test").code).toBe(0);
+
+    const claim = [...fold(result.events).nodes.values()].find(
+      (node) => node.kind === "claim",
+    );
+    if (!claim) throw new Error("no claim recorded");
+    expect(fold(result.events).statuses.get(claim.id)).toBe("verified");
+  });
+
+  it("refuses an edit after a refutation, then converges on a revised hypothesis", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
+          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i < n - 1" },
+          { tool: "run", command: "node --test" },
+          { tool: "edit", path: "src/sum.mjs", find: "i < n - 1", replace: "i <= n" },
+          { tool: "track", kind: "claim", label: "boundary is inclusive", parent: "g1" },
+          { tool: "edit", path: "src/sum.mjs", find: "i < n - 1", replace: "i <= n" },
+          { tool: "run", command: "node --test" },
+          { tool: "finish", summary: "fixed" },
+        ]),
+        workspace,
+        maxTurns: 12,
+      },
+      { goal: { id: "g1", label: "make node --test pass" } },
+    );
+
+    const failures = result.events.filter(
+      (event) => event.type === "record_check" && event.verdict === "fail",
+    );
+    const passes = result.events.filter(
+      (event) => event.type === "record_check" && event.verdict === "pass",
+    );
+    expect(failures).toHaveLength(1);
+    expect(passes).toHaveLength(1);
+
+    const refusal = result.events.find((event) => event.type === "record_rejection");
+    if (!refusal || refusal.type !== "record_rejection") {
+      throw new Error("no rejection recorded");
+    }
+    expect(refusal.reason).toBe("no_open_hypothesis");
+
+    expect(result.events.filter((event) => event.type === "descend")).toHaveLength(2);
+    expect(result.events.filter((event) => event.type === "return").length).toBeGreaterThanOrEqual(1);
+    expect(workspace.run("node --test").code).toBe(0);
+  });
+
+  it("stops with no_progress when repeated steps add no knowledge", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "run", command: "true" },
+          { tool: "run", command: "true" },
+          { tool: "run", command: "true" },
+        ]),
+        workspace,
+        maxTurns: 10,
+        noProgress: 2,
+      },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("no_progress");
+    expect(result.turns).toBe(2);
+  });
+
+  it("keeps going while each step reads a new file", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          { tool: "read", path: "src/sum.mjs" },
+          { tool: "read", path: "test/sum.test.mjs" },
+          { tool: "finish", summary: "looked around" },
+        ]),
+        workspace,
+        maxTurns: 10,
+        noProgress: 2,
+      },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("finish");
+    expect(result.turns).toBe(3);
+  });
+
+  it("ignores generated build output in mutations and the witness", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          {
+            tool: "run",
+            command:
+              "mkdir -p _build && printf 'x\\n' > _build/out.txt && printf 'y\\n' > src/note.txt",
+          },
+          { tool: "finish", summary: "done" },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      { goal: { id: "g1", label: "noop" } },
+    );
+
+    const refs = result.events
+      .filter((event) => event.type === "mutate")
+      .map((event) => event.ref);
+    expect(refs).toContain("file:src/note.txt");
+    expect(refs.some((ref) => ref.includes("_build"))).toBe(false);
+  });
+
+  it("stops with out_of_fragment when the model abstains", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+
+    const result = await runAgent(
+      {
+        propose: scripted([
+          {
+            tool: "abstain",
+            missing: "network access",
+            reason: "the task needs to fetch a dependency",
+          },
+        ]),
+        workspace,
+        maxTurns: 5,
+      },
+      { goal: { id: "g1", label: "install a package from the internet" } },
+    );
+
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("out_of_fragment");
+    expect(
+      result.events.some(
+        (event) =>
+          event.type === "add_node" &&
+          event.node.kind === "action" &&
+          event.node.label.startsWith("out_of_fragment:"),
       ),
     ).toBe(true);
   });

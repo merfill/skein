@@ -33,7 +33,30 @@ export interface Workspace {
   run(command: string): CommandResult;
 }
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "coverage", ".skein"]);
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "coverage",
+  ".skein",
+  "_build",
+  "target",
+  "build",
+  "out",
+  "obj",
+  "__pycache__",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".cache",
+  ".venv",
+  "venv",
+  ".tox",
+  ".gradle",
+  ".next",
+  ".nuxt",
+  ".terraform",
+]);
 const TEXT_EXT = new Set([
   ".mjs",
   ".js",
