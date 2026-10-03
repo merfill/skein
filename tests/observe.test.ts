@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../src/ir/events";
-import { fold } from "../src/ir/graph";
+import { currentVersion, fold } from "../src/ir/graph";
 import { reconcile, type VersionCache } from "../src/loop/observe";
 import { fsWorkspace, type Workspace } from "../src/tools/workspace";
 
@@ -46,18 +46,8 @@ function readFact(version: string): Event[] {
         space: "work",
         kind: "observation",
         label: "read src/sum.mjs",
+        payload: { ref: "file:src/sum.mjs", version },
         seq: 1,
-      },
-    },
-    {
-      type: "add_edge",
-      edge: {
-        id: "e1",
-        from: "file:src/sum.mjs",
-        to: "o1",
-        kind: "locates",
-        provenance: { kind: "read", ref: "file:src/sum.mjs", version },
-        status: "believed",
       },
     },
   ];
@@ -77,7 +67,9 @@ describe("reconcile", () => {
     expect(events[0]).toMatchObject({ type: "mutate", ref: "file:src/sum.mjs" });
 
     const after = fold([...base, ...events]);
-    expect(after.edgeStatuses.get("e1")).toBe("stale");
+    expect(currentVersion(after, "file:src/sum.mjs")).toBe(
+      workspace.version("src/sum.mjs"),
+    );
   });
 
   it("ignores files not involved in current activity", () => {

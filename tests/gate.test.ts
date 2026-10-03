@@ -10,7 +10,7 @@ import { createChatModel } from "../src/llm/client";
 import { runAgent } from "../src/loop/graph";
 import { modelProposer } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
-import { verifiedWithoutCheck } from "./invariants";
+import { achievedWithoutCheck } from "./invariants";
 
 const settings = loadSettings();
 const FIXTURES = join(import.meta.dirname, "..", "fixtures", "bugfix");
@@ -57,9 +57,9 @@ describe.skipIf(!settings.live)("live gate: bugfix by failing test", () => {
         const result = await runAgent(
           { propose: modelProposer(model), workspace, maxTurns: settings.maxTurns },
           {
-            goal: {
-              id: "g1",
-              label: "make the test suite pass without editing tests",
+            request: {
+              id: "r1",
+              text: "make the test suite pass without editing tests",
             },
             constraints: [
               { id: "k1", label: "do not edit test files", forbid: ["\\.test\\.mjs$"] },
@@ -74,7 +74,7 @@ describe.skipIf(!settings.live)("live gate: bugfix by failing test", () => {
           expect(readFileSync(join(root, path), "utf8")).toBe(content);
         }
 
-        expect(verifiedWithoutCheck(result.events)).toEqual([]);
+        expect(achievedWithoutCheck(result.events)).toEqual([]);
 
         const state = fold(result.events);
         expect(state.nodes.size).toBeGreaterThan(1);

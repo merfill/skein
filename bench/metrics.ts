@@ -89,28 +89,37 @@ export class TurnMeter extends BaseCallbackHandler {
   }
 }
 
+export function actionName(action: Action): string {
+  if (action.operator !== "apply") return action.operator;
+  return action.action.tool;
+}
+
 export function graphCounts(proposals: Action[], events: readonly Event[]): Record<string, number> {
   const nodes = fold(events).nodes;
   const byKind: Record<string, number> = {};
   for (const node of nodes.values()) byKind[node.kind] = (byKind[node.kind] ?? 0) + 1;
-  let decompose = 0;
-  let decide = 0;
-  let claims = 0;
-  let constraints = 0;
+  let createGoal = 0;
+  let complete = 0;
+  let edits = 0;
+  let checks = 0;
   for (const action of proposals) {
-    if (action.tool === "decompose") decompose++;
-    else if (action.tool === "decide") decide++;
-    else if (action.tool === "track" && action.kind === "claim") claims++;
-    else if (action.tool === "track" && action.kind === "constraint") constraints++;
+    if (action.operator === "create_goal") createGoal++;
+    else if (action.operator === "complete") complete++;
+    else if (action.operator === "apply" && action.action.tool === "edit") edits++;
+    else if (action.operator === "apply" && action.action.tool === "run" && action.action.target) {
+      checks++;
+    }
   }
   return {
-    decompose,
-    decide,
-    claims,
-    constraints,
-    subgoals: byKind.subgoal ?? 0,
-    decisions: byKind.decision ?? 0,
+    createGoal,
+    complete,
+    edits,
     checks: byKind.check ?? 0,
+    checkProposals: checks,
+    goals: byKind.goal ?? 0,
+    plans: byKind.plan ?? 0,
+    alternatives: byKind.alternatives ?? 0,
+    actions: byKind.action ?? 0,
   };
 }
 

@@ -7,7 +7,10 @@
 `docs/plans/tier1_plan_ru.md`. Общий план —
 `docs/plans/implementation_plan_ru.md`.
 
-Статус: план; работа не начата.
+Статус: **надстроен** приведением к семантике IR — см.
+`docs/plans/ir_semantics_migration_plan_ru.md`. Шаги ниже (режимы, `cited`,
+`Revision`) заменены трёхоператорной моделью и производным состоянием;
+документ оставлен как история (§9.6 `docs/logos_ir_ru.md`).
 
 ## 1. Проблема
 

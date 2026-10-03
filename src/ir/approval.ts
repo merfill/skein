@@ -1,9 +1,10 @@
 import type { EventInput } from "./events";
 
 export function userAcceptance(
-  claimIds: readonly string[],
-  verdict: "pass" | "fail" = "pass",
+  goalIds: readonly string[],
+  verdict: "pass" | "fail" | "inconclusive" = "pass",
   note?: string,
+  under?: readonly string[],
 ): EventInput {
   return {
     type: "record_check",
@@ -11,6 +12,7 @@ export function userAcceptance(
     command: note ?? "user acceptance",
     verdict,
     output: "",
-    claimIds: [...claimIds],
+    targets: [...goalIds],
+    ...(under !== undefined ? { under: [...under] } : {}),
   };
 }

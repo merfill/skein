@@ -1,107 +1,22 @@
-import { FRAGMENT } from "./fragment";
-import { invalidatedClaimIds, type RejectionRecord, type State } from "./graph";
-import { NODE_KINDS, type EdgeKind, type Node, type NodeKind, type Status } from "./types";
+import {
+  alternativesOf,
+  childrenOf,
+  latestChosen,
+  planOf,
+  predicateOf,
+  type State,
+} from "./graph";
+import {
+  applicable,
+  currentGoalId,
+  cursorOf,
+  type Applicable,
+} from "./traversal";
+import type { DoneWhen, Node, Predicate, Verdict } from "./types";
 
-export { invalidatedClaimIds };
-
-const PATH_EDGE_KINDS = new Set<EdgeKind>([
-  "decomposes",
-  "justifies",
-  "chosen_over",
-  "supports",
-]);
-
-export function reachableFromGoal(state: State): Set<string> {
-  const out = new Set<string>();
-  if (state.goalId === undefined) return out;
-  const adjacency = new Map<string, string[]>();
-  const link = (from: string, to: string): void => {
-    const list = adjacency.get(from);
-    if (list) list.push(to);
-    else adjacency.set(from, [to]);
-  };
-  for (const edge of state.edges.values()) {
-    if (!PATH_EDGE_KINDS.has(edge.kind)) continue;
-    link(edge.from, edge.to);
-    link(edge.to, edge.from);
-  }
-  const queue = [state.goalId];
-  out.add(state.goalId);
-  while (queue.length > 0) {
-    const id = queue.pop();
-    if (id === undefined) continue;
-    for (const next of adjacency.get(id) ?? []) {
-      if (out.has(next)) continue;
-      out.add(next);
-      queue.push(next);
-    }
-  }
-  return out;
-}
-
-export const MODES = ["explore", "act", "check", "revise"] as const;
-export type Mode = (typeof MODES)[number];
-
-export function deriveMode(state: State): Mode {
-  const topId = state.branch[state.branch.length - 1];
-  const top = topId !== undefined ? state.nodes.get(topId) : undefined;
-  if (top !== undefined) {
-    return top.kind === "claim" ? claimMode(state, top) : "explore";
-  }
-
-  const reachable = reachableFromGoal(state);
-  let newest: Node | undefined;
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "claim") continue;
-    if (!reachable.has(node.id)) continue;
-    if (newest === undefined || node.seq > newest.seq) newest = node;
-  }
-  return newest === undefined ? "explore" : claimMode(state, newest);
-}
-
-function claimMode(state: State, claim: Node): Mode {
-  const status = state.statuses.get(claim.id);
-  if (status === "refuted") return "revise";
-  if (status !== "open") return "explore";
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "action" || !node.label.startsWith("edit ")) continue;
-    if (node.seq > claim.seq) return "check";
-  }
-  return "act";
-}
-
-function parentId(state: State, node: Node): string | undefined {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "supports" && edge.from === node.id) return edge.to;
-    if (edge.kind === "justifies" && edge.from === node.id) return edge.to;
-    if (edge.kind === "decomposes" && edge.to === node.id) return edge.from;
-  }
-  return undefined;
-}
-
-function ancestorChain(state: State, focus: string): Set<string> {
-  const chain = new Set<string>();
-  let current: string | undefined = focus;
-  while (current !== undefined && !chain.has(current)) {
-    chain.add(current);
-    const node = state.nodes.get(current);
-    if (node === undefined || node.kind === "goal") break;
-    current = parentId(state, node);
-  }
-  if (state.goalId !== undefined) chain.add(state.goalId);
-  return chain;
-}
-
-function activeFocus(state: State, reachable: ReadonlySet<string>): string | undefined {
-  let focus: Node | undefined;
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "claim" && node.kind !== "subgoal") continue;
-    if (state.statuses.get(node.id) !== "open") continue;
-    if (!reachable.has(node.id)) continue;
-    if (focus === undefined || node.seq > focus.seq) focus = node;
-  }
-  return focus?.id;
-}
+// The projection is the context for the next operator, not a state dump: the
+// traversal branch plus its containers, the global constraints, the full latest
+// result, and a summary of previous calls. See docs/projection_ru.md.
 
 export interface Turn {
   seq: number;
@@ -109,346 +24,381 @@ export interface Turn {
   text: string;
 }
 
-export interface IndexEntry {
+export interface ProjectionItem {
   id: string;
-  kind: NodeKind;
+  kind: "goal" | "action";
   label: string;
+  state: Predicate;
+}
+
+export interface ProjectionAlternative {
+  id: string;
+  label: string;
+  state: Predicate;
+  chosen: boolean;
+}
+
+export interface ProjectionPlan {
+  cursor?: number;
+  items: ProjectionItem[];
+}
+
+export interface PathNode {
+  id: string;
+  kind: "request" | "goal";
+  state: Predicate;
+  text?: string;
+  what?: string;
+  why?: string;
+  done_when?: DoneWhen;
+  plan?: ProjectionPlan;
+  alternatives?: { chosen?: string; items: ProjectionAlternative[] };
+}
+
+export interface ResultView {
+  id: string;
+  kind: "observation" | "check" | "action";
+  command?: string;
+  ref?: string;
+  verdict?: Verdict;
+  label?: string;
+  output?: string;
+}
+
+// A deduplicated summary of a previous call: what was called and its outcome, with
+// no result body. This is the model's memory of what was already done (§2.8); the
+// latest result itself is shown in `lastResult`.
+export interface Call {
+  id?: string;
+  action: string;
+  status: "ok" | "fail" | "refused";
+  note?: string;
+  count: number;
 }
 
 export interface Context {
-  header: {
-    goal: Node | null;
-    constraints: Node[];
-    mode: Mode;
-    fragment: { id: string; label: string }[];
-    budget?: { turn: number; maxTurns: number; remaining: number };
-  };
-  frontier: {
-    subgoals: { id: string; label: string }[];
-    achievedSubgoals: string[];
-    claims: { id: string; label: string; supports?: string }[];
-    facts: { id: string; label: string; cite: string; supports?: string }[];
-    decisions: { id: string; label: string; over: string[] }[];
-    backtrack: { id: string; label: string; kind: NodeKind }[];
-    lastAction?: Node;
-    observations: Node[];
-    verified: string[];
-    invalidated: string[];
-    revisions: string[];
-    rejected: string[];
-    refusals: string[];
-  };
-  artifacts: { id: string; label: string; stale: boolean }[];
-  index: { counts: Partial<Record<NodeKind, number>>; recent: IndexEntry[] };
-  recent: Turn[];
+  path: PathNode[];
+  constraints: { id: string; forbid: string[] }[];
+  lastResult?: ResultView;
+  shown: ResultView[];
+  calls: Call[];
+  applicable: string[];
+  budget: { turn: number; maxTurns: number; remaining: number };
 }
 
 export interface ProjectOptions {
-  recent?: readonly Turn[];
-  recentBudget?: number;
-  indexWindow?: number;
   budget?: { turn: number; maxTurns: number };
+  // The text of the latest tool turn: the one transient result. It is not stored in
+  // the IR (invariant 11); the projection renders it in full this once.
+  lastOutput?: string;
+  // Results the model asked to see in full this turn (hypothesis + need, §8). Each is
+  // addressed by node id; the caller resolves the body (payload or temp file).
+  recalled?: { id: string; output: string }[];
 }
 
-export const DEFAULT_RECENT_BUDGET = 6000;
-export const DEFAULT_INDEX_WINDOW = 10;
-
-// The flow is the one section that carries raw tool output, so it is bounded by
-// characters rather than by a list length: keep turns newest-first while they
-// fit the budget, and always keep the newest turn (clipped upstream) even alone.
-function recentFlow(turns: readonly Turn[], budget: number): Turn[] {
-  const out: Turn[] = [];
-  let total = 0;
-  for (let index = turns.length - 1; index >= 0; index--) {
-    const turn = turns[index];
-    if (turn === undefined) continue;
-    if (out.length > 0 && total + turn.text.length > budget) break;
-    out.unshift(turn);
-    total += turn.text.length;
-  }
-  return out;
+function envInt(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-function bySeqDesc(a: Node, b: Node): number {
+function clip(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit)}…`;
+}
+
+function stripRef(ref: string): string {
+  return ref.startsWith("file:") ? ref.slice("file:".length) : ref;
+}
+
+function bySeqDesc(a: { seq: number }, b: { seq: number }): number {
   return b.seq - a.seq;
 }
 
-function latestObservationPerClaim(state: State, claims: readonly Node[]): Node[] {
-  const out: Node[] = [];
-  for (const claim of claims) {
-    let best: Node | undefined;
-    for (const edge of state.edges.values()) {
-      if (edge.to !== claim.id || edge.kind !== "verifies") continue;
-      const observation = state.nodes.get(edge.from);
-      if (!observation || observation.kind !== "observation") continue;
-      if (best === undefined || observation.seq > best.seq) best = observation;
-    }
-    if (best !== undefined) out.push(best);
+function itemView(state: State, id: string): ProjectionItem | undefined {
+  const node = state.nodes.get(id);
+  if (node === undefined) return undefined;
+  if (node.kind !== "goal" && node.kind !== "action") return undefined;
+  return { id, kind: node.kind, label: node.label, state: predicateOf(state, id) };
+}
+
+function planView(state: State, goalId: string, maxItems: number): ProjectionPlan | undefined {
+  const planId = planOf(state, goalId);
+  if (planId === undefined) return undefined;
+  const items = childrenOf(state, planId)
+    .map((id) => itemView(state, id))
+    .filter((item): item is ProjectionItem => item !== undefined)
+    .slice(0, maxItems);
+  return { cursor: cursorOf(state, goalId), items };
+}
+
+function alternativesView(
+  state: State,
+  ownerId: string,
+  maxItems: number,
+): { chosen?: string; items: ProjectionAlternative[] } | undefined {
+  const altId = alternativesOf(state, ownerId);
+  if (altId === undefined) return undefined;
+  const chosen = latestChosen(state, altId);
+  const items = childrenOf(state, altId)
+    .flatMap((id) => {
+      const node = state.nodes.get(id);
+      if (node === undefined || node.kind !== "goal") return [];
+      return [{ id, label: node.label, state: predicateOf(state, id), chosen: chosen === id }];
+    })
+    .slice(0, maxItems);
+  return { ...(chosen !== undefined ? { chosen } : {}), items };
+}
+
+function pathNode(state: State, id: string, maxItems: number): PathNode | undefined {
+  const node = state.nodes.get(id);
+  if (node === undefined) return undefined;
+  const state_ = predicateOf(state, id);
+  if (node.kind === "request") {
+    const payload = node.payload as { text?: unknown } | undefined;
+    return {
+      id,
+      kind: "request",
+      state: state_,
+      ...(typeof payload?.text === "string" ? { text: payload.text } : {}),
+      ...((): { alternatives?: PathNode["alternatives"] } => {
+        const alternatives = alternativesView(state, id, maxItems);
+        return alternatives !== undefined ? { alternatives } : {};
+      })(),
+    };
   }
-  return out;
+  if (node.kind === "goal") {
+    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: DoneWhen } | undefined;
+    const plan = planView(state, id, maxItems);
+    const alternatives = alternativesView(state, id, maxItems);
+    return {
+      id,
+      kind: "goal",
+      state: state_,
+      ...(typeof payload?.what === "string" ? { what: payload.what } : {}),
+      ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
+      ...(payload?.done_when !== undefined ? { done_when: payload.done_when } : {}),
+      ...(plan !== undefined ? { plan } : {}),
+      ...(alternatives !== undefined ? { alternatives } : {}),
+    };
+  }
+  return undefined;
 }
 
-function formatRefusal(rejection: RejectionRecord): string {
-  const owner = rejection.constraintId ? ` (${rejection.constraintId})` : "";
-  return `${rejection.tool} ${rejection.target} — ${rejection.reason}${owner}`;
+function actionRef(state: State, actionId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "mutates" && edge.from === actionId) return stripRef(edge.to);
+  }
+  return undefined;
 }
 
-function refusalLines(state: State): string[] {
-  const bySignature = new Map<string, { line: string; count: number; seq: number }>();
+function buildView(state: State, node: Node, output: string | undefined): ResultView {
+  const payload = node.payload as Record<string, unknown> | undefined;
+  if (node.kind === "check") {
+    return {
+      id: node.id,
+      kind: "check",
+      ...(typeof payload?.command === "string" ? { command: payload.command } : {}),
+      ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
+      ...(output !== undefined ? { output } : {}),
+    };
+  }
+  if (node.kind === "observation") {
+    const ref = typeof payload?.ref === "string" ? stripRef(payload.ref) : undefined;
+    return {
+      id: node.id,
+      kind: "observation",
+      ...(ref !== undefined
+        ? { ref }
+        : typeof payload?.command === "string"
+          ? { command: payload.command }
+          : {}),
+      ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
+      ...(output !== undefined ? { output } : {}),
+    };
+  }
+  const ref = actionRef(state, node.id);
+  return {
+    id: node.id,
+    kind: "action",
+    label: node.label,
+    ...(ref !== undefined ? { ref } : {}),
+  };
+}
+
+function resultView(state: State, lastOutput: string | undefined): ResultView | undefined {
+  const node = [...state.nodes.values()]
+    .filter(
+      (candidate) =>
+        candidate.kind === "observation" ||
+        candidate.kind === "check" ||
+        candidate.kind === "action",
+    )
+    .sort(bySeqDesc)[0];
+  if (node === undefined) return undefined;
+  const payload = node.payload as Record<string, unknown> | undefined;
+  const output =
+    lastOutput !== undefined
+      ? lastOutput
+      : typeof payload?.output === "string"
+        ? payload.output
+        : undefined;
+  return buildView(state, node, output);
+}
+
+// A view of a specific node, with the body the caller resolved (payload or temp file).
+function viewOfNode(state: State, id: string, output: string | undefined): ResultView | undefined {
+  const node = state.nodes.get(id);
+  if (node === undefined) return undefined;
+  if (node.kind !== "observation" && node.kind !== "check" && node.kind !== "action") {
+    return undefined;
+  }
+  return buildView(state, node, output);
+}
+
+function applicableNames(value: Applicable): string[] {
+  const names: string[] = [];
+  if (value.createGoal) names.push("create_goal");
+  if (value.apply) names.push("apply");
+  if (value.complete) names.push("complete");
+  return names;
+}
+
+function lastLine(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return lines.length > 0 ? (lines[lines.length - 1] ?? "") : "";
+}
+
+function producedChild(state: State, actionId: string): Node | undefined {
+  let best: Node | undefined;
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "produces" || edge.from !== actionId) continue;
+    const node = state.nodes.get(edge.to);
+    if (node === undefined) continue;
+    if (best === undefined || node.seq > best.seq) best = node;
+  }
+  return best;
+}
+
+function producedBy(state: State, observationId: string): boolean {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "produces" && edge.to === observationId) return true;
+  }
+  return false;
+}
+
+// Summarize previous calls (§2.8): refusals (logos decisions) and executed actions
+// with their outcome (`ok`/`fail`), deduplicated by `(status, action)`, scoped to the
+// traversal branch. Failures/refusals are dropped once a later mutation could change
+// the outcome; successes are kept as history. Newest first, no result bodies.
+function callsView(state: State, branch: ReadonlySet<string>): Call[] {
+  const byKey = new Map<string, { call: Call; seq: number }>();
+  const put = (
+    action: string,
+    status: Call["status"],
+    note: string | undefined,
+    seq: number,
+    id?: string,
+  ): void => {
+    const key = `${status}\u0000${action}`;
+    const existing = byKey.get(key);
+    if (existing === undefined) {
+      byKey.set(key, {
+        call: { ...(id !== undefined ? { id } : {}), action, status, ...(note !== undefined ? { note } : {}), count: 1 },
+        seq,
+      });
+      return;
+    }
+    existing.call.count += 1;
+    if (seq > existing.seq) {
+      existing.seq = seq;
+      if (id !== undefined) existing.call.id = id;
+    }
+  };
+
   for (const rejection of state.rejections) {
-    const signature = `${rejection.tool}\u0000${rejection.target}\u0000${rejection.reason}`;
-    const existing = bySignature.get(signature);
-    if (existing) {
-      existing.count += 1;
-      if (rejection.seq >= existing.seq) {
-        existing.seq = rejection.seq;
-        existing.line = formatRefusal(rejection);
-      }
-      continue;
-    }
-    bySignature.set(signature, {
-      line: formatRefusal(rejection),
-      count: 1,
-      seq: rejection.seq,
-    });
+    if (rejection.focus !== "" && !branch.has(rejection.focus)) continue;
+    if (rejection.constraintId === undefined && rejection.seq < state.lastMutationSeq) continue;
+    put(`${rejection.tool} ${rejection.target}`.trim(), "refused", rejection.reason, rejection.seq);
   }
-  return [...bySignature.values()]
-    .sort((a, b) => b.seq - a.seq)
-    .map((entry) => (entry.count > 1 ? `${entry.line} ×${entry.count}` : entry.line));
-}
 
-function staleRefs(state: State): Set<string> {
-  const refs = new Set<string>();
-  for (const [edgeId, status] of state.edgeStatuses) {
-    if (status !== "stale") continue;
-    const provenance = state.edges.get(edgeId)?.provenance;
-    if (provenance?.kind === "read") refs.add(provenance.ref);
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "action" || predicateOf(state, node.id) !== "executed") continue;
+    const focus = state.focusOf.get(node.id);
+    if (focus !== undefined && !branch.has(focus)) continue;
+    const payload = node.payload as { command?: unknown } | undefined;
+    const action = typeof payload?.command === "string" ? payload.command : node.label;
+    const child = producedChild(state, node.id);
+    const verdict = (child?.payload as { verdict?: unknown } | undefined)?.verdict;
+    const status: Call["status"] = verdict === "fail" ? "fail" : "ok";
+    if (status === "fail" && node.seq < state.lastMutationSeq) continue;
+    let note: string | undefined;
+    if (status === "fail") {
+      const output = (child?.payload as { output?: unknown } | undefined)?.output;
+      note = clip(lastLine(typeof output === "string" ? output : "") || "(no output)", 120);
+    }
+    // The address of the result is the produced child when there is one, else the
+    // action itself (so the model can recall the body).
+    put(action, status, note, node.seq, child?.id ?? node.id);
   }
-  return refs;
+
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "observation" || producedBy(state, node.id)) continue;
+    const payload = node.payload as Record<string, unknown> | undefined;
+    if (payload?.verdict !== "fail") continue;
+    const focus = state.focusOf.get(node.id);
+    if (focus !== undefined && !branch.has(focus)) continue;
+    if (node.seq < state.lastMutationSeq) continue;
+    const output = typeof payload.output === "string" ? payload.output : node.label;
+    put(node.label, "fail", clip(lastLine(output) || "(no output)", 120), node.seq, node.id);
+  }
+
+  return [...byKey.values()]
+    .sort((a, b) => b.seq - a.seq)
+    .map((entry) => entry.call);
 }
 
 export function project(state: State, options: ProjectOptions = {}): Context {
-  const recentBudget = options.recentBudget ?? DEFAULT_RECENT_BUDGET;
-  const indexWindow = options.indexWindow ?? DEFAULT_INDEX_WINDOW;
-  const nodes = [...state.nodes.values()];
-  const stale = staleRefs(state);
-  const statusOf = (id: string): Status | undefined =>
-    state.statuses.get(id) ?? state.edgeStatuses.get(id);
-  const reachable = reachableFromGoal(state);
-  const onPath = (id: string): boolean => reachable.has(id);
+  const maxItems = envInt("SKEIN_CTX_ITEMS", 20);
 
-  const openClaimNodes = nodes
-    .filter((node) => node.kind === "claim" && statusOf(node.id) === "open" && onPath(node.id))
-    .sort(bySeqDesc);
+  const focusId = currentGoalId(state);
+  const branch = state.branch.length > 0 ? state.branch : state.rootId !== undefined ? [state.rootId] : [];
+  const path = branch
+    .map((id) => pathNode(state, id, maxItems))
+    .filter((node): node is PathNode => node !== undefined);
 
-  const focusId = state.branch[state.branch.length - 1] ?? activeFocus(state, reachable);
-  const branch = new Set<string>(
-    focusId !== undefined
-      ? ancestorChain(state, focusId)
-      : state.goalId !== undefined
-        ? [state.goalId]
-        : [],
-  );
-  const inBranch = (id: string): boolean => branch.has(id);
-  const parentInBranch = (node: Node): boolean => {
-    const parent = parentId(state, node);
-    return parent !== undefined && branch.has(parent);
-  };
-
-  const activeClaimNodes = openClaimNodes.filter(
-    (node) => inBranch(node.id) || parentInBranch(node),
-  );
-
-  const supportsOf = (claimId: string): string | undefined => {
-    for (const edge of state.edges.values()) {
-      if (edge.kind === "supports" && edge.from === claimId) return edge.to;
-    }
-    return undefined;
-  };
-
-  const citeOf = (id: string): string | undefined => {
-    const payload = state.nodes.get(id)?.payload as { cite?: unknown } | undefined;
-    return typeof payload?.cite === "string" && payload.cite.trim() !== ""
-      ? payload.cite
-      : undefined;
-  };
-
-  const claims = activeClaimNodes.flatMap((node) => {
-    if (citeOf(node.id) !== undefined) return [];
-    const supports = supportsOf(node.id);
-    return [{ id: node.id, label: node.label, ...(supports !== undefined ? { supports } : {}) }];
-  });
-
-  const facts = activeClaimNodes.flatMap((node) => {
-    const cite = citeOf(node.id);
-    if (cite === undefined) return [];
-    const supports = supportsOf(node.id);
-    return [
-      {
-        id: node.id,
-        label: node.label,
-        cite,
-        ...(supports !== undefined ? { supports } : {}),
-      },
-    ];
-  });
-
-  const overOf = (decisionId: string): string[] => {
-    const out: string[] = [];
-    for (const edge of state.edges.values()) {
-      if (edge.kind === "chosen_over" && edge.from === decisionId) out.push(edge.to);
-    }
-    return out;
-  };
-
-  const decisions = nodes
-    .filter(
-      (node) =>
-        node.kind === "decision" &&
-        statusOf(node.id) === "active" &&
-        onPath(node.id) &&
-        (inBranch(node.id) || parentInBranch(node)),
-    )
-    .sort(bySeqDesc)
-    .map((node) => ({ id: node.id, label: node.label, over: overOf(node.id) }));
-
-  const subgoals = nodes
-    .filter(
-      (node) =>
-        node.kind === "subgoal" &&
-        statusOf(node.id) === "open" &&
-        onPath(node.id) &&
-        inBranch(node.id),
-    )
-    .sort(bySeqDesc)
-    .map((node) => ({ id: node.id, label: node.label }));
-
-  const activeIds = new Set<string>([
-    ...subgoals.map((entry) => entry.id),
-    ...activeClaimNodes.map((node) => node.id),
-    ...decisions.map((entry) => entry.id),
-  ]);
-
-  const backtrack = nodes
-    .filter((node) => {
-      if (!onPath(node.id)) return false;
-      if (node.kind !== "subgoal" && node.kind !== "claim") return false;
-      if (statusOf(node.id) !== "open") return false;
-      return !activeIds.has(node.id);
-    })
-    .sort(bySeqDesc)
-    .map((node) => ({ id: node.id, label: node.label, kind: node.kind }));
-
-  const achievedSubgoals = nodes
-    .filter((node) => node.kind === "subgoal" && statusOf(node.id) === "achieved" && onPath(node.id))
-    .sort(bySeqDesc)
-    .map((node) => `${node.id}: ${node.label}`);
-
-  const lastAction = nodes
-    .filter((node) => node.kind === "action")
-    .sort(bySeqDesc)[0];
-
-  const observations = latestObservationPerClaim(state, activeClaimNodes);
-
-  const invalidated = invalidatedClaimIds(state);
-
-  const verifiedClaims = nodes
-    .filter((node) => node.kind === "claim" && statusOf(node.id) === "verified" && onPath(node.id))
-    .sort(bySeqDesc);
-
-  const verified = verifiedClaims
-    .filter((node) => !invalidated.has(node.id))
-    .map((node) => `${node.id}: ${node.label}`);
-
-  const invalidatedLines = verifiedClaims
-    .filter((node) => invalidated.has(node.id))
-    .map((node) => `${node.id}: ${node.label}`);
-
-  const revisions = verifiedClaims
-    .filter((node) => invalidated.has(node.id))
+  const constraints = [...state.nodes.values()]
+    .filter((node) => node.kind === "constraint")
     .map((node) => {
-      for (const edge of state.edges.values()) {
-        if (edge.kind !== "verifies" || edge.to !== node.id) continue;
-        if (state.edgeStatuses.get(edge.id) !== "stale") continue;
-        const check = state.nodes.get(edge.from);
-        const payload = check?.payload as { command?: unknown } | undefined;
-        const command = typeof payload?.command === "string" ? payload.command : undefined;
-        return command !== undefined
-          ? `${node.id}: ${node.label} — verification after "${command}" no longer holds`
-          : `${node.id}: ${node.label} — verification no longer holds`;
-      }
-      return `${node.id}: ${node.label} — verification no longer holds`;
+      const payload = node.payload as { forbid?: unknown } | undefined;
+      const forbid = Array.isArray(payload?.forbid)
+        ? payload.forbid.filter((pattern): pattern is string => typeof pattern === "string")
+        : [];
+      return { id: node.id, forbid };
     });
 
-  const rejected = nodes
-    .filter((node) => {
-      const status = statusOf(node.id);
-      return (status === "refuted" || status === "superseded") && onPath(node.id);
-    })
-    .map((node) => `${node.id}: ${node.label}`);
-
-  const refusals = refusalLines(state);
-
-  const artifacts = nodes
-    .filter((node) => node.space === "artifact")
-    .map((node) => ({ id: node.id, label: node.label, stale: stale.has(node.id) }));
-
-  const tally = new Map<NodeKind, number>();
-  for (const node of nodes) tally.set(node.kind, (tally.get(node.kind) ?? 0) + 1);
-  const counts: Partial<Record<NodeKind, number>> = {};
-  for (const kind of NODE_KINDS) {
-    const count = tally.get(kind);
-    if (count !== undefined) counts[kind] = count;
-  }
-
-  const index = {
-    counts,
-    recent: [...nodes].sort(bySeqDesc).slice(0, indexWindow).map((node) => ({
-      id: node.id,
-      kind: node.kind,
-      label: node.label,
-    })),
-  };
-
-  const recent = recentFlow(options.recent ?? [], recentBudget);
-
-  const goal = state.goalId !== undefined ? state.nodes.get(state.goalId) ?? null : null;
-  const constraints = nodes.filter((node) => node.kind === "constraint");
-
-  const budget =
-    options.budget === undefined
-      ? undefined
-      : {
-          turn: options.budget.turn,
-          maxTurns: options.budget.maxTurns,
-          remaining: Math.max(0, options.budget.maxTurns - options.budget.turn),
-        };
+  const lastResult = resultView(state, options.lastOutput);
+  const calls = callsView(state, new Set(branch));
+  const shown = (options.recalled ?? [])
+    .map((entry) => viewOfNode(state, entry.id, entry.output))
+    .filter((view): view is ResultView => view !== undefined);
+  const budget = options.budget;
 
   return {
-    header: {
-      goal,
-      constraints,
-      mode: deriveMode(state),
-      fragment: FRAGMENT.map((capability) => ({ id: capability.id, label: capability.label })),
-      ...(budget !== undefined ? { budget } : {}),
-    },
-    frontier: {
-      subgoals,
-      achievedSubgoals,
-      claims,
-      facts,
-      decisions,
-      backtrack,
-      lastAction,
-      observations,
-      verified,
-      invalidated: invalidatedLines,
-      revisions,
-      rejected,
-      refusals,
-    },
-    artifacts,
-    index,
-    recent,
+    path,
+    constraints,
+    ...(lastResult !== undefined ? { lastResult } : {}),
+    shown,
+    calls,
+    applicable: applicableNames(applicable(state, focusId)),
+    budget: budget === undefined
+      ? { turn: 0, maxTurns: 0, remaining: 0 }
+      : {
+          turn: budget.turn,
+          maxTurns: budget.maxTurns,
+          remaining: Math.max(0, budget.maxTurns - budget.turn),
+        },
   };
 }

@@ -9,13 +9,15 @@ projection are the protocol.
 
 - `docs/concepts.md` — conceptual overview.
 - `docs/ir.md` — the IR: operations, state, and control.
+- `docs/testing.md` — how to run tests and benches, and where output lands.
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
 - `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
 
 ## Commands
 
 - `npm run typecheck` — `tsc --noEmit`
-- `npm test` — vitest (live gate only when `SKEIN_LIVE=true`)
+- `SKEIN_LIVE=false npx vitest run` — offline tests (`.env` sets `SKEIN_LIVE=true`)
+- see `docs/testing.md` for the live gate and benches
 
 ## Invariants (do not break)
 

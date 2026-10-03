@@ -19,6 +19,7 @@ export interface GrepMatch {
 export interface CommandResult {
   code: number;
   output: string;
+  timedOut?: boolean;
 }
 
 export interface Workspace {
@@ -57,18 +58,15 @@ const SKIP_DIRS = new Set([
   ".nuxt",
   ".terraform",
 ]);
-const TEXT_EXT = new Set([
-  ".mjs",
-  ".js",
-  ".cjs",
-  ".ts",
-  ".tsx",
-  ".json",
-  ".md",
-  ".txt",
-  ".yml",
-  ".yaml",
-]);
+
+// Binary detection is by content, not by an extension allowlist: a coding agent
+// greps source in any language (.c, .h, .rs, .go, .py, …), not just the ones the
+// fixtures happened to use.
+const MAX_GREP_BYTES = 2_000_000;
+
+function isBinary(content: string): boolean {
+  return content.includes("\u0000");
+}
 
 export function fsWorkspace(root: string): Workspace {
   const base = resolve(root);
@@ -111,13 +109,15 @@ export function fsWorkspace(root: string): Workspace {
     const re = new RegExp(pattern);
     const matches: GrepMatch[] = [];
     for (const path of list()) {
-      if (!TEXT_EXT.has(path.slice(path.lastIndexOf(".")))) continue;
-      let lines: string[];
+      let content: string;
       try {
-        lines = read(path).split("\n");
+        if (statSync(abs(path)).size > MAX_GREP_BYTES) continue;
+        content = read(path);
       } catch {
         continue;
       }
+      if (isBinary(content)) continue;
+      const lines = content.split("\n");
       lines.forEach((text, index) => {
         if (re.test(text)) matches.push({ path, line: index + 1, text });
       });
@@ -137,13 +137,16 @@ export function fsWorkspace(root: string): Workspace {
     } catch (error) {
       const err = error as {
         status?: number | null;
+        signal?: string | null;
+        killed?: boolean;
         stdout?: string;
         stderr?: string;
         message?: string;
       };
       const output =
         `${err.stdout ?? ""}${err.stderr ?? ""}`.trim() || err.message || "command failed";
-      return { code: err.status ?? 1, output };
+      const timedOut = err.killed === true || err.signal === "SIGTERM";
+      return { code: err.status ?? 1, output, ...(timedOut ? { timedOut: true } : {}) };
     }
   };
 

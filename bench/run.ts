@@ -25,7 +25,14 @@ import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, renderContext } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
-import { contextStats, graphCounts, sum, TurnMeter, type TurnRecord } from "./metrics";
+import {
+  actionName,
+  contextStats,
+  graphCounts,
+  sum,
+  TurnMeter,
+  type TurnRecord,
+} from "./metrics";
 
 interface LoopEvent {
   tool: string;
@@ -92,15 +99,17 @@ async function loadLoopModule(): Promise<LoopModule> {
 }
 
 function toLoopEvent(action: Action): LoopEvent {
-  switch (action.tool) {
+  if (action.operator !== "apply") return { tool: action.operator, input: {} };
+  const apply = action.action;
+  switch (apply.tool) {
     case "read":
-      return { tool: "read", input: { filePath: action.path } };
+      return { tool: "read", input: { filePath: apply.path } };
     case "edit":
-      return { tool: "edit", input: { filePath: action.path } };
+      return { tool: "edit", input: { filePath: apply.path } };
     case "run":
-      return { tool: "bash", input: { command: action.command } };
+      return { tool: "bash", input: { command: apply.command } };
     default:
-      return { tool: action.tool, input: {} };
+      return { tool: apply.tool, input: {} };
   }
 }
 
@@ -117,7 +126,7 @@ function summary(metrics: Record<string, unknown>): string {
     `tok in=${metrics.inputTokens} out=${metrics.outputTokens}`,
     `cache=${metrics.cacheRead} (${(((metrics.cacheHitRatio as number | null) ?? 0) * 100).toFixed(0)}%)`,
     `cost=${(metrics.costRub as number).toFixed(2)}₽`,
-    `graph sg${graph.subgoals}/d${graph.decisions}/c${graph.claims}`,
+    `graph goals${graph.goals}/plans${graph.plans}/alt${graph.alternatives}/checks${graph.checks}`,
     `loop=${((metrics.loopScore as number) * 100).toFixed(0)}%`,
     `rereads=${metrics.rereads}`,
   ].join(" ");
@@ -179,10 +188,13 @@ async function main(): Promise<void> {
   const prompt = readFileSync(join(caseDir, "prompt.txt"), "utf8").trim();
   const proposals: Action[] = [];
   const turns: Omit<TurnRecord, "accepted">[] = [];
+  const contexts: { turn: number; chars: number; context: Context }[] = [];
   const structured = createChatModel({ ...settings, model }).withStructuredOutput(proposalSchema);
 
   const propose = async (context: Context): Promise<Proposal> => {
-    const contextChars = renderContext(context).length;
+    const rendered = renderContext(context);
+    const contextChars = rendered.length;
+    contexts.push({ turn: turns.length, chars: contextChars, context });
     const meter = new TurnMeter();
     const started = Date.now();
     const result = await structured.invoke(buildMessages(context), { callbacks: [meter] });
@@ -191,7 +203,7 @@ async function main(): Promise<void> {
     proposals.push(proposal.action);
     turns.push({
       turn: turns.length,
-      action: proposal.action.tool,
+      action: actionName(proposal.action),
       contextChars,
       inputTokens: meter.inputTokens,
       outputTokens: meter.outputTokens,
@@ -208,7 +220,7 @@ async function main(): Promise<void> {
 
   const result = await runAgent(
     { propose, workspace: fsWorkspace(work), maxTurns: args.maxTurns ?? settings.maxTurns },
-    { goal: { id: "g1", label: prompt } },
+    { request: { id: "r1", text: prompt } },
   );
 
   const check = spawnSync("bash", [join(caseDir, "check.sh")], {
@@ -259,6 +271,7 @@ async function main(): Promise<void> {
 
   writeFileSync(join(runDir, "trajectory.json"), JSON.stringify(proposals, null, 2));
   writeFileSync(join(runDir, "turns.ndjson"), turnRecords.map((t) => JSON.stringify(t)).join("\n"));
+  writeFileSync(join(runDir, "contexts.ndjson"), contexts.map((c) => JSON.stringify(c)).join("\n"));
   writeFileSync(join(runDir, "events.ndjson"), result.events.map((e) => JSON.stringify(e)).join("\n"));
   writeFileSync(join(runDir, "metrics.json"), JSON.stringify(metrics, null, 2));
   writeFileSync(join(runDir, "reward.txt"), String(reward));

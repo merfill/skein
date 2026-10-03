@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, Node, Status, WitnessEntry } from "./types";
+import type { Edge, Node, Predicate, WitnessEntry } from "./types";
 
 export interface RejectionRecord {
   seq: number;
@@ -8,16 +8,29 @@ export interface RejectionRecord {
   target: string;
   reason: string;
   constraintId?: string;
+  // The node in focus when the refusal was recorded; scopes the negative history
+  // to the traversal branch (§2.8).
+  focus: string;
 }
 
 export interface State {
   nodes: Map<string, Node>;
   edges: Map<string, Edge>;
-  statuses: Map<string, Status>;
-  edgeStatuses: Map<string, Status>;
+  // Ordered children of plan/alternatives containers, from `item` event order.
+  children: Map<string, string[]>;
+  // Derived predicates (§2.5); never a stored field.
+  predicates: Map<string, Predicate>;
   rejections: RejectionRecord[];
+  // The node in focus when each node was added, keyed by node id; derived during
+  // fold. Scopes negative records to the traversal branch (§2.8).
+  focusOf: Map<string, string>;
+  // Full traversal stack of goals, root first; `descend`/`return` fold into it.
   branch: string[];
-  goalId?: string;
+  // world state: latest mutated version and first observed version per ref
+  mutated: Map<string, string>;
+  observed: Map<string, string>;
+  lastMutationSeq: number;
+  rootId?: string;
   seq: number;
 }
 
@@ -25,87 +38,164 @@ export function emptyState(): State {
   return {
     nodes: new Map(),
     edges: new Map(),
-    statuses: new Map(),
-    edgeStatuses: new Map(),
+    children: new Map(),
+    predicates: new Map(),
     rejections: [],
+    focusOf: new Map(),
     branch: [],
+    mutated: new Map(),
+    observed: new Map(),
+    lastMutationSeq: 0,
     seq: 0,
   };
 }
 
-function defaultStatus(node: Node): Status {
-  switch (node.kind) {
-    case "decision":
-      return "active";
-    case "action":
-      return "applied";
-    case "constraint":
-      return "must";
-    case "file":
-    case "symbol":
-    case "test":
-      return "believed";
-    default:
-      return "open";
-  }
+export function currentFocus(state: State): string | undefined {
+  return state.branch[state.branch.length - 1] ?? state.rootId;
 }
 
-export function witnessOf(state: State, edge: Edge): WitnessEntry[] | undefined {
-  const observation = state.nodes.get(edge.from);
-  const payload = observation?.payload as { witness?: WitnessEntry[] } | undefined;
+export function currentVersion(state: State, ref: string): string | undefined {
+  return state.mutated.get(ref) ?? state.observed.get(ref);
+}
+
+export function predicateOf(state: State, id: string): Predicate {
+  return state.predicates.get(id) ?? "open";
+}
+
+export function planOf(state: State, goalId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "has_plan" && edge.from === goalId) return edge.to;
+  }
+  return undefined;
+}
+
+export function alternativesOf(state: State, goalId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "has_alternatives" && edge.from === goalId) return edge.to;
+  }
+  return undefined;
+}
+
+export function childrenOf(state: State, containerId: string): string[] {
+  return state.children.get(containerId) ?? [];
+}
+
+export function checkHasUnder(state: State, checkId: string): boolean {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "under" && edge.from === checkId) return true;
+  }
+  return false;
+}
+
+export function witnessOf(state: State, checkId: string): WitnessEntry[] | undefined {
+  const payload = state.nodes.get(checkId)?.payload as { witness?: WitnessEntry[] } | undefined;
   return payload?.witness;
 }
 
-export function invalidatedClaimIds(state: State): Set<string> {
-  const hasLive = new Set<string>();
-  const staleOnly = new Set<string>();
-  for (const edge of state.edges.values()) {
-    if (edge.kind !== "verifies") continue;
-    if (state.edgeStatuses.get(edge.id) === "stale") staleOnly.add(edge.to);
-    else hasLive.add(edge.to);
-  }
-  const out = new Set<string>();
-  for (const id of staleOnly) {
-    if (!hasLive.has(id)) out.add(id);
-  }
-  return out;
+export function checkIsStale(state: State, checkId: string): boolean {
+  const witness = witnessOf(state, checkId);
+  if (witness === undefined) return false;
+  return witness.some((entry) => currentVersion(state, entry.ref) !== entry.version);
 }
 
-function deriveStatuses(state: State): void {
-  const superseded = new Set<string>();
+export function latestClosingCheck(state: State, goalId: string): Node | undefined {
+  let latest: Node | undefined;
   for (const edge of state.edges.values()) {
-    if (edge.kind === "chosen_over") superseded.add(edge.to);
+    if (edge.kind !== "verifies" || edge.to !== goalId) continue;
+    const check = state.nodes.get(edge.from);
+    if (check === undefined || check.kind !== "check") continue;
+    if (latest === undefined || check.seq > latest.seq) latest = check;
   }
-  for (const node of state.nodes.values()) {
-    if (node.kind === "decision") {
-      state.statuses.set(node.id, superseded.has(node.id) ? "superseded" : "active");
-    }
-  }
+  return latest;
+}
 
-  const invalidated = invalidatedClaimIds(state);
-  const supportedBy = new Map<string, string[]>();
+function latestComplete(state: State, goalId: string): Node | undefined {
+  let latest: Node | undefined;
   for (const edge of state.edges.values()) {
-    if (edge.kind !== "supports") continue;
-    const claims = supportedBy.get(edge.to);
-    if (claims) claims.push(edge.from);
-    else supportedBy.set(edge.to, [edge.from]);
+    if (edge.kind !== "closes" || edge.to !== goalId) continue;
+    const complete = state.nodes.get(edge.from);
+    if (complete === undefined || complete.kind !== "complete") continue;
+    if (latest === undefined || complete.seq > latest.seq) latest = complete;
   }
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "subgoal") continue;
-    let verified = false;
-    let unfinished = false;
-    for (const claimId of supportedBy.get(node.id) ?? []) {
-      const claim = state.nodes.get(claimId);
-      if (!claim || claim.kind !== "claim") continue;
-      if (invalidated.has(claimId)) {
-        unfinished = true;
-        continue;
-      }
-      const status = state.statuses.get(claimId);
-      if (status === "open") unfinished = true;
-      else if (status === "verified") verified = true;
+  return latest;
+}
+
+// The current chosen option of a container is the target of the latest `chosen`
+// edge (Map iteration follows insertion order, i.e. journal order).
+export function latestChosen(state: State, containerId: string): string | undefined {
+  let chosen: string | undefined;
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "chosen" && edge.from === containerId) chosen = edge.to;
+  }
+  return chosen;
+}
+
+function isUnselectedVariant(state: State, goalId: string): boolean {
+  for (const [containerId, ids] of state.children) {
+    if (!ids.includes(goalId)) continue;
+    const container = state.nodes.get(containerId);
+    if (container === undefined || container.kind !== "alternatives") continue;
+    const chosen = latestChosen(state, containerId);
+    if (chosen !== undefined) return chosen !== goalId;
+  }
+  return false;
+}
+
+function requestPredicate(state: State, requestId: string): Predicate {
+  const alt = alternativesOf(state, requestId);
+  if (alt === undefined) return "open";
+  const chosen = latestChosen(state, alt);
+  if (chosen === undefined) return "open";
+  const predicate = goalPredicate(state, chosen);
+  return predicate === "achieved" || predicate === "achieved_under" ? "addressed" : "open";
+}
+
+function goalPredicate(state: State, goalId: string): Predicate {
+  const check = latestClosingCheck(state, goalId);
+  const complete = latestComplete(state, goalId);
+  let closure: Predicate = "open";
+  if (check !== undefined && (complete === undefined || check.seq > complete.seq)) {
+    const payload = check.payload as { verdict?: unknown } | undefined;
+    const verdict = payload?.verdict;
+    if (verdict === "pass") {
+      closure = checkHasUnder(state, check.id) ? "achieved_under" : "achieved";
+    } else if (verdict === "fail") {
+      closure = "refuted";
+    } else {
+      closure = "open";
     }
-    state.statuses.set(node.id, verified && !unfinished ? "achieved" : "open");
+  } else if (complete !== undefined) {
+    closure = "achieved_under";
+  }
+  if (closure === "refuted") return "refuted";
+  if (isUnselectedVariant(state, goalId)) return "abandoned";
+  return closure;
+}
+
+function actionExecuted(state: State, actionId: string): boolean {
+  for (const edge of state.edges.values()) {
+    if (edge.from !== actionId) continue;
+    if (edge.kind === "produces" || edge.kind === "mutates") return true;
+  }
+  return false;
+}
+
+function actionSuperseded(state: State, actionId: string): boolean {
+  const alt = alternativesOf(state, actionId);
+  if (alt === undefined) return false;
+  const chosen = latestChosen(state, alt);
+  return chosen !== undefined && chosen !== actionId;
+}
+
+function derivePredicates(state: State): void {
+  state.predicates = new Map();
+  for (const node of state.nodes.values()) {
+    let predicate: Predicate = "open";
+    if (node.kind === "request") predicate = requestPredicate(state, node.id);
+    else if (node.kind === "goal") predicate = goalPredicate(state, node.id);
+    else if (node.kind === "action" && actionExecuted(state, node.id)) predicate = "executed";
+    else if (node.kind === "action" && actionSuperseded(state, node.id)) predicate = "abandoned";
+    state.predicates.set(node.id, predicate);
   }
 }
 
@@ -113,17 +203,21 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
   const state: State = {
     nodes: new Map(base.nodes),
     edges: new Map(base.edges),
-    statuses: new Map(base.statuses),
-    edgeStatuses: new Map(base.edgeStatuses),
+    children: new Map([...base.children].map(([key, value]) => [key, [...value]])),
+    predicates: new Map(base.predicates),
     rejections: [...base.rejections],
+    focusOf: new Map(base.focusOf),
     branch: [...base.branch],
-    goalId: base.goalId,
+    mutated: new Map(base.mutated),
+    observed: new Map(base.observed),
+    lastMutationSeq: base.lastMutationSeq,
+    rootId: base.rootId,
     seq: base.seq,
   };
 
   for (const event of events) applyEvent(state, event);
 
-  deriveStatuses(state);
+  derivePredicates(state);
 
   return state;
 }
@@ -134,20 +228,34 @@ function applyEvent(state: State, event: Event): void {
   switch (event.type) {
     case "add_node": {
       state.nodes.set(event.node.id, event.node);
-      state.statuses.set(event.node.id, defaultStatus(event.node));
-      if (event.node.kind === "goal" && state.goalId === undefined) {
-        state.goalId = event.node.id;
+      if (event.node.kind === "request") {
+        state.rootId = event.node.id;
+        state.branch = [event.node.id];
+      } else if (event.node.kind === "goal" && state.rootId === undefined) {
+        state.rootId = event.node.id;
+        state.branch = [event.node.id];
+      }
+      const focus = currentFocus(state);
+      if (focus !== undefined) state.focusOf.set(event.node.id, focus);
+      if (event.node.kind === "observation") {
+        const payload = event.node.payload as { ref?: unknown; version?: unknown } | undefined;
+        if (
+          typeof payload?.ref === "string" &&
+          typeof payload.version === "string" &&
+          !state.observed.has(payload.ref)
+        ) {
+          state.observed.set(payload.ref, payload.version);
+        }
       }
       break;
     }
     case "add_edge": {
       state.edges.set(event.edge.id, event.edge);
-      state.edgeStatuses.set(event.edge.id, event.edge.status);
-      break;
-    }
-    case "set_status": {
-      if (state.nodes.has(event.id)) state.statuses.set(event.id, event.status);
-      else state.edgeStatuses.set(event.id, event.status);
+      if (event.edge.kind === "item") {
+        const list = state.children.get(event.edge.from);
+        if (list) list.push(event.edge.to);
+        else state.children.set(event.edge.from, [event.edge.to]);
+      }
       break;
     }
     case "descend": {
@@ -155,27 +263,12 @@ function applyEvent(state: State, event: Event): void {
       break;
     }
     case "return": {
-      state.branch.pop();
+      if (state.branch.length > 1) state.branch.pop();
       break;
     }
     case "mutate": {
-      for (const edge of state.edges.values()) {
-        const provenance = edge.provenance;
-        if (
-          provenance.kind === "read" &&
-          provenance.ref === event.ref &&
-          provenance.version !== event.version
-        ) {
-          state.edgeStatuses.set(edge.id, "stale");
-        } else if (
-          provenance.kind === "check" &&
-          witnessOf(state, edge)?.some(
-            (entry) => entry.ref === event.ref && entry.version !== event.version,
-          )
-        ) {
-          state.edgeStatuses.set(edge.id, "stale");
-        }
-      }
+      state.mutated.set(event.ref, event.version);
+      state.lastMutationSeq = state.seq;
       break;
     }
     case "record_rejection": {
@@ -186,6 +279,7 @@ function applyEvent(state: State, event: Event): void {
         target: event.target,
         reason: event.reason,
         constraintId: event.constraintId,
+        focus: currentFocus(state) ?? "",
       });
       break;
     }
@@ -207,15 +301,16 @@ function applyEvent(state: State, event: Event): void {
           },
           seq: state.seq,
         });
-        state.statuses.set(checkId, "open");
+        const focus = currentFocus(state);
+        if (focus !== undefined) state.focusOf.set(checkId, focus);
       }
-      event.claimIds.forEach((id, index) => {
-        state.statuses.set(id, event.verdict === "pass" ? "verified" : "refuted");
+      event.targets.forEach((target, index) => {
         const edgeId = `${checkId}:v:${index}`;
+        if (state.edges.has(edgeId)) return;
         state.edges.set(edgeId, {
           id: edgeId,
           from: checkId,
-          to: id,
+          to: target,
           kind: "verifies",
           provenance: {
             kind: "check",
@@ -223,9 +318,18 @@ function applyEvent(state: State, event: Event): void {
             verdict: event.verdict,
             ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
           },
-          status: "open",
         });
-        state.edgeStatuses.set(edgeId, "open");
+      });
+      (event.under ?? []).forEach((assumption, index) => {
+        const edgeId = `${checkId}:u:${index}`;
+        if (state.edges.has(edgeId)) return;
+        state.edges.set(edgeId, {
+          id: edgeId,
+          from: checkId,
+          to: assumption,
+          kind: "under",
+          provenance: { kind: "llm" },
+        });
       });
       break;
     }

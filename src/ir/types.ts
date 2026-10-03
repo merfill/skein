@@ -3,17 +3,19 @@ export type Space = "work" | "artifact";
 export const SPACES = ["work", "artifact"] as const;
 
 export const WORK_KINDS = [
+  "request",
   "goal",
-  "subgoal",
-  "claim",
-  "decision",
   "action",
+  "plan",
+  "alternatives",
   "observation",
   "check",
+  "complete",
   "constraint",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
+// `symbol` and `test` are reserved but not produced by the current model (§10.1).
 export const ARTIFACT_KINDS = ["file", "symbol", "test"] as const;
 export type ArtifactKind = (typeof ARTIFACT_KINDS)[number];
 
@@ -29,7 +31,7 @@ export interface Node {
   seq: number;
 }
 
-export type Verdict = "pass" | "fail";
+export type Verdict = "pass" | "fail" | "inconclusive";
 
 export interface WitnessEntry {
   ref: string;
@@ -48,38 +50,39 @@ export type Provenance =
       outputRef?: string;
     };
 
-export const STATUSES = [
+// State is derived, never stored: these predicates are computed from the
+// incident event nodes (§2.5).
+export const PREDICATES = [
   "open",
-  "verified",
-  "refuted",
-  "superseded",
-  "active",
-  "applied",
-  "reverted",
+  "executed",
   "achieved",
+  "achieved_under",
+  "refuted",
   "abandoned",
-  "must",
-  "believed",
-  "stale",
-  "confirmed",
+  "addressed",
 ] as const;
-export type Status = (typeof STATUSES)[number];
+export type Predicate = (typeof PREDICATES)[number];
+
+export type DoneWhen =
+  | { kind: "objective"; command: string }
+  | { kind: "subjective"; text: string };
+
+export interface GoalPayload {
+  what: string;
+  why?: string;
+  done_when: DoneWhen;
+}
 
 export const EDGE_KINDS = [
-  "decomposes",
-  "supports",
-  "refutes",
-  "depends_on",
-  "chosen_over",
-  "justifies",
-  "touches",
-  "locates",
+  "has_plan",
+  "item",
+  "has_alternatives",
+  "chosen",
+  "under",
+  "produces",
   "verifies",
-  "violates",
-  "calls",
-  "defines",
-  "imports",
-  "tests",
+  "closes",
+  "mutates",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
@@ -89,6 +92,4 @@ export interface Edge {
   to: string;
   kind: EdgeKind;
   provenance: Provenance;
-  status: Status;
-  version?: string;
 }

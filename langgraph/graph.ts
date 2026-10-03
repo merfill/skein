@@ -8,8 +8,17 @@
 // (Harbor tees the runner output into the trial's agent log).
 import { AIMessage } from "@langchain/core/messages";
 
-import { contextStats, graphCounts, sum, TurnMeter, type TurnRecord } from "../bench/metrics";
+import {
+  actionName,
+  contextStats,
+  graphCounts,
+  sum,
+  TurnMeter,
+  type TurnRecord,
+} from "../bench/metrics";
 import { loadSettings, type Settings } from "../src/config/settings";
+import type { Event } from "../src/ir/events";
+import { checkHasUnder, childrenOf, fold, predicateOf } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
@@ -64,16 +73,95 @@ function buildSettings(config: HarborInvokeConfig | undefined): Settings {
 }
 
 function answerFor(result: Awaited<ReturnType<typeof runAgent>>): string {
-  for (const event of result.events) {
-    if (
-      event.type === "add_node" &&
-      event.node.kind === "action" &&
-      event.node.label.startsWith("finish:")
-    ) {
-      return event.node.label.replace(/^finish:\s*/, "");
-    }
-  }
   return `Skein stopped (${result.stopReason ?? "unknown"}) after ${result.turns} turns.`;
+}
+
+// Diagnostic dump of the IR tree, so a Harbor run is analyzable after the fact
+// (goals with why/done_when, commands, edits, checks, rejections).
+function diagnostics(events: readonly Event[]): unknown {
+  const state = fold(events);
+  const payloadOf = (id: string): Record<string, unknown> | undefined =>
+    state.nodes.get(id)?.payload as Record<string, unknown> | undefined;
+  const nodes = [...state.nodes.values()];
+  const edges = [...state.edges.values()];
+  const hasPlanFrom = (planId: string): string | undefined =>
+    edges.find((edge) => edge.kind === "has_plan" && edge.to === planId)?.from;
+  const mutateRefs = new Set<string>();
+  for (const event of events) {
+    if (event.type === "mutate") mutateRefs.add(event.ref);
+  }
+  return {
+    request: nodes
+      .filter((node) => node.kind === "request")
+      .map((node) => node.payload),
+    goals: nodes
+      .filter((node) => node.kind === "goal")
+      .map((node) => ({
+        id: node.id,
+        label: node.label,
+        predicate: predicateOf(state, node.id),
+        payload: node.payload,
+      })),
+    actions: nodes
+      .filter((node) => node.kind === "action")
+      .map((node) => ({
+        id: node.id,
+        predicate: predicateOf(state, node.id),
+        command: payloadOf(node.id)?.command ?? null,
+      })),
+    checks: nodes
+      .filter((node) => node.kind === "check")
+      .map((node) => {
+        const payload = payloadOf(node.id) ?? {};
+        return {
+          id: node.id,
+          command: payload.command,
+          verdict: payload.verdict,
+          actor: payload.actor,
+          under: checkHasUnder(state, node.id),
+        };
+      }),
+    observations: nodes
+      .filter((node) => node.kind === "observation")
+      .map((node) => {
+        const payload = payloadOf(node.id) ?? {};
+        return {
+          id: node.id,
+          label: node.label,
+          command: payload.command ?? null,
+          ref: payload.ref ?? null,
+          verdict: payload.verdict ?? null,
+        };
+      }),
+    completes: nodes
+      .filter((node) => node.kind === "complete")
+      .map((node) => ({ id: node.id, label: node.label })),
+    plans: nodes
+      .filter((node) => node.kind === "plan")
+      .map((node) => ({
+        id: node.id,
+        for: hasPlanFrom(node.id) ?? null,
+        items: childrenOf(state, node.id),
+      })),
+    alternatives: nodes
+      .filter((node) => node.kind === "alternatives")
+      .map((node) => ({ id: node.id, items: childrenOf(state, node.id) })),
+    verifies: edges
+      .filter((edge) => edge.kind === "verifies")
+      .map((edge) => ({ from: edge.from, to: edge.to })),
+    closes: edges
+      .filter((edge) => edge.kind === "closes")
+      .map((edge) => ({ from: edge.from, to: edge.to })),
+    mutateEdges: edges
+      .filter((edge) => edge.kind === "mutates")
+      .map((edge) => ({ from: edge.from, to: edge.to })),
+    mutateRefCount: mutateRefs.size,
+    rejections: state.rejections.map((rejection) => ({
+      tool: rejection.tool,
+      target: rejection.target,
+      reason: rejection.reason,
+    })),
+  };
 }
 
 export const skein = {
@@ -92,17 +180,42 @@ export const skein = {
     const proposals: Action[] = [];
     const turns: Omit<TurnRecord, "accepted">[] = [];
     const propose = async (context: Context): Promise<Proposal> => {
-      const contextChars = renderContext(context).length;
+      const rendered = renderContext(context);
+      const contextChars = rendered.length;
+      console.log(
+        `SKEIN_CONTEXT ${JSON.stringify({ turn: turns.length, chars: contextChars, context })}`,
+      );
       const meter = new TurnMeter();
       const started = Date.now();
-      const result = await structured.invoke(buildMessages(context), {
-        callbacks: [...inherited, meter],
-      });
-      const proposal = proposalSchema.parse(result);
+      let proposal: Proposal | undefined;
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const result = await structured.invoke(buildMessages(context), {
+            callbacks: [...inherited, meter],
+          });
+          proposal = proposalSchema.parse(result);
+          break;
+        } catch (error) {
+          lastError = error;
+          console.log(
+            `SKEIN_LLM_ERROR ${JSON.stringify({
+              turn: turns.length,
+              attempt,
+              message: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            })}`,
+          );
+        }
+      }
+      if (proposal === undefined) throw lastError;
+      console.log(
+        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action })}`,
+      );
       proposals.push(proposal.action);
       turns.push({
         turn: turns.length,
-        action: proposal.action.tool,
+        action: actionName(proposal.action),
         contextChars,
         inputTokens: meter.inputTokens,
         outputTokens: meter.outputTokens,
@@ -119,7 +232,7 @@ export const skein = {
 
     const result = await runAgent(
       { propose, workspace, maxTurns: settings.maxTurns },
-      { goal: { id: "g1", label: instruction } },
+      { request: { id: "r1", text: instruction } },
     );
 
     const rejectedTurns = new Set(
@@ -136,6 +249,7 @@ export const skein = {
       const { usage: _usage, ...compact } = turn;
       console.log(`SKEIN_TURN ${JSON.stringify(compact)}`);
     }
+    console.log(`SKEIN_EVENTS ${JSON.stringify(diagnostics(result.events))}`);
 
     const inputTokens = sum(turnRecords.map((turn) => turn.inputTokens));
     const outputTokens = sum(turnRecords.map((turn) => turn.outputTokens));

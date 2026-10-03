@@ -58,6 +58,12 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 
 ## 4. Текущий статус
 
+> **Приведение к семантике IR.** Код приведён к `docs/ir_semantics_ru.md`:
+> старая модель (`claim`/`decision`/`subgoal`, статусы-поля, `mode`) заменена
+> трёхоператорной моделью и производным состоянием. План и статус —
+> `docs/plans/ir_semantics_migration_plan_ru.md`; текущий as-built — `docs/ir_ru.md`.
+> Описанная ниже линия Tier 0/Tier 1 — история.
+
 Реализован Tier 0 (шаги 1–5 `docs/plans/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
 `src/llm`, `src/tools`, `src/loop`, три фикстуры, offline- и live-гейт. Полный
 статус и осознанные упрощения — `docs/plans/tier0_plan_ru.md` §13.
@@ -87,7 +93,7 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   (`docs/plans/staleness_scope_plan_ru.md`).
 - **Рабочий граф (T1.1)** — `decompose`/`decide` производят подцели, решения и
   связующие рёбра (`decomposes`/`justifies`/`chosen_over`/`supports`) с
-  `provenance.llm`; привязка к родителю обязательна (врата `classify`); статусы
+  `provenance.llm`; привязка к родителю обязательна (проверка допустимости `classify`); статусы
   `superseded`/`achieved` производны; проекция показывает подцели и связи
   (`docs/plans/tier1_plan_ru.md`).
 - **Path-based релевантность (T1.2)** — `frontier` есть достижимое замыкание от

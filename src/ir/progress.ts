@@ -1,23 +1,26 @@
-import type { State } from "./graph";
-import type { NodeKind } from "./types";
+import { predicateOf, type State } from "./graph";
 
-const PROGRESS_KINDS = new Set<NodeKind>([
-  "claim",
-  "subgoal",
-  "decision",
-  "check",
-  "file",
-  "symbol",
-  "test",
-]);
-
+// A semantic progress key: new knowledge is a changed goal predicate, a new mutation,
+// a new distinct observation/check, or a new distinct negative signature. Observations
+// and checks are keyed by content (kind + command/label), not by node id, and repeated
+// failures/refusals collapse, so a loop of identical or uninformative moves does not
+// reset the stall counter (§2.7–§2.8).
 export function knowledgeKey(state: State): string {
-  const parts: string[] = [];
+  const parts = new Set<string>();
   for (const node of state.nodes.values()) {
-    if (!PROGRESS_KINDS.has(node.kind)) continue;
-    const status = state.statuses.get(node.id) ?? "";
-    parts.push(`${node.id}:${status}`);
+    if (node.kind === "observation" || node.kind === "check") {
+      parts.add(`${node.kind}:${node.label}`);
+    } else if (node.kind === "action") {
+      const payload = node.payload as { command?: unknown } | undefined;
+      const command = typeof payload?.command === "string" ? payload.command : node.label;
+      parts.add(`action:${command}:${predicateOf(state, node.id)}`);
+    } else {
+      parts.add(`${node.id}:${predicateOf(state, node.id)}`);
+    }
   }
-  parts.sort();
-  return parts.join("|");
+  for (const [ref, version] of state.mutated) parts.add(`mut:${ref}@${version}`);
+  for (const rejection of state.rejections) {
+    parts.add(`ref:${rejection.tool}\u0000${rejection.target}\u0000${rejection.reason}`);
+  }
+  return [...parts].sort().join("|");
 }

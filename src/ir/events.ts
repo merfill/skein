@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { EDGE_KINDS, NODE_KINDS, SPACES, STATUSES } from "./types";
+import { EDGE_KINDS, NODE_KINDS, SPACES, type Verdict } from "./types";
 
-const verdictSchema = z.enum(["pass", "fail"]);
+const verdictSchema = z.enum(["pass", "fail", "inconclusive"]);
 
 const witnessEntrySchema = z.object({ ref: z.string(), version: z.string() });
 
@@ -34,19 +34,11 @@ const edgeSchema = z.object({
   to: z.string(),
   kind: z.enum(EDGE_KINDS),
   provenance: provenanceSchema,
-  status: z.enum(STATUSES),
-  version: z.string().optional(),
 });
 
 export const eventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("add_node"), node: nodeSchema }),
   z.object({ type: z.literal("add_edge"), edge: edgeSchema }),
-  z.object({
-    type: z.literal("set_status"),
-    id: z.string(),
-    status: z.enum(STATUSES),
-    reason: z.string().optional(),
-  }),
   z.object({ type: z.literal("descend"), node: z.string() }),
   z.object({ type: z.literal("return") }),
   z.object({
@@ -72,9 +64,12 @@ export const eventSchema = z.discriminatedUnion("type", [
     outputRef: z.string().optional(),
     actor: z.enum(["arbiter", "user"]).optional(),
     witness: z.array(witnessEntrySchema).optional(),
-    claimIds: z.array(z.string()),
+    targets: z.array(z.string()),
+    under: z.array(z.string()).optional(),
   }),
 ]);
 
 export type Event = z.infer<typeof eventSchema>;
 export type EventInput = z.input<typeof eventSchema>;
+
+export type { Verdict };

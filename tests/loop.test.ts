@@ -1,11 +1,12 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
-import { fold } from "../src/ir/graph";
+import { childrenOf, currentVersion, fold, predicateOf } from "../src/ir/graph";
+import { cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
@@ -13,7 +14,7 @@ import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
 import { executeAction } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
-import { unboundWorkNodes, verifiedWithoutCheck } from "./invariants";
+import { achievedWithoutCheck, structuralCycle, unboundGoals } from "./invariants";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures", "bugfix");
 
@@ -34,6 +35,14 @@ function scripted(actions: Action[]) {
     if (!action) throw new Error("script exhausted");
     return { thought: `step ${index}`, action };
   };
+}
+
+function fixed(action: Action) {
+  return async (_context: Context): Promise<Proposal> => ({ thought: "loop", action });
+}
+
+function proposal(action: Action): Proposal {
+  return { thought: "", action };
 }
 
 afterEach(() => {
@@ -60,8 +69,14 @@ describe("reasoning is disabled", () => {
 });
 
 describe("classify", () => {
+  const goal = {
+    type: "add_node" as const,
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: { kind: "subjective" as const, text: "done" } } },
+  };
+
   it("rejects an edit forbidden by a constraint", () => {
     const state = fold([
+      goal,
       {
         type: "add_node",
         node: {
@@ -70,1156 +85,516 @@ describe("classify", () => {
           kind: "constraint",
           label: "do not edit tests",
           payload: { forbid: ["\\.test\\.mjs$"] },
-          seq: 0,
+          seq: 1,
         },
       },
     ]);
     const verdict = classify(
-      {
-        thought: "",
-        action: {
-          tool: "edit",
-          path: "test/sum.test.mjs",
-          find: "a",
-          replace: "b",
-        },
-      },
+      proposal({
+        operator: "apply",
+        action: { tool: "edit", path: "test/sum.test.mjs", find: "a", replace: "b" },
+      }),
       state,
     );
     expect(verdict.accept).toBe(false);
-    expect(verdict.category).toBe("rejected");
+    expect(verdict.reason).toContain("constraint_violation");
   });
 
-  it("accepts a bound track proposal as a hypothesis", () => {
+  it("refuses an edit on a stale read basis", () => {
     const state = fold([
+      goal,
+      { type: "add_node", node: { id: "file:src/a.ts", space: "artifact", kind: "file", label: "src/a.ts", seq: 1 } },
       {
         type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
+        node: { id: "o1", space: "work", kind: "observation", label: "read src/a.ts", payload: { ref: "file:src/a.ts", version: "v1" }, seq: 2 },
       },
+      { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
     ]);
     const verdict = classify(
-      {
-        thought: "",
-        action: { tool: "track", kind: "claim", label: "off-by-one", parent: "g1" },
-      },
+      proposal({ operator: "apply", action: { tool: "edit", path: "src/a.ts", find: "a", replace: "b" } }),
       state,
     );
-    expect(verdict).toEqual({ category: "hypothesis", accept: true });
+    expect(verdict).toEqual({ accept: false, reason: "stale_base" });
   });
 
-  it("refuses a claim without a parent", () => {
+  it("refuses a repeated run with no change since it ran", () => {
     const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
+      goal,
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build", signature: "run build\u0000" }, seq: 1 } },
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "grep", pattern: "x" } } },
     ]);
     const verdict = classify(
-      { thought: "", action: { tool: "track", kind: "claim", label: "off-by-one" } },
+      proposal({ operator: "apply", action: { tool: "run", command: "run build" } }),
       state,
     );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "missing_parent",
-    });
+    expect(verdict).toEqual({ accept: false, reason: "repeated_action" });
   });
 
-  it("refuses a parent that is neither a goal nor a subgoal", () => {
+  it("allows re-reading a file, even the same window", () => {
     const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "c1", space: "work", kind: "claim", label: "existing", seq: 1 },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: { tool: "decompose", parent: "c1", label: "cache read path" },
-      },
-      state,
-    );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "invalid_parent",
-    });
-  });
-
-  it("refuses a decision whose alternative repeats its label", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: {
-          tool: "decide",
-          parent: "g1",
-          label: "cache in the data layer",
-          alternatives: ["cache in the data layer"],
-          rationale: "simpler",
-        },
-      },
-      state,
-    );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "alternative_equals_label",
-    });
-  });
-
-  it("accepts a bound decompose and decide", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "sg1", space: "work", kind: "subgoal", label: "read path", seq: 1 },
-      },
+      goal,
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "read src/a.ts [1-120]", payload: { command: "read src/a.ts [1-120]" }, seq: 1 } },
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "read src/a.ts [1-120]", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "read", ref: "file:src/a.ts", version: "v1" } } },
     ]);
     expect(
       classify(
-        { thought: "", action: { tool: "decompose", parent: "g1", label: "cache read path" } },
+        proposal({ operator: "apply", action: { tool: "read", path: "src/a.ts", start: 121, end: 240 } }),
         state,
       ),
-    ).toEqual({ category: "hypothesis", accept: true });
+    ).toEqual({ accept: true });
     expect(
       classify(
-        {
-          thought: "",
-          action: { tool: "decide", parent: "sg1", label: "data layer", rationale: "simpler" },
-        },
+        proposal({ operator: "apply", action: { tool: "read", path: "src/a.ts", start: 1, end: 120 } }),
         state,
       ),
-    ).toEqual({ category: "hypothesis", accept: true });
+    ).toEqual({ accept: true });
   });
 
-  it("refuses an edit without an open hypothesis", () => {
+  it("allows re-searching (grep is idempotent too)", () => {
     const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
+      goal,
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "grep sweep 5/5", payload: { command: "grep sweep 5/5" }, seq: 1 } },
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "grep sweep 5/5", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "grep", pattern: "sweep" } } },
     ]);
-    const verdict = classify(
-      { thought: "", action: { tool: "edit", path: "src/sum.mjs", find: "a", replace: "b" } },
-      state,
-    );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "no_open_hypothesis",
-    });
+    expect(
+      classify(
+        proposal({ operator: "apply", action: { tool: "grep", pattern: "sweep" } }),
+        state,
+      ),
+    ).toEqual({ accept: true });
   });
 
-  it("accepts an edit once an attached hypothesis is open", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "c1", space: "work", kind: "claim", label: "off-by-one", seq: 1 },
-      },
-      {
-        type: "add_edge",
-        edge: {
-          id: "e1",
-          from: "c1",
-          to: "g1",
-          kind: "supports",
-          provenance: { kind: "llm" },
-          status: "open",
-        },
-      },
-    ]);
-    const verdict = classify(
-      { thought: "", action: { tool: "edit", path: "src/sum.mjs", find: "a", replace: "b" } },
-      state,
-    );
-    expect(verdict).toEqual({ category: "derivable", accept: true });
+  it("accepts a create_goal with a plan and rejects empty content", () => {
+    const state = fold([goal]);
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "locate",
+          done_when: { kind: "subjective", text: "found it" },
+          plan: [{ kind: "action", command: "node --test" }],
+        }),
+        state,
+      ),
+    ).toEqual({ accept: true });
+    expect(
+      classify(
+        proposal({ operator: "create_goal", what: "", done_when: { kind: "subjective", text: "x" } }),
+        state,
+      ).reason,
+    ).toBe("empty_what");
+    expect(
+      classify(
+        proposal({ operator: "create_goal", what: "x", done_when: { kind: "objective", command: "" } }),
+        state,
+      ).reason,
+    ).toBe("empty_done_when");
+    expect(
+      classify(
+        proposal({ operator: "create_goal", what: "x", done_when: { kind: "subjective", text: "y" }, plan: [] }),
+        state,
+      ).reason,
+    ).toBe("empty_plan");
   });
 
-  it("keeps the constraint refusal ahead of the hypothesis gate", () => {
+  it("refuses complete on the root and on an objective goal", () => {
+    const root = fold([goal]);
+    expect(classify(proposal({ operator: "complete" }), root).reason).toBe("root_not_completable");
+
     const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
       {
         type: "add_node",
         node: {
-          id: "k1",
+          id: "g1",
           space: "work",
-          kind: "constraint",
-          label: "do not edit tests",
-          payload: { forbid: ["\\.test\\.mjs$"] },
-          seq: 1,
+          kind: "goal",
+          label: "green",
+          payload: { what: "green", done_when: { kind: "objective", command: "node --test" } },
+          seq: 0,
         },
       },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "sub", payload: { what: "sub", done_when: { kind: "objective", command: "node --test" } }, seq: 1 } },
+      { type: "add_edge", edge: { id: "e1", from: "g2", to: "g1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "descend", node: "g2" },
     ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: { tool: "edit", path: "test/sum.test.mjs", find: "a", replace: "b" },
-      },
-      state,
+    expect(classify(proposal({ operator: "complete" }), state).reason).toBe(
+      "objective_goal_needs_check",
     );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "constraint_violation:\\.test\\.mjs$",
-      constraintId: "k1",
-    });
-  });
-
-  it("accepts a read-grounded claim as cited", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: {
-          id: "obs:1",
-          space: "work",
-          kind: "observation",
-          label: "read src/sum.mjs",
-          payload: { ref: "file:src/sum.mjs", version: "v1", bytes: 10 },
-          seq: 1,
-        },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: {
-          tool: "track",
-          kind: "claim",
-          label: "line 42 uses <",
-          parent: "g1",
-          cite: "obs:1",
-        },
-      },
-      state,
-    );
-    expect(verdict).toEqual({ category: "cited", accept: true });
-  });
-
-  it("accepts a file cite that has a live read fact", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "file:src/sum.mjs", space: "artifact", kind: "file", label: "src/sum.mjs", seq: 1 },
-      },
-      {
-        type: "add_edge",
-        edge: {
-          id: "e:read",
-          from: "file:src/sum.mjs",
-          to: "obs:1",
-          kind: "locates",
-          provenance: { kind: "read", ref: "file:src/sum.mjs", version: "v1" },
-          status: "believed",
-        },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: {
-          tool: "track",
-          kind: "claim",
-          label: "line 42 uses <",
-          parent: "g1",
-          cite: "src/sum.mjs",
-        },
-      },
-      state,
-    );
-    expect(verdict).toEqual({ category: "cited", accept: true });
-  });
-
-  it("refuses a claim whose cite is not grounded in a read", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: {
-          tool: "track",
-          kind: "claim",
-          label: "line 42 uses <",
-          parent: "g1",
-          cite: "src/sum.mjs",
-        },
-      },
-      state,
-    );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "invalid_cite",
-    });
-  });
-
-  it("accepts an abstain for a capability outside the declared fragment", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: { tool: "abstain", missing: "network", reason: "no network access" },
-      },
-      state,
-    );
-    expect(verdict).toEqual({ category: "derivable", accept: true });
-  });
-
-  it("refuses abstaining for a capability the agent has", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 },
-      },
-    ]);
-    const verdict = classify(
-      {
-        thought: "",
-        action: { tool: "abstain", missing: "execute", reason: "hard" },
-      },
-      state,
-    );
-    expect(verdict).toEqual({
-      category: "rejected",
-      accept: false,
-      reason: "capability_available",
-    });
   });
 });
 
-describe("graph actions", () => {
-  const workspace = () => fsWorkspace(setup("off-by-one"));
-
-  it("decompose creates a subgoal and a decomposes edge with llm provenance", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
-      },
-    ]);
-    const outcome = executeAction(
-      { tool: "decompose", parent: "g1", label: "cache the read path" },
-      state,
-      workspace(),
-      0,
-    );
-    const next = fold(outcome.events, state);
-    const subgoal = [...next.nodes.values()].find((node) => node.kind === "subgoal");
-    const decomposes = [...next.edges.values()].find((e) => e.kind === "decomposes");
-    expect(subgoal?.label).toBe("cache the read path");
-    expect(decomposes).toMatchObject({
-      from: "g1",
-      to: subgoal?.id,
-      provenance: { kind: "llm" },
-    });
-  });
-
-  it("decide creates a decision, its alternatives, and path edges", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "sg1", space: "work", kind: "subgoal", label: "cache read path", seq: 1 },
-      },
-      {
-        type: "add_edge",
-        edge: {
-          id: "ed",
-          from: "g1",
-          to: "sg1",
-          kind: "decomposes",
-          provenance: { kind: "llm" },
-          status: "open",
-        },
-      },
+describe("executeAction", () => {
+  it("create_goal builds a goal, its plan and descends into it", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const root = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
     ]);
     const outcome = executeAction(
       {
-        tool: "decide",
-        parent: "sg1",
-        label: "cache in the data layer",
-        alternatives: ["cache via middleware", "cache in the data layer"],
-        rationale: "simpler",
+        operator: "create_goal",
+        what: "locate",
+        done_when: { kind: "subjective", text: "found" },
+        plan: [{ kind: "action", command: "node --test" }],
       },
-      state,
-      workspace(),
+      root,
+      workspace,
       0,
     );
-    const next = fold(outcome.events, state);
-    const decisions = [...next.nodes.values()].filter((node) => node.kind === "decision");
-    const chosen = decisions.find((node) => node.label === "cache in the data layer");
-    const rejected = decisions.find((node) => node.label === "cache via middleware");
-    if (!chosen || !rejected) throw new Error("decisions not recorded");
-    expect(decisions).toHaveLength(2);
-    expect(next.statuses.get(chosen.id)).toBe("active");
-    expect(next.statuses.get(rejected.id)).toBe("superseded");
-    expect(chosen.payload).toEqual({
-      options: ["cache in the data layer", "cache via middleware"],
-      chosen: "cache in the data layer",
-      rationale: "simpler",
-    });
-    const justifies = [...next.edges.values()].find((e) => e.kind === "justifies");
-    const chosenOver = [...next.edges.values()].find((e) => e.kind === "chosen_over");
-    expect(justifies).toMatchObject({
-      from: chosen.id,
-      to: "sg1",
-      provenance: { kind: "llm" },
-    });
-    expect(chosenOver).toMatchObject({
-      from: chosen.id,
-      to: rejected.id,
-      provenance: { kind: "llm" },
-    });
-    expect(project(next).frontier.decisions).toEqual([
-      { id: chosen.id, label: "cache in the data layer", over: [rejected.id] },
-    ]);
+    const state = fold(outcome.events, root);
+    const goals = [...state.nodes.values()].filter((node) => node.kind === "goal" && node.id !== "g1");
+    expect(goals).toHaveLength(1);
+    expect(state.branch[state.branch.length - 1]).toBe(goals[0]?.id);
+    const childGoal = goals[0];
+    expect(childGoal).toBeDefined();
+    const planEdges = [...state.edges.values()].filter(
+      (edge) => edge.kind === "has_plan" && edge.from === childGoal?.id,
+    );
+    expect(planEdges).toHaveLength(1);
+    expect(childrenOf(state, planEdges[0]?.to as string)).toHaveLength(1);
   });
 
-  it("reuses an existing decision node when a later decision rejects it", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
-      },
+  it("edit mutates the file and records the new version", () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    const before = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
     ]);
-    const first = executeAction(
-      { tool: "decide", parent: "g1", label: "cache in the data layer", rationale: "r" },
-      state,
-      workspace(),
-      0,
-    );
-    const afterFirst = fold(first.events, state);
-    const original = [...afterFirst.nodes.values()].find((node) => node.kind === "decision");
-    if (!original) throw new Error("no decision recorded");
-    const second = executeAction(
-      {
-        tool: "decide",
-        parent: "g1",
-        label: "cache via middleware",
-        alternatives: ["cache in the data layer"],
-        rationale: "r",
-      },
-      afterFirst,
-      workspace(),
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
+      before,
+      workspace,
       1,
     );
-    const afterSecond = fold(second.events, afterFirst);
-    expect(afterSecond.statuses.get(original.id)).toBe("superseded");
+    const state = fold(outcome.events, before);
+    expect(readFileSync(join(root, "src/sum.mjs"), "utf8")).toContain("i <= n");
+    expect(currentVersion(state, "file:src/sum.mjs")).toBe(workspace.version("src/sum.mjs"));
+  });
+
+  it("reads a bounded window and says where to continue", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-read-"));
+    tempDirs.push(root);
+    const lines = Array.from({ length: 600 }, (_, index) => `line ${index + 1}`).join("\n");
+    writeFileSync(join(root, "big.txt"), lines);
+    const workspace = fsWorkspace(root);
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const first = executeAction(
+      { operator: "apply", action: { tool: "read", path: "big.txt" } },
+      state,
+      workspace,
+      0,
+    );
+    expect(first.turn.text).toContain("line 1\n");
+    expect(first.turn.text).toContain("line 400");
+    expect(first.turn.text).toContain("[lines 1–400 of 600; continue from 401]");
+    const next = executeAction(
+      { operator: "apply", action: { tool: "read", path: "big.txt", start: 401, end: 600 } },
+      state,
+      workspace,
+      1,
+    );
+    expect(next.turn.text).toContain("line 600");
+    expect(next.turn.text).not.toContain("continue from");
+  });
+
+  it("branches the current plan item when the action differs, so the plan never blocks", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const root = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
+      { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "cat HACKING.adoc", payload: { command: "cat HACKING.adoc" }, seq: 2 } },
+      { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+    ]);
+    expect(itemFulfilled(root, "a1")).toBe(false);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "run", command: "ls" } },
+      root,
+      workspace,
+      0,
+    );
+    const state = fold(outcome.events, root);
+    expect(itemFulfilled(state, "a1")).toBe(true);
+    expect(cursorOf(state, "g1")).toBe(1);
+  });
+
+  it("grep shows context around matches", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
+    const workspace = fsWorkspace(root);
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
+      state,
+      workspace,
+      0,
+    );
+    expect(outcome.turn.text).toContain("code.txt:3: MATCH");
+    expect(outcome.turn.text).toContain("code.txt:2: beta");
+    expect(outcome.turn.text).toContain("code.txt:4: gamma");
+  });
+
+  it("run with a target records a check that achieves the goal", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const root = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "true" } }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "run", command: "true", target: "g1" } },
+      root,
+      workspace,
+      0,
+    );
+    const state = fold(outcome.events, root);
+    expect(predicateOf(state, "g1")).toBe("achieved");
+  });
+
+  it("run that violates a constraint is reverted and records no check", () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    const original = workspace.read("test/sum.test.mjs");
+    const before = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "node --test" } }, seq: 0 } },
+      {
+        type: "add_node",
+        node: { id: "k1", space: "work", kind: "constraint", label: "no tests", payload: { forbid: ["\\.test\\.mjs$"] }, seq: 1 },
+      },
+    ]);
+    const outcome = executeAction(
+      {
+        operator: "apply",
+        action: { tool: "run", command: "printf '// x\\n' > test/sum.test.mjs" },
+      },
+      before,
+      workspace,
+      0,
+    );
+    const state = fold(outcome.events, before);
+    expect(workspace.read("test/sum.test.mjs")).toBe(original);
+    expect([...state.nodes.values()].some((node) => node.kind === "check")).toBe(false);
     expect(
-      [...afterSecond.nodes.values()].filter(
-        (node) => node.kind === "decision" && afterSecond.statuses.get(node.id) === "active",
+      [...state.nodes.values()].some(
+        (node) => node.kind === "observation" && node.label.startsWith("constraint violation"),
       ),
-    ).toMatchObject([{ label: "cache via middleware" }]);
-    expect(
-      [...afterSecond.nodes.values()].filter((node) => node.kind === "decision"),
-    ).toHaveLength(2);
-  });
-
-  it("track attaches a claim to its parent with a supports edge", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
-      },
-    ]);
-    const outcome = executeAction(
-      {
-        tool: "track",
-        kind: "claim",
-        label: "hits are served from memory",
-        parent: "g1",
-        rationale: "r",
-      },
-      state,
-      workspace(),
-      0,
-    );
-    const next = fold(outcome.events, state);
-    const claim = [...next.nodes.values()].find((node) => node.kind === "claim");
-    if (!claim) throw new Error("no claim recorded");
-    const supports = [...next.edges.values()].find((e) => e.kind === "supports");
-    expect(supports).toMatchObject({ from: claim.id, to: "g1", provenance: { kind: "llm" } });
-    expect(project(next).frontier.claims).toEqual([
-      { id: claim.id, label: "hits are served from memory", supports: "g1" },
-    ]);
-  });
-
-  it("stores a cite and projects the claim as a fact, not a hypothesis", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "add caching", seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: {
-          id: "obs:1",
-          space: "work",
-          kind: "observation",
-          label: "read src/sum.mjs",
-          payload: { ref: "file:src/sum.mjs", version: "v1", bytes: 10 },
-          seq: 1,
-        },
-      },
-    ]);
-    const outcome = executeAction(
-      {
-        tool: "track",
-        kind: "claim",
-        label: "line 42 uses <",
-        parent: "g1",
-        cite: "obs:1",
-      },
-      state,
-      workspace(),
-      0,
-    );
-    const next = fold(outcome.events, state);
-    const claim = [...next.nodes.values()].find((node) => node.kind === "claim");
-    if (!claim) throw new Error("no claim recorded");
-    expect(claim.payload).toMatchObject({ cite: "obs:1" });
-    expect(project(next).frontier.facts).toEqual([
-      { id: claim.id, label: "line 42 uses <", cite: "obs:1", supports: "g1" },
-    ]);
-    expect(project(next).frontier.claims).toEqual([]);
-  });
-
-  it("track keeps a constraint global", () => {
-    const outcome = executeAction(
-      {
-        tool: "track",
-        kind: "constraint",
-        label: "do not edit tests",
-        forbid: ["\\.test\\.mjs$"],
-      },
-      fold([]),
-      workspace(),
-      0,
-    );
-    const next = fold(outcome.events);
-    expect([...next.edges.values()].filter((e) => e.kind === "supports")).toHaveLength(0);
-    expect(next.statuses.get("w:constraint:1")).toBe("must");
+    ).toBe(true);
   });
 });
 
-describe("query", () => {
-  const workspace = () => fsWorkspace(setup("off-by-one"));
+describe("workspace grep", () => {
+  it("scans source files by content, not by extension", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    mkdirSync(join(root, "runtime"), { recursive: true });
+    writeFileSync(join(root, "runtime", "gc.c"), "int sweep(void) {}\n");
+    writeFileSync(join(root, "bin.dat"), "sweep\u0000binary\n");
+    const matches = fsWorkspace(root).grep("sweep");
+    expect(matches).toEqual([{ path: "runtime/gc.c", line: 1, text: "int sweep(void) {}" }]);
+  });
+});
 
-  it("filters claims by status and writes no events", () => {
-    const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
-      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
-      { type: "add_node", node: { id: "c2", space: "work", kind: "claim", label: "other", seq: 2 } },
+describe("runAgent", () => {
+  it("carries a plan through edit and check to a closed root", async () => {
+    const root = setup("off-by-one");
+    const workspace = fsWorkspace(root);
+    const result = await runAgent(
       {
-        type: "record_check",
-        command: "npm test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
+        propose: scripted([
+          {
+            operator: "create_goal",
+            what: "fix the off-by-one",
+            why: "the loop stops one short",
+            done_when: { kind: "objective", command: "node --test" },
+            plan: [{ kind: "action", command: "node --test" }],
+          },
+          { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
+          { operator: "apply", action: { tool: "run", command: "node --test" } },
+          { operator: "apply", action: { tool: "run", command: "node --test" } },
+        ]),
+        workspace,
+        maxTurns: 10,
       },
-    ]);
-
-    const outcome = executeAction(
-      { tool: "query", kind: "claim", status: "verified" },
-      state,
-      workspace(),
-      0,
+      { request: { id: "r1", text: "make the suite pass" } },
     );
 
-    expect(outcome.events).toEqual([]);
-    expect(outcome.turn.text).toContain("c1");
-    expect(outcome.turn.text).not.toContain("c2");
+    expect(workspace.run("node --test").code).toBe(0);
+    expect(achievedWithoutCheck(result.events)).toEqual([]);
+    expect(unboundGoals(result.events)).toEqual([]);
+    expect(structuralCycle(result.events)).toBe(false);
+    expect(result.stopReason).toBe("request_addressed");
   });
 
-  it("returns the verdict trail for a claim", () => {
+  it("stops with no_progress when nothing changes", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const result = await runAgent(
+      { propose: fixed({ operator: "query", id: "r1" }), workspace, maxTurns: 10, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(result.stopReason).toBe("no_progress");
+  });
+
+  it("stops with no_progress on a repeatedly refused command", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "interpret the request",
+          done_when: { kind: "objective", command: "node --test" },
+          plan: [{ kind: "action", command: "echo hi" }],
+        });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 12, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(result.stopReason).toBe("no_progress");
+    expect(result.events.some((event) => event.type === "record_rejection")).toBe(true);
+  });
+
+  it("shows the results the model asked to keep (need)", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const contexts: Context[] = [];
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      contexts.push(context);
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        const id = contexts[1]?.lastResult?.id;
+        return {
+          ...proposal({ operator: "apply", action: { tool: "run", command: "true" } }),
+          ...(id !== undefined ? { need: [id] } : {}),
+        };
+      }
+      return proposal({ operator: "query", id: "r1" });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 4 },
+      { request: { id: "r1", text: "green" } },
+    );
+    const readId = contexts[1]?.lastResult?.id;
+    const shown = contexts[2]?.shown ?? [];
+    expect(shown.map((view) => view.id)).toContain(readId);
+    expect(shown[0]?.kind).toBe("observation");
+    expect(shown[0]?.output).toContain("sumTo");
+  });
+
+  it("reports the focus plan and applicable operators in the projection", () => {
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
-      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
-      {
-        type: "add_edge",
-        edge: {
-          id: "e:sup",
-          from: "c1",
-          to: "g1",
-          kind: "supports",
-          provenance: { kind: "llm" },
-          status: "open",
-        },
-      },
-      {
-        type: "record_check",
-        command: "npm test",
-        verdict: "fail",
-        output: "boom",
-        actor: "arbiter",
-        claimIds: ["c1"],
-      },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "node --test" } }, seq: 0 } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", seq: 2 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
     ]);
-
-    const outcome = executeAction({ tool: "query", verdictOf: "c1" }, state, workspace(), 0);
-
-    expect(outcome.turn.text).toContain("boom");
-    expect(outcome.turn.text).toContain("check");
-    expect(outcome.turn.text).toContain("npm test");
-    expect(outcome.turn.text).toContain("arbiter");
+    const context = project(state);
+    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1"]);
+    expect(context.applicable).toContain("apply");
   });
+});
 
-  it("lists check nodes by kind", () => {
-    const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", seq: 0 } },
-      { type: "add_node", node: { id: "c1", space: "work", kind: "claim", label: "off by one", seq: 1 } },
-      {
-        type: "add_edge",
-        edge: {
-          id: "e:sup",
-          from: "c1",
-          to: "g1",
-          kind: "supports",
-          provenance: { kind: "llm" },
-          status: "open",
-        },
-      },
-      {
-        type: "record_check",
-        id: "chk1",
-        command: "npm test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
-      },
-    ]);
-
-    const outcome = executeAction({ tool: "query", kind: "check" }, state, workspace(), 0);
-    expect(outcome.turn.text).toContain("chk1");
-    expect(outcome.turn.text).toContain("npm test");
-  });
-
-  it("still reaches a work node the frontier omits", () => {
-    const nodes = [1, 2, 3, 4].map((n) => ({
+describe("request, revisions and check soundness", () => {
+  const request = {
+    type: "add_node" as const,
+    node: { id: "r1", space: "work" as const, kind: "request" as const, label: "task", payload: { text: "do it" }, seq: 0 },
+  };
+  const base = [
+    request,
+    {
       type: "add_node" as const,
       node: {
-        id: `obs:${n}`,
+        id: "g1",
         space: "work" as const,
-        kind: "observation" as const,
-        label: `step ${n}`,
-        seq: n,
+        kind: "goal" as const,
+        label: "approach one",
+        payload: { what: "approach one", done_when: { kind: "subjective" as const, text: "ok" } },
+        seq: 1,
       },
-    }));
-    const state = fold(nodes);
-    expect(project(state).frontier.observations).toEqual([]);
+    },
+    { type: "add_node" as const, node: { id: "a1", space: "work" as const, kind: "alternatives" as const, label: "alt", seq: 2 } },
+    { type: "add_edge" as const, edge: { id: "e1", from: "r1", to: "a1", kind: "has_alternatives" as const, provenance: { kind: "llm" as const } } },
+    { type: "add_edge" as const, edge: { id: "e2", from: "a1", to: "g1", kind: "item" as const, provenance: { kind: "llm" as const } } },
+    { type: "add_edge" as const, edge: { id: "e3", from: "a1", to: "g1", kind: "chosen" as const, provenance: { kind: "llm" as const } } },
+    { type: "record_check" as const, command: "node --test", verdict: "fail" as const, output: "no", targets: ["g1"] },
+  ];
 
-    const outcome = executeAction({ tool: "query", id: "obs:1" }, state, workspace(), 0);
-    expect(outcome.turn.text).toContain("obs:1");
-    expect(outcome.turn.text).not.toContain("obs:4");
-  });
-});
-
-describe("runAgent (scripted, offline)", () => {
-  it("fixes a failing test end to end", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-    const testBefore = readFileSync(join(root, "test", "sum.test.mjs"), "utf8");
-
-    expect(workspace.run("node --test").code).not.toBe(0);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "read", path: "src/sum.mjs" },
-          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
-          {
-            tool: "edit",
-            path: "src/sum.mjs",
-            find: "i < n",
-            replace: "i <= n",
-          },
-          { tool: "run", command: "node --test" },
-          { tool: "finish", summary: "fixed" },
-        ]),
-        workspace,
-        maxTurns: 10,
-      },
-      {
-        goal: { id: "g1", label: "make node --test pass" },
-        constraints: [
-          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
-        ],
-      },
-    );
-
-    expect(result.done).toBe(true);
-    expect(result.stopReason).toBe("finish");
-    expect(workspace.run("node --test").code).toBe(0);
-    expect(readFileSync(join(root, "test", "sum.test.mjs"), "utf8")).toBe(testBefore);
-
-    const state = fold(result.events);
-    const claim = [...state.nodes.values()].find((node) => node.kind === "claim");
-    if (!claim) throw new Error("no claim recorded");
-    expect(state.statuses.get(claim.id)).toBe("verified");
-
-    expect(workspace.exists("src/sum.mjs")).toBe(true);
+  it("requires revises to list the failed interpretation", () => {
+    const state = fold(base);
+    expect(predicateOf(state, "g1")).toBe("refuted");
     expect(
-      [...state.edgeStatuses.values()].filter((status) => status === "stale").length,
-    ).toBeGreaterThan(0);
-    expect(state.statuses.get("g1")).toBe("open");
-    expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(1);
-    expect(verifiedWithoutCheck(result.events)).toEqual([]);
-    expect(unboundWorkNodes(result.events)).toEqual([]);
+      classify(
+        proposal({ operator: "create_goal", what: "approach two", done_when: { kind: "subjective", text: "ok" } }),
+        state,
+      ),
+    ).toEqual({ accept: false, reason: "missing_revision" });
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "approach two",
+          done_when: { kind: "subjective", text: "ok" },
+          revises: ["g1"],
+        }),
+        state,
+      ),
+    ).toEqual({ accept: true });
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "approach one",
+          done_when: { kind: "subjective", text: "ok" },
+          revises: ["g1"],
+        }),
+        state,
+      ),
+    ).toEqual({ accept: false, reason: "repeat_hypothesis" });
   });
 
-  it("does not touch a file a constraint forbids", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-    const testBefore = readFileSync(join(root, "test", "sum.test.mjs"), "utf8");
-
-    const result = await runAgent(
+  it("refuses to check a subjective goal", () => {
+    const state = fold([
+      request,
       {
-        propose: scripted([
-          {
-            tool: "edit",
-            path: "test/sum.test.mjs",
-            find: "15",
-            replace: "10",
-          },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
+        type: "add_node",
+        node: { id: "g2", space: "work", kind: "goal", label: "sub", payload: { what: "sub", done_when: { kind: "subjective", text: "ok" } }, seq: 1 },
       },
-      {
-        goal: { id: "g1", label: "make node --test pass" },
-        constraints: [
-          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
-        ],
-      },
-    );
-
-    expect(result.done).toBe(true);
-    expect(readFileSync(join(root, "test", "sum.test.mjs"), "utf8")).toBe(testBefore);
-    expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(0);
-  });
-
-  it("records a refusal for a forbidden edit", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "edit", path: "test/sum.test.mjs", find: "15", replace: "10" },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
-      },
-      {
-        goal: { id: "g1", label: "make node --test pass" },
-        constraints: [
-          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
-        ],
-      },
-    );
-
-    const rejection = result.events.find((event) => event.type === "record_rejection");
-    if (!rejection || rejection.type !== "record_rejection") {
-      throw new Error("no rejection recorded");
-    }
-    expect(rejection.tool).toBe("edit");
-    expect(rejection.target).toBe("test/sum.test.mjs");
-    expect(rejection.reason).toBe("constraint_violation:\\.test\\.mjs$");
-    expect(rejection.constraintId).toBe("k1");
-    expect(project(fold(result.events)).frontier.refusals).toEqual([
-      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1)",
     ]);
-  });
-
-  it("reverts a shell mutation of a file a constraint forbids", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-    const testBefore = readFileSync(join(root, "test", "sum.test.mjs"), "utf8");
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "run", command: "printf '15\\n' > test/sum.test.mjs" },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
-      },
-      {
-        goal: { id: "g1", label: "make node --test pass" },
-        constraints: [
-          { id: "k1", label: "do not edit tests", forbid: ["\\.test\\.mjs$"] },
-        ],
-      },
-    );
-
-    expect(result.done).toBe(true);
-    expect(readFileSync(join(root, "test", "sum.test.mjs"), "utf8")).toBe(testBefore);
-    expect(result.events.filter((event) => event.type === "mutate")).toHaveLength(0);
-    expect(result.events.filter((event) => event.type === "record_check")).toHaveLength(0);
     expect(
-      result.events.some(
-        (event) =>
-          event.type === "add_node" && event.node.label.startsWith("constraint violation"),
-      ),
-    ).toBe(true);
+      classify(proposal({ operator: "apply", action: { tool: "run", command: "x", target: "g2" } }), state),
+    ).toEqual({ accept: false, reason: "subjective_goal_needs_complete" });
   });
 
-  it("spills truncated output to .skein and keeps head+tail in context", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-    const command =
-      "node -e \"process.stdout.write('HEAD' + 'a'.repeat(20000) + 'TAIL')\"";
-
-    const result = await runAgent(
+  it("runs the goal's done_when command for a check, ignoring the proposed one", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      request,
       {
-        propose: scripted([
-          { tool: "run", command },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
+        type: "add_node",
+        node: { id: "g2", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: { kind: "objective", command: "true" } }, seq: 1 },
       },
-      { goal: { id: "g1", label: "noop" } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "run", command: "false", target: "g2" } },
+      state,
+      workspace,
+      0,
     );
-
-    const observation = result.events.find(
-      (event) => event.type === "add_node" && event.node.kind === "observation",
-    );
-    if (!observation || observation.type !== "add_node") {
-      throw new Error("no observation recorded");
-    }
-    const payload = observation.node.payload as { outputRef?: string; output?: string };
-    const ref = payload.outputRef;
-    const output = payload.output ?? "";
-    if (!ref) throw new Error("no output ref");
-    expect(output).toContain("HEAD");
-    expect(output).toContain("TAIL");
-    expect(output).toContain("full output");
-    expect(output.length).toBeLessThan(20000);
-
-    const full = workspace.read(ref);
-    expect(full.length).toBeGreaterThan(20000);
-    expect(full).toContain("HEAD");
-    expect(full).toContain("TAIL");
-    expect(workspace.list()).not.toContain(ref);
-
-    expect(observation.node.payload).toMatchObject({ outputRef: ref });
-  });
-
-  it("invalidates a verified claim when the code changes again", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "read", path: "src/sum.mjs" },
-          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
-          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
-          { tool: "run", command: "node --test" },
-          {
-            tool: "track",
-            kind: "claim",
-            label: "the total comment changes the source",
-            parent: "g1",
-          },
-          {
-            tool: "edit",
-            path: "src/sum.mjs",
-            find: "let total = 0;",
-            replace: "let total = 0; // sum",
-          },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 10,
-      },
-      { goal: { id: "g1", label: "make node --test pass" } },
-    );
-
-    const state = fold(result.events);
-    const frontier = project(state).frontier;
-    expect(frontier.verified).toEqual([]);
-    expect(frontier.invalidated).toHaveLength(1);
-    expect(
-      [...state.edgeStatuses.entries()].some(
-        ([id, status]) =>
-          status === "stale" && state.edges.get(id)?.kind === "verifies",
-      ),
-    ).toBe(true);
-  });
-
-  it("records a mutate for a non-forbidden file a run changed", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "run", command: "printf 'note\\n' > src/note.txt" },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
-      },
-      { goal: { id: "g1", label: "noop" } },
-    );
-
-    expect(
-      result.events.some(
-        (event) => event.type === "mutate" && event.ref === "file:src/note.txt",
-      ),
-    ).toBe(true);
-  });
-
-  it("observes an external change and records a mutate", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-    let step = 0;
-    const proposer = async (): Promise<Proposal> => {
-      const current = step;
-      step += 1;
-      if (current === 0) {
-        return { thought: "read", action: { tool: "read", path: "src/sum.mjs" } };
-      }
-      if (current === 1) {
-        workspace.write("src/sum.mjs", "export function sumTo() { return 0; }\n");
-        return { thought: "look", action: { tool: "grep", pattern: "sumTo" } };
-      }
-      return { thought: "done", action: { tool: "finish", summary: "done" } };
-    };
-
-    const result = await runAgent(
-      { propose: proposer, workspace, maxTurns: 5 },
-      { goal: { id: "g1", label: "noop" } },
-    );
-
-    expect(
-      result.events.some(
-        (event) => event.type === "mutate" && event.actionId.startsWith("reconcile"),
-      ),
-    ).toBe(true);
-  });
-
-  it("refuses an edit before a hypothesis, then accepts it after tracking", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
-          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
-          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
-          { tool: "run", command: "node --test" },
-          { tool: "finish", summary: "fixed" },
-        ]),
-        workspace,
-        maxTurns: 10,
-      },
-      { goal: { id: "g1", label: "make node --test pass" } },
-    );
-
-    const refusal = result.events.find((event) => event.type === "record_rejection");
-    if (!refusal || refusal.type !== "record_rejection") {
-      throw new Error("no rejection recorded");
-    }
-    expect(refusal.tool).toBe("edit");
-    expect(refusal.reason).toBe("no_open_hypothesis");
-    expect(workspace.run("node --test").code).toBe(0);
-
-    const claim = [...fold(result.events).nodes.values()].find(
-      (node) => node.kind === "claim",
-    );
-    if (!claim) throw new Error("no claim recorded");
-    expect(fold(result.events).statuses.get(claim.id)).toBe("verified");
-  });
-
-  it("refuses an edit after a refutation, then converges on a revised hypothesis", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "track", kind: "claim", label: "loop stops one short", parent: "g1" },
-          { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i < n - 1" },
-          { tool: "run", command: "node --test" },
-          { tool: "edit", path: "src/sum.mjs", find: "i < n - 1", replace: "i <= n" },
-          { tool: "track", kind: "claim", label: "boundary is inclusive", parent: "g1" },
-          { tool: "edit", path: "src/sum.mjs", find: "i < n - 1", replace: "i <= n" },
-          { tool: "run", command: "node --test" },
-          { tool: "finish", summary: "fixed" },
-        ]),
-        workspace,
-        maxTurns: 12,
-      },
-      { goal: { id: "g1", label: "make node --test pass" } },
-    );
-
-    const failures = result.events.filter(
-      (event) => event.type === "record_check" && event.verdict === "fail",
-    );
-    const passes = result.events.filter(
-      (event) => event.type === "record_check" && event.verdict === "pass",
-    );
-    expect(failures).toHaveLength(1);
-    expect(passes).toHaveLength(1);
-
-    const refusal = result.events.find((event) => event.type === "record_rejection");
-    if (!refusal || refusal.type !== "record_rejection") {
-      throw new Error("no rejection recorded");
-    }
-    expect(refusal.reason).toBe("no_open_hypothesis");
-
-    expect(result.events.filter((event) => event.type === "descend")).toHaveLength(2);
-    expect(result.events.filter((event) => event.type === "return").length).toBeGreaterThanOrEqual(1);
-    expect(workspace.run("node --test").code).toBe(0);
-  });
-
-  it("stops with no_progress when repeated steps add no knowledge", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "run", command: "true" },
-          { tool: "run", command: "true" },
-          { tool: "run", command: "true" },
-        ]),
-        workspace,
-        maxTurns: 10,
-        noProgress: 2,
-      },
-      { goal: { id: "g1", label: "noop" } },
-    );
-
-    expect(result.done).toBe(true);
-    expect(result.stopReason).toBe("no_progress");
-    expect(result.turns).toBe(2);
-  });
-
-  it("keeps going while each step reads a new file", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          { tool: "read", path: "src/sum.mjs" },
-          { tool: "read", path: "test/sum.test.mjs" },
-          { tool: "finish", summary: "looked around" },
-        ]),
-        workspace,
-        maxTurns: 10,
-        noProgress: 2,
-      },
-      { goal: { id: "g1", label: "noop" } },
-    );
-
-    expect(result.done).toBe(true);
-    expect(result.stopReason).toBe("finish");
-    expect(result.turns).toBe(3);
-  });
-
-  it("ignores generated build output in mutations and the witness", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          {
-            tool: "run",
-            command:
-              "mkdir -p _build && printf 'x\\n' > _build/out.txt && printf 'y\\n' > src/note.txt",
-          },
-          { tool: "finish", summary: "done" },
-        ]),
-        workspace,
-        maxTurns: 5,
-      },
-      { goal: { id: "g1", label: "noop" } },
-    );
-
-    const refs = result.events
-      .filter((event) => event.type === "mutate")
-      .map((event) => event.ref);
-    expect(refs).toContain("file:src/note.txt");
-    expect(refs.some((ref) => ref.includes("_build"))).toBe(false);
-  });
-
-  it("stops with out_of_fragment when the model abstains", async () => {
-    const root = setup("off-by-one");
-    const workspace = fsWorkspace(root);
-
-    const result = await runAgent(
-      {
-        propose: scripted([
-          {
-            tool: "abstain",
-            missing: "network access",
-            reason: "the task needs to fetch a dependency",
-          },
-        ]),
-        workspace,
-        maxTurns: 5,
-      },
-      { goal: { id: "g1", label: "install a package from the internet" } },
-    );
-
-    expect(result.done).toBe(true);
-    expect(result.stopReason).toBe("out_of_fragment");
-    expect(
-      result.events.some(
-        (event) =>
-          event.type === "add_node" &&
-          event.node.kind === "action" &&
-          event.node.label.startsWith("out_of_fragment:"),
-      ),
-    ).toBe(true);
+    const after = fold(outcome.events, state);
+    expect(predicateOf(after, "g2")).toBe("achieved");
+    const check = [...after.nodes.values()].find((node) => node.kind === "check");
+    expect((check?.payload as { command?: string } | undefined)?.command).toBe("true");
   });
 });

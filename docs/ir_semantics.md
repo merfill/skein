@@ -52,7 +52,7 @@ into items.
 |---|---|---|---|
 | **Doxa** | LLM | proposes exactly one operator per turn | issue verdicts, infer |
 | **Logos** | the deterministic engine, **including the environment and tools** | executes commands; places nodes and edges from the results; recomputes the derived view; builds the projection | infer truth; choose among equals |
-| **Arbiter** | external (in Skein — a human; objective — the toolchain) | the first goal, verdict, stopping, root closure; the choice when no criterion exists | produce content |
+| **Arbiter** | external (in Skein — a human; objective — the toolchain) | the first request, verdict, stopping, external acceptance of the request; the choice when no criterion exists | produce content |
 
 There is no protocol/environment as a separate role: execution and recording are part
 of the logos. The logos' internal operators are `o_rev` (recompute on change), `o_def`
@@ -68,7 +68,10 @@ Key consequences:
   and fills it with content. Equally consistent hypotheses (no criterion) are decided
   by the **Arbiter**;
 - **a verdict is the arbiter's alone.** "Pass/fail" is given by the toolchain (test,
-  typechecker) or the user; the doxa and logos do not do it.
+  typechecker) or the user; the doxa and logos do not do it;
+- **a request is not a goal.** The first `request` is set by the Arbiter: unstructured
+  motivation, the root of the forest. The doxa neither closes nor checks it — it only
+  interprets it; acceptance of the request is external and implicit (§6).
 
 ---
 
@@ -78,6 +81,7 @@ Key consequences:
 
 | kind | space | meaning |
 |---|---|---|
+| `request` | work | the Arbiter's request: unstructured motivation (the root) |
 | `goal` | work | a goal: what to achieve (the plan is optional) |
 | `action` | work | a command (a plan item) |
 | `plan` | work | a plan container: ordered items (≥1) |
@@ -96,6 +100,12 @@ There are no separate `claim`, `decision`, `subgoal` kinds:
 - **subgoal** — a goal; there is no separate kind;
 - **decision** — not a doxa node: the logos or the Arbiter chooses.
 
+**A request and a goal are different.** A `request` is raw motivation from the Arbiter
+(payload `text`), without `what`/`why`/`done_when`/plan; it is the root of the forest and
+is **not closed** in the IR (acceptance is external, §6). A `goal` is the doxa's
+interpretation of the request: `what` is derived from the text, `why` is the hypothesis,
+`done_when` is how to tell that the interpretation succeeded.
+
 ### 2.2 Goal
 
 A goal carries fields:
@@ -106,6 +116,11 @@ A goal carries fields:
 - `done_when` — the completion condition: **objective** (a command with a verdict) or
   **subjective** (a formulation).
 
+**A request carries only `text`.** A request has no completion condition and no plan:
+acceptance of the request is external (the user's silence or the harness verdict) and
+does not enter the IR. Inside, only the derived `addressed` is computed (§2.5) — "the
+agent has something to show".
+
 The plan is a **separate node** `plan`, linked to the goal by the `has_plan` edge. A
 goal may lack it: the absence of a plan means "the plan is not specified yet". A
 `plan` node, if present, always carries **at least one item**.
@@ -114,12 +129,13 @@ A **plan item** is a `goal` (subgoal) or an `action` (command); the items of a `
 node are ordered by their position in the child list. A subgoal-item may have no plan
 of its own — then it is unspecified too.
 
-**Alternatives** — the goal's second container: an `alternatives` node, linked to the
-goal, holds approach options (`goal` items). It appears **lazily** — not when the goal
-is created, but when the current approach has failed and a new candidate is proposed.
-The chosen (current) option is the one the traversal descended into (the `chosen` edge,
-§2.6); the rest are `abandoned` (derived). The options are proposed by the doxa, not by
-the Arbiter.
+**Alternatives** — a container of options: an `alternatives` node, linked to a
+**request** (interpretations of the request) or to a **goal** (approach options), holds
+`goal` items. For a goal it appears **lazily** — when the current approach has failed and
+a new candidate is proposed; for a request it is created **at once** with the first
+interpretation (a single interpretation is an option too). The chosen (current) option is
+the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
+(derived). The options are proposed by the doxa, not by the Arbiter.
 
 ### 2.3 Edges
 
@@ -127,7 +143,7 @@ the Arbiter.
 |---|---|---|
 | `has_plan` | `goal` → `plan` | the goal's plan (optional) |
 | `item` | `plan` / `alternatives` → `goal` / `action` | an item/option (order = position) |
-| `has_alternatives` | `goal` → `alternatives` | a container of approach options |
+| `has_alternatives` | `request` / `goal` → `alternatives` | a container of interpretations/approach options |
 | `chosen` | `alternatives` → `goal` | the chosen (current) approach option |
 | `under` | `check` / `complete` → `goal` | an assumption a closure rests on |
 | `produces` | `action` → `observation` / `check` | a command result |
@@ -158,8 +174,14 @@ the projection from incident event nodes:
   `complete` node;
 - a goal is `refuted` ⇔ it is closed by a `check` with verdict `fail`;
 - a goal with a `check` `inconclusive` stays `open` (it needs the Arbiter);
-- a goal is `abandoned` ⇔ it is an option in `alternatives` that was not pursued (a
-  sibling has the `chosen` edge);
+- a goal is `abandoned` ⇔ it is an option in `alternatives` not equal to the **current**
+  chosen one (the container's latest `chosen` edge);
+- a request is `addressed` ⇔ its current chosen interpretation is
+  `achieved`/`achieved_under`; otherwise the request is `open` (in the IR a request is
+  never "closed" — acceptance is external, §6);
+- **call summary** `calls` ⇔ a derived list of executed actions and refusals
+  (`record_rejection`), deduplicated by `(status, action)` and tied to the focus
+  (§2.8);
 - otherwise the goal is `open`.
 
 These are `project` rules, not fields. Only the journal is monotone (§3).
@@ -171,7 +193,7 @@ computes the *applicable* moves at the current point; the choice among them is t
 doxa's (§7).
 
 The **stack** `S = [G₀ … G_k]` is the path from the root to the current goal; `G₀` is
-the root. The **cursor** `cursor(G)` is a **derived** number: the index of the first
+the root request (`request`). The **cursor** `cursor(G)` is a **derived** number: the index of the first
 **unperformed** plan item of `G`, left to right. An item is performed if it is an
 `action` with a produced child (`observation`/`check`/`mutate`) or a `goal` in the
 state `achieved`/`achieved_under`/`refuted`/`abandoned`. No plan — no items. The
@@ -193,6 +215,8 @@ plan.
 
 **Applicable at the point `G`** (what the doxa sees as the frontier):
 
+- the current node is the request `R` → `create goal` (propose an interpretation; on
+  failure — with `revises`, §4.1);
 - there is an unperformed `action` item → `apply` (execute it);
 - the first unperformed item is a subgoal `H` → `descend` into `H`;
 - all items are performed and `G` is not closed: an objective `done_when` → `apply` (a
@@ -213,42 +237,79 @@ goal is `achieved` (under its assumptions); if all options are refuted, the goal
 
 | Turn | Stack | Doxa proposal | Logos | Tree |
 |---|---|---|---|---|
-| 0 | `[G0]` | — *(the Arbiter)* | — | root `G0` "fix the bootstrap", `done_when` = the criterion |
-| 1 | `[G0]→[G0,G1]` | `create goal G1` "reproduce" (plan `[A1 run build]`) | accepted | `item G0→G1`; `plan Q1` with `A1`; descend |
-| 2 | `[G0,G1]` | `apply A1` | executed | `A1` executed + `observation`; `cursor(G1)` shifted |
-| 3 | `[G0,G1]→[G0]` | `complete G1` | accepted | `complete`→`G1`; `G1` `achieved_under`; return |
-| 4 | `[G0]→[G0,G2]` | `create goal G2` "localize" | accepted | `item G0→G2`; descend |
-| 5 | `[G0,G2]` | `apply` `read shared_heap.c` | executed | `observation` + `file`@`V1` |
-| 6 | `[G0,G2]` | `apply` the same `read` (the same `V1`) | **refusal** `record_rejection` | no new node; the repeat counter grows (§2.7) |
-| 7 | `[G0,G2]→[G0]` | `complete G2` | accepted | `complete`→`G2`; return |
-| 8 | `[G0]→[G0,G3]` | `create goal G3` "fix" (`why` = hypothesis, `done_when` = the build) | accepted | `item G0→G3`; descend |
-| 9 | `[G0,G3]` | `apply` `edit` | executed | `action` + `mutate V1→V2` |
-| 10 | `[G0,G3]` | `apply` a check | executed | `check` `verifies→G3`, `under→G2` |
-| 11 | `[G0,G3]→[G0]` | *(pass)* | derived | `G3` `achieved_under`; return |
-| 11b | `[G0,G3]→[G0,G3']` | *(fail)* the doxa proposes an option | accepted | `G3` `refuted`; `alternatives` under `G3`, `G3'`; `chosen`; descend |
-| 12 | `[G0,G3']` | commands and a check of the option | … | `check`→`G3'` |
-| 13 | `[G0]` | — *(the Arbiter)* | — | the root is closed by the criterion |
+| 0 | `[R]` | — *(the Arbiter)* | — | root `request R` — the instruction text; no goals |
+| 1 | `[R]→[R,I,G1]` | `create goal I` "fix the bootstrap" (plan `[G1 reproduce, G2 localize, G3 fix, G4 verify]`) | accepted | `alternatives A0` under `R`; `item A0→I`; `chosen A0→I`; `I`'s plan; descend into `G1` |
+| 2 | `[R,I,G1]` | `apply` `run` the build | executed | `action` + `observation`; `cursor(G1)` shifted |
+| 3 | `[R,I,G1]→[R,I]` | `complete G1` | accepted | `complete`→`G1`; `G1` `achieved_under`; return |
+| 4 | `[R,I]→[R,I,G2]` | *(focus)* `apply` `read`/`grep` | … | descend into `G2`; `observation` + `file`@`V1` |
+| 5 | `[R,I,G2]` | `apply` the same `read` (the same `V1`) | **refusal** `record_rejection` | no new node; the repeat counter grows (§2.7) |
+| 6 | `[R,I,G2]→[R,I]` | `complete G2` | accepted | `complete`→`G2`; return |
+| 7 | `[R,I]→[R,I,G3]` | `create goal G3` "fix" (`why` = hypothesis, `done_when` = the build) | accepted | `item`→`G3`; descend |
+| 8 | `[R,I,G3]` | `apply` `edit` | executed | `action` + `mutate V1→V2` |
+| 9 | `[R,I,G3]` | `apply` a check | executed | `check` `verifies→G3`, `under→G2` |
+| 10 | `[R,I,G3]→[R,I]` | *(pass)* | derived | `G3` `achieved_under`; return |
+| 10b | `[R,I,G3]→[R,I,G3']` | *(fail)* the doxa proposes an option | accepted | `G3` `refuted`; `alternatives` under `G3`, `G3'`; `chosen`; descend |
+| 11 | `[R,I]` | `apply` `run` the criterion (`G4`) | executed | `check` `verifies→G4` (the command from `done_when`) |
+| 12 | `[R,I]→[R]` | *(all items done)* | derived | `I` `achieved`; return to `R` |
+| 13 | `[R]` | — *(the Arbiter)* | — | the request is `addressed`; stop; acceptance external |
 
-The example also shows a repeat (turn 6): the same `read` with the same input version —
+The example also shows a repeat (turn 5): the same `read` with the same input version —
 not progress. A repeat **after** an edit (a different version) is legitimate: the input
 version changes.
 
 ### 2.7 Loop detection
 
 Looping is not a separate sensor but the **absence of progress**. Progress at a point is
-a cursor shift, a new observation/check, or a closure. The layers are deterministic:
+a cursor shift, **new knowledge** (a new observation/check or a new call outcome), or a
+closure. The layers are deterministic:
 
 - **action repeat** — the same command with the same input versions (`tool` + target +
   `ref`/`version`). The logos refuses it (`classify`) and writes `record_rejection`. A
   repeat **after** an edit (a different version) is legitimate;
-- **stagnation** — the cursor does not shift and there are no new observations/checks for
-  `K` steps → `return` (escalation to the parent);
+- **hypothesis repeat** — a new interpretation/option whose `what` repeats a refuted one
+  is refused; the proposal must list all the container's failures (`revises`, §4.1);
+- **stagnation** — the cursor does not shift and there is no **new knowledge** for
+  `K` steps → `return` (escalation to the parent). Repeating the same failure/refusal is
+  **not** new knowledge: `knowledgeKey` includes the *set of call signatures*, not the
+  number of repetitions (§2.8);
 - **oscillation** — a goal fluctuates `achieved` ↔ closure withdrawn without a change of
   versions or assumptions; usually due to a crude witness (the whole workspace);
 - **exhaustion** — no progress at the root → stop: if a capability is missing —
   `out_of_fragment`, otherwise `no_progress`.
 
 This is "no progress — stop" from the invariants (§9), applied to traversal.
+
+### 2.8 Call summary (derived)
+
+For the model the projection is **all of memory**, so it carries not only the positive
+state (goals, plans, the achieved) but also a brief **summary of calls**: what has
+already been invoked and how it ended. Absence from the context = absence of knowledge
+for the model.
+
+`calls` is derived from the journal:
+
+- **`refused`** — a logos decision (`record_rejection`): `action = "tool target"`,
+  `note = reason`; constraint refusals carry a `constraintId`;
+- **`ok`/`fail`** — an executed action (an `action` with a produced
+  `observation`/`check`) or a materialized failure without an `action` node. `fail` is
+  a result with `verdict=fail`; `note` is the **last non-empty line** of the output.
+
+Rules:
+
+- **dedup.** Records with an equal `(status, action)` collapse; `count` grows; a repeat
+  creates no new knowledge;
+- **focus.** Each record is tagged with the current node at the moment it appears; only
+  records whose focus is on the **current traversal stack** (§2.6) are shown. Off the
+  branch — out of the context;
+- **invalidation.** A mutation after the record clears `fail`/`refused` (in another
+  world state the same might work); `ok` is kept as history. The exception is
+  **constraint** refusals (`constraintId`): those are invariants, not context. Leaving
+  the branch clears a record by the focus rule.
+
+**The feedback invariant.** A refusal or a recorded failure **changes the projection**:
+if `project` after a refusal equals `project` before it, deterministic advancement must
+repeat the same proposal — a loop. This is a special case of the invariant "the context
+is necessary and sufficient" (§9, no. 8).
 
 ---
 
@@ -267,6 +328,10 @@ change is a **new event node** (`check`, `complete`, …), not an edit of an exi
 node; `set_status` is not used. New behavior is a new event or a new projection rule,
 never a direct edit of the state bypassing the journal.
 
+An action failure (no file, pattern not found, …) is **not forgotten**: it is
+materialized as an observation with `verdict=fail`, so it enters the call summary
+(§2.8) uniformly with a failed command.
+
 Determinism: the same events and parameters give one state and one projection. The only
 external source is file changes; they enter through `mutate`.
 
@@ -280,38 +345,49 @@ tree → derived state → projection effect.
 
 ### 4.1 Goal (`create goal`)
 
-This operator creates a subgoal relative to the **current** goal and adds it as an item
-to the current goal's plan. The **first (root) goal is created by the Arbiter**: it is
-given from outside and is not a doxa proposal.
+The operator introduces a goal that interprets the request, or a subgoal of the current
+goal. **The first `request` is created by the Arbiter**: it is given from outside and is
+not a doxa proposal.
 
-**Input:** the current goal `C`; the content `{ what, why, done_when, plan? }`; `plan`
-is an optional list of items.
+**Input:** the current node `C` (a request or a goal); the content
+`{ what, why, done_when, plan?, revises? }`; `plan` is an optional list of items;
+`revises` is a list of goals the new proposal supersedes.
 
 **Admissibility check:** `what` non-empty; if `plan` is given — it is non-empty (at
-least one item); the current goal exists. Otherwise — a refusal with a reason.
+least one item); the current node exists. If `C` is a request, or a goal whose
+`alternatives` contains `refuted`/`abandoned` options, then `revises` **must** list
+**all** such options (otherwise a refusal `missing_revision`/`unknown_revision`); if
+there are none — `revises` is empty. Additionally, a `what` repeating a refuted one is
+refused (`repeat_hypothesis`). Otherwise — a refusal with a reason.
 
 **Operation on the tree:**
 
 1. create a `goal` node `G` (fields from the input);
-2. embed `G` as an item in `C`'s plan: if `C` has no plan, create a `P` node and the
-   edge `has_plan C → P`; then the edge `item P → G`;
-3. if `G`'s plan is given: create a `Q` node, the edge `has_plan G → Q`; for each item
+2. **if `C` is a request `R`:** create (if absent) an `alternatives` container `A`, the
+   edge `has_alternatives R → A`, the edge `item A → G` and the edge `chosen A → G`
+   (the new interpretation becomes current);
+3. **if `C` is a goal:** embed `G` as an item in `C`'s plan (if `C` has no plan, create a
+   `P` node and the edge `has_plan C → P`; then `item P → G`); if `C` is refuted — embed
+   `G` as an option in its `alternatives` (create the container if absent) and set
+   `chosen A → G`;
+4. if `G`'s plan is given: create a `Q` node, the edge `has_plan G → Q`; for each item
    create a `goal`/`action` node and the edge `item Q → item` in the given order; a
    command item is an `action` (not yet executed);
-4. move to `G`.
+5. move to `G`.
 
 **State (derived):** `G` and goal-items are not closed; command-items are not yet
-executed.
+executed; superseded options remain `refuted`/`abandoned`.
 
-**Projection effect:** `G` becomes the current goal; its plan (if any) and rationale are
-visible.
+**Projection effect:** `G` becomes the current goal; its plan (if any), rationale and the
+refuted interpretations/options are visible.
 
 **Completion of `G`** (see §6): objective — by an arbiter check; subjective — by the
-"complete" operator; the root (first goal) — the Arbiter.
+"complete" operator; a request — by the Arbiter's acceptance (not closed in the IR).
 
 ### 4.2 Command (`apply`)
 
-**Input:** the current goal `C`; a command `D`; an optional "this is a check" marker.
+**Input:** the current goal `C`; a command `D` (for exploration); an optional check
+target `target` — then the command comes from its `done_when`.
 
 **Admissibility check:** the command is admissible (constraints, executability, the
 presence of a current goal). If the command changes a file, the declared basis must be
@@ -322,8 +398,10 @@ is written; no nodes are created.
 
 1. **execute** the command in the environment;
 2. the action as a plan item: if the command is an existing `action`-item of `C`'s
-   plan, use it; otherwise create `action A` and, if needed, `C`'s plan, and add `A` as
-   its item (`item`); do **not** move into `A`;
+   plan, use it; otherwise, if the first unfulfilled item of `C` is an `action` with a
+   different command, attach `A` as its `chosen` alternative (append-only: the previous
+   attempt stays as "did not work"); otherwise create `action A` and, if needed, `C`'s
+   plan, and add `A` as its item (`item`); do **not** move into `A`;
 3. **record the result** — the children of `A`:
    - `observation` (output), edge `produces`;
    - `mutate` for each changed file: `from = current(ref)`, `to = V` (a new version),
@@ -337,6 +415,12 @@ is written; no nodes are created.
 `inconclusive`), the edge `verifies → C`, and, if the check rests on assumptions,
 `under` edges to assumption-goals. On `fail` the branch is considered dropped and a
 return to the parent happens.
+
+**The command of an objective check comes from the IR.** For an objective goal the
+command checked is its `done_when.command`; the doxa only initiates the check and **does
+not** substitute the command. A subjective goal cannot be checked — only `complete`
+(`subjective_goal_needs_complete`). Execution must not mask the exit code (no pipes;
+`pipefail`).
 
 **A verdict and a failure are different.** A `check` carries `pass`/`fail` only for a
 **deterministic** outcome (an objective `done_when`). A timeout, an environment crash,
@@ -352,7 +436,7 @@ goal's state are visible.
 
 **Admissibility check:** `G` has a **subjective** `done_when`. If `done_when` is
 objective — a refusal: the completion of an objective goal is decided only by a check.
-The root is not completed by this operator either.
+A request (the root) is not completed by this operator either.
 
 **Operation on the tree:** create a `complete` node with the `closes → G` edge (and, if
 the closure rests on assumptions, `under` edges to assumption-goals). This is the doxa's
@@ -417,7 +501,12 @@ trace does not.
 | objective, without assumptions | `check` (verdict `pass`) | `achieved` |
 | objective, with assumptions | `check` (`pass`) + `under` edges | `achieved_under` |
 | epistemic (`done_when` subjective) | a `complete` node (a doxa assumption) | `achieved_under` |
-| root (the first goal) | the Arbiter (externally) | — |
+| request (the root) | external acceptance: the user (silence/the next turn) or the harness | `addressed` (derived) |
+
+**A request is not closed in the IR.** There is no "accepted" node/edge: the user's
+silence means consent, and the objective harness scores the run from outside. Inside,
+only `addressed` is computed — "the agent has something to show" — from the current
+chosen interpretation.
 
 **Honesty.** The strength of a conclusion does not exceed the strength of its premises:
 
@@ -449,7 +538,8 @@ Three instances:
   option, a subgoal, a command) — this is its output interface, the three operators
   (§4);
 - the **Arbiter** — external (a human; objectively — the toolchain/harness): the first
-  goal, veto/override, stopping, the verdict when no criterion exists, root closure.
+  request, veto/override, stopping, the verdict when no criterion exists, external
+  acceptance of the request.
 
 **`W: Σ → O`** — the operator-selection function. Usually the doxa realizes it within
 the applicable set; the Arbiter intervenes on override and when no formal criterion
@@ -464,20 +554,12 @@ exists (two equally consistent hypotheses).
 
 ## 8. Projection
 
-`project(state) → Context` is a pure deterministic function. Composition:
-
-- **header** — the root/current goal, constraints, fragment, budget;
-- **frontier** — the current branch: the goal, its plan (the `plan` node, items and
-  their state), open obligations, the latest result;
-- **artifacts** — a file index (+ the current version);
-- **index** — an overview (`counts`, a window of the newest);
-- **recent** — the last turns.
-
-Rules: the context is the current branch (it grows on descent and collapses on return).
-The IR does **not store** file contents or raw output (invariant 11), but an observation
-of an explicit action (e.g. a read) enters the `frontier` as the action's result —
-within the budget. Everything else is reachable by reference; past projections and
-blobs do not enter. The order of parts is from stable to mutable (cache).
+`project(state) → Context` is a pure deterministic function: it is the context for the
+**next operator**, not a state dump. It shows the **traversal branch** plus the
+containers of its nodes (`plan`/`alternatives`), the global constraints, the branch's
+**call summary** (`calls`, §2.8), and the full result of the latest call; everything
+else is reached via `query`. The composition, exact shape, limits and examples are in
+the separate specification `docs/projection.md`.
 
 ---
 
@@ -495,13 +577,17 @@ blobs do not enter. The order of parts is from stable to mutable (cache).
 | 8 | the context is necessary and sufficient for the selected operator |
 | 9 | no progress — stop (the Arbiter) |
 | 10 | a refusal is recorded with a reason and is not stored as belief |
-| 11 | file contents and secrets do not enter the IR |
+| 11 | secrets do not enter the IR; a small tool result's body may live in a node, a large one behind a temp-file reference |
 | 12 | a `plan`/`alternatives` node always carries at least one item (`item`); a `goal` may be without a plan |
-| 13 | the first goal is set by the Arbiter; the root is closed only by the Arbiter |
+| 13 | the first `request` is set by the Arbiter; a request is not closed in the IR — acceptance is external and implicit |
 | 14 | nodes have no stored statuses: state is entirely derived |
 | 15 | structural edges (`has_plan`, `item`, `has_alternatives`, `chosen`) form a forest — no cycles |
 | 16 | the traversal makes at most K steps without progress at a node (a cursor shift, a new observation/check, a closure); otherwise `return` |
 | 17 | the cursor does not decrease on an unchanged plan; a closed goal does not remain the focus (after closure — `return`) |
+| 18 | on failure `create goal` must list all `refuted`/`abandoned` options of the container (`revises`); otherwise a refusal |
+| 19 | the command of an objective check is the goal's `done_when.command` from the IR, not the doxa's text |
+| 20 | the doxa neither completes nor checks a request: at the request point only `create goal` is applicable |
+| 21 | a refusal or a failure changes the projection (`calls`, §2.8): a repeat creates no knowledge; otherwise a loop |
 
 ---
 
@@ -514,6 +600,11 @@ blobs do not enter. The order of parts is from stable to mutable (cache).
 - **`out_of_fragment`.** Requires a separate "declared fragment" design.
 - **The Arbiter's policy.** The concrete operator-selection rules (including automatic
   ones for an autonomous run).
+- **Several requests.** Today one forest per request; open — whether each user turn is a
+  separate `request` and how the projection focuses.
+- **`revises` strictness.** We require listing all the container's failures; open —
+  whether a semantic dedup of `what` against the refuted ones is needed (now a string
+  comparison).
 - **Reserved.** `symbol`/`test` nodes and edges beyond §2.3 are declared but not produced
   by the current model; consider them outside the stage. The `set_status` event is not
   used: state is derived (§2.5).

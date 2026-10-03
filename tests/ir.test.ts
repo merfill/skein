@@ -2,44 +2,71 @@ import { describe, expect, it } from "vitest";
 
 import { userAcceptance } from "../src/ir/approval";
 import { eventSchema, type Event } from "../src/ir/events";
-import { emptyState, fold } from "../src/ir/graph";
-import { project, reachableFromGoal, deriveMode } from "../src/ir/project";
+import { childrenOf, emptyState, fold, predicateOf } from "../src/ir/graph";
 import { knowledgeKey } from "../src/ir/progress";
+import { project } from "../src/ir/project";
+import { applicable } from "../src/ir/traversal";
 import type {
   ArtifactKind,
+  DoneWhen,
   Edge,
   EdgeKind,
+  GoalPayload,
   Node,
   NodeKind,
   Provenance,
-  Status,
 } from "../src/ir/types";
 
-function workNode(id: string, kind: NodeKind, label: string, seq: number): Node {
-  return { id, space: "work", kind, label, seq };
+function workNode(
+  id: string,
+  kind: NodeKind,
+  label: string,
+  seq: number,
+  payload?: unknown,
+): Node {
+  return { id, space: "work", kind, label, ...(payload !== undefined ? { payload } : {}), seq };
 }
 
 function artifactNode(id: string, kind: ArtifactKind, label: string, seq: number): Node {
   return { id, space: "artifact", kind, label, seq };
 }
 
-function edge(
+function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: Provenance): Edge {
+  return { id, from, to, kind, provenance };
+}
+
+const llm: Provenance = { kind: "llm" };
+const objective = (command: string): DoneWhen => ({ kind: "objective", command });
+const subjective = (text: string): DoneWhen => ({ kind: "subjective", text });
+
+function goal(
   id: string,
-  from: string,
-  to: string,
-  kind: EdgeKind,
-  provenance: Provenance,
-  status: Status,
-): Edge {
-  return { id, from, to, kind, provenance, status };
+  what: string,
+  seq: number,
+  done_when: DoneWhen = subjective(what),
+  why?: string,
+): Event {
+  const payload: GoalPayload = { what, done_when, ...(why !== undefined ? { why } : {}) };
+  return { type: "add_node", node: workNode(id, "goal", what, seq, payload) };
+}
+
+function plan(id: string, goalId: string, items: string[], seq: number): Event[] {
+  const events: Event[] = [
+    { type: "add_node", node: workNode(id, "plan", `plan for ${goalId}`, seq) },
+    { type: "add_edge", edge: edge(`hp:${id}`, goalId, id, "has_plan", llm) },
+  ];
+  items.forEach((item, index) => {
+    events.push({
+      type: "add_edge",
+      edge: edge(`it:${id}:${index}`, id, item, "item", llm),
+    });
+  });
+  return events;
 }
 
 describe("events", () => {
-  it("accepts a valid event", () => {
-    const event: Event = {
-      type: "add_node",
-      node: workNode("g1", "goal", "make test green", 0),
-    };
+  it("accepts a valid goal node", () => {
+    const event = goal("g1", "make test green", 0);
     expect(eventSchema.safeParse(event).success).toBe(true);
   });
 
@@ -51,16 +78,22 @@ describe("events", () => {
     expect(eventSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("accepts a check event from the user", () => {
+  it("accepts a check event with targets and under", () => {
     const event = eventSchema.parse({
       type: "record_check",
-      command: "user acceptance",
+      command: "node --test",
       verdict: "pass",
-      output: "",
-      actor: "user",
-      claimIds: ["c1"],
+      output: "ok",
+      targets: ["g1"],
+      under: ["g2"],
     });
-    expect(event.type === "record_check" && event.actor).toBe("user");
+    expect(event.type === "record_check" && event.targets).toEqual(["g1"]);
+  });
+
+  it("rejects the removed set_status event", () => {
+    expect(eventSchema.safeParse({ type: "set_status", id: "g1", status: "open" }).success).toBe(
+      false,
+    );
   });
 
   it("accepts a rejection event", () => {
@@ -78,12 +111,9 @@ describe("events", () => {
 
 describe("fold", () => {
   const events: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
-    {
-      type: "add_node",
-      node: artifactNode("file:src/a.ts", "file", "src/a.ts", 2),
-    },
+    goal("g1", "make test green", 0),
+    { type: "add_node", node: workNode("a1", "action", "read src/a.ts", 1) },
+    { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 2) },
   ];
 
   it("is deterministic: same events, same state", () => {
@@ -97,103 +127,231 @@ describe("fold", () => {
     expect(next.nodes.size).toBe(3);
   });
 
-  it("assigns default statuses and records the goal", () => {
+  it("records the root goal and derives an open predicate", () => {
     const state = fold(events);
-    expect(state.goalId).toBe("g1");
-    expect(state.statuses.get("g1")).toBe("open");
-    expect(state.statuses.get("c1")).toBe("open");
-    expect(state.statuses.get("file:src/a.ts")).toBe("believed");
+    expect(state.rootId).toBe("g1");
+    expect(predicateOf(state, "g1")).toBe("open");
+    expect(predicateOf(state, "a1")).toBe("open");
+  });
+
+  it("derives executed for an action with a produced child", () => {
+    const state = fold([
+      goal("g1", "make test green", 0),
+      { type: "add_node", node: workNode("a1", "action", "read", 1) },
+      { type: "add_node", node: workNode("o1", "observation", "read", 2) },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "read", ref: "file:x", version: "v1" }) },
+    ]);
+    expect(predicateOf(state, "a1")).toBe("executed");
+  });
+
+  it("keeps plan item order from the item edge order", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "add_node", node: workNode("a1", "action", "one", 1) },
+      { type: "add_node", node: workNode("a2", "action", "two", 2) },
+      ...plan("p1", "g1", ["a2", "a1"], 3),
+    ]);
+    expect(childrenOf(state, "p1")).toEqual(["a2", "a1"]);
   });
 });
 
 describe("record_check", () => {
-  const base: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
-    {
-      type: "add_edge",
-      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-    },
-  ];
-
-  it("does not verify a claim without a check", () => {
-    const context = project(fold(base));
-    expect(context.frontier.claims.map((node) => node.id)).toEqual(["c1"]);
-  });
-
-  it("verifies a claim on a passing check and drops it from the frontier", () => {
+  it("achieves a goal on a pass with no assumptions", () => {
     const state = fold([
-      ...base,
+      goal("g1", "make test green", 0, objective("node --test")),
       {
         type: "record_check",
-        command: "npm test",
+        command: "node --test",
         verdict: "pass",
         output: "ok",
-        claimIds: ["c1"],
+        targets: ["g1"],
       },
     ]);
-    expect(state.statuses.get("c1")).toBe("verified");
-    expect(project(state).frontier.claims).toEqual([]);
-    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
+    expect(predicateOf(state, "g1")).toBe("achieved");
   });
 
-  it("refutes a claim on a failing check and reports it as one line", () => {
+  it("only reaches achieved_under with an under edge", () => {
     const state = fold([
-      ...base,
+      goal("g1", "make test green", 0, objective("node --test")),
+      goal("g2", "the cause is a race", 1),
       {
         type: "record_check",
-        command: "npm test",
-        verdict: "fail",
-        output: "boom",
-        claimIds: ["c1"],
+        command: "node --test",
+        verdict: "pass",
+        output: "ok",
+        targets: ["g1"],
+        under: ["g2"],
       },
     ]);
-    expect(state.statuses.get("c1")).toBe("refuted");
-    expect(project(state).frontier.rejected).toEqual(["c1: off-by-one in loop"]);
+    expect(predicateOf(state, "g1")).toBe("achieved_under");
+  });
+
+  it("refutes on a fail and leaves open on inconclusive", () => {
+    const failed = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "record_check", command: "node --test", verdict: "fail", output: "boom", targets: ["g1"] },
+    ]);
+    expect(predicateOf(failed, "g1")).toBe("refuted");
+    const inconclusive = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "record_check", command: "node --test", verdict: "inconclusive", output: "timeout", targets: ["g1"] },
+    ]);
+    expect(predicateOf(inconclusive, "g1")).toBe("open");
+  });
+
+  it("materializes an addressable check node and a verifies edge", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "record_check", id: "chk1", command: "node --test", verdict: "pass", output: "ok", targets: ["g1"] },
+    ]);
+    expect(state.nodes.get("chk1")?.kind).toBe("check");
+    const verifies = [...state.edges.values()].find((candidate) => candidate.kind === "verifies");
+    expect(verifies).toMatchObject({ from: "chk1", to: "g1" });
+  });
+});
+
+describe("complete", () => {
+  it("closes a subjective goal as achieved_under", () => {
+    const state = fold([
+      goal("g1", "locate the cause", 0, subjective("I know where it is")),
+      { type: "add_node", node: workNode("c1", "complete", "complete g1", 1) },
+      { type: "add_edge", edge: edge("e1", "c1", "g1", "closes", llm) },
+    ]);
+    expect(predicateOf(state, "g1")).toBe("achieved_under");
+  });
+});
+
+describe("alternatives", () => {
+  it("marks unselected variants abandoned when a sibling is chosen", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "record_check", command: "node --test", verdict: "fail", output: "boom", targets: ["g1"] },
+      { type: "add_node", node: workNode("a1", "alternatives", "approaches", 1) },
+      { type: "add_edge", edge: edge("e0", "g1", "a1", "has_alternatives", llm) },
+      goal("g2", "approach one", 2),
+      goal("g3", "approach two", 3),
+      { type: "add_edge", edge: edge("e1", "a1", "g2", "item", llm) },
+      { type: "add_edge", edge: edge("e2", "a1", "g3", "item", llm) },
+      { type: "add_edge", edge: edge("e3", "a1", "g3", "chosen", llm) },
+    ]);
+    expect(predicateOf(state, "g1")).toBe("refuted");
+    expect(predicateOf(state, "g2")).toBe("abandoned");
+    expect(predicateOf(state, "g3")).toBe("open");
+  });
+});
+
+describe("projection", () => {
+  it("is the traversal path; the focus carries its plan and cursor", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "add_node", node: workNode("a1", "action", "run build", 1) },
+      goal("g2", "locate", 2),
+      ...plan("p1", "g1", ["a1", "g2"], 3),
+    ]);
+    const context = project(state, { budget: { turn: 2, maxTurns: 10 } });
+    expect(context.path.map((node) => node.id)).toEqual(["g1"]);
+    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1", "g2"]);
+    expect(context.path[0]?.plan?.cursor).toBe(0);
+    expect(context.budget).toEqual({ turn: 2, maxTurns: 10, remaining: 8 });
+  });
+
+  it("starts at the request and shows its interpretations", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "do it" }, seq: 0 },
+      },
+      goal("g1", "approach one", 1),
+      { type: "add_node", node: workNode("a1", "alternatives", "alt", 2) },
+      { type: "add_edge", edge: edge("e1", "r1", "a1", "has_alternatives", llm) },
+      { type: "add_edge", edge: edge("e2", "a1", "g1", "item", llm) },
+      { type: "add_edge", edge: edge("e3", "a1", "g1", "chosen", llm) },
+    ]);
+    const context = project(state);
+    expect(context.path[0]?.kind).toBe("request");
+    expect(context.path[0]?.text).toBe("do it");
+    expect(context.path[0]?.alternatives?.items.map((item) => item.id)).toEqual(["g1"]);
+    expect(context.path[0]?.alternatives?.chosen).toBe("g1");
+  });
+
+  it("renders the latest result in full, without files or versions", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 1) },
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "read src/a.ts", 2, { ref: "file:src/a.ts", version: "v1" }),
+      },
+    ]);
+    const context = project(state, { lastOutput: "x".repeat(1000) });
+    expect(context.lastResult?.kind).toBe("observation");
+    expect(context.lastResult?.ref).toBe("src/a.ts");
+    expect(context.lastResult?.output).toBe("x".repeat(1000));
+    const serialized = JSON.stringify(context);
+    expect(serialized).not.toContain("artifacts");
+    expect(serialized).not.toContain("version");
+  });
+
+  it("lists constraints and exposes the applicable operators", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1, { forbid: ["\\.test\\.mjs$"] }) },
+      { type: "add_node", node: workNode("a1", "action", "run build", 2) },
+      { type: "add_node", node: workNode("o1", "observation", "done", 3) },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "grep", pattern: "x" }) },
+      ...plan("p1", "g1", ["a1"], 4),
+    ]);
+    const context = project(state);
+    expect(context.constraints).toEqual([{ id: "k1", forbid: ["\\.test\\.mjs$"] }]);
+    expect(context.applicable).toContain("apply");
+    expect(context.applicable).toContain("create_goal");
+  });
+
+  it("keeps the full latest result and has no context budget", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "run build", 1, { command: "run build", output: "stored" }),
+      },
+    ]);
+    const output = "y".repeat(4000);
+    const context = project(state, { lastOutput: output });
+    expect(context.lastResult?.output).toBe(output);
+    expect(context).not.toHaveProperty("truncated");
+  });
+
+  it("reports the applicable operators at the current point", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "add_node", node: workNode("a1", "action", "run build", 1) },
+      { type: "add_node", node: workNode("o1", "observation", "done", 2) },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "grep", pattern: "x" }) },
+      ...plan("p1", "g1", ["a1"], 3),
+    ]);
+    const app = applicable(state, "g1");
+    expect(app.createGoal).toBe(true);
+    expect(app.checkReady).toBe(true);
+    expect(app.apply).toBe(true);
   });
 });
 
 describe("user acceptance", () => {
-  const base: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "write the design note", 0) },
-    { type: "add_node", node: workNode("c1", "claim", "the note covers the API", 1) },
-    {
-      type: "add_edge",
-      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-    },
-  ];
-
-  it("verifies a claim through a user check and records the actor", () => {
-    const state = fold([...base, userAcceptance(["c1"], "pass", "looks good")]);
-    expect(state.statuses.get("c1")).toBe("verified");
+  it("achieves a goal through a user check and records the actor", () => {
+    const state = fold([
+      goal("g1", "write the note", 0, objective("user acceptance")),
+      userAcceptance(["g1"], "pass", "looks good"),
+    ]);
+    expect(predicateOf(state, "g1")).toBe("achieved");
     const check = [...state.nodes.values()].find((node) => node.kind === "check");
     expect(check?.payload).toMatchObject({ actor: "user", command: "looks good" });
-    expect(project(state).frontier.verified).toEqual(["c1: the note covers the API"]);
-  });
-
-  it("defaults the actor to the arbiter", () => {
-    const state = fold([
-      ...base,
-      {
-        type: "record_check",
-        command: "npm test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
-      },
-    ]);
-    const check = [...state.nodes.values()].find((node) => node.kind === "check");
-    expect(check?.payload).toMatchObject({ actor: "arbiter" });
   });
 });
 
 describe("record_rejection", () => {
   const base: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    {
-      type: "add_node",
-      node: workNode("k1", "constraint", "do not edit tests", 1),
-    },
+    goal("g1", "green", 0),
+    { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1) },
   ];
   const refusal = (turn: number): Event => ({
     type: "record_rejection",
@@ -204,25 +362,6 @@ describe("record_rejection", () => {
     turn,
   });
 
-  it("records the refusal in derived state", () => {
-    const state = fold([...base, refusal(3)]);
-    expect(state.rejections).toHaveLength(1);
-    expect(state.rejections[0]).toMatchObject({
-      tool: "edit",
-      target: "test/sum.test.mjs",
-      reason: "constraint_violation:\\.test\\.mjs$",
-      constraintId: "k1",
-      turn: 3,
-    });
-  });
-
-  it("shows a refusal as one line under frontier.refusals", () => {
-    const context = project(fold([...base, refusal(3)]));
-    expect(context.frontier.refusals).toEqual([
-      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1)",
-    ]);
-  });
-
   it("collapses repeated refusals without dropping distinct ones", () => {
     const state = fold([
       ...base,
@@ -230,696 +369,169 @@ describe("record_rejection", () => {
       refusal(5),
       {
         type: "record_rejection",
-        tool: "track",
-        target: "claim",
-        reason: "empty_label",
+        tool: "create_goal",
+        target: "goal",
+        reason: "empty_what",
         turn: 6,
       },
     ]);
     expect(state.rejections).toHaveLength(3);
-    expect(project(state).frontier.refusals).toEqual([
-      "track claim — empty_label",
-      "edit test/sum.test.mjs — constraint_violation:\\.test\\.mjs$ (k1) ×2",
-    ]);
   });
 });
 
-describe("staleness by version", () => {
-  const readFact = edge(
-    "e1",
-    "file:src/a.ts",
-    "sym:src/a.ts#loop",
-    "defines",
-    { kind: "read", ref: "file:src/a.ts", version: "v1" },
-    "believed",
-  );
+describe("call summary", () => {
+  it("aggregates refusals by signature and keeps distinct ones", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "record_rejection", tool: "read", target: "/app/a.txt", reason: "repeated_action", turn: 3 },
+      { type: "record_rejection", tool: "read", target: "/app/a.txt", reason: "repeated_action", turn: 4 },
+      { type: "record_rejection", tool: "query", target: "x", reason: "unknown_revision", turn: 5 },
+    ]);
+    const calls = project(state).calls;
+    const repeated = calls.find((entry) => entry.action === "read /app/a.txt");
+    expect(repeated).toMatchObject({ status: "refused", note: "repeated_action", count: 2 });
+    expect(calls.some((entry) => entry.note === "unknown_revision")).toBe(true);
+  });
 
-  const events: Event[] = [
-    { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 0) },
-    {
+  it("summarizes an executed action with its outcome", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "add_node", node: workNode("a1", "action", "git status", 1, { command: "git status" }) },
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "git status", 2, {
+          command: "git status",
+          verdict: "fail",
+          output: "hint: something\nfatal: not a git repository\n",
+        }),
+      },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
+    ]);
+    const calls = project(state).calls;
+    expect(calls).toEqual([
+      { id: "o1", action: "git status", status: "fail", note: "fatal: not a git repository", count: 1 },
+    ]);
+  });
+
+  it("includes a materialized action failure that has no action node", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "read failed: a does not exist", 1, {
+          verdict: "fail",
+          output: "read failed: a does not exist",
+        }),
+      },
+    ]);
+    expect(project(state).calls).toEqual([
+      { id: "o1", action: "read failed: a does not exist", status: "fail", note: "read failed: a does not exist", count: 1 },
+    ]);
+  });
+
+  it("clears a failure on mutation, but keeps successes and constraint refusals", () => {
+    const failure: Event = {
       type: "add_node",
-      node: artifactNode("sym:src/a.ts#loop", "symbol", "loop", 1),
-    },
-    { type: "add_edge", edge: readFact },
-  ];
-
-  it("marks facts from an older version stale after a mutation", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-    ]);
-    expect(state.edgeStatuses.get("e1")).toBe("stale");
-    const context = project(state);
-    expect(context.artifacts.find((item) => item.id === "file:src/a.ts")?.stale).toBe(
-      true,
-    );
-  });
-
-  it("keeps facts fresh when the version matches", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v1", actionId: "a1" },
-    ]);
-    expect(state.edgeStatuses.get("e1")).toBe("believed");
-    expect(project(state).artifacts.every((item) => !item.stale)).toBe(true);
-  });
-});
-
-describe("check invalidation by version", () => {
-  const events: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    { type: "add_node", node: workNode("c1", "claim", "off-by-one in loop", 1) },
-    {
-      type: "add_edge",
-      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-    },
-    {
-      type: "record_check",
-      command: "npm test",
-      verdict: "pass",
-      output: "ok",
-      witness: [{ ref: "file:src/a.ts", version: "v2" }],
-      claimIds: ["c1"],
-    },
-  ];
-
-  const verifiesEdgeId = (state: ReturnType<typeof fold>): string => {
-    for (const candidate of state.edges.values()) {
-      if (candidate.kind === "verifies") return candidate.id;
-    }
-    throw new Error("no verifies edge");
-  };
-
-  it("invalidates a verification when a witnessed file changes", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
-    ]);
-    expect(state.edgeStatuses.get(verifiesEdgeId(state))).toBe("stale");
-    const { verified, invalidated } = project(state).frontier;
-    expect(verified).toEqual([]);
-    expect(invalidated).toEqual(["c1: off-by-one in loop"]);
-  });
-
-  it("keeps a verification live when the version matches", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-    ]);
-    expect(state.edgeStatuses.get(verifiesEdgeId(state))).toBe("open");
-    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
-    expect(project(state).frontier.invalidated).toEqual([]);
-  });
-
-  it("re-verifies after a fresh passing check", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
-      {
-        type: "record_check",
-        command: "npm test",
-        verdict: "pass",
-        output: "ok",
-        witness: [{ ref: "file:src/a.ts", version: "v3" }],
-        claimIds: ["c1"],
-      },
-    ]);
-    expect(project(state).frontier.verified).toEqual(["c1: off-by-one in loop"]);
-    expect(project(state).frontier.invalidated).toEqual([]);
-  });
-
-  it("explains a change of answer as a revision (projection, not new state)", () => {
-    const state = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/a.ts", version: "v3", actionId: "a1" },
-    ]);
-    const frontier = project(state).frontier;
-    expect(frontier.invalidated).toEqual(["c1: off-by-one in loop"]);
-    expect(frontier.revisions).toHaveLength(1);
-    expect(frontier.revisions[0]).toContain("c1");
-    expect(frontier.revisions[0]).toContain("npm test");
-  });
-});
-
-describe("check node (Tier 1.3)", () => {
-  const events: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) },
-    {
-      type: "add_edge",
-      edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-    },
-    {
-      type: "record_check",
-      id: "chk1",
-      command: "npm test",
-      verdict: "pass",
-      output: "ok",
-      witness: [{ ref: "file:src/a.ts", version: "v1" }],
-      claimIds: ["c1"],
-    },
-  ];
-
-  it("materializes an addressable check node", () => {
-    const state = fold(events);
-    expect(state.nodes.get("chk1")).toMatchObject({
-      id: "chk1",
-      space: "work",
-      kind: "check",
-      label: "npm test",
-    });
-    expect(state.nodes.get("chk1")?.payload).toMatchObject({
-      command: "npm test",
-      verdict: "pass",
-      actor: "arbiter",
-      witness: [{ ref: "file:src/a.ts", version: "v1" }],
-    });
-  });
-
-  it("links the check to the claim with a verifies edge", () => {
-    const state = fold(events);
-    const verifies = [...state.edges.values()].find((candidate) => candidate.kind === "verifies");
-    expect(verifies).toMatchObject({ from: "chk1", to: "c1" });
-    expect(verifies?.provenance).toMatchObject({
-      kind: "check",
-      command: "npm test",
-      verdict: "pass",
-    });
-  });
-
-  it("counts the check kind in the index", () => {
-    expect(project(fold(events)).index.counts.check).toBe(1);
-  });
-
-  it("reads the single check node for a claim", () => {
-    const state = fold(events);
-    const check = state.nodes.get("chk1");
-    const verifies = [...state.edges.values()].filter(
-      (candidate) => candidate.kind === "verifies" && candidate.to === "c1",
-    );
-    expect(verifies.map((candidate) => candidate.from)).toEqual([check?.id]);
-  });
-});
-
-describe("project", () => {
-  it("summarizes nodes in index and bounds the recent flow by characters", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-      { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1) },
-      { type: "add_node", node: workNode("c1", "claim", "off-by-one", 2) },
-      { type: "add_node", node: workNode("o1", "observation", "test output", 3) },
-    ]);
-    const recent = [
-      { seq: 0, kind: "proposal" as const, text: "read a.ts" },
-      { seq: 1, kind: "tool" as const, text: "a.ts contents" },
-      { seq: 2, kind: "proposal" as const, text: "edit a.ts" },
+      node: workNode("o1", "observation", "make", 1, { verdict: "fail", output: "boom" }),
+    };
+    const success: Event[] = [
+      { type: "add_node", node: workNode("a2", "action", "read a", 2, { command: "read a" }) },
+      { type: "add_node", node: workNode("o2", "observation", "read a", 3, { ref: "file:a", version: "v1" }) },
+      { type: "add_edge", edge: edge("e2", "a2", "o2", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
     ];
-
-    expect(project(state, { indexWindow: 2 }).index.recent.map((entry) => entry.id)).toEqual([
-      "o1",
-      "c1",
-    ]);
-
-    const context = project(state, { recent, recentBudget: 25 });
-    expect(context.header.goal?.id).toBe("g1");
-    expect(context.header.constraints.map((node) => node.id)).toEqual(["k1"]);
-    expect(context.index.counts).toEqual({
-      goal: 1,
-      claim: 1,
-      observation: 1,
-      constraint: 1,
-    });
-    expect(context.recent.map((turn) => turn.seq)).toEqual([1, 2]);
-  });
-
-  it("exposes the turn budget in the header when provided", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-    ]);
-
-    expect(project(state).header.budget).toBeUndefined();
-    expect(project(state, { budget: { turn: 3, maxTurns: 10 } }).header.budget).toEqual({
-      turn: 3,
-      maxTurns: 10,
-      remaining: 7,
-    });
-    expect(project(state, { budget: { turn: 12, maxTurns: 10 } }).header.budget).toMatchObject({
-      remaining: 0,
-    });
-  });
-
-  it("lists verified claims newest first without dropping any", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "make test green", 0) },
-      { type: "add_node", node: workNode("c1", "claim", "first", 1) },
-      { type: "add_node", node: workNode("c2", "claim", "second", 2) },
-      { type: "add_node", node: workNode("c3", "claim", "third", 3) },
-      {
-        type: "add_edge",
-        edge: edge("es1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge("es2", "c2", "g1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge("es3", "c3", "g1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "record_check",
-        command: "npm test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1", "c2", "c3"],
-      },
-    ]);
-
-    expect(project(state).frontier.verified).toEqual([
-      "c3: third",
-      "c2: second",
-      "c1: first",
-    ]);
-  });
-});
-
-describe("derived statuses (Tier 1.1)", () => {
-  it("marks a chosen-over decision superseded and hides it from the frontier", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 1) },
-      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 2) },
-      {
-        type: "add_edge",
-        edge: edge("ej", "d1", "g1", "justifies", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge("e1", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
-      },
-    ]);
-    expect(state.statuses.get("d1")).toBe("active");
-    expect(state.statuses.get("d2")).toBe("superseded");
-    const frontier = project(state).frontier;
-    expect(frontier.decisions).toEqual([{ id: "d1", label: "cache in the data layer", over: ["d2"] }]);
-    expect(frontier.rejected).toContain("d2: cache via middleware");
-  });
-
-  it("derives achieved for a subgoal with a confirmed claim and no unfinished work", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-      {
-        type: "add_edge",
-        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
-      {
-        type: "add_edge",
-        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "record_check",
-        command: "node --test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
-      },
-    ]);
-    expect(state.statuses.get("sg1")).toBe("achieved");
-    expect(project(state).frontier.achievedSubgoals).toEqual(["sg1: cache the read path"]);
-    expect(project(state).frontier.subgoals).toEqual([]);
-  });
-
-  it("keeps a subgoal open while any attached claim is open", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-      {
-        type: "add_edge",
-        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
-      { type: "add_node", node: workNode("c2", "claim", "misses are computed", 3) },
-      {
-        type: "add_edge",
-        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge("e2", "c2", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "record_check",
-        command: "node --test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
-      },
-    ]);
-    expect(state.statuses.get("sg1")).toBe("open");
-    expect(project(state).frontier.subgoals).toEqual([
-      { id: "sg1", label: "cache the read path" },
-    ]);
-  });
-
-  it("returns a subgoal to open when its only confirmed claim is invalidated", () => {
-    const events: Event[] = [
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-      {
-        type: "add_edge",
-        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
-      {
-        type: "add_edge",
-        edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      {
-        type: "record_check",
-        command: "node --test",
-        verdict: "pass",
-        output: "ok",
-        witness: [{ ref: "file:src/cache.mjs", version: "v2" }],
-        claimIds: ["c1"],
-      },
-    ];
-    expect(fold(events).statuses.get("sg1")).toBe("achieved");
-    const invalidated = fold([
-      ...events,
-      { type: "mutate", ref: "file:src/cache.mjs", version: "v3", actionId: "a1" },
-    ]);
-    expect(invalidated.statuses.get("sg1")).toBe("open");
-  });
-
-  it("exposes subgoals, claim parents, and rejected alternatives in the frontier", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-      {
-        type: "add_edge",
-        edge: edge("e1", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
-      {
-        type: "add_edge",
-        edge: edge("e2", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("d1", "decision", "cache in the data layer", 3) },
-      { type: "add_node", node: workNode("d2", "decision", "cache via middleware", 4) },
-      {
-        type: "add_edge",
-        edge: edge("ej", "d1", "g1", "justifies", { kind: "llm" }, "open"),
-      },
-      {
-        type: "add_edge",
-        edge: edge("e3", "d1", "d2", "chosen_over", { kind: "llm" }, "open"),
-      },
-    ]);
-    const frontier = project(state).frontier;
-    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "cache the read path" }]);
-    expect(frontier.claims).toEqual([
-      { id: "c1", label: "hits are served from memory", supports: "sg1" },
-    ]);
-    expect(frontier.decisions).toEqual([
-      { id: "d1", label: "cache in the data layer", over: ["d2"] },
-    ]);
-  });
-});
-
-describe("path relevance (Tier 1.2)", () => {
-  const orphaned: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-    { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-    {
-      type: "add_edge",
-      edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-    },
-    { type: "add_node", node: workNode("c1", "claim", "hits are served from memory", 2) },
-    {
-      type: "add_edge",
-      edge: edge("e1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-    },
-    { type: "add_node", node: workNode("sg9", "subgoal", "old branch", 3) },
-    { type: "add_node", node: workNode("c9", "claim", "orphan belief", 4) },
-    {
-      type: "add_edge",
-      edge: edge("e9", "c9", "sg9", "supports", { kind: "llm" }, "open"),
-    },
-  ];
-
-  it("keeps only the nodes reachable from the goal in the frontier", () => {
-    const state = fold(orphaned);
-    const frontier = project(state).frontier;
-    expect(frontier.subgoals.map((entry) => entry.id)).toEqual(["sg1"]);
-    expect(frontier.claims.map((entry) => entry.id)).toEqual(["c1"]);
-  });
-
-  it("reaches the disconnected branch through the graph, not the projection", () => {
-    const state = fold(orphaned);
-    const reachable = reachableFromGoal(state);
-    expect(reachable.has("sg1")).toBe(true);
-    expect(reachable.has("c1")).toBe(true);
-    expect(reachable.has("sg9")).toBe(false);
-    expect(reachable.has("c9")).toBe(false);
-    // the node is still in state, so query can address it
-    expect(state.nodes.has("c9")).toBe(true);
-  });
-
-  it("never empties the closure: the goal is always reachable", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("c9", "claim", "orphan belief", 1) },
-    ]);
-    const context = project(state);
-    expect(reachableFromGoal(state)).toEqual(new Set(["g1"]));
-    expect(context.header.goal?.id).toBe("g1");
-    expect(context.frontier.claims).toEqual([]);
-  });
-
-  it("walks the path edges in both directions", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "add caching", 0) },
-      { type: "add_node", node: workNode("sg1", "subgoal", "cache the read path", 1) },
-      {
-        type: "add_edge",
-        edge: edge("ed", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-      },
-      { type: "add_node", node: workNode("d1", "decision", "data layer", 2) },
-      {
-        type: "add_edge",
-        edge: edge("ej", "d1", "sg1", "justifies", { kind: "llm" }, "open"),
-      },
-    ]);
-    const reachable = reachableFromGoal(state);
-    expect(reachable.has("d1")).toBe(true);
-    expect(project(state).frontier.decisions.map((entry) => entry.id)).toEqual(["d1"]);
-  });
-});
-
-describe("step mode (W, step 1)", () => {
-  const goal: Event = { type: "add_node", node: workNode("g1", "goal", "green", 0) };
-  const claim: Event = { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) };
-  const supports: Event = {
-    type: "add_edge",
-    edge: edge("e1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-  };
-
-  it("is explore without an open hypothesis and exposes it in the header", () => {
-    const state = fold([goal]);
-    expect(deriveMode(state)).toBe("explore");
-    expect(project(state).header.mode).toBe("explore");
-  });
-
-  it("is act once an attached hypothesis is open", () => {
-    const state = fold([goal, claim, supports]);
-    expect(deriveMode(state)).toBe("act");
-    expect(project(state).header.mode).toBe("act");
-  });
-
-  it("is check once an edit is recorded after the hypothesis", () => {
-    const state = fold([
-      goal,
-      claim,
-      supports,
-      { type: "add_node", node: workNode("a1", "action", "edit src/sum.mjs", 2) },
-    ]);
-    expect(deriveMode(state)).toBe("check");
-    expect(project(state).header.mode).toBe("check");
-  });
-
-  it("stays explore for a hypothesis detached from the goal", () => {
-    const state = fold([goal, claim]);
-    expect(deriveMode(state)).toBe("explore");
-  });
-
-  it("is revise once the branch hypothesis is refuted", () => {
-    const state = fold([
-      goal,
-      claim,
-      supports,
-      { type: "descend", node: "c1" },
-      {
-        type: "record_check",
-        command: "node --test",
-        verdict: "fail",
-        output: "boom",
-        claimIds: ["c1"],
-      },
-    ]);
-    expect(deriveMode(state)).toBe("revise");
-    expect(project(state).header.mode).toBe("revise");
-  });
-});
-
-describe("active branch (W, step 3)", () => {
-  const twoBranches: Event[] = [
-    { type: "add_node", node: workNode("g1", "goal", "green", 0) },
-    { type: "add_node", node: workNode("sg1", "subgoal", "branch a", 1) },
-    { type: "add_node", node: workNode("c1", "claim", "hypothesis a", 2) },
-    { type: "add_node", node: workNode("sg2", "subgoal", "branch b", 3) },
-    { type: "add_node", node: workNode("c2", "claim", "hypothesis b", 4) },
-    {
-      type: "add_edge",
-      edge: edge("d1", "g1", "sg1", "decomposes", { kind: "llm" }, "open"),
-    },
-    {
-      type: "add_edge",
-      edge: edge("d2", "g1", "sg2", "decomposes", { kind: "llm" }, "open"),
-    },
-    {
-      type: "add_edge",
-      edge: edge("s1", "c1", "sg1", "supports", { kind: "llm" }, "open"),
-    },
-    {
-      type: "add_edge",
-      edge: edge("s2", "c2", "sg2", "supports", { kind: "llm" }, "open"),
-    },
-  ];
-
-  it("shows only the newest open obligation's branch", () => {
-    const frontier = project(fold(twoBranches)).frontier;
-    expect(frontier.subgoals).toEqual([{ id: "sg2", label: "branch b" }]);
-    expect(frontier.claims).toEqual([
-      { id: "c2", label: "hypothesis b", supports: "sg2" },
-    ]);
-  });
-
-  it("keeps the other reachable branch as a backtrack point", () => {
-    const frontier = project(fold(twoBranches)).frontier;
-    expect(frontier.backtrack).toEqual([
-      { id: "c1", label: "hypothesis a", kind: "claim" },
-      { id: "sg1", label: "branch a", kind: "subgoal" },
-    ]);
-  });
-
-  it("has no backtrack points when only one branch is open", () => {
-    const oneBranch = twoBranches.filter(
-      (event) =>
-        !(
-          event.type === "add_node" &&
-          (event.node.id === "sg2" || event.node.id === "c2")
-        ) &&
-        !(
-          event.type === "add_edge" &&
-          (event.edge.id === "d2" || event.edge.id === "s2")
-        ),
-    );
-    const frontier = project(fold(oneBranch)).frontier;
-    expect(frontier.backtrack).toEqual([]);
-    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "branch a" }]);
-    expect(frontier.claims).toEqual([
-      { id: "c1", label: "hypothesis a", supports: "sg1" },
-    ]);
-  });
-
-  it("pushes and pops the explicit branch", () => {
-    const pushed = fold([
-      twoBranches[0] as Event,
-      { type: "descend", node: "sg1" },
-      { type: "descend", node: "c1" },
-    ]);
-    expect(pushed.branch).toEqual(["sg1", "c1"]);
-    expect(fold([{ type: "return" }], pushed).branch).toEqual(["sg1"]);
-  });
-
-  it("follows the explicit stack over the newest obligation", () => {
-    const state = fold([
-      ...twoBranches,
-      { type: "descend", node: "sg1" },
-      { type: "descend", node: "c1" },
-    ]);
-    const frontier = project(state).frontier;
-    expect(frontier.subgoals).toEqual([{ id: "sg1", label: "branch a" }]);
-    expect(frontier.claims).toEqual([
-      { id: "c1", label: "hypothesis a", supports: "sg1" },
-    ]);
-    expect(frontier.backtrack).toEqual([
-      { id: "c2", label: "hypothesis b", kind: "claim" },
-      { id: "sg2", label: "branch b", kind: "subgoal" },
-    ]);
-  });
-});
-
-describe("progress key (W, step 4)", () => {
-  const goal: Event = { type: "add_node", node: workNode("g1", "goal", "green", 0) };
-  const claim: Event = { type: "add_node", node: workNode("c1", "claim", "off-by-one", 1) };
-  const supports: Event = {
-    type: "add_edge",
-    edge: edge("e1", "c1", "g1", "supports", { kind: "llm" }, "open"),
-  };
-
-  it("changes when a hypothesis or a file is added", () => {
-    const base = fold([goal]);
-    const withClaim = fold([goal, claim, supports]);
-    const withFile = fold([
-      goal,
-      { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 1) },
-    ]);
-    expect(knowledgeKey(withClaim)).not.toBe(knowledgeKey(base));
-    expect(knowledgeKey(withFile)).not.toBe(knowledgeKey(base));
-  });
-
-  it("does not change on a repeated observation", () => {
-    const obs = (seq: number): Event => ({
-      type: "add_node",
-      node: workNode(`obs:${seq}`, "observation", `read ${seq}`, seq),
-    });
-    const first = fold([goal, obs(1)]);
-    const second = fold([goal, obs(1), obs(2)]);
-    expect(knowledgeKey(second)).toBe(knowledgeKey(first));
-  });
-
-  it("changes when a claim is settled", () => {
-    const before = fold([goal, claim, supports]);
+    const constraint: Event = {
+      type: "record_rejection",
+      tool: "edit",
+      target: "test/x",
+      reason: "constraint_violation",
+      constraintId: "k1",
+      turn: 4,
+    };
+    const before = fold([goal("g1", "green", 0), failure, ...success, constraint]);
+    expect(project(before).calls).toHaveLength(3);
     const after = fold([
-      goal,
-      claim,
-      supports,
-      {
-        type: "record_check",
-        command: "node --test",
-        verdict: "pass",
-        output: "ok",
-        claimIds: ["c1"],
-      },
+      goal("g1", "green", 0),
+      failure,
+      ...success,
+      constraint,
+      { type: "mutate", ref: "file:a", version: "v2", actionId: "a1" },
     ]);
-    expect(knowledgeKey(after)).not.toBe(knowledgeKey(before));
+    const calls = project(after).calls;
+    expect(calls).toHaveLength(2);
+    expect(calls.some((entry) => entry.status === "ok")).toBe(true);
+    expect(calls.some((entry) => entry.note === "constraint_violation")).toBe(true);
+  });
+
+  it("scopes the summary to the current branch", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 },
+      },
+      goal("g1", "sub", 1),
+      { type: "descend", node: "g1" },
+      { type: "add_node", node: workNode("o1", "observation", "make", 2, { verdict: "fail", output: "boom" }) },
+      { type: "return" },
+    ]);
+    expect(state.branch).toEqual(["r1"]);
+    expect(project(state).calls).toEqual([]);
+  });
+
+  it("changes the projection on a refusal (feedback invariant)", () => {
+    const state = fold([goal("g1", "green", 0)]);
+    const refused = fold([
+      goal("g1", "green", 0),
+      { type: "record_rejection", tool: "query", target: "x", reason: "repeated_action", turn: 1 },
+    ]);
+    expect(JSON.stringify(project(refused))).not.toBe(JSON.stringify(project(state)));
   });
 });
 
-describe("declared fragment (W, step 6)", () => {
-  it("exposes the declared capabilities in the header", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("g1", "goal", "green", 0) },
+describe("progress key", () => {
+  it("changes when a goal is added and when its predicate changes", () => {
+    const base = fold([goal("g1", "green", 0, objective("node --test"))]);
+    const withPlan = fold([goal("g1", "green", 0, objective("node --test")), goal("g2", "locate", 1)]);
+    expect(knowledgeKey(withPlan)).not.toBe(knowledgeKey(base));
+
+    const achieved = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "record_check", command: "node --test", verdict: "pass", output: "ok", targets: ["g1"] },
     ]);
-    expect(project(state).header.fragment.map((capability) => capability.id)).toEqual([
-      "inspect",
-      "modify",
-      "execute",
-      "verify",
-      "abduce",
+    expect(knowledgeKey(achieved)).not.toBe(knowledgeKey(base));
+  });
+
+  it("does not change on a repeated failure, but does on a distinct one", () => {
+    const failure = (command: string, output: string, seq: number): Event => ({
+      type: "add_node",
+      node: workNode(`o${seq}`, "observation", command, seq, { command, verdict: "fail", output }),
+    });
+    const once = fold([goal("g1", "green", 0), failure("git status", "fatal: no repo", 1)]);
+    const twice = fold([
+      goal("g1", "green", 0),
+      failure("git status", "fatal: no repo", 1),
+      failure("git status", "fatal: no repo", 2),
     ]);
+    expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
+    const other = fold([
+      goal("g1", "green", 0),
+      failure("git status", "fatal: no repo", 1),
+      failure("git log", "fatal: no repo", 2),
+    ]);
+    expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
+  });
+
+  it("does not change on a repeated refusal, but does on a distinct one", () => {
+    const refusal = (target: string, seq: number, turn: number): Event => ({
+      type: "record_rejection",
+      tool: "read",
+      target,
+      reason: "repeated_action",
+      turn,
+    });
+    const once = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1)]);
+    const twice = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1), refusal("/app/a", 2, 2)]);
+    expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
+    const other = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1), refusal("/app/b", 2, 2)]);
+    expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
   });
 });

@@ -48,13 +48,13 @@ Ideal is not the exact text of a hypothesis (the model does not know it either) 
   (`chosen`), not a repeat;
 - nodes have **no statuses**: state (executed, achieved, achieved_under, refuted) is
   **derived**;
-- the root is closed by the Arbiter.
+- a request is not closed in the IR; acceptance is external (the Arbiter/harness).
 
 ## 4. The reference route
 
 | Stage | Doxa operator | What appears in the tree | Why |
 |---|---|---|---|
-| setup | *(the Arbiter)* | a root `goal` + `constraint` (do not edit tests) | the subject and the boundaries |
+| setup | *(the Arbiter)* | a root `request` (the task text) + `constraint` (do not edit tests) | the motivation and the boundaries |
 | reproduce | `create goal` (a plan with a command item) | a new `goal` as an `item` in the root's plan; it has its own `plan` with an `action` | see the crash, not assume it |
 | | `apply` (a build `run`) | the `action` executed + `observation` (crash log) | evidence |
 | | `complete` | a `complete` node → the goal `achieved_under` | the completion is visible from the observation |
@@ -65,8 +65,8 @@ Ideal is not the exact text of a hypothesis (the model does not know it either) 
 | | `apply` (`edit`) | `action` + `mutate` `from → to` | an edit under the hypothesis |
 | | `apply` (a check `run`) | `check` + `verifies` (+ `under`); the goal → `achieved`/`achieved_under`/`refuted` (derived) | the check settles its fate |
 | revise | `create goal` (an option via `alternatives`) | an `alternatives` node + an option; `chosen` | replace, do not repeat |
-| acceptance | `apply` (a criterion `run`) | `check`; the root is closed by the Arbiter | close objectively |
-| stop | *(the Arbiter)* | — | the root is closed/stagnation |
+| acceptance | `apply` (a criterion `run`, the command from `done_when`) | `check`; the request is `addressed`, acceptance external | close objectively |
+| stop | *(the Arbiter)* | — | the request is addressed / stagnation |
 
 Refuted approaches are not lost: the goal remains `refuted`, and the non-chosen options
 of `alternatives` — `abandoned` (derived).
@@ -79,8 +79,8 @@ are illustrative; the shapes are as in `docs/ir_semantics.md`.
 
 | Turn | Operator | LLM call: what it proposed | Tree: what appeared |
 |---|---|---|---|
-| 0 | *(the Arbiter)* | — | root `goal` "fix the bootstrap", `done_when` = the criterion; `constraint` "do not edit tests"; the root's plan is not set yet |
-| 1 | `create goal` | goal "reproduce the crash" (`why` empty; plan: a build command item) | a `plan P0` node at the root (`has_plan` edge); `goal G1` as an `item` in `P0`; `G1` has its own `plan Q1` with `action A1` |
+| 0 | *(the Arbiter)* | — | root `request` — the instruction text; `constraint` "do not edit tests"; no goals |
+| 1 | `create goal` | an interpretation goal "fix the bootstrap" (plan: reproduce/localize/fix/verify) | `alternatives A0` under the request; `item A0 → I`; `chosen A0 → I`; `I` has its own `plan`; descend into the first item |
 | 2 | `apply` | a build `run` | `A1` executed + `observation` (crash log) |
 | 3 | `complete` | "G1 is reached" | a `complete` node → `G1`; derived `achieved_under` |
 | 4 | `create goal` | goal "localize the cause" | `goal G2` as an item in the root's plan `P0` |
@@ -93,7 +93,7 @@ are illustrative; the shapes are as in `docs/ir_semantics.md`.
 | 11 | `apply` | `edit runtime/shared_heap.c` | `action` + `mutate` `V1 → V2` |
 | 12 | `apply` | a build `run` (a check) | `check` + `verifies → G3` + `under → G2` (the localization assumption); derived `achieved_under`; otherwise `refuted` |
 | 12b | `create goal` | on `refuted`: a new approach option | an `alternatives` node + option `G3'`; the Arbiter sets `chosen`; `G3` derived `refuted`, non-chosen — `abandoned` |
-| 13 | `apply` | a `run` of the task criterion | `check`; the root is closed by the Arbiter |
+| 13 | `apply` | a `run` of the task criterion (the command from `done_when`) | `check`; the request is `addressed`; acceptance external |
 | 14 | *(the Arbiter)* | stop | — |
 
 The key difference from the facts: in the actual run the agent issued only commands
@@ -102,15 +102,18 @@ The key difference from the facts: in the actual run the agent issued only comma
 
 ## 5. Expected tree shape
 
-- **Goals:** 3–5 subgoals (`reproduce`, `localize`, `fix`, `verify`) plus the root.
+- **Root:** a `request` (the task text), not a goal.
+- **Goals:** 1 interpretation of the request with a 3–5 item plan (`reproduce`,
+  `localize`, `fix`, `verify`) plus possible alternative interpretations.
 - **Plan:** a `plan` node(s) with `item`s; some goals may have no plan (unspecified).
 - **Observations:** ≥1 (the crash, "compression was enabled by a recent commit").
 - **Edits (`action` edit):** ≥1, under a goal with a non-empty `why`.
 - **Checks (`check`):** ≥1, tied to a goal via `verifies`; with `under` edges when they
   rest on an assumption.
 - **Completions (`complete`):** ≥1 at an epistemic goal.
-- **Outcome:** a goal `achieved` (a `pass` check, no `under`) or `achieved_under` (there
-  is `under` or `complete`); the root closed by the Arbiter.
+- **Outcome:** the chosen interpretation `achieved` (a `pass` check, no `under`) or
+  `achieved_under` (there is `under` or `complete`); the request `addressed`; acceptance
+  external (the harness/the user).
 
 ## 6. Branch and backtracking
 
@@ -129,8 +132,8 @@ progress.
 
 ## 8. Stopping and honesty
 
-- **Success:** the root goal is closed by the criterion; the final acceptance is given
-  by the Arbiter (the harness).
+- **Success:** the chosen interpretation is reached; the request is `addressed`; the final
+  acceptance is given by the Arbiter (the harness) from outside — it does not enter the IR.
 - **Honesty:** `achieved` — only if the closure does not rest on an assumption (no
   `under` edges); `achieved_under` — if there is `under` or the goal was closed by the
   doxa (`complete`).
@@ -164,8 +167,7 @@ from the model:
 
 - **Three operators** (`create goal`, `apply`, `complete`) are not implemented yet; the
   code has the old model's tools and modes.
-- **The root** is set by the Arbiter (the first goal) — this must be built in
-  explicitly.
+- **The request** is set by the Arbiter — this must be built in explicitly.
 - **Plan traversal and the Arbiter's policy** are deferred but are needed for the
   structure.
 - **Versions:** `mutate` with `from`/`to`, `restore`; there is no separate `stale` —

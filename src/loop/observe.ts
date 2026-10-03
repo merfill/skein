@@ -17,13 +17,14 @@ function activeRefs(state: State): Map<string, Set<string>> {
     else refs.set(ref, new Set([version]));
   };
 
-  for (const edge of state.edges.values()) {
-    if (state.edgeStatuses.get(edge.id) === "stale") continue;
-    const provenance = edge.provenance;
-    if (provenance.kind === "read") {
-      add(provenance.ref, provenance.version);
-    } else if (edge.kind === "verifies" && provenance.kind === "check") {
-      for (const entry of witnessOf(state, edge) ?? []) add(entry.ref, entry.version);
+  for (const node of state.nodes.values()) {
+    if (node.kind === "observation") {
+      const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
+      if (typeof payload?.ref === "string" && typeof payload.version === "string") {
+        add(payload.ref, payload.version);
+      }
+    } else if (node.kind === "check") {
+      for (const entry of witnessOf(state, node.id) ?? []) add(entry.ref, entry.version);
     }
   }
 
