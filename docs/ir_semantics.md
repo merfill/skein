@@ -264,8 +264,18 @@ a cursor shift, **new knowledge** (a new observation/check or a new call outcome
 closure. The layers are deterministic:
 
 - **action repeat** — the same command with the same input versions (`tool` + target +
-  `ref`/`version`). The logos refuses it (`classify`) and writes `record_rejection`. A
-  repeat **after** an edit (a different version) is legitimate;
+  `ref`/`version`). The logos refuses it (`classify`) and writes `record_rejection`; the
+  reason names the `id` of the existing result — "retrieve it by `id`, do not repeat".
+  This covers `read`/`grep` too: **the same window/scope with an unchanged world is a
+  repeat**; a different window/scope is a new action. A repeat **after** an edit (a
+  different version) is legitimate. The same `query {id}` is a repeat **while the body
+  is in the working set** (`shown`, TTL): the second query is redundant and refused; once
+  evicted/expired it is allowed again (the guard watches the live set, not an unbounded
+  history). A body evicted by the cap leaves `held`, so re-querying it is **allowed**
+  (the body is no longer shown). For **non-results** (`action`/`goal` etc., which have no
+  body) a separate set of recently queried ids with the same TTL is kept, so a repeated
+  `query` of such a node is refused too. A state query (`kind`/`predicate`/`edgesOf`) is
+  not pinned or deduplicated — its answer changes as the graph grows;
 - **hypothesis repeat** — a new interpretation/option whose `what` repeats a refuted one
   is refused; the proposal must list all the container's failures (`revises`, §4.1);
 - **stagnation** — the cursor does not shift and there is no **new knowledge** for
@@ -286,6 +296,16 @@ state (goals, plans, the achieved) but also a brief **summary of calls**: what h
 already been invoked and how it ended. Absence from the context = absence of knowledge
 for the model.
 
+`calls` is the **index of the current interpretation's history**: each entry is
+addressed by `id`, and the result body is retrieved from the IR by `id` (`query`, §8) —
+**without a repeat call**. That is why a repeated command with the same inputs is
+refused (§2.7): the knowledge already exists, take it by address rather than
+re-deriving it.
+
+The index's scope is the **whole subtree of the current chosen interpretation**, not
+just the current path: evidence gathered in `reproduce` stays addressable on
+`locate`/`fix`. Entries of abandoned interpretations are not shown.
+
 `calls` is derived from the journal:
 
 - **`refused`** — a logos decision (`record_rejection`): `action = "tool target"`,
@@ -298,13 +318,14 @@ Rules:
 
 - **dedup.** Records with an equal `(status, action)` collapse; `count` grows; a repeat
   creates no new knowledge;
-- **focus.** Each record is tagged with the current node at the moment it appears; only
-  records whose focus is on the **current traversal stack** (§2.6) are shown. Off the
-  branch — out of the context;
+- **scope.** Each record is tagged with the focus node at the moment it appears; records
+  whose focus lies in the **subtree of the current chosen interpretation** (§2.3, §2.6)
+  are shown — the whole interpretation's history, not just the current path. Records of
+  abandoned interpretations are not shown;
 - **invalidation.** A mutation after the record clears `fail`/`refused` (in another
   world state the same might work); `ok` is kept as history. The exception is
   **constraint** refusals (`constraintId`): those are invariants, not context. Leaving
-  the branch clears a record by the focus rule.
+  the interpretation clears a record by the scope rule.
 
 **The feedback invariant.** A refusal or a recorded failure **changes the projection**:
 if `project` after a refusal equals `project` before it, deterministic advancement must
@@ -358,7 +379,13 @@ least one item); the current node exists. If `C` is a request, or a goal whose
 `alternatives` contains `refuted`/`abandoned` options, then `revises` **must** list
 **all** such options (otherwise a refusal `missing_revision`/`unknown_revision`); if
 there are none — `revises` is empty. Additionally, a `what` repeating a refuted one is
-refused (`repeat_hypothesis`). Otherwise — a refusal with a reason.
+refused (`repeat_hypothesis`). And finally: if the current goal is **objective** and its
+plan is already **fully and successfully carried out** (every item `achieved`/
+`achieved_under`, or an executed action), the plan must not be grown
+— the goal itself must be checked (`apply run {target: C}`), otherwise a refusal "all
+plan items are fulfilled; check this goal". A `refuted`/`abandoned` item resolves the
+cursor but is **not** a success, so it does **not** trigger this guard: the plan may
+still grow (the failed attempt never blocks the plan). Otherwise — a refusal with a reason.
 
 **Operation on the tree:**
 
@@ -386,13 +413,22 @@ refuted interpretations/options are visible.
 
 ### 4.2 Command (`apply`)
 
-**Input:** the current goal `C`; a command `D` (for exploration); an optional check
-target `target` — then the command comes from its `done_when`.
+**Input:** the current goal `C`; a command `D` (for exploration, required without
+`target`); an optional check target `target` — then the command comes from its
+`done_when`, and `D` is omitted.
 
 **Admissibility check:** the command is admissible (constraints, executability, the
-presence of a current goal). If the command changes a file, the declared basis must be
-`current(ref)`; an edit on an outdated basis is refused. On refusal a `record_rejection`
-is written; no nodes are created.
+presence of a current goal). Without `target` `D` must be present. For a check (`target`)
+a foreign command cannot be substituted: if `D` is present and differs from the goal's
+`done_when.command`, it is refused (the goal's command is not substitutable). If the
+command changes a file, the declared basis must be `current(ref)`; an edit on an outdated
+basis is refused. On refusal a `record_rejection` is written; no nodes are created.
+
+**Command signature.** A command's identity includes its parameters — for a search, the
+**scope** (`path`/`include`/`exclude`) and the **window** (`from`/`count`); for a read, the
+line range. A command with the **same** signature and unchanged inputs is a **repeat**:
+refused with the `id` of the existing result (§2.7). A different scope/window is a new
+action.
 
 **Operation on the tree:**
 
@@ -558,7 +594,8 @@ exists (two equally consistent hypotheses).
 **next operator**, not a state dump. It shows the **traversal branch** plus the
 containers of its nodes (`plan`/`alternatives`), the global constraints, the branch's
 **call summary** (`calls`, §2.8), and the full result of the latest call; everything
-else is reached via `query`. The composition, exact shape, limits and examples are in
+else is reached via `query`, and the **body of any past result by its `id`**
+(`query { id, start?, end? }`). The composition, exact shape, limits and examples are in
 the separate specification `docs/projection.md`.
 
 ---

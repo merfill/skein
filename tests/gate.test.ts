@@ -82,4 +82,31 @@ describe.skipIf(!settings.live)("live gate: bugfix by failing test", () => {
       300_000,
     );
   }
+
+  it(
+    "retrieves prior results by id instead of repeating reads/searches",
+    async () => {
+      const root = setup(fixtures[0] ?? "off-by-one");
+      const workspace = fsWorkspace(root);
+      const model = createChatModel(settings);
+      const result = await runAgent(
+        { propose: modelProposer(model), workspace, maxTurns: settings.maxTurns },
+        {
+          request: { id: "r1", text: "make the test suite pass without editing tests" },
+        },
+      );
+
+      expect(workspace.run("node --test").code).toBe(0);
+      // The goal is 0 — the model should fetch by id, not re-issue. A single transient
+      // attempt (refused, then retrieved) is tolerated so the deliberate live gate does
+      // not flake; more means thrashing.
+      const repeats = result.events
+        .filter(
+          (event) => event.type === "record_rejection" && event.reason.startsWith("repeated_action"),
+        )
+        .map((event) => event.type === "record_rejection" ? `${event.tool} ${event.target} :: ${event.reason}` : "");
+      expect(repeats.length).toBeLessThanOrEqual(1);
+    },
+    300_000,
+  );
 });

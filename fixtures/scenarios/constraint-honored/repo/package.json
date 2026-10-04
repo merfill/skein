@@ -1,0 +1,6 @@
+{
+  "name": "skein-scenario",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test" }
+}

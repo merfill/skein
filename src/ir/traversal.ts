@@ -56,6 +56,29 @@ export function itemFulfilled(state: State, itemId: string): boolean {
   return false;
 }
 
+// Like `itemFulfilled`, but only a SUCCESSFUL resolution counts: a refuted/abandoned
+// item resolves the cursor, yet the goal is not achieved, so the plan may still grow.
+export function itemSucceeded(state: State, itemId: string): boolean {
+  const node = state.nodes.get(itemId);
+  if (node === undefined) return false;
+  const selfDone =
+    node.kind === "action"
+      ? predicateOf(state, itemId) === "executed"
+      : node.kind === "goal"
+        ? isSettledSuccess(predicateOf(state, itemId))
+        : false;
+  if (selfDone) return true;
+
+  const alt = alternativesOf(state, itemId);
+  if (alt === undefined) return false;
+  const chosen = latestChosen(state, alt);
+  if (chosen === undefined || chosen === itemId) return false;
+  const option = state.nodes.get(chosen);
+  if (option?.kind === "action") return predicateOf(state, chosen) === "executed";
+  if (option?.kind === "goal") return isSettledSuccess(predicateOf(state, chosen));
+  return false;
+}
+
 export function cursorOf(state: State, goalId: string): number | undefined {
   const plan = planOf(state, goalId);
   if (plan === undefined) return undefined;

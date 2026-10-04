@@ -6,6 +6,11 @@ export interface Settings {
   model: string;
   temperature: number;
   maxTokens: number;
+  // When a structured call is cut by the completion cap, retry with a higher cap
+  // (up to `maxTokensCeiling`, at most `maxTokensBumps` times) before falling back to
+  // plain JSON parsing (docs/testing_ru.md §8.1).
+  maxTokensCeiling: number;
+  maxTokensBumps: number;
   reasoningEffort: string;
   maxTurns: number;
   live: boolean;
@@ -23,6 +28,8 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     model: env.SKEIN_MODEL ?? "~deepseek/deepseek-v4-flash-latest",
     temperature: num(env.SKEIN_TEMPERATURE, 0.1),
     maxTokens: num(env.SKEIN_MAX_TOKENS, 4096),
+    maxTokensCeiling: num(env.SKEIN_MAX_TOKENS_CEILING, 32768),
+    maxTokensBumps: num(env.SKEIN_MAX_TOKENS_BUMPS, 2),
     reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "none",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
     live: (env.SKEIN_LIVE ?? "false").toLowerCase() === "true",

@@ -128,40 +128,79 @@ describe("classify", () => {
       proposal({ operator: "apply", action: { tool: "run", command: "run build" } }),
       state,
     );
-    expect(verdict).toEqual({ accept: false, reason: "repeated_action" });
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("repeated_action");
+    expect(verdict.reason).toContain("o1");
   });
 
-  it("allows re-reading a file, even the same window", () => {
-    const state = fold([
-      goal,
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "read src/a.ts [1-120]", payload: { command: "read src/a.ts [1-120]" }, seq: 1 } },
-      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "read src/a.ts [1-120]", seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "read", ref: "file:src/a.ts", version: "v1" } } },
-    ]);
+  it("refuses an identical re-read and names the stored result", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-read-"));
+    tempDirs.push(root);
+    writeFileSync(join(root, "a.txt"), "one\ntwo\nthree\n");
+    const workspace = fsWorkspace(root);
+    const state0 = fold([goal]);
+    const first = executeAction(
+      { operator: "apply", action: { tool: "read", path: "a.txt" } },
+      state0,
+      workspace,
+      0,
+    );
+    const state = fold(first.events, state0);
+    const obs = [...state.nodes.values()].find((node) => node.kind === "observation");
+
+    const same = classify(
+      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
+      state,
+    );
+    expect(same.accept).toBe(false);
+    expect(same.reason).toContain(obs?.id ?? "?");
+
+    // A different window is a new action.
     expect(
       classify(
-        proposal({ operator: "apply", action: { tool: "read", path: "src/a.ts", start: 121, end: 240 } }),
+        proposal({ operator: "apply", action: { tool: "read", path: "a.txt", start: 2, end: 3 } }),
         state,
       ),
     ).toEqual({ accept: true });
+
+    // After a change to the world, re-reading is allowed.
+    const afterMutation = fold(
+      [...first.events, { type: "mutate", ref: "file:a.txt", version: "v2", actionId: "a1" }],
+      state0,
+    );
     expect(
       classify(
-        proposal({ operator: "apply", action: { tool: "read", path: "src/a.ts", start: 1, end: 120 } }),
-        state,
+        proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
+        afterMutation,
       ),
     ).toEqual({ accept: true });
   });
 
-  it("allows re-searching (grep is idempotent too)", () => {
-    const state = fold([
-      goal,
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "grep sweep 5/5", payload: { command: "grep sweep 5/5" }, seq: 1 } },
-      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "grep sweep 5/5", seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "grep", pattern: "sweep" } } },
-    ]);
+  it("refuses an identical re-search and names the stored result", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-research-"));
+    tempDirs.push(root);
+    writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\n");
+    const workspace = fsWorkspace(root);
+    const state0 = fold([goal]);
+    const first = executeAction(
+      { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
+      state0,
+      workspace,
+      0,
+    );
+    const state = fold(first.events, state0);
+    const obs = [...state.nodes.values()].find((node) => node.kind === "observation");
+
+    const same = classify(
+      proposal({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }),
+      state,
+    );
+    expect(same.accept).toBe(false);
+    expect(same.reason).toContain(obs?.id ?? "?");
+
     expect(
       classify(
-        proposal({ operator: "apply", action: { tool: "grep", pattern: "sweep" } }),
+        proposal({ operator: "apply", action: { tool: "grep", pattern: "MATCH", from: 2 } }),
         state,
       ),
     ).toEqual({ accept: true });
@@ -198,6 +237,90 @@ describe("classify", () => {
         state,
       ).reason,
     ).toBe("empty_plan");
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "x",
+          done_when: { kind: "subjective", text: "y" },
+          plan: [{ kind: "goal", what: "", done_when: { kind: "subjective", text: "z" } }],
+        }),
+        state,
+      ).reason,
+    ).toBe("empty_item");
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "x",
+          done_when: { kind: "subjective", text: "y" },
+          plan: [{ kind: "action", command: "node --test" }],
+        }),
+        fold([]),
+      ).reason,
+    ).toContain("no_current_goal");
+    const unknown = classify(
+      proposal({
+        operator: "create_goal",
+        what: "x",
+        done_when: { kind: "subjective", text: "y" },
+        revises: ["g1"],
+      }),
+      state,
+    );
+    expect(unknown.reason).toContain("unknown_revision");
+    expect(unknown.reason).toContain("g1");
+  });
+
+  it("guards run: needs a command, and a check may not substitute the goal's command", () => {
+    const state = fold([
+      goal,
+      {
+        type: "add_node",
+        node: {
+          id: "g2",
+          space: "work",
+          kind: "goal",
+          label: "crit",
+          payload: { what: "crit", done_when: { kind: "objective", command: "npm test" } },
+          seq: 1,
+        },
+      },
+    ]);
+    expect(classify(proposal({ operator: "apply", action: { tool: "run" } }), state).reason).toContain(
+      "run needs a command",
+    );
+    // target-only is the expected way to check an objective goal.
+    expect(
+      classify(proposal({ operator: "apply", action: { tool: "run", target: "g2" } }), state),
+    ).toEqual({ accept: true });
+    // Passing the goal's own command verbatim is also fine.
+    expect(
+      classify(
+        proposal({ operator: "apply", action: { tool: "run", command: "npm test", target: "g2" } }),
+        state,
+      ),
+    ).toEqual({ accept: true });
+    // A different command is refused: the goal's command is not substitutable.
+    const mismatch = classify(
+      proposal({ operator: "apply", action: { tool: "run", command: "npm run lint", target: "g2" } }),
+      state,
+    );
+    expect(mismatch.accept).toBe(false);
+    expect(mismatch.reason).toContain("its own command");
+  });
+
+  it("refuses complete of a non-goal and run of a non-goal target", () => {
+    const state = fold([goal]);
+    expect(
+      classify(proposal({ operator: "complete", goal: "missing" }), state).reason,
+    ).toBe("invalid_goal");
+    expect(
+      classify(
+        proposal({ operator: "apply", action: { tool: "run", command: "x", target: "missing" } }),
+        state,
+      ).reason,
+    ).toBe("invalid_target");
   });
 
   it("refuses complete on the root and on an objective goal", () => {
@@ -220,9 +343,69 @@ describe("classify", () => {
       { type: "add_edge", edge: { id: "e1", from: "g2", to: "g1", kind: "item", provenance: { kind: "llm" } } },
       { type: "descend", node: "g2" },
     ]);
-    expect(classify(proposal({ operator: "complete" }), state).reason).toBe(
-      "objective_goal_needs_check",
-    );
+    const verdict = classify(proposal({ operator: "complete" }), state);
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("objective_goal_needs_check");
+    expect(verdict.reason).toContain("g2");
+  });
+
+  it("allows growing an objective goal's plan when a stage was refuted, not achieved", () => {
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: { kind: "objective", command: "node --test" } }, seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 1 },
+      },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "record_check", command: "node --test", verdict: "fail", output: "no", targets: ["g2"] },
+    ]);
+    expect(predicateOf(state, "g2")).toBe("refuted");
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "add a stage the refuted one did not cover",
+          done_when: { kind: "objective", command: "node --test" },
+        }),
+        state,
+      ),
+    ).toEqual({ accept: true });
+  });
+
+  it("allows growing a plan whose only stages are fulfilled epistemic goals", () => {
+    // g1 objective, plan = [g2 subjective] completed; the fix stage is still to come.
+    const state = fold([
+      {
+        type: "add_node",
+        node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: { kind: "objective", command: "node --test" } }, seq: 0 },
+      },
+      {
+        type: "add_node",
+        node: { id: "g2", space: "work", kind: "goal", label: "locate", payload: { what: "locate", done_when: { kind: "subjective", text: "named" } }, seq: 1 },
+      },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      { type: "add_node", node: { id: "c1", space: "work", kind: "complete", label: "complete g2", payload: {}, seq: 3 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e3", from: "c1", to: "g2", kind: "closes", provenance: { kind: "llm" } } },
+    ]);
+    expect(predicateOf(state, "g2")).toBe("achieved_under");
+    expect(
+      classify(
+        proposal({
+          operator: "create_goal",
+          what: "fix the cause",
+          why: "hypothesis",
+          done_when: { kind: "objective", command: "node --test" },
+        }),
+        state,
+      ),
+    ).toEqual({ accept: true });
   });
 });
 
@@ -271,6 +454,26 @@ describe("executeAction", () => {
     const state = fold(outcome.events, before);
     expect(readFileSync(join(root, "src/sum.mjs"), "utf8")).toContain("i <= n");
     expect(currentVersion(state, "file:src/sum.mjs")).toBe(workspace.version("src/sum.mjs"));
+  });
+
+  it("refuses to create a file with edit (it only rewrites existing files)", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "edit", path: "package.json", find: "", replace: "{}" } },
+      state,
+      workspace,
+      1,
+    );
+    expect(outcome.events.some((event) => event.type === "mutate")).toBe(false);
+    const failure = outcome.events.find(
+      (event) =>
+        event.type === "add_node" &&
+        (event.node.payload as { verdict?: string } | undefined)?.verdict === "fail",
+    );
+    expect(failure).toBeDefined();
   });
 
   it("reads a bounded window and says where to continue", () => {
@@ -322,7 +525,7 @@ describe("executeAction", () => {
     expect(cursorOf(state, "g1")).toBe(1);
   });
 
-  it("grep shows context around matches", () => {
+  it("grep returns a JSON window with context", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
     tempDirs.push(root);
     writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
@@ -336,9 +539,79 @@ describe("executeAction", () => {
       workspace,
       0,
     );
-    expect(outcome.turn.text).toContain("code.txt:3: MATCH");
-    expect(outcome.turn.text).toContain("code.txt:2: beta");
-    expect(outcome.turn.text).toContain("code.txt:4: gamma");
+    const result = JSON.parse(outcome.turn.text) as {
+      total: number;
+      returned: number;
+      results: { path: string; line: number; match: string; before: string[]; after: string[] }[];
+    };
+    expect(result.total).toBe(1);
+    expect(result.returned).toBe(1);
+    expect(result.results[0]).toMatchObject({
+      path: "code.txt",
+      line: 3,
+      match: "MATCH",
+      before: ["alpha", "beta"],
+      after: ["gamma", "delta", ""],
+    });
+  });
+
+  it("grep pages over matches by from/count and reports next", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\nMATCH three\n");
+    const workspace = fsWorkspace(root);
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const first = executeAction(
+      { operator: "apply", action: { tool: "grep", pattern: "MATCH", count: 2 } },
+      state,
+      workspace,
+      0,
+    );
+    const page1 = JSON.parse(first.turn.text) as {
+      total: number;
+      from: number;
+      returned: number;
+      next?: number;
+      results: { line: number }[];
+    };
+    expect(page1).toMatchObject({ total: 3, from: 1, returned: 2, next: 3 });
+    expect(page1.results.map((r) => r.line)).toEqual([1, 2]);
+
+    const state2 = fold(first.events, state);
+    const second = executeAction(
+      { operator: "apply", action: { tool: "grep", pattern: "MATCH", count: 2, from: 3 } },
+      state2,
+      workspace,
+      1,
+    );
+    const page2 = JSON.parse(second.turn.text) as { from: number; returned: number; next?: number };
+    expect(page2).toMatchObject({ from: 3, returned: 1 });
+    expect(page2.next).toBeUndefined();
+  });
+
+  it("list returns files as JSON and can be scoped by include", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-list-"));
+    tempDirs.push(root);
+    mkdirSync(join(root, "runtime"), { recursive: true });
+    writeFileSync(join(root, "runtime", "gc.c"), "int x;\n");
+    writeFileSync(join(root, "runtime", "gc.h"), "int x;\n");
+    writeFileSync(join(root, "README.md"), "# hi\n");
+    writeFileSync(join(root, ".depend"), "hidden\n");
+    const workspace = fsWorkspace(root);
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "list", include: "**/*.c" } },
+      state,
+      workspace,
+      0,
+    );
+    const result = JSON.parse(outcome.turn.text) as { total: number; files: string[] };
+    expect(result.total).toBe(1);
+    expect(result.files).toEqual(["runtime/gc.c"]);
   });
 
   it("run with a target records a check that achieves the goal", () => {
@@ -387,6 +660,240 @@ describe("executeAction", () => {
   });
 });
 
+describe("query by id (history index)", () => {
+  const goal = {
+    type: "add_node" as const,
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: { kind: "subjective" as const, text: "done" } } },
+  };
+
+  it("returns a stored body by id and windows a large one", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-query-"));
+    tempDirs.push(root);
+    const workspace = fsWorkspace(root);
+    const big = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
+    workspace.write(".skein/observations/o2.txt", big);
+    const state = fold([
+      goal,
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "small", payload: { output: "hello" }, seq: 1 } },
+      { type: "add_node", node: { id: "o2", space: "work", kind: "observation", label: "big", payload: { outputRef: ".skein/observations/o2.txt" }, seq: 2 } },
+    ]);
+
+    const small = executeAction({ operator: "query", id: "o1" }, state, workspace, 0);
+    const smallJson = JSON.parse(small.turn.text) as { id: string; output: string; total: number };
+    expect(smallJson.id).toBe("o1");
+    expect(smallJson.output).toContain("hello");
+
+    const windowed = executeAction(
+      { operator: "query", id: "o2", start: 2, end: 4 },
+      state,
+      workspace,
+      1,
+    );
+    const bigJson = JSON.parse(windowed.turn.text) as {
+      start: number;
+      end: number;
+      total: number;
+      output: string;
+    };
+    expect(bigJson).toMatchObject({ start: 2, end: 4, total: 50 });
+    expect(bigJson.output).toContain("line 2");
+    expect(bigJson.output).not.toContain("line 5");
+  });
+
+  it("refuses a query for a result already in the working set", () => {
+    const state = fold([goal]);
+    const held = ["obs:30"];
+
+    const repeat = classify(proposal({ operator: "query", id: "obs:30" }), state, held);
+    expect(repeat.accept).toBe(false);
+    expect(repeat.reason).toContain("obs:30");
+    expect(repeat.reason).toContain("repeated_action");
+
+    // Another id, or a state query, is fine.
+    expect(classify(proposal({ operator: "query", id: "obs:31" }), state, held)).toEqual({
+      accept: true,
+    });
+    expect(classify(proposal({ operator: "query", predicate: "refuted" }), state, held)).toEqual({
+      accept: true,
+    });
+  });
+
+  it("refuses a re-query of a non-result id (e.g. an action node)", () => {
+    const state = fold([goal]);
+    const verdict = classify(proposal({ operator: "query", id: "w:action:77" }), state, [
+      "w:action:77",
+    ]);
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("w:action:77");
+    expect(verdict.reason).toContain("repeated_action");
+  });
+
+  it("refuses a need for a non-result id", () => {
+    const state = fold([goal]);
+    const verdict = classify(
+      { thought: "", action: { operator: "query", id: "r1" }, need: ["g1"] },
+      state,
+    );
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("result ids only");
+    expect(verdict.reason).toContain("g1");
+  });
+});
+
+describe("working set (shown) with TTL", () => {
+  it("retains the current level's results beyond the old TTL", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const shown: string[][] = [];
+    let id: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      shown.push(
+        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
+      );
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        id = context.lastResult?.id;
+        return {
+          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
+          need: id !== undefined ? [id] : [],
+        };
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 9, noProgress: 10, held: { turns: 3 } },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(id).toBeDefined();
+    // The read belongs to the current level (the request), so it is not evicted by TTL.
+    expect(shown[2]).toContain(id);
+    expect(shown[4]).toContain(id);
+    expect(shown[5]).toContain(id);
+  });
+
+  it("holds a needed cross-level result for HELD_TURNS then drops it", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const shown: string[][] = [];
+    let id: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      shown.push(
+        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
+      );
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        // Descend into a plan item: the read is now at a previous level.
+        id = context.lastResult?.id;
+        return proposal({
+          operator: "create_goal",
+          what: "work",
+          done_when: { kind: "subjective", text: "done" },
+          plan: [{ kind: "goal", what: "stage", done_when: { kind: "subjective", text: "ok" } }],
+        });
+      }
+      if (index === 3) {
+        return {
+          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
+          need: id !== undefined ? [id] : [],
+        };
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 10, noProgress: 10, held: { turns: 2 } },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(id).toBeDefined();
+    const first = shown.findIndex((ids) => id !== undefined && ids.includes(id));
+    expect(first).toBeGreaterThan(0);
+    // Cross-level (only held via `need`, TTL 2): shown at first, gone by the end.
+    expect(shown[first]).toContain(id);
+    expect(shown[shown.length - 1]).not.toContain(id);
+  });
+
+  it("drops a needed read once its file changes", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const shown: string[][] = [];
+    let id: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      shown.push(
+        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
+      );
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        id = context.lastResult?.id;
+        return {
+          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
+          need: id !== undefined ? [id] : [],
+        };
+      }
+      if (index === 3) {
+        return proposal({
+          operator: "apply",
+          action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
+        });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 9, noProgress: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(shown[2]).toContain(id); // before the edit
+    expect(shown[3]).not.toContain(id); // the edit at turn 2 makes the read stale
+  });
+
+  it("caps the current level's retained results", async () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-held-"));
+    tempDirs.push(root);
+    for (let i = 0; i < 10; i += 1) writeFileSync(join(root, `f${i}.txt`), `body ${i}\n`);
+    const workspace = fsWorkspace(root);
+    const ids = new Set<string>();
+    let shownCount = -1;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      if (context.lastResult?.id) ids.add(context.lastResult.id);
+      index += 1;
+      if (index <= 10) {
+        return proposal({ operator: "apply", action: { tool: "read", path: `f${index - 1}.txt` } });
+      }
+      shownCount = Math.max(shownCount, context.shown.length);
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 14, noProgress: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(ids.size).toBeGreaterThan(8);
+    expect(shownCount).toBeGreaterThan(0);
+    expect(shownCount).toBeLessThanOrEqual(8);
+  });
+});
+
+describe("workspace run", () => {
+  it("reports a pipeline's failing stage (pipefail), not the last stage's exit", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-run-"));
+    tempDirs.push(root);
+    // `false | true` exits 0 without pipefail; with it the failure of `false` surfaces.
+    const result = fsWorkspace(root).run("false | true");
+    expect(result.code).toBe(1);
+  });
+});
+
 describe("workspace grep", () => {
   it("scans source files by content, not by extension", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
@@ -396,6 +903,48 @@ describe("workspace grep", () => {
     writeFileSync(join(root, "bin.dat"), "sweep\u0000binary\n");
     const matches = fsWorkspace(root).grep("sweep");
     expect(matches).toEqual([{ path: "runtime/gc.c", line: 1, text: "int sweep(void) {}" }]);
+  });
+
+  it("skips dot files and directories by default", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    mkdirSync(join(root, ".git"), { recursive: true });
+    writeFileSync(join(root, ".depend"), "sweep\n");
+    writeFileSync(join(root, ".git", "config"), "sweep\n");
+    writeFileSync(join(root, "real.c"), "sweep\n");
+    const matches = fsWorkspace(root).grep("sweep");
+    expect(matches.map((m) => m.path)).toEqual(["real.c"]);
+  });
+
+  it("scopes by path and filters with include/exclude globs", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    mkdirSync(join(root, "runtime"), { recursive: true });
+    mkdirSync(join(root, "other"), { recursive: true });
+    writeFileSync(join(root, "runtime", "gc.c"), "sweep\n");
+    writeFileSync(join(root, "runtime", "gc.h"), "sweep\n");
+    writeFileSync(join(root, "other", "notes.txt"), "sweep\n");
+    const workspace = fsWorkspace(root);
+    expect(workspace.grep("sweep", { path: "runtime" }).map((m) => m.path).sort()).toEqual([
+      "runtime/gc.c",
+      "runtime/gc.h",
+    ]);
+    expect(workspace.grep("sweep", { include: "**/*.c" }).map((m) => m.path)).toEqual([
+      "runtime/gc.c",
+    ]);
+    expect(workspace.grep("sweep", { exclude: "**/*.c" }).map((m) => m.path)).toEqual([
+      "other/notes.txt",
+      "runtime/gc.h",
+    ]);
+    expect(workspace.grep("sweep", { path: "runtime/gc.c" }).map((m) => m.path)).toEqual([
+      "runtime/gc.c",
+    ]);
+  });
+
+  it("throws on a missing path", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
+    tempDirs.push(root);
+    expect(() => fsWorkspace(root).grep("x", { path: "nope" })).toThrow(/path not found/);
   });
 });
 
@@ -427,6 +976,27 @@ describe("runAgent", () => {
     expect(achievedWithoutCheck(result.events)).toEqual([]);
     expect(unboundGoals(result.events)).toEqual([]);
     expect(structuralCycle(result.events)).toBe(false);
+    expect(result.stopReason).toBe("request_addressed");
+  });
+
+  it("reports request_addressed, not max_turns, when the final allowed turn closes it", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const result = await runAgent(
+      {
+        propose: scripted([
+          {
+            operator: "create_goal",
+            what: "make the suite pass",
+            done_when: { kind: "subjective", text: "green" },
+          },
+          { operator: "complete" },
+        ]),
+        workspace,
+        maxTurns: 2,
+      },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(result.turns).toBe(2);
     expect(result.stopReason).toBe("request_addressed");
   });
 
@@ -504,6 +1074,189 @@ describe("runAgent", () => {
     expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1"]);
     expect(context.applicable).toContain("apply");
   });
+
+  it("refuses a repeated read, names the stored id, and can be retrieved by query", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const ids: (string | undefined)[] = [];
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      ids.push(context.lastResult?.id);
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 3) {
+        return proposal({ operator: "query", id: ids[1] ?? "missing" });
+      }
+      return proposal({ operator: "query", id: "r1" });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const reads = [...fold(result.events).nodes.values()].filter(
+      (node) =>
+        node.kind === "action" &&
+        (node.payload as { command?: string } | undefined)?.command === "read src/sum.mjs",
+    );
+    expect(reads).toHaveLength(1);
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    const reason =
+      rejection?.type === "record_rejection" ? rejection.reason : "";
+    expect(reason).toContain(ids[1] ?? "?");
+  });
+
+  it("refuses an identical re-query by id instead of re-retrieving", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let readId: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        readId = context.lastResult?.id;
+        return proposal({ operator: "query", id: readId ?? "missing" });
+      }
+      return proposal({ operator: "query", id: readId ?? "missing" });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 8, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
+    expect(reason).toContain("repeated_action");
+    expect(reason).toContain(readId ?? "?");
+    expect(result.stopReason).toBe("no_progress");
+  });
+
+  it("refuses a repeated query of a non-result node", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let goalId: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "green",
+          done_when: { kind: "subjective", text: "done" },
+          plan: [{ kind: "action", command: "echo hi" }],
+        });
+      }
+      goalId = context.path[context.path.length - 1]?.id;
+      return proposal({ operator: "query", id: goalId ?? "missing" });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
+    expect(reason).toContain("repeated_action");
+    expect(reason).toContain(goalId ?? "?");
+  });
+
+  it("refuses a need for a non-result id, so the paired query is not trapped", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "green",
+          done_when: { kind: "subjective", text: "done" },
+          plan: [{ kind: "action", command: "echo hi" }],
+        });
+      }
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
+      }
+      const itemId = context.path[context.path.length - 1]?.plan?.items?.[0]?.id;
+      return {
+        thought: "",
+        action: { operator: "query", id: itemId ?? "missing" },
+        need: itemId !== undefined ? [itemId] : [],
+      };
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 5, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
+    expect(reason).toContain("result ids only");
+  });
+
+  it("accepts a need and a query of the same result id (not self-refused)", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let readId: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 2) {
+        readId = context.lastResult?.id;
+        return {
+          ...proposal({ operator: "query", id: readId ?? "missing" }),
+          need: readId !== undefined ? [readId] : [],
+        };
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo done${index}` } });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 3, noProgress: 5 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(readId).toBeDefined();
+    expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
+  });
+
+  it("refuses to grow an objective goal whose plan is fulfilled; check it instead", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "make the suite pass",
+          done_when: { kind: "objective", command: "node --test" },
+          plan: [{ kind: "action", command: "echo hi" }],
+        });
+      }
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
+      }
+      return proposal({
+        operator: "create_goal",
+        what: "add another stage",
+        done_when: { kind: "objective", command: "node --test" },
+      });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const rejection = result.events.find((event) => event.type === "record_rejection");
+    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
+    expect(reason).toContain("all plan items are fulfilled");
+    expect(reason).toContain("target");
+  });
 });
 
 describe("request, revisions and check soundness", () => {
@@ -534,12 +1287,13 @@ describe("request, revisions and check soundness", () => {
   it("requires revises to list the failed interpretation", () => {
     const state = fold(base);
     expect(predicateOf(state, "g1")).toBe("refuted");
-    expect(
-      classify(
-        proposal({ operator: "create_goal", what: "approach two", done_when: { kind: "subjective", text: "ok" } }),
-        state,
-      ),
-    ).toEqual({ accept: false, reason: "missing_revision" });
+    const missing = classify(
+      proposal({ operator: "create_goal", what: "approach two", done_when: { kind: "subjective", text: "ok" } }),
+      state,
+    );
+    expect(missing.accept).toBe(false);
+    expect(missing.reason).toContain("missing_revision");
+    expect(missing.reason).toContain("g1");
     expect(
       classify(
         proposal({
@@ -572,12 +1326,16 @@ describe("request, revisions and check soundness", () => {
         node: { id: "g2", space: "work", kind: "goal", label: "sub", payload: { what: "sub", done_when: { kind: "subjective", text: "ok" } }, seq: 1 },
       },
     ]);
-    expect(
-      classify(proposal({ operator: "apply", action: { tool: "run", command: "x", target: "g2" } }), state),
-    ).toEqual({ accept: false, reason: "subjective_goal_needs_complete" });
+    const verdict = classify(
+      proposal({ operator: "apply", action: { tool: "run", command: "x", target: "g2" } }),
+      state,
+    );
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("subjective_goal_needs_complete");
+    expect(verdict.reason).toContain("g2");
   });
 
-  it("runs the goal's done_when command for a check, ignoring the proposed one", () => {
+  it("runs the goal's own done_when command for a target-only check", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
       request,
@@ -586,8 +1344,9 @@ describe("request, revisions and check soundness", () => {
         node: { id: "g2", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: { kind: "objective", command: "true" } }, seq: 1 },
       },
     ]);
+    // A check omits the command; the engine runs the goal's own.
     const outcome = executeAction(
-      { operator: "apply", action: { tool: "run", command: "false", target: "g2" } },
+      { operator: "apply", action: { tool: "run", target: "g2" } },
       state,
       workspace,
       0,
@@ -596,5 +1355,95 @@ describe("request, revisions and check soundness", () => {
     expect(predicateOf(after, "g2")).toBe("achieved");
     const check = [...after.nodes.values()].find((node) => node.kind === "check");
     expect((check?.payload as { command?: string } | undefined)?.command).toBe("true");
+  });
+});
+
+describe("revise after a refuted fix", () => {
+  it("does not give up: two refuted fixes, a third attempt, then the check passes", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      index += 1;
+      const focus = context.path[context.path.length - 1]?.id;
+      const root = context.path[1]?.id;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "make the suite pass",
+          done_when: { kind: "objective", command: "node --test" },
+          plan: [
+            {
+              kind: "goal",
+              what: "fix the cause",
+              done_when: { kind: "objective", command: "node --test" },
+            },
+          ],
+        });
+      }
+      if (index === 2) {
+        // A plausible but wrong fix: `i <= n - 1` is still the off-by-one.
+        return proposal({
+          operator: "apply",
+          action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n - 1" },
+        });
+      }
+      if (index === 3) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
+      }
+      if (index === 4) {
+        // After the refutation the plan may grow (the failed item does not count).
+        return proposal({
+          operator: "create_goal",
+          what: "fix the cause, second attempt",
+          done_when: { kind: "objective", command: "node --test" },
+        });
+      }
+      if (index === 5) {
+        // A second wrong guess: now the loop is too tight.
+        return proposal({
+          operator: "apply",
+          action: { tool: "edit", path: "src/sum.mjs", find: "i <= n - 1", replace: "i <= n - 2" },
+        });
+      }
+      if (index === 6) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
+      }
+      if (index === 7) {
+        return proposal({
+          operator: "create_goal",
+          what: "fix the cause, third attempt",
+          done_when: { kind: "objective", command: "node --test" },
+        });
+      }
+      if (index === 8) {
+        return proposal({
+          operator: "apply",
+          action: { tool: "edit", path: "src/sum.mjs", find: "i <= n - 2", replace: "i <= n" },
+        });
+      }
+      if (index === 9) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
+      }
+      if (index === 10) {
+        return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: root } });
+      }
+      return proposal({ operator: "query", predicate: "refuted" });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 16, noProgress: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const state = fold(result.events);
+    const checks = result.events.filter(
+      (event): event is Extract<typeof event, { type: "record_check" }> =>
+        event.type === "record_check",
+    );
+    expect(checks.filter((check) => check.verdict === "fail")).toHaveLength(2);
+    expect(checks.filter((check) => check.verdict === "pass").length).toBeGreaterThanOrEqual(2);
+    // Three fix goals: two refuted, one achieved — no two-attempt cap.
+    const goals = [...state.nodes.values()].filter((node) => node.kind === "goal");
+    expect(goals.filter((node) => predicateOf(state, node.id) === "refuted").length).toBe(2);
+    expect(predicateOf(state, "r1")).toBe("addressed");
   });
 });

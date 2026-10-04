@@ -19,7 +19,21 @@ const provenanceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("llm") }),
   z.object({ kind: z.literal("user"), turnId: z.string() }),
   z.object({ kind: z.literal("read"), ref: z.string(), version: z.string() }),
-  z.object({ kind: z.literal("grep"), pattern: z.string() }),
+  z.object({
+    kind: z.literal("grep"),
+    pattern: z.string(),
+    path: z.string().optional(),
+    include: z.string().optional(),
+    exclude: z.string().optional(),
+    from: z.number().int().optional(),
+    count: z.number().int().optional(),
+  }),
+  z.object({
+    kind: z.literal("list"),
+    path: z.string().optional(),
+    include: z.string().optional(),
+    exclude: z.string().optional(),
+  }),
   z.object({
     kind: z.literal("check"),
     command: z.string(),

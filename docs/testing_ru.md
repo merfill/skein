@@ -13,6 +13,7 @@
 | Типы | `npm run typecheck` | `tsc --noEmit` | секунды |
 | Офлайн-тесты | `SKEIN_LIVE=false npx vitest run` | инварианты IR, проекция, цикл, проверка допустимости | секунды |
 | Live-гейт | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | починка багфиксов живой моделью | минуты, деньги |
+| Live-сценарии | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | короткие сценарии на ветки движка | минуты, деньги |
 | Синтетический бенч | `npm run bench -- <case>` | один кейс из `skein-plugin` | минуты, деньги |
 | Гейт бенча | `npm run bench:gate -- <runDir>` | прогон против `bench/baseline.json` | секунды |
 | Harbor | `bash bench/harbor/run.sh` | реальные задачи terminal-bench | долго, деньги |
@@ -43,6 +44,65 @@ SKEIN_LIVE=true npx vitest run tests/gate.test.ts
 Прогоняет живую модель по фикстурам `fixtures/bugfix/*`: агент должен починить
 падающий тест, не редактируя тесты. Таймаут — 300 c на фикстуру. Нужен ключ
 (см. §9).
+
+### Live-сценарии
+
+Короткие сценарии на отдельные ветки цикла (`need`, `query`, ревизия гипотезы,
+ограничения, `complete` без правки, план, восстановление после отказа, поиск при
+многих файлах). Отдельная группа — **матрица «команды × действия»**: `fail-recover`,
+`script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — задачи,
+где критерий включает реальную команду (в README / `package.json` / `Makefile` /
+дословно), а решающий должен выполнить последовательность действий
+(`read`→`edit`→`run`, создание конфига через `run … >`, две независимые правки).
+Фикстура — `fixtures/scenarios/<name>/{repo, request.txt, check.sh?,
+constraints.json?}`; `check.sh` опционален (по умолчанию `node --test`).
+
+```sh
+SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
+SKEIN_SCENARIOS=need-two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
+SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
+```
+
+Жёсткие проверки (падение теста): решён ли `check`, закрыт ли запрос
+(`stopReason=request_addressed`, если у сценария `expect.addressed`), целостность
+инвариантов (`tests/invariants.ts`), неизменность `test/` (и явных путей), число
+**различимых** повторно запрошенных результатов (`maxRepeats`; одна и та же цель,
+сколько бы раз ни отказали, — один), отсутствие правок там, где запрещено.
+**Устойчивость:** `SKEIN_SCENARIO_REPEATS=N` (по умолчанию 1) гоняет каждый сценарий
+N раз и собирает все провалы, так что флаки промпта виден как pass-rate, а не как
+одна выборка; таймаут теста масштабируется на N. Мягкий отчёт по покрытию
+веток печатается в stdout (`branches=[…]`, `MISSING(soft)=[…]`, `need=…`) и намеренно
+не роняет тест: это инструмент подбора проекции, ветки промоутятся в жёсткие по мере
+стабилизации. Полная проекция каждого хода и журнал складываются в
+`bench/runs/live-<ts>-<name>/{contexts,events}.ndjson` для офлайн-разбора; туда же
+пишется телеметрия рабочего множества: `workset.ndjson` (на ход — `shownCount`,
+`shownChars`, `requested`) и `workset.json` (`peakCount`, `peakChars`, `reacquired`),
+а `run.json` фиксирует вердикт (`done`, `stopReason`, `turns` и внешний `check`:
+код/stdout/stderr). Мягкий отчёт печатает ещё и `refuted=` — провалившиеся проверки
+целей, — чтобы был виден прогон, восстановившийся после неверного фикса
+(`tempting-wrong`, `two-step-fix`), а не только итоговый reward.
+
+### Реплей трассы (без Harbor)
+
+`npm run replay -- <trace-or-scenario> [--limit N] [--offset N] [--model M]` берёт
+записанную трассу (короткий сценарий — `bench/runs/live-<ts>-<name>/contexts.ndjson`,
+допускается имя сценария; Harbor — `agent/langgraph-run.log` со строками `SKEIN_CONTEXT`
+/ `SKEIN_PROPOSAL`), восстанавливает `buildMessages(context)` на каждый ход и гоняет
+текущий `invokeStructured` на **том же контексте**. Печатает по ходу: `operator`/tool
+предложенный и записанный (`=`/`≠`), длину `thought`, выходные токены, `finish_reason`;
+в конце — сводку `ok/fail/match/mismatch/outTokens/maxOut/finish=[…]`. Это позволяет
+отлаживать промпт/схему на реальном распределении контекстов за копейки: например,
+`th=8661 out=31531 finish=length` до правки `thought` против `th≈120 out≈200 finish=stop`
+после.
+
+### Симуляция политики рабочего множества (офлайн)
+
+Длинный горизонт проверяется без модели: `tests/workingset.test.ts` гоняет
+скриптованный proposer через реальный цикл и проверяет рост, вытеснение по cap,
+повторное приобретение, сброс устаревшего и сжатие. Лимиты (`turns`/`max`/`chars`)
+передаются через `AgentDeps.held` и варьируются в тестах; метрики — из
+`tests/workset.ts` (те же, что в live-дампе). Это позволяет проверять политику на
+сотнях ходов детерминированно и бесплатно, до дорогих live-прогонов.
 
 ## 4. Синтетический бенч
 
@@ -88,13 +148,25 @@ bash bench/harbor/run.sh
 `<task>__<id>/agent/langgraph-run.log` (строки `SKEIN_*`, §7),
 `<task>__<id>/verifier/reward.txt`.
 
-**Точечный прогон** (одна задача, одна попытка) — чтобы не платить за весь набор:
-скопировать `bench/harbor/skein.yaml`, оставить в `datasets[0].task_names` одну
-задачу, выставить `n_attempts: 1`, затем
+**Точечный прогон** (один кейс, не весь набор). `run.sh` передаёт свои аргументы
+дальше в `harbor run`, поэтому набор/задачу/число попыток задаём флагами Harbor
+после `run.sh`:
 
 ```sh
-OPENAI_API_KEY=... harbor run --config <focused>.yaml -y
+# один кейс, одна попытка (итерации по движку)
+bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 1
+# две попытки (как в отчётах о прогонах)
+bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 ```
+
+- `-d/--dataset` — набор (`terminal-bench`), `-i/--include-task-name` — задача
+  (поддерживает glob), `-k/--n-attempts` — попыток на триал; `-x/--exclude-task-name`
+  исключает, `-l/--n-tasks` ограничивает число задач.
+- Альтернатива (как в соседнем `skein-plugin`): задать одну задачу и `n_attempts`
+  прямо в `bench/harbor/skein.template.yaml` (`datasets[0].task_names`), отрендерить
+  `node bench/harbor/prepare.mjs`, затем `harbor run --config bench/harbor/skein.yaml -y`.
+
+Результат — там же, вне репозитория: `~/.skein-bench/harbor/<ts>/<task>__<id>/`.
 
 ## 7. Инструментовка: где смотреть
 
@@ -103,7 +175,7 @@ OPENAI_API_KEY=... harbor run --config <focused>.yaml -y
 | Строка | Содержимое |
 | --- | --- |
 | `SKEIN_CONTEXT` | **полная проекция** на ход: `{turn, chars, context}` |
-| `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) |
+| `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) и `need` (запрошенные id) |
 | `SKEIN_TURN` | на ход: токены/кэш/`contextChars`/время |
 | `SKEIN_LLM_ERROR` | ошибка вызова модели (с номером попытки) |
 | `SKEIN_EVENTS` | диагностика IR: цели, планы, альтернативы, `checks`, `observations`, `mutates`, отказы |
@@ -123,9 +195,24 @@ OPENAI_API_KEY=... harbor run --config <focused>.yaml -y
 | Предел | Значение | Смысл |
 | --- | --- | --- |
 | `MAX_READ_LINES` | 400 | окно `read` за вызов; инструмент говорит «строки X–Y из Z» |
-| `MAX_GREP_MATCHES` | 200 | совпадений `grep` за вызов |
+| `GREP_COUNT_DEFAULT` | 100 | совпадений `grep` в окне по умолчанию |
+| `MAX_GREP_MATCHES` | 200 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
+| `MAX_LIST_FILES` | 500 | максимум файлов в окне `list` |
+| `OUTPUT_LIMIT` | 8000 | байтовый предел JSON-результата `grep`/`list`; лишние результаты отбрасываются целиком |
 | `MAX_RUN_OUTPUT` | 8000 | вывод `run`; дальше head+tail и `outputRef` |
 | `SKEIN_CTX_ITEMS` | 20 | элементов в `plan`/`alternatives` проекции |
+
+### 8.1 Устойчивый structured output
+
+Провайдер плохо держит tool calling под длинным агентым промптом: аргументы вызова
+приходят плоскими (`operator` на верхнем уровне вместо вложенного `action`) или
+невалидным JSON, а библиотека отдаёт `parsed: null` без `parsing_error`. Поэтому агент
+не использует `withStructuredOutput` вовсе: `src/llm/structured.ts` кладёт **сырую
+JSON-схему** в промпт (`response_format: json_object` как подсказка) и разбирает ответ
+руками. При обрезанном ответе (`max_tokens`) или нарушении схемы — повтор с поднятым
+`max_tokens` (`SKEIN_MAX_TOKENS_CEILING`, не более `SKEIN_MAX_TOKENS_BUMPS` раз) и один
+repair-раунд с текстом ошибки валидатора. Если всё не удалось, цикл завершается с
+`stopReason: "llm_error"`, а не падает. Офлайн покрыто в `tests/structured.test.ts`.
 
 ## 9. Ключи и секреты
 

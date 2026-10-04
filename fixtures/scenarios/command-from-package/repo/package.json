@@ -1,0 +1,8 @@
+{
+  "name": "command-from-package",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "check": "node --test"
+  }
+}

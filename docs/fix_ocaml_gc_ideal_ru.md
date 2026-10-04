@@ -85,7 +85,7 @@ make -C testsuite one DIR=tests/basic
 | 5 | `apply` | `read HACKING.adoc` | `action` + `observation` + `file` |
 | 6 | `apply` | `grep "pool_sweep\|pool_allocate\|freelist"` | `action` + `observation` |
 | 7 | `apply` | `read runtime/shared_heap.c` | `action` + `observation` + `file`@`V1` |
-| 8 | `apply` | `run "git log --oneline -8 -- runtime/shared_heap.c"` | `action` + `observation` |
+| 8 | `apply` | `grep "POOL_FREE_HEADER\|POOL_BLOCK_FREE\|Whsize_hd"` (кодирование свободных блоков run-length) | `action` + `observation` (макросы и инвариант перескока) |
 | 9 | `complete` | «G2 достигнута» | `complete` → `G2`; производно `achieved_under` |
 | 10 | `create goal` | цель «починить заголовок» (`why` = «при сжатии `pool_sweep` не переносит заголовок свободного блока», `done_when` = сборка) | `goal G3` пунктом в план корня `P0` |
 | 11 | `apply` | `edit runtime/shared_heap.c` | `action` + `mutate` `V1 → V2` |
@@ -93,6 +93,12 @@ make -C testsuite one DIR=tests/basic
 | 12b | `create goal` | при `refuted`: новый вариант подхода | узел `alternatives` + вариант `G3'`; Арбитр ставит `chosen`; `G3` производно `refuted`, невыбранные — `abandoned` |
 | 13 | `apply` | `run` критерия задачи (команда из `done_when`) | `check`; запрос `addressed`; приёмка внешняя |
 | 14 | *(Арбитр)* | остановка | — |
+
+Образ задачи **удаляет `.git`** (`environment/Dockerfile`: *«We don't want it cheating and
+just rolling back the recent changes»*), поэтому `git log`/`git diff` недоступен:
+локализация идёт по коду и инварианту свободного блока, а не по diff. Дефект — один
+токен, поэтому названного подозреваемого достаточно: фикс — гипотеза, которую надо
+**проверить**, а не доказать в `locate`.
 
 Ключевое отличие от факта: в реальном прогоне агент выдавал только команды
 (`read/grep/run`) и **не завёл ни одной цели с планом и ни одной проверки** —

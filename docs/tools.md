@@ -41,7 +41,7 @@ The model returns `{ thought, action }`; `action` is one of four operators:
 | Operator | Purpose |
 |---|---|
 | `create_goal` | introduce a goal (an interpretation of the request or a subgoal) with a plan |
-| `apply` | work with the workspace: `read` / `grep` / `edit` / `run` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `run` |
 | `complete` | close a **subjective** goal as an assumption |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
@@ -64,19 +64,21 @@ subgoal to its plan. Give a plan when the steps are known. List failures fully i
 | tool | Fields | Meaning |
 |---|---|---|
 | `read` | `{ path, start?, end? }` | read a file, or a window of its lines |
-| `grep` | `{ pattern }` (→ + context, see §4) | search the workspace |
+| `grep` | `{ pattern, path?, include?, exclude?, before?, after?, from?, count? }` | search the workspace: scope, windows over matches, JSON (see §4.2) |
+| `list` | `{ path?, include?, exclude?, from?, limit? }` | list files by mask, JSON (see §4.6) |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
-| `run` | `{ command, target?, under? }` | shell command; with `target` — a goal check |
+| `run` | `{ command?, target?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted) |
 
 ### 2.3 `complete { goal?, note?, under? }`
 
 Closes a subjective goal (`achieved_under`). Not allowed: the request and an objective
 goal (only a check settles it).
 
-### 2.4 `query { id | kind | predicate | edgesOf }`
+### 2.4 `query { id | kind | predicate | edgesOf, start?, end? }`
 
-Deterministic read of the tree/journal: nodes, edges, their payloads. Does not change
-state.
+Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id` — the
+**body of a stored result** (a small one from the payload, a large one behind
+`outputRef`), optionally a line window (`start`/`end`). Does not change state.
 
 ---
 
@@ -118,14 +120,30 @@ content. The model asks for 120 lines — it sees ~8.
   and 101–200, but the code is at 80–120), the model re-reads a window with margin
   (say 60–160).
 
-### 4.2 `grep`: context around matches (decided)
+### 4.2 `grep`: scope, windows over matches, JSON (decided)
 
-- `grep { pattern, before?, after? }`:
+- `grep { pattern, path?, include?, exclude?, before?, after?, from?, count? }`:
+  - `path` — a file or a directory (the workspace root by default); the scope is part
+    of the action signature;
+  - `include`/`exclude` — glob filters over paths (`**/*.c`, `runtime/**`,
+    `**/.depend` as an exclude); choosing "where to search" (code/logs/tests) is the model's job;
+    there is no language→extension table in the engine;
   - `before`/`after` — context lines above/below, **`5/5` by default**;
-  - result: matches with context, `path:line:text`;
-  - **`MAX_GREP_MATCHES = 200`**: when exceeded — an explicit note "showing the first
-    200 matches of N; narrow the pattern".
-- Shown fully.
+  - `from`/`count` — a window **over matches** (1-based, like lines in `read`);
+    `count` defaults to `100`, maximum **`MAX_GREP_MATCHES = 200`**;
+- the result is **valid JSON**:
+  `{ pattern, scope, context, total, from, returned, next?, results:
+  [{ path, line, match, before: [], after: [] }] }`. Matches are structurally
+  separated from each other, the matched line (`match`) from the context
+  (`before`/`after`); the context of adjacent matches may duplicate;
+- byte limit (**`OUTPUT_LIMIT = 8000`**): when exceeded, whole trailing results are
+  dropped, `returned` shrinks, `next` points to the continuation; the JSON stays valid
+  (the middle is never cut);
+- pagination is the same `grep` with a new `from`: recomputation is deterministic (like
+  re-reading a window in `read`); the window body is kept via `storeOutput`, so recall
+  via `need`/`shown` works exactly as for `read`;
+- default skips: `SKIP_DIRS` directories + dot files/directories (`.depend`,
+  `.mailmap`); `.gitignore` filtering comes later.
 
 ### 4.3 `run`: the full output (decided)
 
@@ -144,13 +162,43 @@ content. The model asks for 120 lines — it sees ~8.
   command. This gives the model "memory of what was already done" without inflating
   the context, and makes coverage visible.
 - `negative` is **merged into `calls`** (one list): status `refused`/`fail` + the rule
-  "do not repeat while the world has not changed".
+  "do not repeat while the world has not changed". A repeated command with the same
+  signature (`read`/`grep` too) and an unchanged world is **refused**, and the reason
+  names the `id` of the existing result; the body is fetched via `query` (§4.5), not by
+  repeating.
+- `shown` is the **working set**: `need: [id …]` and `query {id}` place **result
+  bodies** in `shown`, where they are held for **`HELD_TURNS` (6)** turns (re-adding
+  refreshes); the cap is `MAX_NEED` (5) bodies and `2 × OUTPUT_LIMIT` (16000) characters,
+  the least recently requested evicted first. `need` accepts only ids with a body
+  (`observation`/`check`); an id without a body is refused. A read observation whose file
+  has changed since is dropped (stale content is never shown as active). `run`/`check`
+  bodies are historical and never go stale.
 - `SKEIN_CTX_TOTAL` is not applied; `SKEIN_CTX_EXCERPT` is no longer needed.
 
-### 4.5 `query`
+### 4.5 `query`: fetch a result by `id` (decided)
 
-- Add the ability to fetch a stored `read`/`grep` fragment by observation id. (Open
-  question: store the content in the IR or behind a reference into the workspace.)
+- `query { id, start?, end? }` returns the **body** of a stored result (a small one
+  from the payload, a large one behind `outputRef`), optionally a line window.
+- This is the "index" mechanism: a past result is fetched by `id`, not by repeating the
+  call. A repeated command with the same inputs and an unchanged world is refused (see
+  §4.2, semantics §2.7) and the reason names the `id`.
+- `query {id}` **enters the working set** (§4.4): the body is shown from `shown` for
+  several turns. Re-querying the same `id` **while it is in the set** is redundant and
+  refused; a body evicted by the cap leaves `held`, so re-querying it is **allowed**. For
+  **non-results** (`action`/`goal`) a separate set of recently queried ids with the same
+  TTL is kept, so a repeated `query` of such a node is refused too (spin). A state query
+  (`kind`/`predicate`/`edgesOf`) is not pinned: its answer changes as the graph grows.
+
+### 4.6 `list`: file listing (decided)
+
+- `list { path?, include?, exclude?, from?, limit? }`:
+  - scope and filters (`path`/`include`/`exclude`) — as for `grep`; the same default
+    skips (`SKIP_DIRS` + dot files/directories);
+  - `from`/`limit` — a window **over files** (1-based); `limit` defaults to and is
+    capped at the declared `MAX_LIST_FILES`;
+- the result is JSON: `{ root, total, from, returned, next?, files: [] }`;
+- read-only and idempotent (a repeat is not a refusal); it gives the model visibility
+  of extensions so it can set `include` for `grep` meaningfully.
 
 ---
 
@@ -177,6 +225,12 @@ reflect the real limits. Proposed:
    windows) are **not** stored — there is only a summary of calls (`calls`). If an
    earlier fragment is needed (including at a window boundary), **re-read the
    window**, with overlap if necessary; do not rely on memory of a previous result.
+7. **Where to search.** Pick the scope from the evidence: logic is in the sources
+   (`include` by the project's language), a failure/log is in the output and log files.
+   Set `path` when a file/directory is named in the error, the `done_when` or the
+   hypothesis; grep the whole tree only to localize. A `grep` result is windows over
+   matches: if there are more matches than the window, continue with `next`/`from`
+   **without** changing the `pattern`.
 
 ### 5.1 How to determine the goal from the request (and not reach for `git`)
 
@@ -197,9 +251,10 @@ agent's default reflex ("look at the diff").
    bootstrap; verify with `make -C testsuite one DIR=tests/basic`". Correct:
    - goal: `what: "fix the GC regression so the basic testsuite passes"`,
      `done_when: { kind: "objective", command: "make -C testsuite one DIR=tests/basic" }`;
-   - a plan of **stage sub-goals**: `reproduce` → `locate` → `fix` → `verify`
-     (epistemic ones close with `complete`, objective ones with a `check`), not a list
-     of commands.
+   - a plan of **stage sub-goals**: `reproduce` → `locate` → `fix`
+     (the epistemic ones close with `complete`); `fix` IS the hypothesis — `why` + an
+     `objective done_when` = the command that shows the failure, so its own `check`
+     settles it (there is no separate `verify`), not a list of commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a
    VCS; do not do it. A `git` failure in `calls` is a signal to change the approach,
    not the command.
@@ -257,8 +312,8 @@ capability gap; **not part of the current implementation**.
    now: the agent cannot create a new file (a test, a script, a patch), only change an
    existing one via `find/replace`. Needs a declared `content` maximum; writes a
    `mutate` with the new version.
-2. **`list`** (a.k.a. `glob`) — list files by mask: `{ path?, glob? }` with a declared
-   entry maximum. Removes parsing of `run ls/find` (unstructured, unbounded output).
+2. **`list`** (a.k.a. `glob`) — **done**, see §4.6. Removes parsing of `run ls/find`
+   (unstructured, unbounded output) and gives the model visibility of extensions.
 3. **`edit` by range / `multiedit`** — editing by line numbers and atomic grouped
    edits: `find/replace` breaks on ambiguous/duplicated fragments.
 4. **Later:** `web_fetch` (docs, error analysis) and LSP operations `symbol`

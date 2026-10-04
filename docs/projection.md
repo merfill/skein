@@ -30,8 +30,8 @@ operator cannot decide:
 3. **`constraints`** — global, not to be violated;
 4. **`lastResult`** — the **full** result of the latest call (within the tool's
    honestly declared limits), to decide the next move;
-5. **`shown`** — the results the model asked to keep (`need`), also in full: the
-   working set for a hypothesis (§8 of `docs/context_design.md`);
+5. **`shown`** — the **working set**: the results the model asked for via `need`/`query`,
+   also in full, with a TTL (§8 of `docs/context_design.md`);
 6. **`calls`** — a deduplicated **summary of previous calls without results**: what
    was called, the status (`ok`/`fail`/`refused`) and the reason. It gives memory of
    what was already done without inflating the context (invariant 21, §2.8 of the
@@ -49,6 +49,8 @@ Projection = {
   shown:       ResultView[],      // results kept via `need` (the hypothesis)
   calls:       Call[],            // a summary of previous ones (may be empty)
   applicable:  string[],          // names of applicable operators
+  checkReady:  boolean,           // a run {target: focus} check is expected now
+  nextAction?: string,            // the action item the plan cursor points at
   budget:      { turn, maxTurns, remaining }
 }
 
@@ -61,8 +63,8 @@ PathNode = {
   alternatives?: { chosen?, items: Alt[] }     // the node's own container
 }
 
-Item = { id, kind: "goal" | "action", label, state }
-Alt  = { id, label, state, chosen: boolean }
+Item = { id, kind: "goal" | "action", label, state, why? }
+Alt  = { id, label, state, chosen: boolean, why? }
 
 ResultView = {                 // a view, not a node
   id, kind: "observation" | "check" | "action",
@@ -85,6 +87,15 @@ Call = {                       // an aggregate, not an event
 - `path[last]` is the focus; there is no separate `focus`.
 - A `request` has no `plan`/`done_when`; its interpretations live in `alternatives`.
 - A `goal` may have a `plan`, `alternatives`, or neither.
+- A plan/alternatives item carries `why?`: for a `refuted`/`abandoned` item it is the
+  failed hypothesis, so the next attempt does not repeat it.
+- `applicable` lists the operator names; `checkReady` says whether a `run {target:
+  path[last]}` **check** is the expected move now (an objective goal whose plan is
+  done). `apply` can be listed while `checkReady` is false — that means a bare
+  exploratory `run` is available, not a check of the focus; a check requires an
+  **objective** goal (a subjective target is refused).
+- `nextAction`, when present, is the action item the plan cursor points at: apply it
+  verbatim.
 - `lastResult.output` is full (the projection does not cut it); the limits are set by
   the tool itself and **declared** in the result (see `docs/tools.md`).
 

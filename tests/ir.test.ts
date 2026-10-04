@@ -283,13 +283,20 @@ describe("projection", () => {
         node: workNode("o1", "observation", "read src/a.ts", 2, { ref: "file:src/a.ts", version: "v1" }),
       },
     ]);
-    const context = project(state, { lastOutput: "x".repeat(1000) });
+    const context = project(state, { lastOutput: "x".repeat(1000), lastOutputId: "o1" });
     expect(context.lastResult?.kind).toBe("observation");
+    expect(context.lastResult?.id).toBe("o1");
     expect(context.lastResult?.ref).toBe("src/a.ts");
     expect(context.lastResult?.output).toBe("x".repeat(1000));
     const serialized = JSON.stringify(context);
     expect(serialized).not.toContain("artifacts");
     expect(serialized).not.toContain("version");
+
+    // A tool turn that produced no result node (query/complete) is shown without an
+    // id, so the model cannot address a stale body by a mismatched id.
+    const nodeLess = project(state, { lastOutput: "completed: g1" });
+    expect(nodeLess.lastResult?.id).toBeUndefined();
+    expect(nodeLess.lastResult?.output).toBe("completed: g1");
   });
 
   it("lists constraints and exposes the applicable operators", () => {
@@ -305,6 +312,30 @@ describe("projection", () => {
     expect(context.constraints).toEqual([{ id: "k1", forbid: ["\\.test\\.mjs$"] }]);
     expect(context.applicable).toContain("apply");
     expect(context.applicable).toContain("create_goal");
+    expect(context.checkReady).toBe(true);
+  });
+
+  it("distinguishes a bare run from a ready check (checkReady / nextAction)", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      { type: "add_node", node: workNode("a1", "action", "run build", 1) },
+      ...plan("p1", "g1", ["a1"], 2),
+    ]);
+    const context = project(state);
+    expect(context.checkReady).toBe(false);
+    expect(context.nextAction).toBe("a1");
+  });
+
+  it("exposes a plan item's hypothesis (why) so a refuted attempt is not repeated", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test")),
+      goal("g2", "fix the loop bound", 1, objective("node --test"), "the loop excludes n"),
+      ...plan("p1", "g1", ["g2"], 2),
+    ]);
+    const context = project(state);
+    const item = context.path[0]?.plan?.items.find((entry) => entry.id === "g2");
+    expect(item?.state).toBe("open");
+    expect(item?.why).toBe("the loop excludes n");
   });
 
   it("keeps the full latest result and has no context budget", () => {
@@ -413,6 +444,28 @@ describe("call summary", () => {
     ]);
   });
 
+  it("surfaces the crash line when a piped build exits 0", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "add_node", node: workNode("a1", "action", "make | tail", 1, { command: "make | tail" }) },
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "make | tail", 2, {
+          command: "make | tail",
+          verdict: "pass",
+          output: "  OCAMLC a.cmi\nmake: *** Segmentation fault (core dumped)\nmake: *** Error 2\n",
+        }),
+      },
+      {
+        type: "add_edge",
+        edge: edge("e1", "a1", "o1", "produces", { kind: "check", command: "make | tail", verdict: "pass" }),
+      },
+    ]);
+    const entry = project(state).calls.find((call) => call.action === "make | tail");
+    expect(entry?.status).toBe("ok");
+    expect(entry?.note).toContain("Segmentation fault");
+  });
+
   it("includes a materialized action failure that has no action node", () => {
     const state = fold([
       goal("g1", "green", 0),
@@ -429,7 +482,7 @@ describe("call summary", () => {
     ]);
   });
 
-  it("clears a failure on mutation, but keeps successes and constraint refusals", () => {
+  it("keeps a failure after a mutation, alongside successes and refusals", () => {
     const failure: Event = {
       type: "add_node",
       node: workNode("o1", "observation", "make", 1, { verdict: "fail", output: "boom" }),
@@ -457,24 +510,38 @@ describe("call summary", () => {
       { type: "mutate", ref: "file:a", version: "v2", actionId: "a1" },
     ]);
     const calls = project(after).calls;
-    expect(calls).toHaveLength(2);
+    // The failed attempt stays in the log after the edit (a person remembers it).
+    expect(calls).toHaveLength(3);
+    expect(calls.some((entry) => entry.status === "fail")).toBe(true);
     expect(calls.some((entry) => entry.status === "ok")).toBe(true);
     expect(calls.some((entry) => entry.note === "constraint_violation")).toBe(true);
   });
 
-  it("scopes the summary to the current branch", () => {
+  it("keeps the whole interpretation history, not just the focus path", () => {
     const state = fold([
       {
         type: "add_node",
         node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 },
       },
-      goal("g1", "sub", 1),
-      { type: "descend", node: "g1" },
-      { type: "add_node", node: workNode("o1", "observation", "make", 2, { verdict: "fail", output: "boom" }) },
+      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "alt", seq: 1 } },
+      { type: "add_edge", edge: edge("ea", "r1", "alt", "has_alternatives", { kind: "llm" }) },
+      goal("g1", "interp", 2),
+      { type: "add_edge", edge: edge("ei", "alt", "g1", "item", { kind: "llm" }) },
+      { type: "add_edge", edge: edge("ec", "alt", "g1", "chosen", { kind: "llm" }) },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
+      { type: "add_edge", edge: edge("ep", "g1", "p1", "has_plan", { kind: "llm" }) },
+      goal("g2", "stage one", 4),
+      { type: "add_edge", edge: edge("e2", "p1", "g2", "item", { kind: "llm" }) },
+      { type: "descend", node: "g2" },
+      { type: "add_node", node: workNode("a1", "action", "read a", 5, { command: "read a" }) },
+      { type: "add_node", node: workNode("o1", "observation", "read a", 6, { ref: "file:a", version: "v1" }) },
+      { type: "add_edge", edge: edge("e3", "a1", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
       { type: "return" },
     ]);
+    // Focus is back on the interpretation, off the stage g2 — but the stage is part of
+    // the interpretation's subtree, so its result stays in the index (semantics §2.8).
     expect(state.branch).toEqual(["r1"]);
-    expect(project(state).calls).toEqual([]);
+    expect(project(state).calls.some((entry) => entry.action === "read a")).toBe(true);
   });
 
   it("changes the projection on a refusal (feedback invariant)", () => {

@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "tsx bench/run.ts",
-    "bench:gate": "tsx bench/gate.ts"
+    "bench:gate": "tsx bench/gate.ts",
+    "replay": "tsx bench/replay.ts"
   },
   "dependencies": {
     "@langchain/core": "^1.2.12",

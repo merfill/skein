@@ -1,0 +1,3 @@
+[
+  { "id": "k1", "label": "do not modify any files", "forbid": [".*"] }
+]

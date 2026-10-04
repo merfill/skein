@@ -1,0 +1,8 @@
+{
+  "name": "verbatim-flag",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/math.test.mjs"
+  }
+}

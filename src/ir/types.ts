@@ -42,7 +42,16 @@ export type Provenance =
   | { kind: "llm" }
   | { kind: "user"; turnId: string }
   | { kind: "read"; ref: string; version: string }
-  | { kind: "grep"; pattern: string }
+  | {
+      kind: "grep";
+      pattern: string;
+      path?: string;
+      include?: string;
+      exclude?: string;
+      from?: number;
+      count?: number;
+    }
+  | { kind: "list"; path?: string; include?: string; exclude?: string }
   | {
       kind: "check";
       command: string;

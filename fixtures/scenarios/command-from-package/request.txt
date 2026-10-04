@@ -1,0 +1,1 @@
+Make the test suite pass. The project's command is defined in package.json; see README.md.

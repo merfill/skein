@@ -1,0 +1,1 @@
+Explain why the test in test/counter.test.mjs fails and what the correct fix is. Do not modify any files.

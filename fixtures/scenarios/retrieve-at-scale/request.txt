@@ -1,0 +1,1 @@
+The test suite prints a long table and then fails. Make it pass without editing tests. The failing detail is somewhere in the middle of the long output.

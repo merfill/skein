@@ -50,8 +50,21 @@ export const applySchema = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("grep"),
     pattern: z.string(),
+    path: z.string().optional(),
+    include: z.string().optional(),
+    exclude: z.string().optional(),
     before: z.number().int().nonnegative().optional(),
     after: z.number().int().nonnegative().optional(),
+    from: z.number().int().positive().optional(),
+    count: z.number().int().positive().optional(),
+  }),
+  z.object({
+    tool: z.literal("list"),
+    path: z.string().optional(),
+    include: z.string().optional(),
+    exclude: z.string().optional(),
+    from: z.number().int().positive().optional(),
+    limit: z.number().int().positive().optional(),
   }),
   z.object({
     tool: z.literal("edit"),
@@ -61,7 +74,7 @@ export const applySchema = z.discriminatedUnion("tool", [
   }),
   z.object({
     tool: z.literal("run"),
-    command: z.string(),
+    command: z.string().optional(),
     target: z.string().optional(),
     under: z.array(z.string()).optional(),
   }),
@@ -91,6 +104,8 @@ export const actionSchema = z.discriminatedUnion("operator", [
     kind: z.string().optional(),
     predicate: z.string().optional(),
     edgesOf: z.string().optional(),
+    start: z.number().int().positive().optional(),
+    end: z.number().int().positive().optional(),
   }),
 ]);
 

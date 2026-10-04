@@ -7,8 +7,8 @@ Related: `docs/context_design.md` (the projection and plan design),
 `docs/fix_ocaml_gc_ideal.md` (the reference form).
 
 Status: a working journal. It records what has been investigated, what is fixed, what
-remains, so work can resume from any point. The code is not committed (all changes are
-in the working tree).
+remains, so work can resume from any point. **The current state is §8 (session
+2026-10-04).** The code is not committed (all changes are in the working tree).
 
 Task constraints (agreed): we do not change the model; we do not run the whole set; we
 aim for a short route (the reference is ~14 turns), not 60.
@@ -163,3 +163,81 @@ in noise (.depend, Changes)". `SKIP_DIRS` skips directories but **not files** li
 4. Inspect `~/.skein-bench/harbor/<ts>/<trial>/agent/langgraph-run.log`: the plan, the
    stage timeline (`complete`/`edit`/`check`), `SKEIN_METRICS` (ctx, turns, reward).
 5. Compare with `docs/fix_ocaml_gc_ideal.md` and the table here; add a row to §2.
+
+---
+
+## 8. Session 2026-10-04: structured output, context, diagnosis
+
+This section is more current than §4–§5; read it first.
+
+### 8.1 Chronology (fix-ocaml-gc, one attempt each)
+
+| Job | What changed | turns | edits | checks | stop | reward |
+|---|---|---|---|---|---|---|
+| `2026-10-04__16-20-49` | before the session (tool calling) | 60 | 4 | 3 | max_turns | 0 |
+| `2026-10-04__19-05-54` | — | 37 | 0 | 0 | **llm_error** | 0 |
+| `2026-10-04__19-33-21` | `withConfig` + `rebuild` | 30 | 0 | 0 | **llm_error** | 0 |
+| `2026-10-04__19-45-22` | + repair round | 60 | 2 | 4 | max_turns | 0 |
+| `2026-10-04__21-15-09` | JSON-only + `thought` cap + objective fix | 60 | 5 | 6 | max_turns | 0 |
+| `2026-10-04__21-56-14` | + pipefail + failure history | 60 | 6 | 6 | max_turns | 0 |
+| `2026-10-04__22-30-48` | + level retention + "failure to cause" | **24** | 0 | 1 | **no_progress** | 0 |
+| `2026-10-04__22-38-56` | + plan-guard fix | 60 | 2 | 2 | max_turns | 0 |
+
+### 8.2 What is fixed
+
+1. **Structured output — JSON-only** (`src/llm/structured.ts`). Under the long prompt the
+   provider returned tool calls with flat/broken args (`operator` at the top level instead
+   of `action`, "Bad control character"), and LangChain v1 has no `Runnable.bind` (per-call
+   kwargs go through `withConfig`). Now: **the raw JSON schema in the prompt + manual
+   parse**; a cut-off is detected by `finish_reason == "length"` (structural check as a
+   fallback); `max_tokens` is raised via `rebuild` (a constructor field); one repair round
+   on a schema violation. Startup `llm_error`s are gone.
+2. **`thought` is bounded** to one short sentence (`src/loop/propose.ts`): the model dumped
+   its reasoning into `thought` (up to **30 127** output tokens/turn → cut-offs). Now
+   ~100–300; no cut-offs.
+3. **`pipefail`** in `workspace.run` (`src/tools/workspace.ts`): `make | tail` now returns
+   `make`'s code — a failure shows as `fail`, not `pass`.
+4. **Failure history** (`src/ir/project.ts`): failed attempts are **not pruned** after an
+   `edit`, and a `calls` note surfaces the error line even when `verdict=pass`.
+5. **Level-retention context** (`src/loop/graph.ts`, `projectNode`): the results of the
+   **current** focus goal's actions stay in `shown` with no TTL until the focus leaves the
+   level; `need`/`query` are for cross-level recall (TTL). Removes the `read ↔ make`
+   oscillation (one window was re-read 5–6 times).
+6. **Plan guard** (`src/loop/classify.ts`): "all plan items fulfilled → do not grow" fires
+   only when the plan **carries a checkable step** (an action or an objective sub-goal).
+   Otherwise, after epistemic stages (reproduce/locate) are closed, the model could not add
+   the fix stage and fell into a `create_goal` loop (regression `22-30-48`).
+7. **Prompt "from a failure to its cause"** (`src/loop/propose.ts`): extract the exact fact
+   from the error → name the invariant → **read the definition of every symbol/macro** →
+   check **all** maintainers of the invariant, including the quiet ones (the advance), not
+   only the obvious (the merge) → the failing check is the oracle.
+8. **Trace replay** (`bench/replay.ts`, `npm run replay`): runs recorded contexts
+   (`contexts.ndjson` or `SKEIN_CONTEXT` from a Harbor log) through the live model without
+   Harbor; prints `operator`/tool, `thought`, tokens, `finish_reason`.
+9. Docs synced: `testing_{ru,}.md` §8.1, `context_design_{ru,}.md` §8,
+   `ir_semantics_{ru,}.md` (`run target` semantics), `tools_{ru,}.md` (`run`).
+
+### 8.3 Diagnosis: why the task is not solved
+
+- **Information was not missing.** A per-turn audit: at **every** edit the context held the
+  defective line (`p += Whsize_hd(hd);`) and the crash output (`Segmentation fault`), and
+  the code was re-read.
+- **The root is a specific symbol.** The model reasoned about `Whsize_hd` **without ever
+  reading its definition** (0 contexts out of 60). Without it, the common advance
+  `p += Whsize_hd(hd)` looks correct, and attention goes to the merge/rle logic.
+- **After item 8.2.7** the `Whsize_hd` definition is now read (**0 → 19** contexts), the
+  model adds an objective fix stage and makes edits. Its hypotheses are close ("with
+  wosize=0 `Whsize_hd` gives 1, not `wh`"), but it patches the `p += wh*Wosize_hd(hd)`
+  branch and the merge, not the common `p += Whsize_hd(hd)` → `p += wh`. One inference is
+  not made.
+- A `create_goal` thrash remains (20 per run) — a separate issue.
+
+### 8.4 Open tasks
+
+1. **The common advance after a run-skipping branch.** Nudge: "if the branch already
+   advanced the pointer past a run, the common step is exactly one size-class slot
+   (`wh`)". Word it generally, not hard-coded to the case.
+2. **`create_goal` thrash.** Dedup/limit growth; repeated interpretations in a row until
+   `no_progress`.
+3. **grep scope + service files** (from §5, still relevant).
+4. Stage-closing discipline (from §5).

@@ -46,8 +46,9 @@ near step and a list of intentions that grows as we go, not a forecast. Hence:
    grown as we work; no long plans.
 2. **An item is a sub-goal (`goal`)**, closed by predicate (`complete`/`check`). An
    `action` item is only for a command you run **right now, verbatim**. For a bugfix
-   the stages are `reproduce → locate → fix → verify` (epistemic ones close with
-   `complete`, objective ones with a `check`).
+   the stages are `reproduce → locate → fix` (the epistemic ones close with
+   `complete`); `fix` IS the hypothesis: `why` + an `objective done_when` = the command
+   that shows the failure, so its own `check` settles it — there is no separate `verify`.
 3. **A hypothesis is a node, not a thought.** An explanatory guess becomes a goal with
    `why`, and a `check` settles it — not the reasoning text.
 4. **Branching on any item.** An item that did not work gets an **alternative**; the
@@ -101,7 +102,7 @@ rollback without losing history.
 | 6 | Does not know prohibitions | `constraints` | present |
 | 7 | Forgets the chosen/failed option | `alternatives` in a revision node | present (extend to items) |
 | 8 | Does not know the turn budget | `budget` | open (§7) |
-| 9 | **Does not retain a working set of code** | — | **open** |
+| 9 | **Does not retain a working set of code** | `shown` with TTL + cap (§8) | **decided §8** |
 | 10 | **Stuck on a stale plan item** | checklist + alternatives | **to fix via §3–4** |
 | 11 | Builds a long brittle plan | horizon 1–3, instruction | **to fix** |
 | 12 | Context explodes (witness/dumps) | do not inline raw payloads | present |
@@ -132,24 +133,61 @@ one context.
 
 1. **Results have addresses.** Each result has an `id`; `calls` shows the `id` (the id
    of the latest occurrence). The model references results by id.
-2. **A hypothesis carries what to show.** The proposal gains an optional `need: [id …]`
-   — which results to show **in full** on the **next** turn. It applies for **one
-   turn**: with each hypothesis the model sets the content anew.
-3. **Storing the bodies.** The logos stores a result's body: **a small one directly in
+2. **Level retention.** Everything the **current** goal's actions produced (its plan's
+   attempts: code windows, build output, checks) is shown in `shown` **in full, with no
+   TTL**, until the focus leaves the level; on ascending, the level collapses into the
+   `calls` notes. This removes `read ↔ run` oscillation: the current attempt's evidence
+   stays in view.
+3. **A working set with a TTL — for cross-level recall.** `need: [id …]` (and
+   `query {id}`) add **results** (`observation`/`check`) from **another** level to `shown`
+   for `HELD_TURNS` turns; re-adding refreshes. An id without a body (an `action`/`goal`
+   node) is **refused** in `need` — there is nothing to show.
+4. **Storing the bodies.** The logos stores a result's body: **a small one directly in
    the node's payload**; **a large one in a temp file**, with a reference (`outputRef`)
    in the node. The projection assembles the requested results (from the payload or, for
    a reference, at the loop level — `project` stays pure) and shows them next to
    `lastResult`.
-4. **A `need` limit.** A reasonable safety cap (say ≤5), **declared in the
-   instructions**: otherwise a model mistake can eat the whole context. This is not a
-   "predetermined history" but protection against unbounded growth.
-5. **Addressing by `id`** for now; another scheme later if needed.
-6. **Append-only.** `need` is part of the hypothesis record; it changes only through a
+5. **Caps.** The shared `shown` budget is at most `MAX_NEED` (5) bodies and
+   `2 × OUTPUT_LIMIT` (16000) characters; explicit `need`/`query` come first, the current
+   level fills the rest by recency. The TTL (`HELD_TURNS`, 6) and caps are anchored to
+   observed request gaps; an adaptive TTL variant is compared in
+   `tests/workingset.test.ts`.
+6. **Addressing by `id`** for now; another scheme later if needed.
+7. **Append-only.** `need` is part of the hypothesis record; it changes only through a
    new proposal.
-7. **Staleness.** Not handled for now. If a result from **before** a mutation is
-   recalled, it is shown as-is; versions and new nodes already exist, and the latest
-   mutation is considered current. We return to it later.
+7. **Staleness.** `shown` carries only current content: if the file a read was taken
+   from has changed since (a different version), the entry is dropped from the working
+   set, so the "a `stale` fact is never shown as active content" invariant holds.
+   `run`/`check` bodies are historical and never go stale.
 
 **Consequence for the "no file content in the IR" invariant.** Small tool results may
 now live in a node's payload, large ones behind a temp-file reference. Secrets still do
 not enter. The invariant is amended in the semantics.
+
+## 9. Branch history as an index (retrieval, not repetition)
+
+`calls` is not just "what I did" — it is the **index of the current interpretation's
+history**. Each entry has an `id`; a result body is fetched by `id`
+(`query { id, start?, end? }`), not by re-running the command. The point is to keep the
+context light: the projection carries signatures + addresses, bodies are pulled on
+demand.
+
+The index's scope is the **whole subtree of the current chosen interpretation**, not
+just the current path: evidence from `reproduce` stays addressable on `locate`/`fix`.
+Entries of abandoned interpretations are not shown.
+
+Consequences:
+
+- a repeated `read`/`grep` with the same signature and an unchanged world is a
+  **protocol violation**: refused, and the reason names the existing result's `id`
+  (semantics §2.7, §4.2);
+- a `query {id}` **enters the same working set** (§8): the body is shown from `shown`
+  for several turns, so a repeated `query` of that id — while it is in the set — is
+  redundant and refused. A body evicted by the cap can be re-queried. For **non-results**
+  (`action`/`goal`) a separate set of recently queried ids with the same TTL is kept, so
+  a repeated `query` of such a node is refused too. A state query
+  (`kind`/`predicate`/`edgesOf`) is not pinned;
+- the instructions must say this explicitly: to re-see a step, call `query` by `id` (or
+  add it to `need`); do not repeat the call. This is part of the contract, not a hint;
+- `need` and `query {id}` are two entrances to one working set; `need` is a batch,
+  `query` a single body.

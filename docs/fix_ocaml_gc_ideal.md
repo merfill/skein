@@ -87,7 +87,7 @@ are illustrative; the shapes are as in `docs/ir_semantics.md`.
 | 5 | `apply` | `read HACKING.adoc` | `action` + `observation` + `file` |
 | 6 | `apply` | `grep "pool_sweep\|pool_allocate\|freelist"` | `action` + `observation` |
 | 7 | `apply` | `read runtime/shared_heap.c` | `action` + `observation` + `file`@`V1` |
-| 8 | `apply` | `run "git log --oneline -8 -- runtime/shared_heap.c"` | `action` + `observation` |
+| 8 | `apply` | `grep "POOL_FREE_HEADER\|POOL_BLOCK_FREE\|Whsize_hd"` (the free-block run-length encoding) | `action` + `observation` (the macros and the skip invariant) |
 | 9 | `complete` | "G2 is reached" | `complete` → `G2`; derived `achieved_under` |
 | 10 | `create goal` | goal "fix the header" (`why` = "under compression `pool_sweep` does not move the free block's header", `done_when` = the build) | `goal G3` as an item in the root's plan `P0` |
 | 11 | `apply` | `edit runtime/shared_heap.c` | `action` + `mutate` `V1 → V2` |
@@ -95,6 +95,12 @@ are illustrative; the shapes are as in `docs/ir_semantics.md`.
 | 12b | `create goal` | on `refuted`: a new approach option | an `alternatives` node + option `G3'`; the Arbiter sets `chosen`; `G3` derived `refuted`, non-chosen — `abandoned` |
 | 13 | `apply` | a `run` of the task criterion (the command from `done_when`) | `check`; the request is `addressed`; acceptance external |
 | 14 | *(the Arbiter)* | stop | — |
+
+The task image **removes `.git`** (`environment/Dockerfile`: *"We don't want it
+cheating and just rolling back the recent changes"*), so `git log`/`git diff` is
+unavailable: localization must come from the code and the free-block invariant, not from
+a diff. The defect is a single token, so a named suspect is enough — the fix is a
+hypothesis to be **checked**, not proven in `locate`.
 
 The key difference from the facts: in the actual run the agent issued only commands
 (`read/grep/run`) and **created no goal with a plan and no check** — the work was

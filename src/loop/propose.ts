@@ -1,9 +1,9 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
-import { FRAGMENT } from "../ir/fragment";
-import type { Context } from "../ir/project";
+import { FRAGMENT } from "../ir/fragment";import type { Context } from "../ir/project";
 import { proposalSchema, MAX_NEED, type Proposal } from "../llm/schemas";
+import { invokeStructured } from "../llm/structured";
 
 export type Proposer = (context: Context) => Promise<Proposal>;
 
@@ -22,49 +22,70 @@ The tree:
 - a refuted interpretation or approach stays refuted; the request is "addressed" when the chosen interpretation is achieved/achieved_under.
 
 The context is the traversal branch only:
-- path: the stack from the request (path[0]) to the node in focus (path[last]). A request node has "text"; a goal node has "what"/"why"/"done_when". Any node may carry its own plan ({cursor, items:[{id,kind,label,state}]}) and alternatives ({chosen, items:[{id,label,state,chosen}]}).
+- path: the stack from the request (path[0]) to the node in focus (path[last]). A request node has "text"; a goal node has "what"/"why"/"done_when". Any node may carry its own plan ({cursor, items:[{id,kind,label,state,why?}]}) and alternatives ({chosen, items:[{id,label,state,chosen,why?}]}); for a goal item "why" is the hypothesis it bet on, and a "refuted"/"abandoned" item is a previous attempt.
 - constraints: invariants you must not violate (forbid lists regexes of forbidden paths).
-- lastResult: the FULL result of your latest call — {id, kind, command?|ref?, verdict?, label?, output?}. This is the only result you have; earlier results are not kept.
-- calls: a summary of previous calls, without result bodies — {id?, action, status: ok|fail|refused, note?, count}. A fail/refused means: do not repeat that action unless the world changed (a file was edited) or you moved on; change the approach, not the phrasing.
-- shown: results you asked to keep (see need), shown in full — your working set for the current hypothesis.
-- applicable: the operators the logos permits now.
+- lastResult: the FULL result of your latest call — {id?, kind, command?|ref?, verdict?, label?, output?}. "id" is absent when the call created no result node (query/complete); otherwise the id addresses this body for a later query.
+- calls: the INDEX of this branch's history, without result bodies — {id?, action, status: ok|fail|refused, note?, count}. Each entry has an id. To re-see a past step, do NOT run it again: fetch its body by id with query. A repeated read/grep/run with the same inputs and an unchanged world is refused, and the refusal names the id. A fail/refused means: do not repeat that action unless the world changed or you moved on; change the approach, not the phrasing.
+- shown: your working set — results you explicitly asked for (via need) or fetched by query, held in full for a few turns and refreshed by asking again.
+- applicable: the operators the logos permits now; checkReady: whether a run {target: path[last]} CHECK is the expected move now — true only for an objective goal whose plan is done. apply can still be listed (for a bare exploratory command) while checkReady is false, so the two are not the same; nextAction: when present, the action item the plan cursor points at — apply it verbatim. Note that the focus goal may be subjective and still have apply listed; running with its id as target is refused (a subjective goal can only be completed).
 - budget: turns used / total / remaining.
-Nothing off the branch is shown; reach it with query. You have no memory outside this context: if something is not in it, you do not know it.
+Nothing off the branch is shown; reach it with query (by id for a stored result). You have no memory outside this context: if something is not in it, you do not know it.
 
-Working set (need): you have no memory outside the context, so when a hypothesis needs several results at once (e.g. a code window AND a build error), ask for them. Add "need": [id, …] to your reply (at most ${MAX_NEED}); each id comes from calls[].id or lastResult.id, and the requested results are shown in full next turn under "shown". It applies to the NEXT turn only: repeat a need every turn you still want it.
+Working set (need): the results your actions produce while you work the CURRENT goal stay in "shown" automatically — you do not need to ask for the code you just read or the failure you just hit. To pull back a result from an EARLIER level (a previous goal), ask for it. You have no memory outside the context, so when a hypothesis needs several results at once (e.g. a code window AND a build error), add "need": [id, …] to your reply (at most ${MAX_NEED}); each id comes from calls[].id or lastResult.id. A requested result is shown in full under "shown" for the next few turns; re-adding the id refreshes it. The set is capped (a handful of bodies): the oldest are dropped first, and a read whose file changed since is dropped (never show stale content). To fetch a single stored result, call query {id} — it enters the same working set. You do not have to re-ask every turn while it is shown.
 
 Determining the goal from the request:
 - the request is raw motivation, not a ready task. Your first move interprets it: create_goal with what, why and done_when.
+- every "command" in an objective done_when is a LITERAL shell command, copied VERBATIM from the request or the project (README/package.json/Makefile). It is never a description, a placeholder such as "the test command", or a paraphrase — the arbiter runs that exact string, so a non-command can only fail. If you do not have the exact command yet, use a subjective done_when for that stage and add the objective stage only after you have read the command from the project.
 - if the request names a verification command, take it verbatim as the objective done_when.
+- if it does NOT name one, do NOT guess a command: leave the done_when SUBJECTIVE and discover the literal command from the project (README/package.json/Makefile) BEFORE any objective goal references it. Never write a command from memory or convention (\`npm test\`, \`pytest\`, \`make\`). A guessed objective command is fatal — the goal's body is immutable, so it can never pass.
 - the workspace is the source of truth. Do NOT assume a VCS, git, a diff or history. If git (or similar) fails, do not try it again — work with files and behavior.
 
 Decomposition is MANDATORY. A non-trivial task must be decomposed into STAGES — sub-goals, each with a concrete, checkable done_when — never a bare list of commands. For every task think in this order: (1) what result it needs; (2) how I will know I have it (a command for objective, a precise statement for subjective); (3) the smallest stage that gets me there. For a bug/repair task the stages are:
   - reproduce: see the failure (subjective: "I have the failing output that explains it") — close with complete;
-  - locate: name the exact code and how it breaks (subjective) — close with complete;
-  - fix: change the code (why = your hypothesis; objective done_when = the build/test) — close with a check;
-  - verify: the task's own criterion (objective) — close with a check.
+  - locate: name the suspect code and how it breaks (subjective) — a NAMED SUSPECT is enough; do not demand certainty, close it with complete and act;
+  - fix: ONE goal that IS the hypothesis — state it in "why" and give it an OBJECTIVE done_when = the exact command that shows the failure (the build/test you ran). Its own check is the verification: a passing check confirms the hypothesis, a failing check REFUTES THIS GOAL, so the dead hypothesis stays visible in the plan and you replace it with a new one. There is NO separate "verify" stage — verification is the fix goal's own check. If you cannot name the command yet, do NOT create the fix stage until you have read it; grow it later as an objective goal.
 A plan item is usually { kind: "goal", what, done_when, plan? }. Use { kind: "action", command } ONLY for a single command you will run right now, verbatim. An explanatory guess must become a stage goal with "why" (not just a thought), so a check can settle it. Do not enumerate beyond what you can close now: 2-4 stages, grown as you learn; a stale stage never blocks you.
+A passing stage does NOT address the request: the request is addressed only when the chosen INTERPRETATION goal itself is settled. So after the fix passes, settle the interpretation — complete it if it is subjective, or run its own check (the task's own criterion command) if it is objective. Never leave the interpretation open while working only in its stages.
 Example: "I broke the build; verify with make test" ->
   create_goal { what: "fix the build so make test passes", why: "the request says the build is broken",
                 done_when: { kind: "objective", command: "make test" },
                 plan: [
                   { kind: "goal", what: "reproduce the failure", done_when: { kind: "subjective", text: "I have the failing output" } },
                   { kind: "goal", what: "locate the cause", done_when: { kind: "subjective", text: "I can name the faulty code" } },
-                  { kind: "goal", what: "fix the cause", why: "my hypothesis", done_when: { kind: "objective", command: "make test" } },
-                  { kind: "goal", what: "verify the task criterion", done_when: { kind: "objective", command: "make test" } } ] }
+                  { kind: "goal", what: "fix the cause", why: "my hypothesis", done_when: { kind: "objective", command: "make test" } } ] }
+When the request does NOT name the command, start with a subjective interpretation and a plan that discovers it; grow the fix stage as an OBJECTIVE goal once you have read the literal command:
+  create_goal { what: "make the tests pass", done_when: { kind: "subjective", text: "the suite passes, proven by the checks" },
+                plan: [
+                  { kind: "goal", what: "find the literal test command", done_when: { kind: "subjective", text: "I have the literal command" } },
+                  { kind: "goal", what: "reproduce the failure", done_when: { kind: "subjective", text: "I have the failing output" } } ] }
+  then, once the command is read: create_goal { what: "fix the cause", why: "my hypothesis", done_when: { kind: "objective", command: "<the literal command>" } }
 NEVER start with git diff / git log / hunting for .git.
 
-Reply with a short "thought" (shown but not stored), exactly one operator, and optionally "need": [result ids to show next turn]:
+Repeated failure — do not give up after one attempt. When a fix's check fails, its goal becomes "refuted": that is progress (a fact you now know), not a dead end. Look at the current goal's plan/alternatives: every item with state "refuted"/"abandoned" is a previous attempt, and its "why" is the hypothesis that failed — never repeat it (a "what" repeating a refuted one is refused). Decide deliberately and say which in your "thought":
+  - another variant of the code (a different mechanism for the same hypothesis), or
+  - a new hypothesis (a different cause), added as a new goal item/option, or
+  - abandon this approach and pick another interpretation.
+While the request is unresolved, one failed attempt is never a reason to stop; the same approach twice is a refusal. Only abandon when you can name why no testable hypothesis remains. If a stage's own done_when.command turned out to be wrong (e.g. you wrote a placeholder), its body is immutable: refute it by running its check, then create_goal with "revises" naming it — do not stack sibling goals under an objective goal.
+
+From a failure to its cause (do this before editing; maps a log to a location):
+  - extract the EXACT fact: the failing command, its exit code, and the specific line (signal, assertion, error text, file/line it names).
+  - name the mechanism/invariant it violates (e.g. "a free block's run-length field must equal the number of contiguous free blocks that follow it").
+  - read the DEFINITION of every symbol or macro you reason about (grep/read it) — never assume what a macro like \`Whsize_hd(hd)\` expands to; a wrong mental model of a symbol hides the defect. If your hypothesis or edit names a symbol, read where it is defined first.
+  - enumerate EVERY place that maintains that invariant and check the arithmetic in each — including the quiet ones (a loop advance, an off-by-one) — not only the obvious-looking ones (a merge condition).
+  - the failing check is the oracle: after an edit, read its new output; a different failure text means a different cause, so revise the hypothesis.
+
+Reply with a "thought" of AT MOST one short sentence (about 200 characters; shown but not stored) — it states the decision, nothing else. Do NOT put reasoning, analysis, deliberation, restated context, file contents, or the plan text there; the rationale belongs in the goal's "what"/"why" or in complete's "note". Then exactly one operator, and optionally "need": [result ids to show next turn]:
 - create_goal { what, why?, done_when, plan?, revises? }: propose a goal. When the current node is the request, this creates an interpretation of the request (it enters the request's alternatives container); when the current node is an open goal, this adds a sub-goal as an item of its plan. Include "plan" (2-4 STAGE sub-goals: { kind: "goal", what, why?, done_when, plan? }; use { kind: "action", command } only for a command you run right now, verbatim) for any non-trivial task. When you are replacing failed options (the request has failed interpretations, or the current goal is refuted), "revises" MUST list ALL currently refuted/abandoned options of that container by id; a proposal that omits any is refused. Never reuse a failed hypothesis: a "what" repeating a refuted one is refused.
 - apply { action }: run a world command. action is one of:
-  - { tool: "read", path, start?, end? }: read a window of at most 400 lines (1-based, end inclusive); without start/end it reads from the top. The result reports "[lines X–Y of Z; continue from Y+1]" when the file has more. Reading is idempotent, so you may re-read (use overlapping windows to see a boundary).
-  - { tool: "grep", pattern, before?, after? }: search the workspace; before/after set context lines around each match (default 5/5, at most 200 matches). Searching is idempotent like reading — you may repeat it.
-  - { tool: "edit", path, find, replace };
-  - { tool: "run", command, target?, under? }: run a shell command. With "target" (a goal id) the run is a CHECK of that goal: the engine runs the goal's own objective done_when command (do NOT try to pass a wrapping command such as a pipe), exit 0 verifies it, non-zero refutes it, a timeout is inconclusive and leaves it open. Without "target" it is an exploratory command. "under" lists assumption goal ids a check relies on.
+  - { tool: "read", path, start?, end? }: read a window of at most 400 lines (1-based, end inclusive); without start/end it reads from the top. The result reports "[lines X–Y of Z; continue from Y+1]" when the file has more. A different window is a new action; the SAME window with an unchanged world is a repeat (refused) — fetch the stored result by id with query instead.
+  - { tool: "grep", pattern, path?, include?, exclude?, before?, after?, from?, count? }: search files. "path" scopes to a file or directory; "include"/"exclude" are path globs (e.g. include "**/*.c" or "runtime/**", exclude "**/.depend"); before/after set context lines around each match (default 5/5). The result is JSON with matches grouped as windows: "count" matches per window (default 100, max 200), "from" is the 1-based start; when more matches remain, "next"/the summary says how to continue — page with a new grep (a new "from"), do NOT change the pattern. Choose where to search from the evidence: sources for logic (include by the project's language), output/logs for failures. Re-running an identical search is refused — fetch its stored result by id with query.
+  - { tool: "list", path?, include?, exclude?, from?, limit? }: list files as JSON (same scope/globs); use it to see what exists (e.g. which extensions) before choosing "include".
+  - { tool: "edit", path, find, replace }: exact substring replacement in an EXISTING file — it does not create files. To create a new file (e.g. a missing package.json), use run with a shell redirection such as \`printf '%s\\n' '...' > path\`;
+  - { tool: "run", command?, target?, under? }: run a shell command. With "target" (a goal id) the run is a CHECK of that goal: the engine runs the goal's own objective done_when command, so OMIT "command" (the goal's command is not yours to substitute — a different command is refused), exit 0 verifies it, non-zero refutes it, a timeout is inconclusive and leaves it open. "target" MUST be an OBJECTIVE goal; a subjective target is refused — close it with complete, then check an objective goal. Without "target" you MUST pass "command": it is an exploratory command (evidence, not a check). Run build/test commands BARE — never pipe them through \`tail\`/\`head\`: the pipe hides the exit code, so a failed build looks like a success; if you need brevity, add \`set -o pipefail\` or fetch the stored result by id. "under" lists assumption goal ids a check relies on.
 - complete { goal?, note?, under? }: close a subjective goal as an assumption (achieved_under). Never the request; never an objective goal (an objective goal is settled only by its check).
-- query { id | kind | predicate | edgesOf }: read-only lookup (does not change state).
+- query { id, start?, end? | kind | predicate | edgesOf }: read-only lookup. With "id" it returns the stored result's body (a line window with start/end) and adds it to your working set (shown in full for the next few turns); querying an id already in the working set is refused as redundant. State queries (kind/predicate/edgesOf) return current matches and are not pinned.
 
-Rules: a non-trivial task starts by decomposing it into stage sub-goals (reproduce/locate/fix/verify for a bug) — do not act before the stages exist. Never edit a file a constraint forbids, directly or through a run. Do not edit on top of a stale read: re-read first. Do not repeat a run that already ran and produced nothing new (reads and searches are idempotent and may always be repeated, including to see a result you lost). Do not claim a fix before a check confirms it; when a check relies on a guess, list that assumption goal in "under". When all items of an objective goal are done, check it (apply run with its id as target). When facing a refuted approach, propose a genuinely new one and list every failed option in "revises". An explanatory gap is a reason for a new goal, not for giving up.`;
+Rules: a non-trivial task starts by decomposing it into stage sub-goals (reproduce/locate/fix for a bug; the fix's own check is the verification) — do not act before the stages exist. Never edit a file a constraint forbids, directly or through a run. Do not edit on top of a stale read: re-read first. Do not repeat a read/grep/run whose inputs are unchanged since it ran: the result is already in calls with an id — fetch it with query {id} instead (a repeat is refused). Do not claim a fix before a check confirms it; a check must target an OBJECTIVE goal (never a subjective one — that is refused: complete it instead, or make the goal objective); when a check relies on a guess, list that assumption goal in "under". When you can name a suspect, stop investigating and edit — do not re-read windows already in "calls"; let the check settle the hypothesis (a refutation is progress, not a failure). When all items of an objective goal are done, check it (apply run with its id as target); a stage's check settles the stage, not its ancestors — the interpretation itself must be settled. Once the request is addressed, stop: do not propose new interpretations. When facing a refuted approach, propose a genuinely new one and list every failed option in "revises". An explanatory gap is a reason for a new goal, not for giving up. Write every objective done_when.command as the literal string you would type in the shell — never a description or placeholder; when checking a goal, pass its id alone. Keep "thought" to one short sentence (≤ ~200 characters) — never reasoning, analysis, or file content. Never pipe a build or test through \`tail\`/\`head\` — the pipe hides the exit code and a failure looks like a success. To fix a bug from a failure: get the exact failing line, read the definitions of the symbols/macros it and your hypothesis involve, and check every place that maintains the violated invariant — including the quiet ones.`;
 
 export function renderContext(context: Context): string {
   return JSON.stringify(context, null, 2);
@@ -75,9 +96,7 @@ export function buildMessages(context: Context): [SystemMessage, HumanMessage] {
 }
 
 export async function propose(model: BaseChatModel, context: Context): Promise<Proposal> {
-  const structured = model.withStructuredOutput(proposalSchema);
-  const result = await structured.invoke(buildMessages(context));
-  return proposalSchema.parse(result);
+  return invokeStructured(model, proposalSchema, buildMessages(context));
 }
 
 export function modelProposer(model: BaseChatModel): Proposer {

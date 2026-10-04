@@ -22,6 +22,7 @@ import { loadSettings } from "../src/config/settings";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
+import { invokeStructured } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, renderContext } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -107,7 +108,7 @@ function toLoopEvent(action: Action): LoopEvent {
     case "edit":
       return { tool: "edit", input: { filePath: apply.path } };
     case "run":
-      return { tool: "bash", input: { command: apply.command } };
+      return { tool: "bash", input: { command: apply.command ?? `check ${apply.target ?? ""}` } };
     default:
       return { tool: apply.tool, input: {} };
   }
@@ -189,7 +190,7 @@ async function main(): Promise<void> {
   const proposals: Action[] = [];
   const turns: Omit<TurnRecord, "accepted">[] = [];
   const contexts: { turn: number; chars: number; context: Context }[] = [];
-  const structured = createChatModel({ ...settings, model }).withStructuredOutput(proposalSchema);
+  const chat = createChatModel({ ...settings, model });
 
   const propose = async (context: Context): Promise<Proposal> => {
     const rendered = renderContext(context);
@@ -197,9 +198,11 @@ async function main(): Promise<void> {
     contexts.push({ turn: turns.length, chars: contextChars, context });
     const meter = new TurnMeter();
     const started = Date.now();
-    const result = await structured.invoke(buildMessages(context), { callbacks: [meter] });
+    const proposal = await invokeStructured(chat, proposalSchema, buildMessages(context), {
+      callbacks: [meter],
+      rebuild: (maxTokens) => createChatModel({ ...settings, model, maxTokens }),
+    });
     const elapsedMs = Date.now() - started;
-    const proposal = proposalSchema.parse(result);
     proposals.push(proposal.action);
     turns.push({
       turn: turns.length,

@@ -15,16 +15,19 @@ import type { GrepMatch, Workspace } from "./workspace";
 
 export interface ExecOutcome {
   events: Event[];
-  turn: { seq: number; kind: "proposal" | "tool"; text: string };
+  turn: { seq: number; kind: "proposal" | "tool"; text: string; nodeId?: string };
   done: boolean;
   stopReason: string | null;
 }
 
-const OUTPUT_LIMIT = 8000;
+export const OUTPUT_LIMIT = 8000;
 const MAX_READ_LINES = 400;
 const MAX_GREP_MATCHES = 200;
+const GREP_COUNT_DEFAULT = 100;
 const GREP_BEFORE_DEFAULT = 5;
 const GREP_AFTER_DEFAULT = 5;
+const MAX_LIST_FILES = 500;
+const LIST_LIMIT_DEFAULT = 200;
 // A result body is kept in the node when small, otherwise in a temp file referenced by
 // the node (docs/context_design_ru.md §8).
 const MAX_INLINE_RESULT = 2000;
@@ -62,7 +65,34 @@ function excerpt(text: string, ref: string, limit = OUTPUT_LIMIT): string {
 
 const QUERY_LIMIT = 50;
 
-function runQuery(state: State, action: Extract<Action, { operator: "query" }>): string {
+// The body of a stored result: a small one lives inline in the payload, a large one
+// behind `outputRef` in the workspace (invariant 11). Used by `query` and by the loop
+// when resolving `need`.
+export function resolveOutput(
+  state: State,
+  id: string,
+  workspace: Workspace,
+): string | undefined {
+  const node = state.nodes.get(id);
+  if (node === undefined) return undefined;
+  const payload = node.payload as Record<string, unknown> | undefined;
+  if (typeof payload?.output === "string") return payload.output;
+  const ref = typeof payload?.outputRef === "string" ? payload.outputRef : undefined;
+  if (ref !== undefined) {
+    try {
+      return workspace.read(ref);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function runQuery(
+  state: State,
+  action: Extract<Action, { operator: "query" }>,
+  resolve: (id: string) => string | undefined,
+): string {
   const nodeRow = (node: Node) => ({
     id: node.id,
     kind: node.kind,
@@ -80,7 +110,30 @@ function runQuery(state: State, action: Extract<Action, { operator: "query" }>):
     }
   } else if (action.id !== undefined) {
     const node = state.nodes.get(action.id);
-    if (node) nodes.push(nodeRow(node));
+    if (node === undefined) return "(nothing matches)";
+    // A stored result's body is fetched by id — the "index" mechanism (tools §4.5):
+    // re-see a past step without re-running it.
+    const body = resolve(action.id);
+    if (body !== undefined) {
+      const window = readWindow(body, action.start, action.end);
+      const trailer =
+        window.total > 0 && window.end < window.total
+          ? `\n…[lines ${window.start}–${window.end} of ${window.total}; continue from ${window.end + 1}]`
+          : "";
+      return JSON.stringify(
+        {
+          id: action.id,
+          kind: node.kind,
+          start: window.start,
+          end: window.end,
+          total: window.total,
+          output: `${window.text}${trailer}`,
+        },
+        null,
+        2,
+      );
+    }
+    nodes.push(nodeRow(node));
     for (const edge of state.edges.values()) {
       if (edge.from === action.id || edge.to === action.id) {
         edges.push({ id: edge.id, kind: edge.kind, from: edge.from, to: edge.to });
@@ -178,57 +231,126 @@ export function commandOf(apply: Apply): string {
     case "grep": {
       const before = apply.before ?? GREP_BEFORE_DEFAULT;
       const after = apply.after ?? GREP_AFTER_DEFAULT;
-      return `grep ${apply.pattern} ${before}/${after}`;
+      const from = apply.from ?? 1;
+      const count = Math.min(apply.count ?? GREP_COUNT_DEFAULT, MAX_GREP_MATCHES);
+      const scope = [apply.path, apply.include, apply.exclude]
+        .filter((part): part is string => part !== undefined)
+        .join(" ");
+      return `grep ${apply.pattern}${scope === "" ? "" : ` ${scope}`} ${before}/${after} [${from}+${count}]`;
+    }
+    case "list": {
+      const from = apply.from ?? 1;
+      const limit = Math.min(apply.limit ?? LIST_LIMIT_DEFAULT, MAX_LIST_FILES);
+      const scope = [apply.path, apply.include, apply.exclude]
+        .filter((part): part is string => part !== undefined)
+        .join(" ");
+      return `list${scope === "" ? "" : ` ${scope}`} [${from}+${limit}]`;
     }
     case "edit":
       return `edit ${apply.path}`;
     case "run":
-      return apply.command;
+      return apply.command ?? "";
   }
 }
 
-// Render grep matches with context lines, merging overlapping windows, and report
-// truncation when more than MAX_GREP_MATCHES matched.
-function renderGrep(
-  matches: GrepMatch[],
+interface GrepResultItem {
+  path: string;
+  line: number;
+  match: string;
+  before: string[];
+  after: string[];
+}
+
+interface GrepWindow {
+  json: string;
+  total: number;
+  returned: number;
+}
+
+function clipLine(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function grepItem(
+  match: GrepMatch,
   reader: (path: string) => string | undefined,
   before: number,
   after: number,
-): string {
-  const out: string[] = [];
-  if (matches.length > MAX_GREP_MATCHES) {
-    out.push(`…[showing ${MAX_GREP_MATCHES} of ${matches.length} matches; narrow the pattern]`);
+): GrepResultItem | undefined {
+  const content = reader(match.path);
+  if (content === undefined) return undefined;
+  const lines = content.split("\n");
+  const beforeLines: string[] = [];
+  for (let i = Math.max(1, match.line - before); i < match.line; i += 1) {
+    beforeLines.push(lines[i - 1] ?? "");
   }
-  const byFile = new Map<string, number[]>();
-  for (const match of matches.slice(0, MAX_GREP_MATCHES)) {
-    const lines = byFile.get(match.path) ?? [];
-    lines.push(match.line);
-    byFile.set(match.path, lines);
+  const afterLines: string[] = [];
+  for (let i = match.line + 1; i <= Math.min(lines.length, match.line + after); i += 1) {
+    afterLines.push(lines[i - 1] ?? "");
   }
-  for (const [path, lineNumbers] of byFile) {
-    const content = reader(path);
-    if (content === undefined) {
-      out.push(`${path}: (unreadable)`);
-      continue;
-    }
-    const lines = content.split("\n");
-    const sorted = [...new Set(lineNumbers)].sort((a, b) => a - b);
-    const windows: { from: number; to: number }[] = [];
-    for (const line of sorted) {
-      const from = Math.max(1, line - before);
-      const to = Math.min(lines.length, line + after);
-      const last = windows[windows.length - 1];
-      if (last !== undefined && from <= last.to + 1) last.to = Math.max(last.to, to);
-      else windows.push({ from, to });
-    }
-    for (const window of windows) {
-      for (let i = window.from; i <= window.to; i += 1) {
-        out.push(`${path}:${i}: ${lines[i - 1] ?? ""}`);
-      }
-      out.push("--");
-    }
+  return {
+    path: match.path,
+    line: match.line,
+    match: lines[match.line - 1] ?? match.text,
+    before: beforeLines,
+    after: afterLines,
+  };
+}
+
+// Build one window of grep results as JSON. The window is a range of matches (1-based
+// `from`, `count`); the byte limit drops whole trailing results so the JSON stays
+// valid. A single oversized result has its lines clipped as a last resort.
+function buildGrepWindow(
+  matches: GrepMatch[],
+  reader: (path: string) => string | undefined,
+  options: {
+    pattern: string;
+    scope: { path?: string; include?: string; exclude?: string };
+    before: number;
+    after: number;
+    from: number;
+    count: number;
+  },
+): GrepWindow {
+  const total = matches.length;
+  const start = Math.min(Math.max(options.from - 1, 0), total);
+  const window = matches.slice(start, start + Math.min(options.count, MAX_GREP_MATCHES));
+  const results: GrepResultItem[] = [];
+  for (const match of window) {
+    const item = grepItem(match, reader, options.before, options.after);
+    if (item !== undefined) results.push(item);
   }
-  return out.join("\n");
+  const build = (kept: number): string => {
+    const payload: Record<string, unknown> = {
+      pattern: options.pattern,
+      scope: options.scope,
+      context: { before: options.before, after: options.after },
+      total,
+      from: total === 0 ? 0 : start + 1,
+      returned: kept,
+      results: results.slice(0, kept),
+    };
+    if (start + kept < total) payload.next = start + kept + 1;
+    return JSON.stringify(payload, null, 2);
+  };
+  let kept = results.length;
+  let json = build(kept);
+  while (kept > 1 && json.length > OUTPUT_LIMIT) {
+    kept -= 1;
+    json = build(kept);
+  }
+  if (json.length > OUTPUT_LIMIT && kept === 1) {
+    const item = results[0] as GrepResultItem;
+    const perLine = Math.max(
+      100,
+      Math.floor(OUTPUT_LIMIT / (item.before.length + item.after.length + 2)),
+    );
+    item.match = clipLine(item.match, perLine);
+    item.before = item.before.map((line) => clipLine(line, perLine));
+    item.after = item.after.map((line) => clipLine(line, perLine));
+    json = build(kept);
+  }
+  return { json, total, returned: kept };
 }
 
 export function executeAction(
@@ -244,16 +366,22 @@ export function executeAction(
   };
 
   const events: Event[] = [];
-  const proposalTurn = (text: string): ExecOutcome["turn"] => ({ seq: turn, kind: "tool", text });
+  const proposalTurn = (text: string, nodeId?: string): ExecOutcome["turn"] => ({
+    seq: turn,
+    kind: "tool",
+    text,
+    ...(nodeId !== undefined ? { nodeId } : {}),
+  });
   const fail = (text: string): ExecOutcome => {
     // A failure is knowledge too: materialize it as an observation with
     // verdict=fail so it enters the negative history (§2.8) and is never shadowed
     // by an accepted-looking turn.
     const seq = next();
+    const id = `obs:${seq}`;
     events.push({
       type: "add_node",
       node: {
-        id: `obs:${seq}`,
+        id,
         space: "work",
         kind: "observation",
         label: text,
@@ -261,7 +389,7 @@ export function executeAction(
         seq,
       },
     });
-    return { events, turn: proposalTurn(text), done: false, stopReason: null };
+    return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
   };
 
   const ensureFile = (path: string, ref: string): void => {
@@ -284,10 +412,11 @@ export function executeAction(
   const ensurePlan = (goalId: string): string => {
     const existing = planOf(state, goalId);
     if (existing !== undefined) return existing;
-    const planId = `w:plan:${next()}`;
+    const planSeq = next();
+    const planId = `w:plan:${planSeq}`;
     events.push({
       type: "add_node",
-      node: { id: planId, space: "work", kind: "plan", label: `plan for ${goalId}`, seq: next() },
+      node: { id: planId, space: "work", kind: "plan", label: `plan for ${goalId}`, seq: planSeq },
     });
     events.push({
       type: "add_edge",
@@ -305,7 +434,8 @@ export function executeAction(
   const ensureAlternatives = (owner: string): string => {
     const existing = alternativesOf(state, owner);
     if (existing !== undefined) return existing;
-    const altId = `w:alt:${next()}`;
+    const altSeq = next();
+    const altId = `w:alt:${altSeq}`;
     events.push({
       type: "add_node",
       node: {
@@ -313,7 +443,7 @@ export function executeAction(
         space: "work",
         kind: "alternatives",
         label: `alternatives for ${owner}`,
-        seq: next(),
+        seq: altSeq,
       },
     });
     addEdge({ kind: "llm" }, owner, altId, "has_alternatives");
@@ -332,7 +462,8 @@ export function executeAction(
   };
 
   const buildGoal = (item: GoalItem): string => {
-    const id = `w:goal:${next()}`;
+    const goalSeq = next();
+    const id = `w:goal:${goalSeq}`;
     events.push({
       type: "add_node",
       node: {
@@ -341,7 +472,7 @@ export function executeAction(
         kind: "goal",
         label: item.what,
         payload: { what: item.what, why: item.why, done_when: item.done_when },
-        seq: next(),
+        seq: goalSeq,
       },
     });
     if (item.plan !== undefined && item.plan.length > 0) {
@@ -364,7 +495,8 @@ export function executeAction(
   };
 
   const buildActionItem = (command: string, label?: string, extra?: Record<string, unknown>): string => {
-    const id = `w:action:${next()}`;
+    const actionSeq = next();
+    const id = `w:action:${actionSeq}`;
     events.push({
       type: "add_node",
       node: {
@@ -373,7 +505,7 @@ export function executeAction(
         kind: "action",
         label: label ?? command,
         payload: { command, ...(extra ?? {}) },
-        seq: next(),
+        seq: actionSeq,
       },
     });
     return id;
@@ -429,7 +561,8 @@ export function executeAction(
 
   switch (action.operator) {
     case "query": {
-      return { events, turn: proposalTurn(clip(runQuery(state, action))), done: false, stopReason: null };
+      const text = runQuery(state, action, (id) => resolveOutput(state, id, workspace));
+      return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 
     case "create_goal": {
@@ -469,7 +602,8 @@ export function executeAction(
       if (goalId === undefined) return fail("complete failed: no goal");
       const goal = state.nodes.get(goalId);
       if (goal === undefined || goal.kind !== "goal") return fail(`complete failed: no goal ${goalId}`);
-      const id = `w:complete:${next()}`;
+      const completeSeq = next();
+      const id = `w:complete:${completeSeq}`;
       events.push({
         type: "add_node",
         node: {
@@ -478,7 +612,7 @@ export function executeAction(
           kind: "complete",
           label: `complete ${goalId}`,
           payload: action.note !== undefined ? { note: action.note } : {},
-          seq: next(),
+          seq: completeSeq,
         },
       });
       addEdge({ kind: "llm" }, id, goalId, "closes");
@@ -512,7 +646,8 @@ export function executeAction(
         ensureFile(apply.path, ref);
         const command = commandOf(apply);
         const actionId = ensureAction(command, command);
-        const observationId = `obs:${next()}`;
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
         // The window is shown in full (bounded by MAX_READ_LINES); if the file is
         // longer, say where to continue.
         const trailer =
@@ -536,30 +671,56 @@ export function executeAction(
               total: window.total,
               ...storeOutput(observationId, shown),
             },
-            seq: next(),
+            seq: observationSeq,
           },
         });
         addEdge({ kind: "read", ref, version }, actionId, observationId, "produces");
-        return { events, turn: proposalTurn(shown), done: false, stopReason: null };
+        return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
       }
 
       if (apply.tool === "grep") {
-        const matches = workspace.grep(apply.pattern);
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command);
         const before = apply.before ?? GREP_BEFORE_DEFAULT;
         const after = apply.after ?? GREP_AFTER_DEFAULT;
+        const from = apply.from ?? 1;
+        const count = apply.count ?? GREP_COUNT_DEFAULT;
+        const scope = { path: apply.path, include: apply.include, exclude: apply.exclude };
+        let matches: GrepMatch[];
+        try {
+          matches = workspace.grep(apply.pattern, scope);
+        } catch (error) {
+          return fail(`grep failed: ${(error as Error).message}`);
+        }
+        const command = commandOf(apply);
+        const actionId = ensureAction(command, command);
+        // Files are read once per call even when many matches share one.
+        const cache = new Map<string, string | undefined>();
         const reader = (path: string): string | undefined => {
+          if (cache.has(path)) return cache.get(path);
+          let content: string | undefined;
           try {
-            return workspace.read(path);
+            content = workspace.read(path);
           } catch {
-            return undefined;
+            content = undefined;
           }
+          cache.set(path, content);
+          return content;
         };
-        const rendered =
-          matches.length === 0 ? "(no matches)" : renderGrep(matches, reader, before, after);
-        const shown = clip(rendered);
-        const observationId = `obs:${next()}`;
+        const window = buildGrepWindow(matches, reader, {
+          pattern: apply.pattern,
+          scope,
+          before,
+          after,
+          from,
+          count,
+        });
+        const shown = window.json;
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const more = window.returned > 0 && from - 1 + window.returned < window.total;
+        const summary =
+          window.total === 0
+            ? "no matches"
+            : `${window.returned}/${window.total} matches${more ? `; continue from ${from + window.returned}` : ""}`;
         events.push({
           type: "add_node",
           node: {
@@ -568,17 +729,102 @@ export function executeAction(
             kind: "observation",
             label: command,
             payload: {
-              count: matches.length,
               pattern: apply.pattern,
+              path: apply.path,
+              include: apply.include,
+              exclude: apply.exclude,
               before,
               after,
+              total: window.total,
+              from,
+              returned: window.returned,
+              summary,
               ...storeOutput(observationId, shown),
             },
-            seq: next(),
+            seq: observationSeq,
           },
         });
-        addEdge({ kind: "grep", pattern: apply.pattern }, actionId, observationId, "produces");
-        return { events, turn: proposalTurn(shown), done: false, stopReason: null };
+        addEdge(
+          {
+            kind: "grep",
+            pattern: apply.pattern,
+            path: apply.path,
+            include: apply.include,
+            exclude: apply.exclude,
+            from,
+            count,
+          },
+          actionId,
+          observationId,
+          "produces",
+        );
+        return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
+      }
+
+      if (apply.tool === "list") {
+        const from = apply.from ?? 1;
+        const limit = Math.min(apply.limit ?? LIST_LIMIT_DEFAULT, MAX_LIST_FILES);
+        const scope = { path: apply.path, include: apply.include, exclude: apply.exclude };
+        let files: string[];
+        try {
+          files = workspace.listFiles(scope);
+        } catch (error) {
+          return fail(`list failed: ${(error as Error).message}`);
+        }
+        const total = files.length;
+        const start = Math.min(Math.max(from - 1, 0), total);
+        const page = files.slice(start, start + limit);
+        const returned = page.length;
+        const result: Record<string, unknown> = {
+          root: apply.path ?? ".",
+          total,
+          from: total === 0 ? 0 : start + 1,
+          returned,
+          files: page,
+        };
+        if (start + returned < total) result.next = start + returned + 1;
+        const shown = JSON.stringify(result, null, 2);
+        const command = commandOf(apply);
+        const actionId = ensureAction(command, command);
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const more = start + returned < total;
+        const summary =
+          total === 0
+            ? "no files"
+            : `${returned}/${total} files${more ? `; continue from ${start + returned + 1}` : ""}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: command,
+            payload: {
+              path: apply.path,
+              include: apply.include,
+              exclude: apply.exclude,
+              total,
+              from: total === 0 ? 0 : start + 1,
+              returned,
+              summary,
+              ...storeOutput(observationId, shown),
+            },
+            seq: observationSeq,
+          },
+        });
+        addEdge(
+          {
+            kind: "list",
+            path: apply.path,
+            include: apply.include,
+            exclude: apply.exclude,
+          },
+          actionId,
+          observationId,
+          "produces",
+        );
+        return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
       }
 
       if (apply.tool === "edit") {
@@ -601,7 +847,7 @@ export function executeAction(
         const actionId = ensureAction(command, command);
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
-        return { events, turn: proposalTurn(`edited ${apply.path}`), done: false, stopReason: null };
+        return { events, turn: proposalTurn(`edited ${apply.path}`, actionId), done: false, stopReason: null };
       }
 
       // apply.tool === "run"
@@ -628,6 +874,9 @@ export function executeAction(
           return fail(`check failed: goal ${target} is subjective; use complete`);
         }
         runCommand = payload.done_when.command;
+      }
+      if (runCommand === undefined) {
+        return fail("run failed: no command");
       }
 
       const readIfPresent = (path: string): string | undefined => {
@@ -679,18 +928,20 @@ export function executeAction(
         const first = violated[0];
         const pattern = first ? first[1].pattern : "constraint";
         const label = `constraint violation (${pattern}): reverted ${paths}`;
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
         events.push({
           type: "add_node",
           node: {
-            id: `obs:${next()}`,
+            id: observationId,
             space: "work",
             kind: "observation",
             label,
             payload: { pattern, paths: violated.map(([path]) => path), reverted: true },
-            seq: next(),
+            seq: observationSeq,
           },
         });
-        return { events, turn: proposalTurn(label), done: false, stopReason: null };
+        return { events, turn: proposalTurn(label, observationId), done: false, stopReason: null };
       }
 
       const verdict =
@@ -726,10 +977,11 @@ export function executeAction(
           checkId,
           "produces",
         );
-        return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
+        return { events, turn: proposalTurn(clip(text), checkId), done: false, stopReason: null };
       }
 
-      const observationId = `obs:${next()}`;
+      const observationSeq = next();
+      const observationId = `obs:${observationSeq}`;
       events.push({
         type: "add_node",
         node: {
@@ -743,7 +995,7 @@ export function executeAction(
             output,
             ...(outputRef !== undefined ? { outputRef } : {}),
           },
-          seq: next(),
+          seq: observationSeq,
         },
       });
       addEdge(
@@ -757,7 +1009,7 @@ export function executeAction(
         observationId,
         "produces",
       );
-      return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
+      return { events, turn: proposalTurn(clip(text), observationId), done: false, stopReason: null };
     }
   }
 }

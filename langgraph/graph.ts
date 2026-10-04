@@ -22,6 +22,7 @@ import { checkHasUnder, childrenOf, fold, predicateOf } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
+import { invokeStructured } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, renderContext } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -169,7 +170,7 @@ export const skein = {
     const instruction = extractInstruction(input);
     const settings = buildSettings(config);
     const workspace = fsWorkspace(process.cwd());
-    const structured = createChatModel(settings).withStructuredOutput(proposalSchema);
+    const model = createChatModel(settings);
     const inherited = Array.isArray(config?.callbacks) ? (config.callbacks as unknown[]) : [];
 
     console.log(`SKEIN_CWD ${process.cwd()}`);
@@ -187,30 +188,34 @@ export const skein = {
       );
       const meter = new TurnMeter();
       const started = Date.now();
-      let proposal: Proposal | undefined;
-      let lastError: unknown;
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          const result = await structured.invoke(buildMessages(context), {
-            callbacks: [...inherited, meter],
-          });
-          proposal = proposalSchema.parse(result);
-          break;
-        } catch (error) {
-          lastError = error;
-          console.log(
-            `SKEIN_LLM_ERROR ${JSON.stringify({
-              turn: turns.length,
-              attempt,
-              message: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-            })}`,
-          );
-        }
+      let proposal: Proposal;
+      try {
+        proposal = await invokeStructured(model, proposalSchema, buildMessages(context), {
+          callbacks: [...inherited, meter],
+          rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
+          onError: (error, phase) => {
+            console.log(
+              `SKEIN_LLM_ERROR ${JSON.stringify({
+                turn: turns.length,
+                phase,
+                message: error instanceof Error ? error.message : String(error),
+              })}`,
+            );
+          },
+        });
+      } catch (error) {
+        console.log(
+          `SKEIN_LLM_ERROR ${JSON.stringify({
+            turn: turns.length,
+            phase: "final",
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          })}`,
+        );
+        throw error;
       }
-      if (proposal === undefined) throw lastError;
       console.log(
-        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action })}`,
+        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action, need: proposal.need ?? [] })}`,
       );
       proposals.push(proposal.action);
       turns.push({
