@@ -39,7 +39,8 @@
 - `plan`/`alternatives` — контейнеры; порядок детей **не** хранится полем, а
   выводится из порядка событий `add_edge item` (поле `State.children`);
 - `observation.payload` чтения несёт `{ ref, version }`; `check.payload` —
-  `{ command, verdict, output, actor, witness?, outputRef? }`.
+  `{ command, verdict, output, error?, actor, witness?, outputRef?, errorRef? }`
+  (`output` — stdout, `error` — stderr, раздельно).
 
 **Рёбра** (`Edge.provenance`, без поля статуса): `has_plan`, `item`,
 `has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `closes`,

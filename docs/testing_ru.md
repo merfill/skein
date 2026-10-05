@@ -199,7 +199,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | `MAX_GREP_MATCHES` | 200 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
 | `MAX_LIST_FILES` | 500 | максимум файлов в окне `list` |
 | `OUTPUT_LIMIT` | 8000 | байтовый предел JSON-результата `grep`/`list`; лишние результаты отбрасываются целиком |
-| `MAX_RUN_OUTPUT` | 8000 | вывод `run`; дальше head+tail и `outputRef` |
+| `MAX_RUN_OUTPUT` | 8000 | вывод `run`; дальше head+tail и `outputRef`/`errorRef` (stdout/stderr раздельно) |
 | `SKEIN_CTX_ITEMS` | 20 | элементов в `plan`/`alternatives` проекции |
 
 ### 8.1 Устойчивый structured output

@@ -72,7 +72,8 @@ ResultView = {                 // a view, not a node
   ref?,                        // read / edit — the touched file
   verdict?,                    // check
   label?,                      // action
-  output?                      // the full output of the latest call
+  output?,                     // stdout of the latest call (not merged with stderr)
+  error?                       // stderr, kept separate; the primary signal of a failure
 }
 
 Call = {                       // an aggregate, not an event
@@ -120,14 +121,21 @@ Call = {                       // an aggregate, not an event
   an `action` node.
 - **Dedup and count.** Records with an equal `(status, action)` collapse; `count`
   grows. A repeated failure creates **no** knowledge.
-- **Focus.** Only records whose focus (the node at the moment of appearance) lies on
-  the current `path` are shown. Left the branch — the record is gone.
+- **Focus.** A record is shown when its focus (the node at the moment of appearance)
+  lies in the **subtree of the current chosen interpretation**, **or on the current
+  `path`**. The path is included because the request root is the parent of that subtree:
+  a refusal recorded while the focus is the request (e.g. a rejected new
+  interpretation) must be visible, otherwise the projection does not change after the
+  refusal (invariant 21).
 - **Invalidation.** A mutation after the record clears `fail`/`refused` (in another
   world state the same might work). `ok` is kept as history. The exception is
   constraint refusals (`constraintId`).
 - **Order.** Newest first.
-- **`note`.** `refused` — `reason`; `fail` — the **last non-empty line** of the output
-  (errors are usually at the tail), up to ~120 chars.
+- **`note`.** `refused` — `reason`; `fail` — the most informative line of the **stderr**
+  body (the failure signal), else of stdout: the last line that names a crash
+  (`segmentation`, `panic`, `traceback`, `assertion`, `fatal`, …), else the last line
+  that names an error (`error`, `failed`, `cannot`, `no such file`, …), else the last
+  non-empty line; up to ~120 chars.
 
 ## 4. Limits
 

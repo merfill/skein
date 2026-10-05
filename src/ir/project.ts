@@ -26,6 +26,8 @@ export interface Turn {
   // The result node this tool turn produced, if any: so `lastResult` can name a
   // matching id, and not a stale one (docs/tools_ru.md §4.4).
   nodeId?: string;
+  // stderr of a run/check turn, kept separate from the stdout in `text` (tools §4.3).
+  error?: string;
 }
 
 export interface ProjectionItem {
@@ -73,6 +75,8 @@ export interface ResultView {
   verdict?: Verdict;
   label?: string;
   output?: string;
+  // stderr, separate from stdout: a failed run's error is the primary signal.
+  error?: string;
 }
 
 // A deduplicated summary of a previous call: what was called and its outcome, with
@@ -111,9 +115,11 @@ export interface ProjectOptions {
   // The result node that the latest tool turn produced, if any (so `lastResult.id`
   // addresses the shown body).
   lastOutputId?: string;
+  // stderr of the latest tool turn, shown separately from the stdout in `lastOutput`.
+  lastError?: string;
   // Results the model asked to see in full this turn (hypothesis + need, §8). Each is
   // addressed by node id; the caller resolves the body (payload or temp file).
-  recalled?: { id: string; output: string }[];
+  recalled?: { id: string; output: string; error?: string }[];
 }
 
 function envInt(name: string, fallback: number): number {
@@ -227,8 +233,16 @@ function actionRef(state: State, actionId: string): string | undefined {
   return undefined;
 }
 
-function buildView(state: State, node: Node, output: string | undefined): ResultView {
+function buildView(
+  state: State,
+  node: Node,
+  output: string | undefined,
+  error: string | undefined,
+): ResultView {
   const payload = node.payload as Record<string, unknown> | undefined;
+  const shownError =
+    error !== undefined ? error : typeof payload?.error === "string" ? payload.error : undefined;
+  const errorField = shownError !== undefined && shownError !== "" ? { error: shownError } : {};
   if (node.kind === "check") {
     return {
       id: node.id,
@@ -236,6 +250,7 @@ function buildView(state: State, node: Node, output: string | undefined): Result
       ...(typeof payload?.command === "string" ? { command: payload.command } : {}),
       ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
       ...(output !== undefined ? { output } : {}),
+      ...errorField,
     };
   }
   if (node.kind === "observation") {
@@ -250,6 +265,7 @@ function buildView(state: State, node: Node, output: string | undefined): Result
           : {}),
       ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
       ...(output !== undefined ? { output } : {}),
+      ...errorField,
     };
   }
   const ref = actionRef(state, node.id);
@@ -259,6 +275,7 @@ function buildView(state: State, node: Node, output: string | undefined): Result
     label: node.label,
     ...(ref !== undefined ? { ref } : {}),
     ...(output !== undefined ? { output } : {}),
+    ...errorField,
   };
 }
 
@@ -266,16 +283,22 @@ function resultView(
   state: State,
   lastOutput: string | undefined,
   lastOutputId: string | undefined,
+  lastError: string | undefined,
 ): ResultView | undefined {
   // The latest tool turn: pair its output with the node it actually produced, so the
   // id addresses that body and not a stale previous node. A turn that produced no node
   // (query/complete) is shown without an id.
   if (lastOutput !== undefined) {
     if (lastOutputId !== undefined) {
-      const view = viewOfNode(state, lastOutputId, lastOutput);
+      const view = viewOfNode(state, lastOutputId, lastOutput, lastError);
       if (view !== undefined) return view;
     }
-    return { kind: "action", label: "(latest call)", output: lastOutput };
+    return {
+      kind: "action",
+      label: "(latest call)",
+      output: lastOutput,
+      ...(lastError !== undefined && lastError !== "" ? { error: lastError } : {}),
+    };
   }
   const node = [...state.nodes.values()]
     .filter(
@@ -288,17 +311,23 @@ function resultView(
   if (node === undefined) return undefined;
   const payload = node.payload as Record<string, unknown> | undefined;
   const output = typeof payload?.output === "string" ? payload.output : undefined;
-  return buildView(state, node, output);
+  const error = typeof payload?.error === "string" ? payload.error : undefined;
+  return buildView(state, node, output, error);
 }
 
 // A view of a specific node, with the body the caller resolved (payload or temp file).
-function viewOfNode(state: State, id: string, output: string | undefined): ResultView | undefined {
+function viewOfNode(
+  state: State,
+  id: string,
+  output: string | undefined,
+  error: string | undefined,
+): ResultView | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
   if (node.kind !== "observation" && node.kind !== "check" && node.kind !== "action") {
     return undefined;
   }
-  return buildView(state, node, output);
+  return buildView(state, node, output, error);
 }
 
 function applicableNames(value: Applicable): string[] {
@@ -317,17 +346,29 @@ function lastLine(text: string): string {
   return lines.length > 0 ? (lines[lines.length - 1] ?? "") : "";
 }
 
-// The most informative line of a failure: the first line that looks like an error,
-// else the first non-empty line. Avoids tail lines such as "duration_ms" in a test
-// report (docs/tools_ru.md §4.4).
-const ERROR_HINT = /(error|fail|fatal|assert|exception|expected|cannot|denied|not found|abort|panic|traceback|segmentation)/i;
+// A strong failure signal names the crash itself; a weak one only says something went
+// wrong. Neither matches compiler flags such as `-fno-exceptions` (which the old
+// `/exception/` did), so the summary names the real error line (docs/projection.md §3.1).
+const STRONG_HINT = /\b(segmentation|core dumped|panic|traceback|assertion|undefined reference|fatal)\b/i;
+const WEAK_HINT = /\b(error|failed|failure|cannot|denied|no such file|not found)\b/i;
 
-function errorLine(text: string): string {
+// The most informative line of a failure: scan the tail for a strong signal (a crash),
+// then for a weak one, else the last non-empty line. This is the one-line `calls`
+// summary; it never carries the full body — that belongs to `lastResult`/`query`.
+function failureLine(text: string): string {
   const lines = text
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  return lines.find((line) => ERROR_HINT.test(line)) ?? lines[0] ?? "";
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i] as string;
+    if (STRONG_HINT.test(line)) return line;
+  }
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i] as string;
+    if (WEAK_HINT.test(line)) return line;
+  }
+  return lines[lines.length - 1] ?? "";
 }
 
 // A compact, informative hint for a call entry, so the model can tell whether the
@@ -337,14 +378,17 @@ function callNote(child: Node | undefined, status: Call["status"]): string | und
   const payload = child?.payload as Record<string, unknown> | undefined;
   if (typeof payload?.summary === "string") return clip(payload.summary, 120);
   if (status === "fail") {
+    // stderr is the primary signal: name its failure line, not a stdout line.
+    const error = typeof payload?.error === "string" ? payload.error : "";
     const output = typeof payload?.output === "string" ? payload.output : "";
-    return clip(errorLine(output) || "(no output)", 120);
+    return clip(failureLine(error) || failureLine(output) || "(no output)", 120);
   }
   if (typeof payload?.verdict === "string") {
     // A piped build (`make … | tail`) exits 0, so its verdict is "pass" while the output
     // still carries the crash; surface the error line, not just the last line.
+    const error = typeof payload.error === "string" ? payload.error : "";
     const output = typeof payload.output === "string" ? payload.output : "";
-    const detail = errorLine(output) || lastLine(output);
+    const detail = failureLine(error) || failureLine(output) || lastLine(output);
     return clip(detail === "" ? payload.verdict : `${payload.verdict}; ${detail}`, 120);
   }
   if (typeof payload?.ref === "string" && typeof payload.total === "number") {
@@ -482,10 +526,22 @@ export function project(state: State, options: ProjectOptions = {}): Context {
       return { id: node.id, forbid };
     });
 
-  const lastResult = resultView(state, options.lastOutput, options.lastOutputId);
-  const calls = callsView(state, interpretationScope(state, branch));
+  const lastResult = resultView(
+    state,
+    options.lastOutput,
+    options.lastOutputId,
+    options.lastError,
+  );
+  // The negative history is scoped to the chosen interpretation's subtree, so evidence
+  // from earlier stages stays addressable; the current path (the root request included)
+  // is added because the request is not inside that subtree — without it a refusal at
+  // the request point would be dropped and the model could not see why its proposal was
+  // rejected (invariant 21).
+  const scope = interpretationScope(state, branch);
+  for (const id of branch) scope.add(id);
+  const calls = callsView(state, scope);
   const shown = (options.recalled ?? [])
-    .map((entry) => viewOfNode(state, entry.id, entry.output))
+    .map((entry) => viewOfNode(state, entry.id, entry.output, entry.error))
     .filter((view): view is ResultView => view !== undefined);
   const budget = options.budget;
   const frontier = applicable(state, focusId);

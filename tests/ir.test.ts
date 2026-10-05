@@ -466,6 +466,58 @@ describe("call summary", () => {
     expect(entry?.note).toContain("Segmentation fault");
   });
 
+  it("keeps stderr separate and names its failure line, not a stdout false positive", () => {
+    const state = fold([
+      goal("g1", "green", 0),
+      { type: "add_node", node: workNode("a1", "action", "make", 1, { command: "make" }) },
+      {
+        type: "add_node",
+        node: workNode("o1", "observation", "make", 2, {
+          command: "make",
+          verdict: "fail",
+          // stdout: a configure line that only looks like an error (`-fno-exceptions`).
+          output: "checking if gcc supports -fno-rtti -fno-exceptions... no\n  CC runtime/shared_heap.b.o",
+          // stderr: the real failure.
+          error:
+            "make[2]: *** [Makefile:147: caml.cmi] Segmentation fault (core dumped)\nmake: *** [Makefile:855: world.opt] Error 2",
+        }),
+      },
+      {
+        type: "add_edge",
+        edge: edge("e1", "a1", "o1", "produces", { kind: "check", command: "make", verdict: "fail" }),
+      },
+    ]);
+    const shown = "checking if gcc supports -fno-rtti -fno-exceptions... no";
+    const context = project(state, {
+      lastOutput: shown,
+      lastOutputId: "o1",
+      lastError: "make[2]: *** [Makefile:147: caml.cmi] Segmentation fault (core dumped)",
+    });
+    // stderr is a separate field, not glued onto stdout.
+    expect(context.lastResult?.output).toBe(shown);
+    expect(context.lastResult?.error).toContain("Segmentation fault");
+    const entry = context.calls.find((call) => call.action === "make");
+    expect(entry?.note).toContain("Segmentation fault");
+    expect(entry?.note).not.toContain("fno-rtti");
+  });
+
+  it("shows a refusal at the request point, which lies outside the interpretation subtree", () => {
+    const state = fold([
+      { type: "add_node", node: workNode("r1", "request", "task", 0, { text: "do it" }) },
+      goal("g1", "approach one", 1, objective("make test")),
+      { type: "add_node", node: workNode("a1", "alternatives", "alt", 2) },
+      { type: "add_edge", edge: edge("e1", "r1", "a1", "has_alternatives", llm) },
+      { type: "add_edge", edge: edge("e2", "a1", "g1", "item", llm) },
+      { type: "add_edge", edge: edge("e3", "a1", "g1", "chosen", llm) },
+      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: ["g1"], actor: "arbiter" },
+      // Recorded while the focus is the request r1: the chosen interpretation g1 is
+      // refuted, so the focus stays at the root and the request is not in g1's subtree.
+      { type: "record_rejection", tool: "create_goal", target: "goal:approach one", reason: "repeat_hypothesis", turn: 0 },
+    ]);
+    const calls = project(state).calls;
+    expect(calls.some((entry) => entry.status === "refused" && entry.note === "repeat_hypothesis")).toBe(true);
+  });
+
   it("includes a materialized action failure that has no action node", () => {
     const state = fold([
       goal("g1", "green", 0),

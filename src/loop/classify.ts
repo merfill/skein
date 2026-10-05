@@ -63,6 +63,16 @@ function latestAction(state: State, command: string): { seq: number; id: string 
   return best;
 }
 
+// Why a repeat is refused points the model at the cheapest way to see the body: if it is
+// already in the working set, use `shown`; otherwise fetch it by id. Never tell it to
+// `query` a body that is already shown — that advice is itself refused, and the model
+// loops read→query→read (tools §4.3).
+function repeatReason(id: string, held: readonly string[]): string {
+  return held.includes(id)
+    ? `repeated_action: ${id} is already in "shown"; use the body there instead of repeating`
+    : `repeated_action: ${id} already has it; retrieve by id (query), do not repeat`;
+}
+
 // The addressable result of an action: its produced child, else the action itself.
 function resultId(state: State, actionId: string): string {
   let best: { seq: number; id: string } | undefined;
@@ -136,8 +146,15 @@ function hasBody(state: State, id: string): boolean {
   const node = state.nodes.get(id);
   if (node === undefined) return false;
   if (node.kind === "observation" || node.kind === "check") return true;
-  const payload = node.payload as { output?: unknown; outputRef?: unknown } | undefined;
-  return typeof payload?.output === "string" || typeof payload?.outputRef === "string";
+  const payload = node.payload as
+    | { output?: unknown; outputRef?: unknown; error?: unknown; errorRef?: unknown }
+    | undefined;
+  return (
+    typeof payload?.output === "string" ||
+    typeof payload?.outputRef === "string" ||
+    typeof payload?.error === "string" ||
+    typeof payload?.errorRef === "string"
+  );
 }
 
 // A plan "carries a check" when it has at least one checkable step: an action, or an
@@ -174,7 +191,12 @@ export function classify(
       // Refuse a query of a body already shown (`held`), and a spin on a non-result node
       // (an action/goal has no body to show, so a recent query of it is not repeated).
       // A body evicted from the working set is NOT guarded here, so it can be re-fetched.
-      if (held.includes(action.id) || (!hasBody(state, action.id) && queried.includes(action.id))) {
+      if (held.includes(action.id)) {
+        return reject(
+          `repeated_action: ${action.id} is already in "shown"; use the body there (no need to re-query)`,
+        );
+      }
+      if (!hasBody(state, action.id) && queried.includes(action.id)) {
         return reject(`repeated_action: ${action.id} already retrieved; do not re-query`);
       }
     }
@@ -271,9 +293,7 @@ export function classify(
   if (apply.tool === "read" || apply.tool === "grep") {
     const found = latestAction(state, commandOf(apply));
     if (found !== undefined && state.lastMutationSeq < found.seq) {
-      return reject(
-        `repeated_action: ${resultId(state, found.id)} already has it; retrieve by id (query), do not repeat`,
-      );
+      return reject(repeatReason(resultId(state, found.id), held));
     }
   }
 
@@ -286,9 +306,7 @@ export function classify(
     const signature = `${runCommand}\u0000${apply.target ?? ""}`;
     const found = latestAction(state, signature);
     if (found !== undefined && state.lastMutationSeq < found.seq) {
-      return reject(
-        `repeated_action: ${resultId(state, found.id)} already has it; retrieve by id (query), do not repeat`,
-      );
+      return reject(repeatReason(resultId(state, found.id), held));
     }
   }
   if (apply.tool === "edit") {

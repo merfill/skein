@@ -198,7 +198,7 @@ limits, and the projection does not cut it (`docs/tools.md`).
 | `MAX_GREP_MATCHES` | 200 | maximum `grep` matches per window; continuation via `next`/`from` |
 | `MAX_LIST_FILES` | 500 | maximum files per `list` window |
 | `OUTPUT_LIMIT` | 8000 | byte cap for a `grep`/`list` JSON result; excess results are dropped whole |
-| `MAX_RUN_OUTPUT` | 8000 | `run` output; beyond that head+tail and `outputRef` |
+| `MAX_RUN_OUTPUT` | 8000 | `run` output; beyond that head+tail and `outputRef`/`errorRef` (stdout/stderr separate) |
 | `SKEIN_CTX_ITEMS` | 20 | items in the projection's `plan`/`alternatives` |
 
 ### 8.1 Robust structured output

@@ -297,6 +297,8 @@ function applyEvent(state: State, event: Event): void {
             output: event.output,
             actor: event.actor ?? "arbiter",
             ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
+            ...(event.error !== undefined ? { error: event.error } : {}),
+            ...(event.errorRef !== undefined ? { errorRef: event.errorRef } : {}),
             ...(event.witness !== undefined ? { witness: event.witness } : {}),
           },
           seq: state.seq,

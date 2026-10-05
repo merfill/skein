@@ -38,7 +38,8 @@ Before `project` the engine reconciles active `ref`s with the filesystem
 - `plan`/`alternatives` are containers; child order is **not** stored in a field
   but derived from the `add_edge item` event order (`State.children`);
 - a read `observation.payload` carries `{ ref, version }`; `check.payload` —
-  `{ command, verdict, output, actor, witness?, outputRef? }`.
+  `{ command, verdict, output, error?, actor, witness?, outputRef?, errorRef? }`
+  (`output` is stdout, `error` is stderr, kept separate).
 
 **Edges** (`Edge.provenance`, with no status field): `has_plan`, `item`,
 `has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `closes`,

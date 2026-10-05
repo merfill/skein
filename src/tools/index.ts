@@ -15,9 +15,12 @@ import type { GrepMatch, Workspace } from "./workspace";
 
 export interface ExecOutcome {
   events: Event[];
-  turn: { seq: number; kind: "proposal" | "tool"; text: string; nodeId?: string };
+  turn: { seq: number; kind: "proposal" | "tool"; text: string; nodeId?: string; error?: string };
   done: boolean;
   stopReason: string | null;
+  // Result ids the loop must pin into the working set (`shown`) after this turn, so the
+  // evidence the next move needs stays in view without a re-read (tools §4.3).
+  pin?: string[];
 }
 
 export const OUTPUT_LIMIT = 8000;
@@ -63,35 +66,66 @@ function excerpt(text: string, ref: string, limit = OUTPUT_LIMIT): string {
   return `${text.slice(0, head)}\n…[${omitted} chars omitted; full output: ${ref}]…\n${text.slice(-tail)}`;
 }
 
+// Bound a body for the projection without a reference (head+tail), so a copy-paste error
+// message stays small while the tail (usually what matters) survives.
+function bounded(text: string, limit = OUTPUT_LIMIT): string {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit / 2);
+  const omitted = text.length - limit;
+  return `${text.slice(0, head)}\n…[${omitted} chars omitted]…\n${text.slice(-(limit - head))}`;
+}
+
 const QUERY_LIMIT = 50;
 
-// The body of a stored result: a small one lives inline in the payload, a large one
-// behind `outputRef` in the workspace (invariant 11). Used by `query` and by the loop
-// when resolving `need`.
-export function resolveOutput(
+// The body of a stored result. stdout (`output`) and stderr (`error`) are separate
+// streams; a small body lives inline in the payload, a large one behind
+// `outputRef`/`errorRef` (invariant 11). `preferRef` reads the full file — used by
+// `query`, which windows it; the working set keeps the inline (bounded) body so the
+// projection stays small.
+export interface ResultBody {
+  output: string;
+  error: string;
+}
+
+export function resolveBody(
   state: State,
   id: string,
   workspace: Workspace,
-): string | undefined {
+  preferRef = false,
+): ResultBody | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
   const payload = node.payload as Record<string, unknown> | undefined;
-  if (typeof payload?.output === "string") return payload.output;
-  const ref = typeof payload?.outputRef === "string" ? payload.outputRef : undefined;
-  if (ref !== undefined) {
-    try {
-      return workspace.read(ref);
-    } catch {
-      return undefined;
+  const stream = (inlineKey: string, refKey: string): string | undefined => {
+    const inline = payload?.[inlineKey];
+    const ref = payload?.[refKey];
+    if (preferRef && typeof ref === "string") {
+      try {
+        return workspace.read(ref);
+      } catch {
+        // fall through to the inline body
+      }
     }
-  }
-  return undefined;
+    if (typeof inline === "string") return inline;
+    if (typeof ref === "string") {
+      try {
+        return workspace.read(ref);
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  };
+  const output = stream("output", "outputRef");
+  const error = stream("error", "errorRef");
+  if (output === undefined && error === undefined) return undefined;
+  return { output: output ?? "", error: error ?? "" };
 }
 
 function runQuery(
   state: State,
   action: Extract<Action, { operator: "query" }>,
-  resolve: (id: string) => string | undefined,
+  resolve: (id: string) => ResultBody | undefined,
 ): string {
   const nodeRow = (node: Node) => ({
     id: node.id,
@@ -115,7 +149,7 @@ function runQuery(
     // re-see a past step without re-running it.
     const body = resolve(action.id);
     if (body !== undefined) {
-      const window = readWindow(body, action.start, action.end);
+      const window = readWindow(body.output, action.start, action.end);
       const trailer =
         window.total > 0 && window.end < window.total
           ? `\n…[lines ${window.start}–${window.end} of ${window.total}; continue from ${window.end + 1}]`
@@ -128,6 +162,7 @@ function runQuery(
           end: window.end,
           total: window.total,
           output: `${window.text}${trailer}`,
+          ...(body.error !== "" ? { error: body.error } : {}),
         },
         null,
         2,
@@ -366,11 +401,12 @@ export function executeAction(
   };
 
   const events: Event[] = [];
-  const proposalTurn = (text: string, nodeId?: string): ExecOutcome["turn"] => ({
+  const proposalTurn = (text: string, nodeId?: string, error?: string): ExecOutcome["turn"] => ({
     seq: turn,
     kind: "tool",
     text,
     ...(nodeId !== undefined ? { nodeId } : {}),
+    ...(error !== undefined && error !== "" ? { error } : {}),
   });
   const fail = (text: string): ExecOutcome => {
     // A failure is knowledge too: materialize it as an observation with
@@ -407,6 +443,23 @@ export function executeAction(
     const ref = `.skein/observations/${id}.txt`;
     workspace.write(ref, text);
     return { outputRef: ref };
+  };
+
+  // A run result body: stdout (`output`) and stderr (`error`) are stored as separate
+  // streams. The inline value is the shown body (head+tail when long); when it exceeds
+  // OUTPUT_LIMIT the full stream is also written behind `outputRef`/`errorRef`, so it is
+  // retrievable by id. The error stream is never dropped.
+  const storeStream = (
+    id: string,
+    kind: "output" | "error",
+    text: string,
+  ): Record<string, string> => {
+    if (text === "") return {};
+    const refKey = kind === "output" ? "outputRef" : "errorRef";
+    if (text.length <= OUTPUT_LIMIT) return { [kind]: text };
+    const ref = `.skein/observations/${id}.${kind === "output" ? "out" : "err"}.txt`;
+    workspace.write(ref, text);
+    return { [kind]: excerpt(text, ref), [refKey]: ref };
   };
 
   const ensurePlan = (goalId: string): string => {
@@ -561,7 +614,7 @@ export function executeAction(
 
   switch (action.operator) {
     case "query": {
-      const text = runQuery(state, action, (id) => resolveOutput(state, id, workspace));
+      const text = runQuery(state, action, (id) => resolveBody(state, id, workspace, true));
       return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
     }
 
@@ -837,7 +890,31 @@ export function executeAction(
           return fail(`edit failed: ${apply.path} disappeared`);
         }
         if (!original.includes(apply.find)) {
-          return fail(`edit failed: pattern not found in ${apply.path}`);
+          // Materialize the current content so the model can copy `find` verbatim from it
+          // instead of re-reading a file it already read (which the repeat guard refuses):
+          // the failed edit is the exact moment the content is needed (tools §4.3).
+          const label = `edit failed: find not found in ${apply.path}`;
+          const full = `${label}\n--- current content of ${apply.path} (copy "find" verbatim) ---\n${original}\n--- end ---`;
+          const observationSeq = next();
+          const observationId = `obs:${observationSeq}`;
+          events.push({
+            type: "add_node",
+            node: {
+              id: observationId,
+              space: "work",
+              kind: "observation",
+              label,
+              payload: { verdict: "fail", ...storeOutput(observationId, full) },
+              seq: observationSeq,
+            },
+          });
+          return {
+            events,
+            turn: proposalTurn(bounded(full), observationId),
+            done: false,
+            stopReason: null,
+            pin: [observationId],
+          };
         }
         const updated = original.replace(apply.find, apply.replace);
         workspace.write(apply.path, updated);
@@ -946,24 +1023,31 @@ export function executeAction(
 
       const verdict =
         result.timedOut === true ? "inconclusive" : result.code === 0 ? "pass" : "fail";
-      const truncated = result.output.length > OUTPUT_LIMIT;
-      const outputRef = truncated ? `.skein/logs/run-${turn}.log` : undefined;
-      if (outputRef !== undefined) workspace.write(outputRef, result.output);
-      const output = outputRef !== undefined ? excerpt(result.output, outputRef) : result.output;
-      const text = `$ ${runCommand}\nexit ${result.code}\n${output}`;
+      const isCheck = target !== undefined && targetNode?.kind === "goal";
+      const resultSeq = next();
+      const resultId = isCheck ? `chk:${resultSeq}` : `obs:${resultSeq}`;
+      // stdout and stderr are stored separately and never concatenated: a failed run's
+      // error is the primary signal, and a merged log hides which stream carried it.
+      const outputBody = storeStream(resultId, "output", result.stdout);
+      const errorBody = storeStream(resultId, "error", result.stderr);
+      const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
+      const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
+      const header = `$ ${runCommand}\nexit ${result.code}`;
+      const text = result.stdout === "" ? header : `${header}\n${outputShown}`;
 
-      if (target !== undefined && targetNode?.kind === "goal") {
-        const checkId = `chk:${next()}`;
+      if (isCheck) {
         events.push({
           type: "record_check",
-          id: checkId,
+          id: resultId,
           command: runCommand,
           verdict,
-          output,
-          ...(outputRef !== undefined ? { outputRef } : {}),
+          output: outputShown,
+          ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
+          ...(errorShown !== "" ? { error: errorShown } : {}),
+          ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
           actor: "arbiter",
           witness: witnessOfWorkspace(workspace),
-          targets: [target],
+          targets: [target as string],
           ...(apply.under !== undefined ? { under: apply.under } : {}),
         });
         addEdge(
@@ -971,31 +1055,36 @@ export function executeAction(
             kind: "check",
             command: runCommand,
             verdict,
-            ...(outputRef !== undefined ? { outputRef } : {}),
+            ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
           },
           actionId,
-          checkId,
+          resultId,
           "produces",
         );
-        return { events, turn: proposalTurn(clip(text), checkId), done: false, stopReason: null };
+        return {
+          events,
+          turn: proposalTurn(text, resultId, errorShown),
+          done: false,
+          stopReason: null,
+        };
       }
 
-      const observationSeq = next();
-      const observationId = `obs:${observationSeq}`;
       events.push({
         type: "add_node",
         node: {
-          id: observationId,
+          id: resultId,
           space: "work",
           kind: "observation",
           label: command,
           payload: {
             command: runCommand,
             verdict,
-            output,
-            ...(outputRef !== undefined ? { outputRef } : {}),
+            ...(result.stdout !== "" ? { output: outputShown } : {}),
+            ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
+            ...(errorShown !== "" ? { error: errorShown } : {}),
+            ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
           },
-          seq: observationSeq,
+          seq: resultSeq,
         },
       });
       addEdge(
@@ -1003,13 +1092,13 @@ export function executeAction(
           kind: "check",
           command: runCommand,
           verdict,
-          ...(outputRef !== undefined ? { outputRef } : {}),
+          ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
         },
         actionId,
-        observationId,
+        resultId,
         "produces",
       );
-      return { events, turn: proposalTurn(clip(text), observationId), done: false, stopReason: null };
+      return { events, turn: proposalTurn(text, resultId, errorShown), done: false, stopReason: null };
     }
   }
 }

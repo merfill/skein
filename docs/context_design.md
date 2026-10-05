@@ -143,10 +143,11 @@ one context.
    for `HELD_TURNS` turns; re-adding refreshes. An id without a body (an `action`/`goal`
    node) is **refused** in `need` — there is nothing to show.
 4. **Storing the bodies.** The logos stores a result's body: **a small one directly in
-   the node's payload**; **a large one in a temp file**, with a reference (`outputRef`)
-   in the node. The projection assembles the requested results (from the payload or, for
-   a reference, at the loop level — `project` stays pure) and shows them next to
-   `lastResult`.
+   the node's payload**; **a large one in a temp file**, with a reference
+   (`outputRef`/`errorRef`) in the node. For a run/check, stdout (`output`) and stderr
+   (`error`) are stored as separate streams (never concatenated). The projection
+   assembles the requested results (from the payload or, for a reference, at the loop
+   level — `project` stays pure) and shows them next to `lastResult`.
 5. **Caps.** The shared `shown` budget is at most `MAX_NEED` (5) bodies and
    `2 × OUTPUT_LIMIT` (16000) characters; explicit `need`/`query` come first, the current
    level fills the rest by recency. The TTL (`HELD_TURNS`, 6) and caps are anchored to

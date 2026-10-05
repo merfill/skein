@@ -312,7 +312,9 @@ just the current path: evidence gathered in `reproduce` stays addressable on
   `note = reason`; constraint refusals carry a `constraintId`;
 - **`ok`/`fail`** — an executed action (an `action` with a produced
   `observation`/`check`) or a materialized failure without an `action` node. `fail` is
-  a result with `verdict=fail`; `note` is the **last non-empty line** of the output.
+  a result with `verdict=fail`; the failure signal is **stderr** (`error`), kept separate
+  from stdout; `note` is its most informative line (the last crash/error line, else the
+  last non-empty line of stderr, else of stdout).
 
 Rules:
 
@@ -320,8 +322,9 @@ Rules:
   creates no new knowledge;
 - **scope.** Each record is tagged with the focus node at the moment it appears; records
   whose focus lies in the **subtree of the current chosen interpretation** (§2.3, §2.6)
-  are shown — the whole interpretation's history, not just the current path. Records of
-  abandoned interpretations are not shown;
+  **or on the current path** are shown — the whole interpretation's history, not just
+  the current path, and the path itself so a refusal at the request root (outside that
+  subtree) is visible. Records of abandoned interpretations are not shown;
 - **invalidation.** A mutation after the record clears `fail`/`refused` (in another
   world state the same might work); `ok` is kept as history. The exception is
   **constraint** refusals (`constraintId`): those are invariants, not context. Leaving

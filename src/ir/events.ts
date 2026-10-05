@@ -76,6 +76,9 @@ export const eventSchema = z.discriminatedUnion("type", [
     verdict: verdictSchema,
     output: z.string(),
     outputRef: z.string().optional(),
+    // stderr, kept separate from stdout: the primary signal of a failed run.
+    error: z.string().optional(),
+    errorRef: z.string().optional(),
     actor: z.enum(["arbiter", "user"]).optional(),
     witness: z.array(witnessEntrySchema).optional(),
     targets: z.array(z.string()),

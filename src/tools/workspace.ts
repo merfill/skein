@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -25,9 +25,13 @@ export interface PathFilter {
   exclude?: string;
 }
 
+// A command's outcome. stdout and stderr are kept separate (never concatenated): the
+// error stream is the primary signal of a failed run, and merging the two hides which
+// stream carried the failure (docs/tools.md §4.3).
 export interface CommandResult {
   code: number;
-  output: string;
+  stdout: string;
+  stderr: string;
   timedOut?: boolean;
 }
 
@@ -219,31 +223,24 @@ export function fsWorkspace(root: string): Workspace {
   const listFiles = (filter: PathFilter = {}): string[] => scopedFiles(filter);
 
   const run = (command: string): CommandResult => {
-    try {
-      // `pipefail` so a pipeline reports the failing stage's exit code: `make | tail` must
-      // tell the truth (the pipe would otherwise mask the build failure).
-      const output = execSync(`set -o pipefail; ${command}`, {
-        cwd: base,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 120_000,
-        shell: "/bin/bash",
-      });
-      return { code: 0, output };
-    } catch (error) {
-      const err = error as {
-        status?: number | null;
-        signal?: string | null;
-        killed?: boolean;
-        stdout?: string;
-        stderr?: string;
-        message?: string;
-      };
-      const output =
-        `${err.stdout ?? ""}${err.stderr ?? ""}`.trim() || err.message || "command failed";
-      const timedOut = err.killed === true || err.signal === "SIGTERM";
-      return { code: err.status ?? 1, output, ...(timedOut ? { timedOut: true } : {}) };
-    }
+    // `spawnSync` returns stdout and stderr separately regardless of the exit code, so
+    // an error stream is never lost and never concatenated into stdout. `pipefail` makes
+    // a pipeline report the failing stage's exit code: `make | tail` must tell the truth.
+    const result = spawnSync("/bin/bash", ["-c", `set -o pipefail; ${command}`], {
+      cwd: base,
+      encoding: "utf8",
+      timeout: 120_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const timedOut =
+      result.signal === "SIGTERM" ||
+      (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+    return {
+      code: result.status ?? (timedOut ? 124 : 1),
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      ...(timedOut ? { timedOut: true } : {}),
+    };
   };
 
   return {

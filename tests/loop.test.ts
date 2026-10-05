@@ -176,6 +176,51 @@ describe("classify", () => {
     ).toEqual({ accept: true });
   });
 
+  it("points a repeated read at `shown` when the body is already held, else at query", () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-read-held-"));
+    tempDirs.push(root);
+    writeFileSync(join(root, "a.txt"), "one\ntwo\n");
+    const workspace = fsWorkspace(root);
+    const state0 = fold([goal]);
+    const first = executeAction(
+      { operator: "apply", action: { tool: "read", path: "a.txt" } },
+      state0,
+      workspace,
+      0,
+    );
+    const state = fold(first.events, state0);
+    const obsId = [...state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
+
+    const held = classify(
+      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
+      state,
+      [obsId],
+    );
+    expect(held.accept).toBe(false);
+    expect(held.reason).toContain("shown");
+
+    const notHeld = classify(
+      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
+      state,
+      [],
+    );
+    expect(notHeld.accept).toBe(false);
+    expect(notHeld.reason).toContain("query");
+  });
+
+  it("points a repeated query at `shown` when the body is already held", () => {
+    const state = fold([
+      goal,
+      {
+        type: "add_node",
+        node: { id: "o1", space: "work", kind: "observation", label: "run", payload: { output: "x" }, seq: 1 },
+      },
+    ]);
+    const verdict = classify(proposal({ operator: "query", id: "o1" }), state, ["o1"]);
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("shown");
+  });
+
   it("refuses an identical re-search and names the stored result", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-research-"));
     tempDirs.push(root);
@@ -1445,5 +1490,50 @@ describe("revise after a refuted fix", () => {
     const goals = [...state.nodes.values()].filter((node) => node.kind === "goal");
     expect(goals.filter((node) => predicateOf(state, node.id) === "refuted").length).toBe(2);
     expect(predicateOf(state, "r1")).toBe("addressed");
+  });
+});
+
+describe("failed edit materializes the file content", () => {
+  it("shows the current content and keeps it in view instead of a re-read", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const contexts: Context[] = [];
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      contexts.push(context);
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "green",
+          done_when: { kind: "subjective", text: "done" },
+        });
+      }
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      if (index === 3) {
+        return proposal({
+          operator: "apply",
+          action: { tool: "edit", path: "src/sum.mjs", find: "NONEXISTENT_PATTERN_XYZ", replace: "x" },
+        });
+      }
+      return proposal({ operator: "complete", note: "stop" });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 8, noProgress: 100 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const failure = [...fold(result.events).nodes.values()].find(
+      (node) => node.kind === "observation" && node.label.startsWith("edit failed"),
+    );
+    const output = (failure?.payload as { output?: string } | undefined)?.output ?? "";
+    expect(output).toContain("current content");
+    expect(output).toContain("sumTo");
+
+    // The failed-edit body is pinned, so it is already in `shown` the next turn.
+    const afterEdit = contexts[3];
+    const shown = (afterEdit?.shown ?? []).map((view) => view.output ?? "").join("\n");
+    expect(shown).toContain("current content");
   });
 });

@@ -145,12 +145,22 @@ content. The model asks for 120 lines — it sees ~8.
 - default skips: `SKIP_DIRS` directories + dot files/directories (`.depend`,
   `.mailmap`); `.gitignore` filtering comes later.
 
-### 4.3 `run`: the full output (decided)
+### 4.3 `run`: the full output, stdout and stderr separate (decided)
 
 - Show the command's full output (not 400 chars from the start); when
   **`MAX_RUN_OUTPUT = 8000`** is exceeded — head+tail with an explicit note +
-  `outputRef`.
-- Store it in the observation (already the case) for `query`.
+  `outputRef`/`errorRef`.
+- **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
+  The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
+  is always kept on a failure. A command that runs `2>&1`/`&>` merges the streams before
+  the engine sees them, so the prompt forbids it: the engine, not the shell, decides
+  how the two are shown.
+- Store both in the observation (already the case) for `query`: a small body inline, a
+  large one behind `outputRef`/`errorRef`, and `query {id}` reads the full body, not the
+  inline excerpt.
+- A failed `edit` (`find` not found) materializes the file's **current content** in the
+  failure observation and keeps it in `shown`, so the model copies `find` verbatim from
+  there instead of re-reading a file it already read (which the repeat guard refuses).
 
 ### 4.4 Projection: latest result + summary (decided)
 
@@ -164,8 +174,10 @@ content. The model asks for 120 lines — it sees ~8.
 - `negative` is **merged into `calls`** (one list): status `refused`/`fail` + the rule
   "do not repeat while the world has not changed". A repeated command with the same
   signature (`read`/`grep` too) and an unchanged world is **refused**, and the reason
-  names the `id` of the existing result; the body is fetched via `query` (§4.5), not by
-  repeating.
+  names the `id` of the existing result and says how to see it: if the body is already in
+  `shown`, use it there; otherwise fetch it via `query {id}` (§4.5). The advice never
+  sends the model to `query` a body that is already shown — that is itself refused, and
+  the model would loop `read → query → read`.
 - `shown` is the **working set**: `need: [id …]` and `query {id}` place **result
   bodies** in `shown`, where they are held for **`HELD_TURNS` (6)** turns (re-adding
   refreshes); the cap is `MAX_NEED` (5) bodies and `2 × OUTPUT_LIMIT` (16000) characters,
@@ -218,7 +230,11 @@ reflect the real limits. Proposed:
    (or another history tool) is unavailable — **do not hunt for it**, work with files
    and behavior (see §6).
 4. **What to do with a failure/refusal**: look at `calls`/`negative`, do not repeat;
-   change the approach, not the phrasing of the command.
+   change the approach, not the phrasing of the command. A failure that says the command
+   or path is missing (`No such file or directory`, `can't cd`, `No rule to make target`)
+   is a wrong working directory, not bad code: revise the interpretation/goal so the
+   objective command carries a `cd <dir> &&` prefix (the project directory), instead of
+   repeating the bare command.
 5. **How to read code**: `grep` to localize, `read` a window; the whole file when
    needed; do not re-read the same window without a change to the world.
 6. **The context holds only the latest result.** Previous results (including read
@@ -241,7 +257,11 @@ agent's default reflex ("look at the diff").
    `create_goal`: formulate an interpretation (`what`), a rationale (`why`) and
    `done_when`.
 2. If the request names a **criterion/verification command** — take it verbatim as the
-   objective `done_when`.
+   objective `done_when` — but the arbiter runs it from the **workspace root**, not a
+   project subdirectory. A named command is authoritative; its working directory is
+   resolved from the tree. If the project lives in a subdirectory, the literal command
+   must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
+   never the bare command.
 3. After the goal, the first step is to **reproduce** the failure (run the
    verification/build), not to look for a change history.
 4. **The workspace is the source of truth.** Do **not** assume a VCS, `git`, a diff,

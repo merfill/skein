@@ -7,7 +7,7 @@ import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
 import type { Action, Proposal } from "../llm/schemas";
 import { MAX_NEED } from "../llm/schemas";
-import { OUTPUT_LIMIT, commandOf, executeAction, resolveOutput } from "../tools";
+import { OUTPUT_LIMIT, commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
@@ -162,20 +162,21 @@ export function compileGraph(deps: AgentDeps) {
     // Explicit requests come first (the model asked for them); the current level's
     // results fill the rest, kept by recency under the shared caps.
     const candidates = [...explicit, ...level];
-    const recalled: { id: string; output: string }[] = [];
+    const recalled: { id: string; output: string; error: string }[] = [];
     const kept: HeldEntry[] = [];
     const seen = new Set<string>();
     let shownCount = 0;
     let heldChars = 0;
     for (const entry of candidates) {
       if (seen.has(entry.id) || isStale(current, entry.id)) continue;
-      const output = resolveOutput(current, entry.id, deps.workspace);
-      if (output === undefined) continue;
-      if (shownCount >= maxHeld || heldChars + output.length > heldCharCap) continue;
+      const body = resolveBody(current, entry.id, deps.workspace);
+      if (body === undefined) continue;
+      const chars = body.output.length + body.error.length;
+      if (shownCount >= maxHeld || heldChars + chars > heldCharCap) continue;
       seen.add(entry.id);
-      recalled.push({ id: entry.id, output });
+      recalled.push({ id: entry.id, output: body.output, error: body.error });
       shownCount += 1;
-      heldChars += output.length;
+      heldChars += chars;
       if (explicitIds.has(entry.id)) kept.push(entry);
     }
     return {
@@ -188,6 +189,7 @@ export function compileGraph(deps: AgentDeps) {
           ? {
               lastOutput: lastToolTurn.text,
               ...(lastToolTurn.nodeId !== undefined ? { lastOutputId: lastToolTurn.nodeId } : {}),
+              ...(lastToolTurn.error !== undefined ? { lastError: lastToolTurn.error } : {}),
             }
           : {}),
         ...(recalled.length > 0 ? { recalled } : {}),
@@ -279,9 +281,17 @@ export function compileGraph(deps: AgentDeps) {
       deps.workspace,
       state.turn,
     );
+    // `query {id}` pins the fetched body; a tool may also ask to pin a result it produced
+    // (e.g. the materialized content of a failed edit), so the next move does not re-read.
+    const pinIds = [
+      ...(proposal.action.operator === "query" && proposal.action.id !== undefined
+        ? [proposal.action.id]
+        : []),
+      ...(outcome.pin ?? []),
+    ];
     const pinned =
-      proposal.action.operator === "query" && proposal.action.id !== undefined
-        ? pinHeld(state.held, state.heldRequests, [proposal.action.id], state.turn, held)
+      pinIds.length > 0
+        ? pinHeld(state.held, state.heldRequests, pinIds, state.turn, held)
         : { held: state.held, counts: state.heldRequests };
     const queried =
       proposal.action.operator === "query" && proposal.action.id !== undefined
