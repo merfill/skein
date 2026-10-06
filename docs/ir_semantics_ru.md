@@ -6,6 +6,8 @@
 
 - `docs/logos_ir_ru.md` — основание: докса и логос, цели, разрыв-анализ.
 - `docs/ir_ru.md` — **as-built**: как IR устроен в текущем коде.
+- `docs/ir_operations_ru.md` — операционный справочник по каждой операции и карта
+  покрытия (`OP-*`, `TR-*`, `DER-*`, `REF-*`).
 - `docs/fix_ocaml_gc_ideal_ru.md` — инстанс модели: эталонная траектория.
 - `docs/plans/implementation_plan_ru.md` — этапы и статус.
 

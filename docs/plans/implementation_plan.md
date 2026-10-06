@@ -101,6 +101,10 @@ Beyond Tier 0, the current line adds:
   (focus under a closed ancestor, crash diagnostics, projection retention, background
   `run`, removal of `need`) — `docs/plans/engine_fixes_found.md`; the run report —
   `docs/fix_ocaml_gc_run_report_2026-10-06.md`.
+- **IR operations reference & coverage** — every tree operator is specified with a
+  stable ID in `docs/ir_operations.md` (+`_ru`); offline tests grouped by operator
+  (`tests/ops/`), property tests over 400 random legal trees, a coverage gate
+  (`tests/coverage.test.ts`), and live step tests (`tests/live/ir_operations_step.test.ts`).
 
 Verification: `npm run typecheck`; `npm test` (67 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.

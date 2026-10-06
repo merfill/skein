@@ -35,6 +35,15 @@ SKEIN_LIVE=false npx vitest run
 уже выставленную переменную. Live-тесты помечены `describe.skipIf(!settings.live)`
 (`tests/gate.test.ts`), инварианты — в `tests/invariants.ts`.
 
+### Операции над IR
+
+Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
+`OP-AP`, `OP-CP`, `OP-QR`, `TR`, `DER`, `REF`). Их офлайн-тесты сгруппированы по
+оператору в `tests/ops/` (`create_goal`, `apply`, `complete`, `query`, `traversal`,
+`derivation`); инварианты проверяются на 400 случайных легальных деревьях
+(`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
+нет теста или тест ссылается на ID вне реестра.
+
 ## 3. Live-гейт
 
 ```sh
@@ -47,7 +56,7 @@ SKEIN_LIVE=true npx vitest run tests/gate.test.ts
 
 ### Live-сценарии
 
-Короткие сценарии на отдельные ветки цикла (`need`, `query`, ревизия гипотезы,
+Короткие сценарии на отдельные ветки цикла (`query`, ревизия гипотезы,
 ограничения, `complete` без правки, план, восстановление после отказа, поиск при
 многих файлах). Отдельная группа — **матрица «команды × действия»**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — задачи,
@@ -59,7 +68,7 @@ constraints.json?}`; `check.sh` опционален (по умолчанию `n
 
 ```sh
 SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
-SKEIN_SCENARIOS=need-two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
+SKEIN_SCENARIOS=two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 ```
 
@@ -81,6 +90,16 @@ N раз и собирает все провалы, так что флаки п�
 код/stdout/stderr). Мягкий отчёт печатает ещё и `refuted=` — провалившиеся проверки
 целей, — чтобы был виден прогон, восстановившийся после неверного фикса
 (`tempting-wrong`, `two-step-fix`), а не только итоговый reward.
+
+### Live-шаги по операциям
+
+`SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` строит проекцию
+каждой семьи операций **офлайн** (ровно то, что показал бы движок) и проверяет **форму**
+следующего хода живой модели: интерпретировать запрос, чекнуть готовую объективную цель,
+закрыть субъективную, опросить фоновый job, повторить inconclusive-проверку, применить
+следующий пункт плана, последовать подсказке фокуса. `SKEIN_STEP_REPEATS=N` (по умолчанию
+3) повторяет шаг, поэтому стохастический промах — не провал. Спецификация и карта
+покрытия — `docs/ir_operations_ru.md`.
 
 ### Реплей трассы (без Harbor)
 

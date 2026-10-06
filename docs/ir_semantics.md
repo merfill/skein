@@ -6,6 +6,8 @@ Related documents:
 
 - `docs/logos_ir.md` — the foundation: doxa and logos, goals, gap analysis.
 - `docs/ir.md` — **as-built**: how the IR is arranged in the current code.
+- `docs/ir_operations.md` — the operational reference of every operator and the
+  test-coverage map (`OP-*`, `TR-*`, `DER-*`, `REF-*`).
 - `docs/fix_ocaml_gc_ideal.md` — the model instance: a reference trajectory.
 - `docs/plans/implementation_plan.md` — stages and status.
 

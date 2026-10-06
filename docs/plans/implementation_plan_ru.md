@@ -107,6 +107,10 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   (фокус под закрытым предком, диагностика падения, удержание в проекции, фоновый
   `run`, удаление `need`) — `docs/plans/engine_fixes_found_ru.md`; отчёт о прогоне —
   `docs/fix_ocaml_gc_run_report_2026-10-06_ru.md`.
+- **Справочник операций IR и покрытие** — каждая операция над деревом специфицирована
+  стабильным ID в `docs/ir_operations_ru.md` (+EN); офлайн-тесты по операторам
+  (`tests/ops/`), property-тесты на 400 случайных легальных деревьях, coverage-gate
+  (`tests/coverage.test.ts`) и live step-тесты (`tests/live/ir_operations_step.test.ts`).
 
 Проверка: `npm run typecheck`; `npm test` (67 тестов) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.

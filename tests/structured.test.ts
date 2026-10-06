@@ -98,6 +98,9 @@ describe("invokeStructured", () => {
     });
     const rebuilt: number[] = [];
     const result = await invokeStructured(asModel(model), schema, [], {
+      // Pin the base cap: the bump doubles `settings.maxTokens`, so it must not depend on
+      // the developer's `.env`.
+      settings: { ...loadSettings(), maxTokens: 4096 },
       rebuild: (maxTokens) => {
         rebuilt.push(maxTokens);
         return asModel(model);
@@ -115,6 +118,7 @@ describe("invokeStructured", () => {
     const rebuilt: number[] = [];
     await expect(
       invokeStructured(asModel(model), schema, [], {
+        settings: { ...loadSettings(), maxTokens: 4096 },
         rebuild: (maxTokens) => {
           rebuilt.push(maxTokens);
           return asModel(model);

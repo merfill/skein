@@ -35,6 +35,15 @@ SKEIN_LIVE=false npx vitest run
 overwrite an already-set variable. Live tests are marked `describe.skipIf(!settings.live)`
 (`tests/gate.test.ts`); the invariants live in `tests/invariants.ts`.
 
+### IR operations
+
+The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
+`OP-AP`, `OP-CP`, `OP-QR`, `TR`, `DER`, `REF` IDs). Their offline tests are grouped by
+operator under `tests/ops/` (`create_goal`, `apply`, `complete`, `query`, `traversal`,
+`derivation`); the invariants are exercised on 400 random legal trees
+(`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
+ID has no test or a test cites an ID outside the registry.
+
 ## 3. Live gate
 
 ```sh
@@ -46,7 +55,7 @@ test without editing the tests. Timeout — 300 s per fixture. Needs a key (§9)
 
 ### Live scenarios
 
-Short scenarios for individual loop branches (`need`, `query`, hypothesis revision,
+Short scenarios for individual loop branches (query, hypothesis revision,
 constraints, `complete` without a mutation, plan, recovery after a failure, search over
 many files). A separate group is the **"commands × actions" matrix**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — tasks whose
@@ -58,7 +67,7 @@ is optional (default `node --test`).
 
 ```sh
 SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
-SKEIN_SCENARIOS=need-two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
+SKEIN_SCENARIOS=two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 ```
 
@@ -80,6 +89,16 @@ and `run.json` records the verdict (`done`, `stopReason`, `turns`, and the exter
 `check` code/stdout/stderr). The soft report also prints `refuted=` — the goal checks that
 failed — so a run that recovered from a wrong fix (`tempting-wrong`, `two-step-fix`) is
 visible, not just the final reward.
+
+### IR operation steps
+
+`SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` builds each
+operation family's projection **offline** (exactly what the engine would show) and
+asserts the **shape** of the live model's next move: interpret the request, check a ready
+objective goal, complete a subjective one, poll a background job, retry an inconclusive
+check, apply the next plan action, follow a focus hint. `SKEIN_STEP_REPEATS=N` (default 3)
+retries a step, so a stochastic miss is not a failure. The specification and the coverage
+map are `docs/ir_operations.md` (EN + RU).
 
 ### Trace replay (without Harbor)
 
