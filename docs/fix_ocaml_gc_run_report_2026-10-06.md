@@ -9,7 +9,8 @@ Related: `docs/fix_ocaml_gc_run_report_2026-10-05.md` (the focus defect),
 `docs/ir_semantics.md`.
 
 Run: `harbor run --config /tmp/opencode/accept.yaml -y` — Flash +
-reasoning `high`, `maxTurns 60`, `override_cpus: 4` / `override_memory_mb: 6144`.
+`configurable.reasoningEffort: high` (the everyday default is `low`),
+`maxTurns 60`, `override_cpus: 4` / `override_memory_mb: 6144`.
 Two attempts, both on 2026-10-06:
 
 | Job | trial | when | engine | reward |

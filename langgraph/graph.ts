@@ -72,6 +72,10 @@ function buildSettings(config: HarborInvokeConfig | undefined): Settings {
       str(process.env.OPENAI_API_KEY) ??
       base.apiKey,
     model: str(modelKwargs.model) ?? str(process.env.SKEIN_MODEL) ?? base.model,
+    reasoningEffort:
+      str(configurable.reasoningEffort) ??
+      str(process.env.SKEIN_REASONING_EFFORT) ??
+      base.reasoningEffort,
     maxTurns: Number.isFinite(maxTurns) && maxTurns > 0 ? maxTurns : base.maxTurns,
     runTimeoutMs:
       Number.isFinite(runTimeoutMs) && runTimeoutMs > 0 ? runTimeoutMs : base.runTimeoutMs,

@@ -30,12 +30,14 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     apiKey: env.SKEIN_API_KEY ?? "",
     model: env.SKEIN_MODEL ?? "~deepseek/deepseek-v4-flash-latest",
     temperature: num(env.SKEIN_TEMPERATURE, 0.1),
-    // Reasoning is on by default (see `client.ts`): the reasoning tokens share the
-    // completion budget, so the base cap is larger than a plain-answer run needs.
+    // Reasoning is on by default (see `client.ts`), at `low` effort: the reasoning tokens
+    // share the completion budget, so the base cap is larger than a plain-answer run
+    // needs. A hard task — the Harbor bench/acceptance — raises the effort to `high` per
+    // run via `SKEIN_REASONING_EFFORT` or the adapter's `configurable.reasoningEffort`.
     maxTokens: num(env.SKEIN_MAX_TOKENS, 8192),
     maxTokensCeiling: num(env.SKEIN_MAX_TOKENS_CEILING, 32768),
     maxTokensBumps: num(env.SKEIN_MAX_TOKENS_BUMPS, 2),
-    reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "high",
+    reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "low",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
     runTimeoutMs: num(env.SKEIN_RUN_TIMEOUT_MS, 120_000),
     live: (env.SKEIN_LIVE ?? "false").toLowerCase() === "true",

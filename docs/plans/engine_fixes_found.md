@@ -9,8 +9,8 @@ Related: `docs/plans/fix_ocaml_gc_investigation.md` (the run journal),
 `docs/testing.md` (commands and the live gate).
 
 Status: plan agreed 2026-10-06. Items **S1–S5**, **P0**, **P1**, **P2**, **P3.1**, **P3.3**,
-**P4** (remove `need`) and **P5/P6** are implemented in the working tree (not committed);
-P1's backtrace is best-effort where the platform pipes cores. **P3.2** (fast proxy reward)
+**P4** (remove `need`) and **P5/P6** are implemented; P1's
+backtrace is best-effort where the platform pipes cores. **P3.2** (fast proxy reward)
 is deferred: it needs Harbor-internals infrastructure, not engine work.
 
 Acceptance (**2026-10-06, twice**): two `fix-ocaml-gc` runs on Flash + reasoning `high`,
@@ -83,15 +83,20 @@ macros + crash diagnostic, minimal prompt, history of the model's own failed edi
 
 ## 4. P0 — reasoning on and a larger completion budget (implemented)
 
-- `src/config/settings.ts`: `reasoningEffort` default `"high"`; `maxTokens`
-  4096 → **8192** (ceiling 32768 unchanged).
+- `src/config/settings.ts`: `reasoningEffort` default `"low"` for everyday runs;
+  a hard task raises it to `"high"` per run — `SKEIN_REASONING_EFFORT`, or the
+  Harbor adapter's `configurable.reasoningEffort`. `maxTokens` 4096 → **8192**
+  (ceiling 32768 unchanged).
 - `src/llm/client.ts`: `reasoningBody(effort)` — `"none"` keeps the old off-body,
   otherwise `{ reasoning: { effort } }` (the exact form that produced the correct
   fix).
-- `tests/loop.test.ts`: updated (default `high`, `reasoningBody` cases).
+- `tests/loop.test.ts`: updated (default `low`, env override `high`,
+  `reasoningBody` cases).
 
-Agreed: `effort=high` for **all** runs (including Harbor), `maxTokens=8192`.
-Risk: cost/latency grow; a provider may additionally want `thinking`; verify live.
+Agreed: reasoning is on by default at `low`; the bench/acceptance (`fix-ocaml-gc`)
+runs at `high` (`bench/harbor/skein.template.yaml` → `configurable.reasoningEffort:
+high`). `maxTokens=8192`. Risk: `high` costs more latency; a provider may
+additionally want `thinking`; verify live.
 
 ## 5. P1 — crash diagnostics (core dump): never lose the crash information
 
@@ -236,5 +241,6 @@ Harbor itself does not check the build: it runs the task verifier and reads
   no core file; add an explicit run-under-gdb / `debug` variant, or accept signal-only?
 - P3.1: does Harbor expose per-task resource overrides?
 - P3.2: Harbor plugin vs external snapshot script.
-- Whether `reasoningEffort=high` should stay the default for everyday runs or be
-  raised only for hard tasks.
+- ~~Whether `reasoningEffort=high` should stay the default for everyday runs or be
+  raised only for hard tasks.~~ **Resolved (2026-10-06):** default `low`; the
+  bench/acceptance sets `high` per run (`configurable.reasoningEffort`).

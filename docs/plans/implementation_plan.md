@@ -21,7 +21,7 @@ function are the protocol.
 | Code non-monotonicity | staleness by version (file hash), no manual retraction |
 | First slice | bugfix by a failing test; arbiter is the test runner |
 | Orchestration | LangGraph.js (`@langchain/langgraph`) |
-| LLM | as in Ankyra: OpenAI-compatible endpoint, **reasoning disabled** (`thinking.type=disabled`, `reasoning.effort=none`); secrets only in `.env` |
+| LLM | as in Ankyra: OpenAI-compatible endpoint, reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
 | Arbiter | objective (test runner) plus subjective (user/acceptance) |
 
 ## 3. Roadmap

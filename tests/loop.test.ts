@@ -69,7 +69,8 @@ describe("reasoning budget", () => {
   it("loads settings from env with defaults", () => {
     const settings = loadSettings({ SKEIN_TEMPERATURE: "0.5" } as NodeJS.ProcessEnv);
     expect(settings.temperature).toBe(0.5);
-    expect(settings.reasoningEffort).toBe("high");
+    expect(settings.reasoningEffort).toBe("low");
+    expect(loadSettings({ SKEIN_REASONING_EFFORT: "high" } as NodeJS.ProcessEnv).reasoningEffort).toBe("high");
     expect(settings.live).toBe(false);
   });
 });

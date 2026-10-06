@@ -8,8 +8,7 @@ Related: `docs/context_design.md` (the projection and plan design),
 
 Status: a working journal. It records what has been investigated, what is fixed, what
 remains, so work can resume from any point. **The current state is §9 (session
-2026-10-06): the acceptance passes.** The code is not committed (all changes are in the
-working tree).
+2026-10-06): the acceptance passes.** The changes are committed.
 
 Task constraints (agreed): we do not change the model; we do not run the whole set; we
 aim for a short route (the reference is ~14 turns), not 60.

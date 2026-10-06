@@ -9,7 +9,8 @@
 `docs/ir_semantics_ru.md`.
 
 Прогон: `harbor run --config /tmp/opencode/accept.yaml -y` — Flash +
-reasoning `high`, `maxTurns 60`, `override_cpus: 4` / `override_memory_mb: 6144`.
+`configurable.reasoningEffort: high` (повседневный дефолт — `low`),
+`maxTurns 60`, `override_cpus: 4` / `override_memory_mb: 6144`.
 Две попытки, обе 2026-10-06:
 
 | Job | триал | когда | движок | reward |
