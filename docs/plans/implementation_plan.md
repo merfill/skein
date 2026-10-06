@@ -54,7 +54,10 @@ staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
    (`docs/plans/constraint_guard_plan.md`).
 2. Long-horizon tasks where the projection should give an advantage
    (multi-file edits, 50+ turns).
-3. Compare Skein vs opencode vs a monotonic agent on the same tasks.
+3. Compare Skein vs opencode vs a monotonic agent on the same tasks. **Started** —
+   the first matched run (3 long terminal-bench tasks, k = 3, reasoning `high` both)
+   is in `docs/bench_report.md` §4.4: parity on `fix-ocaml-gc`, no aggregate accuracy
+   gain, and the per-call context saving is offset by more calls and a worse cache.
 
 ## 4. Current status
 

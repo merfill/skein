@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "bench": "tsx bench/run.ts",
     "bench:gate": "tsx bench/gate.ts",
+    "bench:compare": "tsx bench/agents_compare.ts",
     "replay": "tsx bench/replay.ts"
   },
   "dependencies": {

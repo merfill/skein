@@ -98,7 +98,156 @@ is deliberately soft and the reference is extended as runs appear. The long
 scenario (`fix-ocaml-gc`) is not part of the gate — it is tracked in §4.2; it now
 passes (reward 1.0).
 
+### 4.4 Skein vs opencode (long tasks)
+
+The Tier 1 premise is that the projection gives an advantage on long tasks. To test
+it head-on, both agents run under one Harbor job with identical resources and
+reasoning (`bench/harbor/compare.template.yaml`):
+
+```
+SKEIN_HARBOR_CONFIG=compare.yaml bash bench/harbor/run.sh
+npm run bench:compare -- ~/.skein-bench/harbor/2026-10-06__17-31-37
+```
+
+Protocol: `terminal-bench` 2.0, three tasks, same model
+(`~deepseek/deepseek-v4-flash-latest`), `reasoningEffort: high` for both (Skein via
+`configurable.reasoningEffort`; opencode via `--variant high` and the model option),
+`override_cpus: 4`, `override_memory_mb: 5120`, `n_concurrent_trials: 5`,
+`n_attempts: 3`, `timeout_multiplier: 2.0`. Skein `maxTurns` 60. Job
+`2026-10-06__17-31-37`, 18 trials, ~1 h 23 min wall.
+
+`ctx` below is per-LLM-call prompt tokens `min/median/mean/peak` (Skein: `SKEIN_TURN`;
+opencode: `trajectory.json` `metrics.prompt_tokens` = input + cache). `tok in/out` is
+the mean per trial.
+
+**Overall (9 trials each):**
+
+| agent | solved | LLM calls | tools | tok in/out | ctx (min/med/mean/peak) | cache |
+|---|---|---|---|---|---|---|
+| Skein (langgraph) | 4/9 | 41 | 30 | 607.8k / 207.8k | 7.2k / 16.2k / 20.0k / 60.1k | 60% |
+| opencode | 6/9 | 21 | 26 | 697.9k / 3.0k | 7.4k / 30.7k / 32.9k / 79.7k | 96% |
+
+**Per task:**
+
+| task | Skein | opencode |
+|---|---|---|
+| `fix-ocaml-gc` | **3/3**, 69 call, med 16.4k, cache 56% | **3/3**, 26 call, med 43.1k, cache 96% |
+| `db-wal-recovery` | 1/3 (2 × `AgentTimeoutError`) | **3/3**, cache 96% |
+| `custom-memory-heap-crash` | 0/3 (2 × `no_progress`, 1 × exit 1) | 0/3 |
+
+**Reading:**
+
+- **On the task Skein was tuned for, `fix-ocaml-gc`, both agents are at 3/3 — no
+  accuracy gain.** The projection does what it promises per call: Skein's median
+  context is ~2.6× smaller (16.4k vs 43.1k) and its peak is lower (60.1k vs 79.7k).
+  But Skein makes ~2.6× more LLM calls (69 vs 26) and caches far worse (56% vs 96%),
+  so total input tokens land in the same place (1.04M vs 1.06M). The economy of the
+  projection is spent on the extra calls and the non-cacheable frontier; it buys no
+  solved tasks.
+- **`db-wal-recovery` favours opencode (3/3 vs 1/3), but not on merit:** both Skein
+  misses are 1800 s agent timeouts (`AgentTimeoutError`), i.e. the run is too slow,
+  not wrong. The faster, better-cached agent finishes it.
+- **`custom-memory-heap-crash` is non-discriminating:** neither agent solves it
+  (Skein: two `no_progress` stops and one non-zero exit; opencode: three wrong
+  answers).
+- Variance is high (n = 3 per cell): the saved opencode baseline
+  (`2026-09-26__11-50-39`, k = 1) had `db-wal-recovery` 1/1 and
+  `custom-memory-heap-crash` 0/1; here `db-wal-recovery` is 3/3 and
+  `custom-memory-heap-crash` 0/3.
+
+**Per-example analysis.**
+
+`fix-ocaml-gc` (both 3/3 — the task Skein was tuned on). Where Skein's calls go:
+
+| attempt | turns | LLM calls | retries | job polls | bookkeeping | real work |
+|---|---|---|---|---|---|---|
+| `brVESz3` | 52 | 63 | 11 | 17 | 9 (17%) | 43 |
+| `fNwUyxJ` | 48 | 63 | 15 | 1 | 20 (41%) | 28 |
+| `fa7HV3F` | 57 | 82 | 25 | 1 | 36 (63%) | 21 |
+
+opencode: 24–27 steps, 26–35 tool calls, 7–9 steps batching two tools, ~10k
+reasoning tokens (reasoning is on). Three sources of the extra Skein calls:
+
+1. **Background-job polling.** `brVESz3` launched the OCaml build as a background
+   `run {background}` and then polled it with `run {job: …}` **17 times**. Each poll
+   is a full-context LLM call. opencode runs the build with a blocking `bash`, so
+   it pays no polling turns. The strategy is uneven: one attempt polled 17 times,
+   the other two once each — but each poll is a wasted call opencode never makes.
+2. **Structured-output retries.** `invokeStructured` re-invokes on a completion
+   cap or a schema violation (`src/llm/structured.ts`): 11/15/25 extra calls, i.e.
+   21–44% of all calls here, each resending the full projection. `db-wal`'s
+   successful run had **0** retries, so this is model/context dependent, but on the
+   long OCaml runs it is a large tax.
+3. **IR bookkeeping.** `create_goal`/`complete`/`query` are 17–63% of turns on
+   these runs and have no counterpart in opencode; Skein also does one action per
+   turn, while opencode batches two.
+
+What went right: all three attempts reached the fix and stopped with
+`request_addressed`, and there was exactly one rejected proposal — the engine fixes
+(focus under a closed ancestor, crash diagnostics, background `run`, reasoning) hold
+on this task. The cost is efficiency, not correctness: the median context is ~2.6×
+smaller but the retries, polls, and bookkeeping re-send it often enough that the
+**total input tokens match opencode's (1.04M vs 1.06M)**.
+
+`db-wal-recovery` (opencode 3/3, Skein 1/3). The one Skein success (`4YD4dB5`) was
+efficient and clean: 18 turns / 18 calls / 0 retries / `request_addressed`, though
+still 10 of 18 turns were bookkeeping. The two misses (`6BJGabb`, `F3YTvbt`) are
+**`AgentTimeoutError` at 1800 s**, not wrong answers: both had reached turns 30–38
+(38 and 34 proposals) when killed, so their `SKEIN_METRICS` never flushed. opencode
+solves it in 7–22 steps, `bash`-only. Diagnosis: Skein is too slow here — the same
+retry + bookkeeping + one-action-per-turn overhead, against a 30-minute budget.
+
+`custom-memory-heap-crash` (both 0/3). Skein attempts `FdQ7oRm` and `c2nVLJQ` span
+**22–25 `query` calls** (58–64% of turns bookkeeping) and stop on `no_progress`:
+the model loops on retrieval instead of acting, and the engine correctly halts it.
+The third attempt (`phqyVm8`) **crashed** at turn 26: it read
+`/build/patches/locale_init.cc.patch` and the workspace guard threw
+`path escapes workspace: /build`, which ended the process (`exit 1`). The task
+instruction points into `/build`, outside the workspace, and `list` on the same path
+is recorded as a refusal while `read` throws and kills the run — an inconsistency to
+fix. opencode (19–34 steps, `bash`/`read`/`write`/`edit`, it runs valgrind and edits
+`user.cpp`) does not solve it either, so the task does not discriminate.
+
+**Caveats:** opencode's completion count excludes reasoning tokens (Harbor sums
+`tokens.output` only), so its `out` undercounts; input tokens are the comparable
+axis. opencode reports cost 0 from this provider, while Skein's cost is computed
+locally, so cost is not comparable here. Reasoning level is set by config, not
+verifiable from the artifacts.
+
+**Problems found (2026-10-06 comparison) and what to do.** The projection's per-call
+economy is real (median context ~2.6× smaller) but is currently spent on overhead.
+The concrete defects:
+
+1. **The turn-count comparison is confounded by strategy.** All three opencode runs
+   found the bug by downloading the upstream `shared_heap.c` and diffing it
+   (`curl`/`diff`/GitHub API; the `edit` is the last tool), while none of the Skein
+   runs tried it and localized by hand (`edit` at turns 19/36/51). The raw turns
+   compare a shortcut against manual localization, not two architectures. To measure
+   the architecture, rerun with the network off (or on tasks with no public
+   upstream). The per-turn overhead below is *not* confounded — Skein pays it under
+   any strategy.
+2. **A background `run` costs one full-context LLM call per poll.** `brVESz3` polled
+   the OCaml build 17 times (`run {job}`); opencode's blocking `bash` pays zero. Fix:
+   block, or let one turn consume the finished job instead of one poll per turn.
+3. **`invokeStructured` retries re-send the whole projection** — 11/15/25 extra calls
+   (21–44%) on the OCaml runs, 0 on the clean `db-wal` run. Size the completion
+   cap/prompt so the retries drop.
+4. **IR bookkeeping is a large share of turns** (`create_goal`/`complete`/`query`,
+   17–64%), and only one action is allowed per turn (opencode batches two).
+   `custom-memory-heap-crash` looped on `query` (22–25 calls) into `no_progress`.
+5. **`read` on a path outside the workspace kills the run.** `phqyVm8` read
+   `/build/…` (the task instruction points there); the workspace guard threw
+   `path escapes workspace` and the process exited 1. `list` on the same path is a
+   recorded refusal — `read` must behave the same.
+6. **Speed is a first-class metric.** On `db-wal-recovery` both Skein misses are
+   `AgentTimeoutError` (1800 s): slower than budget, not wrong.
+7. **The stable-prefix cache stays the biggest structural gap:** 60% vs 96%
+   (`implementation_plan.md`, backlog).
+
 ## 5. Problems (what broke or hurts)
+
+These are from the early baseline runs (`2026-09-26`, `2026-10-02`); some are fixed
+by now — the engine fixes and the current comparison are in §4.2 and §4.4.
 
 1. **The work graph is unused on a long task.** 0 claims, 0 decisions, 0 subgoals.
    The model creates no hypotheses, so refusals, check staleness, and path relevance

@@ -18,5 +18,9 @@ if [ -z "$key" ]; then
   exit 1
 fi
 
+# Config selection: SKEIN_HARBOR_CONFIG (default skein.yaml). Use compare.yaml
+# for the Skein-vs-opencode comparison (see docs/bench_report.md §4.4).
+config="${SKEIN_HARBOR_CONFIG:-skein.yaml}"
+
 cd "$repo"
-OPENAI_API_KEY="$key" exec harbor run --config "$here/skein.yaml" -y "$@"
+OPENAI_API_KEY="$key" exec harbor run --config "$here/$config" -y "$@"
