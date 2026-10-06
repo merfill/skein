@@ -85,12 +85,15 @@
   `action`+`mutate`+`mutates`, на устаревшем базисе отклоняется; `run` с `target`
   (объективная цель) → `check`+`verifies` (+`under`), причём **команда берётся из
   `target.done_when`**, а не из предложения доксы; `run` без `target` → `observation`.
-- **`complete`** `{ goal?, note?, under? }` — только субъективная, не корень.
+- **`complete`** `{ goal?, note?, under? }` — только субъективная, не корень; цель
+  обязана быть текущим узлом.
 - **`query`** — read-only адресация (не оператор доксы): достаёт узлы/рёбра.
 
-Врата `classify`: ограничения на `edit`; `stale_base`; `repeated_action`; строгий
-`revises`; `repeat_hypothesis`; `apply run { target }` только для объективной цели
-(`subjective_goal_needs_complete`); `complete` только для субъективной не-корневой.
+Врата `classify`: ограничения на `edit`; `stale_base`; `repeated_action` (снимается для
+пере-проверки после `inconclusive`); строгий `revises`; `repeat_hypothesis`; `apply run
+{ target }` только для объективной цели, которая **является текущим узлом**
+(`subjective_goal_needs_complete`, `not_current_goal`); `complete` только для
+субъективной не-корневой цели, которая является текущим узлом (`not_current_goal`).
 
 ## 6. Обход (логос)
 
@@ -105,8 +108,8 @@ execute → progress`; остановка — `request_addressed` (запрос 
 
 `Context` (`src/ir/project.ts`) — **ветка обхода**, а не дамп: `path` (стек
 `request → … → фокус`; узел несёт свои `plan`/`alternatives`), `constraints`,
-`lastResult` (**полный** результат последнего вызова), `shown` (результаты,
-удержанные по `need` — рабочее множество гипотезы), `calls` (дедуплицированная
+`lastResult` (**полный** результат последнего вызова), `shown` (рабочее множество:
+результаты уровней ветки плюс тела, возвращённые по `query {id}`), `calls` (дедуплицированная
 сводка предыдущих вызовов: `id`, `action`, `status ok/fail/refused`, `note`,
 `count`), `applicable`, `budget` (ходы). Никаких `artifacts`, версий, `index`, `recent` и
 сырых payload — всё прочее достаётся по `query`. Общего бюджета символов нет; форму

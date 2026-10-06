@@ -27,12 +27,10 @@ export const LoopState = Annotation.Root({
   stopReason: Annotation<string | null>(last<string | null>(null)),
   progressKey: Annotation<string>(last("")),
   stall: Annotation<number>(last(0)),
-  // The working set: results the model explicitly asked to see (via `need` or a
-  // `query {id}`), held for HELD_TURNS turns and refreshed on each request. Ephemeral
-  // loop state, not IR (query/need store no nodes).
+  // The working set: bodies the model pulled back with `query {id}`, held for HELD_TURNS
+  // turns and refreshed on each request. Ephemeral loop state, not IR (query stores no
+  // node). Level results are kept structurally, not here.
   held: Annotation<HeldEntry[]>(last<HeldEntry[]>([])),
-  // How often each result was requested, surviving eviction: feeds the adaptive TTL.
-  heldRequests: Annotation<Record<string, number>>(last<Record<string, number>>({})),
   // Ids retrieved by `query {id}` (even ones with no body, e.g. action/goal nodes), with
   // their TTL: the guard refuses re-querying an id while it is still recent.
   queried: Annotation<HeldEntry[]>(last<HeldEntry[]>([])),
@@ -41,8 +39,8 @@ export const LoopState = Annotation.Root({
 export interface HeldEntry {
   id: string;
   expiresAt: number;
-  // Last request turn: the working set is kept by recency, so a fresh body is never
-  // starved by a long-lived one (matters when TTLs differ, i.e. adaptive).
+  // Last fetch turn: the working set is kept by recency, so a fresh body is never starved
+  // by a long-lived one.
   pinnedAt: number;
 }
 

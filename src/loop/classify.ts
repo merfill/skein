@@ -7,7 +7,7 @@ import {
   predicateOf,
   type State,
 } from "../ir/graph";
-import { currentGoalId, goalPayload, itemSucceeded } from "../ir/traversal";
+import { currentGoalId, cursorOf, firstUnfulfilledItem, goalPayload, itemSucceeded } from "../ir/traversal";
 import type { DoneWhen } from "../ir/types";
 import type { PlanItem, Proposal } from "../llm/schemas";
 import { commandOf } from "../tools";
@@ -140,8 +140,8 @@ function repeatOfFailed(state: State, failed: string[], what: string): boolean {
 }
 
 // A node has a retrievable body if it is a result (observation/check) or carries inline
-// output / an outputRef; an action/goal/etc. has none, so `need`/`query` of it is not a
-// way to see anything.
+// output / an outputRef; an action/goal/etc. has none, so `query` of it returns only the
+// node's row, not a body.
 function hasBody(state: State, id: string): boolean {
   const node = state.nodes.get(id);
   if (node === undefined) return false;
@@ -168,6 +168,34 @@ function planCarriesCheck(state: State, items: readonly string[]): boolean {
   });
 }
 
+// The concrete move the logos expects at the current focus, computed from the same
+// frontier as `applicable`/`checkReady`. A wrong-target/wrong-operator refusal names it,
+// so the model is told not only why it was refused but what to do instead — the engine
+// states the frontier, the doxa still has to propose the move (docs/ir_semantics §4.2).
+function focusHint(state: State): string | undefined {
+  const focus = currentGoalId(state);
+  if (focus === undefined) return undefined;
+  const node = state.nodes.get(focus);
+  if (node?.kind === "request") return "interpret the request: create_goal";
+  if (node?.kind !== "goal") return undefined;
+  const payload = goalPayload(state, focus);
+  const plan = planOf(state, focus);
+  const items = plan === undefined ? [] : childrenOf(state, plan);
+  const cursor = cursorOf(state, focus);
+  const done = cursor === undefined || items.length === 0 || cursor >= items.length;
+  if (!done) {
+    const first = firstUnfulfilledItem(state, focus);
+    const firstNode = first !== undefined ? state.nodes.get(first) : undefined;
+    if (first === undefined) return undefined;
+    return firstNode?.kind === "action"
+      ? `apply the next plan item: ${firstNode.label}`
+      : `descend into the next plan item: ${first}`;
+  }
+  if (payload?.done_when.kind === "objective") return `check it: apply run {target: "${focus}"}`;
+  if (payload?.done_when.kind === "subjective") return `close it: complete {goal: "${focus}"}`;
+  return undefined;
+}
+
 export function classify(
   proposal: Proposal,
   state: State,
@@ -175,16 +203,6 @@ export function classify(
   queried: readonly string[] = [],
 ): Classification {
   const action = proposal.action;
-
-  // `need` keeps a result body; a non-result id (an action/goal node, or one without a
-  // body) is a mistake that would silently show nothing — refuse it with the reason.
-  for (const id of proposal.need ?? []) {
-    if (!hasBody(state, id)) {
-      return reject(
-        `need takes result ids only; ${id} has no retrievable body (use an observation/check id from calls[].id)`,
-      );
-    }
-  }
 
   if (action.operator === "query") {
     if (action.id !== undefined) {
@@ -257,6 +275,13 @@ export function classify(
     const goal = state.nodes.get(goalId);
     if (goal === undefined || goal.kind !== "goal") return reject("invalid_goal");
     if (goalId === state.rootId) return reject("root_not_completable");
+    const current = currentGoalId(state);
+    if (goalId !== current) {
+      const hint = focusHint(state);
+      return reject(
+        `not_current_goal: complete acts on the node in focus (${current ?? "none"}), not ${goalId}; ${hint ?? `close ${current ?? "it"} first`} — the traversal returns to the parent once it closes`,
+      );
+    }
     const payload = goalPayload(state, goalId);
     if (payload === undefined || payload.done_when.kind !== "subjective") {
       return reject(
@@ -268,8 +293,31 @@ export function classify(
 
   // action.operator === "apply"
   const apply = action.action;
-  if (apply.tool === "run" && apply.target === undefined && (apply.command ?? "").trim() === "") {
+  // A poll of a background job carries only the job id, and reads new state each time,
+  // so it is never a repeat: accept it outright (docs/tools.md §4.7).
+  if (apply.tool === "run" && apply.job !== undefined) {
+    if (apply.command !== undefined || apply.target !== undefined || apply.background === true) {
+      return reject('job_poll: poll a background job with { tool: "run", job } alone');
+    }
+    return accept;
+  }
+  if (apply.tool === "run" && apply.background === true && apply.target !== undefined) {
+    return reject("background_target: a check must run to a verdict; do not background a check");
+  }
+  if (
+    apply.tool === "run" &&
+    apply.target === undefined &&
+    apply.background !== true &&
+    (apply.command ?? "").trim() === ""
+  ) {
     return reject("run needs a command or an objective target to check");
+  }
+  if (
+    apply.tool === "run" &&
+    apply.background === true &&
+    (apply.command ?? "").trim() === ""
+  ) {
+    return reject("background_run: background needs a command");
   }
   if (apply.tool === "run" && apply.target !== undefined) {
     const target = state.nodes.get(apply.target);
@@ -283,6 +331,13 @@ export function classify(
     if (apply.command !== undefined && apply.command !== payload.done_when.command) {
       return reject(
         `target ${apply.target} is an objective goal; its check runs its own command "${payload.done_when.command}" — drop "command" (it is ignored) or pass exactly that`,
+      );
+    }
+    const current = currentGoalId(state);
+    if (apply.target !== current) {
+      const hint = focusHint(state);
+      return reject(
+        `not_current_goal: a check acts on the node in focus (${current ?? "none"}), not ${apply.target}; ${hint ?? `settle ${current ?? "the focus"} first`} — the traversal returns to the parent once it closes`,
       );
     }
   }
@@ -306,7 +361,13 @@ export function classify(
     const signature = `${runCommand}\u0000${apply.target ?? ""}`;
     const found = latestAction(state, signature);
     if (found !== undefined && state.lastMutationSeq < found.seq) {
-      return reject(repeatReason(resultId(state, found.id), held));
+      const prior = state.nodes.get(resultId(state, found.id));
+      const verdict = (prior?.payload as { verdict?: unknown } | undefined)?.verdict;
+      // A timeout brought no knowledge: an identical re-check after `inconclusive` is not
+      // a repeat, so the model may retry the same check at the same node (§4.2, invariant 23).
+      if (verdict !== "inconclusive") {
+        return reject(repeatReason(resultId(state, found.id), held));
+      }
     }
   }
   if (apply.tool === "edit") {

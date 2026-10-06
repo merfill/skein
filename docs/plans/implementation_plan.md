@@ -96,6 +96,11 @@ Beyond Tier 0, the current line adds:
 - **Explicit check node (T1.3)** — `record_check` materializes a `check` node
   (command, verdict, witness, `actor`) and a `verifies` `check → claim` edge;
   `query {verdictOf}` reads the node (`docs/plans/tier1_plan.md` §6).
+- **fix-ocaml-gc acceptance (2026-10-06)** — the long terminal-bench task is solved
+  (**reward 1.0**, `40 tests passed`) on Flash + reasoning `high`. The engine fixes
+  (focus under a closed ancestor, crash diagnostics, projection retention, background
+  `run`, removal of `need`) — `docs/plans/engine_fixes_found.md`; the run report —
+  `docs/fix_ocaml_gc_run_report_2026-10-06.md`.
 
 Verification: `npm run typecheck`; `npm test` (67 tests) — offline tests, live gate
 only when `SKEIN_LIVE=true`.

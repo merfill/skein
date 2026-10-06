@@ -7,6 +7,12 @@ environment:
   type: docker
   force_build: true
   delete: true
+  # The verifier rebuilds OCaml with `make -j4`; task.toml gives cpus=1, so -j4 ran as
+  # -j1. Override the container resources for every task in the job (Harbor applies these
+  # to task_env_config, docs/plans/engine_fixes_found.md P3.1). Values fit the host
+  # (16 CPU, 30G) even at n_concurrent_trials: 3: 3x4 CPU and 3x6G.
+  override_cpus: 4
+  override_memory_mb: 6144
 agents:
   - name: langgraph
     model_name: routerai/~deepseek/deepseek-v4-flash-latest

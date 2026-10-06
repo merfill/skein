@@ -109,7 +109,7 @@ export function latestClosingCheck(state: State, goalId: string): Node | undefin
   return latest;
 }
 
-function latestComplete(state: State, goalId: string): Node | undefined {
+export function latestComplete(state: State, goalId: string): Node | undefined {
   let latest: Node | undefined;
   for (const edge of state.edges.values()) {
     if (edge.kind !== "closes" || edge.to !== goalId) continue;
@@ -299,6 +299,12 @@ function applyEvent(state: State, event: Event): void {
             ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
             ...(event.error !== undefined ? { error: event.error } : {}),
             ...(event.errorRef !== undefined ? { errorRef: event.errorRef } : {}),
+            ...(event.signal !== undefined ? { signal: event.signal } : {}),
+            ...(event.core !== undefined ? { core: event.core } : {}),
+            ...(event.backtrace !== undefined ? { backtrace: event.backtrace } : {}),
+            ...(event.backtraceError !== undefined
+              ? { backtraceError: event.backtraceError }
+              : {}),
             ...(event.witness !== undefined ? { witness: event.witness } : {}),
           },
           seq: state.seq,

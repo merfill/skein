@@ -35,16 +35,11 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
   const first = chars[0] ?? 0;
   const peak = chars.reduce((max, value) => Math.max(max, value), 0);
   const used = [...branchesOf(run.turns)];
-  const needs = run.turns
-    .filter((turn) => turn.need.length > 0)
-    .map((turn) => `#${turn.turn}:${turn.need.length}`);
   const ws = workingSetStats(
     run.turns.map((turn) => ({
       shown: turn.context.shown,
-      requested: [
-        ...turn.need,
-        ...(turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : []),
-      ],
+      requested:
+        turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : [],
     })),
   );
   const parts = [
@@ -59,7 +54,6 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
     `mutations=${mutationsOf(run.result.events).length}`,
     `branches=[${used.join(",")}]`,
   ];
-  if (needs.length > 0) parts.push(`need=${needs.join(" ")}`);
   if (missing.length > 0) parts.push(`MISSING(soft)=[${missing.join(",")}]`);
   const tag = repeat > 0 ? `#${repeat + 1} ` : "";
   console.log(`[scenario ${tag}${run.name}] ${parts.join(" ")}`);

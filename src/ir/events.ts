@@ -79,6 +79,11 @@ export const eventSchema = z.discriminatedUnion("type", [
     // stderr, kept separate from stdout: the primary signal of a failed run.
     error: z.string().optional(),
     errorRef: z.string().optional(),
+    // A crash (a signal): the core file and, best effort, a backtrace (docs/tools.md §4.3).
+    signal: z.string().optional(),
+    core: z.string().optional(),
+    backtrace: z.string().optional(),
+    backtraceError: z.string().optional(),
     actor: z.enum(["arbiter", "user"]).optional(),
     witness: z.array(witnessEntrySchema).optional(),
     targets: z.array(z.string()),

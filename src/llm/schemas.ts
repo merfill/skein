@@ -77,6 +77,10 @@ export const applySchema = z.discriminatedUnion("tool", [
     command: z.string().optional(),
     target: z.string().optional(),
     under: z.array(z.string()).optional(),
+    // Start the command in the background and return at once; poll it with `job`.
+    background: z.boolean().optional(),
+    // Poll a background job started earlier (its id came back as `job-N`).
+    job: z.string().optional(),
   }),
 ]);
 
@@ -111,14 +115,9 @@ export const actionSchema = z.discriminatedUnion("operator", [
 
 export type Action = z.infer<typeof actionSchema>;
 
-// The model may ask for prior results to be shown in full on the next turn; the cap
-// is a safety guard, declared in the prompt (docs/context_design_ru.md §8).
-export const MAX_NEED = 5;
-
 export const proposalSchema = z.object({
   thought: z.string(),
   action: actionSchema,
-  need: z.array(z.string()).max(MAX_NEED).optional(),
 });
 
 export type Proposal = z.infer<typeof proposalSchema>;

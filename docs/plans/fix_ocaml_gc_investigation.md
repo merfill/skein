@@ -7,8 +7,9 @@ Related: `docs/context_design.md` (the projection and plan design),
 `docs/fix_ocaml_gc_ideal.md` (the reference form).
 
 Status: a working journal. It records what has been investigated, what is fixed, what
-remains, so work can resume from any point. **The current state is §8 (session
-2026-10-04).** The code is not committed (all changes are in the working tree).
+remains, so work can resume from any point. **The current state is §9 (session
+2026-10-06): the acceptance passes.** The code is not committed (all changes are in the
+working tree).
 
 Task constraints (agreed): we do not change the model; we do not run the whole set; we
 aim for a short route (the reference is ~14 turns), not 60.
@@ -241,3 +242,52 @@ This section is more current than §4–§5; read it first.
    `no_progress`.
 3. **grep scope + service files** (from §5, still relevant).
 4. Stage-closing discipline (from §5).
+
+---
+
+## 9. Session 2026-10-06: the task is solved (reward 1.0)
+
+The `fix-ocaml-gc` acceptance now passes. The plan behind the fixes —
+`docs/plans/engine_fixes_found.md`; metrics and trajectory —
+`docs/fix_ocaml_gc_run_report_2026-10-06.md`. This section is the current state.
+
+### 9.1 Chronology (fix-ocaml-gc, one attempt each)
+
+| Job | What changed | turns | edits | checks | stop | reward |
+|---|---|---|---|---|---|---|
+| `2026-10-06__10-57-47` | S1–S5, P0–P3.3 (`need` still present) | 60 | 1 | 2 | max_turns | **1** |
+| `2026-10-06__14-53-22` | + P4 (no `need`), P5/P6 | 60 | 1 | 2 | max_turns | **1** |
+
+Both: `override_cpus: 4`, reasoning `high`; verifier `40 tests passed`.
+
+### 9.2 Why it finally solved
+
+- **P0 — reasoning on** is the decisive factor (F1): with `reasoningEffort="high"` the
+  model touches the right line; with reasoning off it never did (15/15 off-target).
+- **S1–S3** (focus under a closed ancestor; closing move on the focus; re-check after
+  `inconclusive`) remove the 12-turn `unknown_revision` loop.
+- **P1/P2** (crash diagnostics; `complete` notes, edit diffs, per-level retention) put the
+  defective line, the crash and the stage evidence into the projection.
+- **P3.1/P3.3** (4 CPU/6 GB; `run {background}` + `{job}`) let the agent build and verify
+  without blocking a turn.
+- **P4/P5/P6** remove the one place doxa shaped the context (`need`) and make a refusal
+  name the focus move. The second run shows removing `need` does not regress the live path.
+
+### 9.3 Trajectory
+
+Both name the defect in `pool_sweep` and apply the reference edit
+`p += Whsize_hd(hd);` → `p += wh;`. First run: edit at turn 29 (before `need` removal).
+Second run: `locate` closed at turn 45, edit at turn 53, then a **background** bootstrap
+build (`job-2`, P3.3) polled at turns 56–57 before the fix goal's check (turns 58–59).
+Both hit `max_turns` with the edit already in place; the verifier then rebuilds clean and
+passes.
+
+### 9.4 Open tasks
+
+1. **Shorten localization** (45 turns in `14-53-22`) so the run stops before `max_turns`
+   and can self-verify within budget — the last wasted turns are the long build.
+2. **`create_goal` thrash** is still visible (`14-53-22`: 10 goals / 10 plans /
+   10 alternatives); from §8.4.
+3. **`P3.2`** (fast proxy reward) remains deferred — Harbor-internals infra.
+4. Should `reasoningEffort=high` stay the everyday default (cost/latency) or be raised
+   only for hard tasks? (open in `engine_fixes_found.md` §10).

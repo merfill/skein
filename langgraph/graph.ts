@@ -59,6 +59,9 @@ function buildSettings(config: HarborInvokeConfig | undefined): Settings {
   const modelKwargs = (configurable.model_kwargs ?? {}) as Record<string, unknown>;
   const configuration = (modelKwargs.configuration ?? {}) as Record<string, unknown>;
   const maxTurns = Number(configurable.maxTurns ?? process.env.SKEIN_MAX_TURNS ?? 60);
+  const runTimeoutMs = Number(
+    configurable.runTimeoutMs ?? process.env.SKEIN_RUN_TIMEOUT_MS ?? base.runTimeoutMs,
+  );
   return {
     ...base,
     apiUrl:
@@ -70,6 +73,8 @@ function buildSettings(config: HarborInvokeConfig | undefined): Settings {
       base.apiKey,
     model: str(modelKwargs.model) ?? str(process.env.SKEIN_MODEL) ?? base.model,
     maxTurns: Number.isFinite(maxTurns) && maxTurns > 0 ? maxTurns : base.maxTurns,
+    runTimeoutMs:
+      Number.isFinite(runTimeoutMs) && runTimeoutMs > 0 ? runTimeoutMs : base.runTimeoutMs,
   };
 }
 
@@ -169,7 +174,7 @@ export const skein = {
   async invoke(input: unknown, config?: HarborInvokeConfig): Promise<unknown> {
     const instruction = extractInstruction(input);
     const settings = buildSettings(config);
-    const workspace = fsWorkspace(process.cwd());
+    const workspace = fsWorkspace(process.cwd(), { runTimeoutMs: settings.runTimeoutMs });
     const model = createChatModel(settings);
     const inherited = Array.isArray(config?.callbacks) ? (config.callbacks as unknown[]) : [];
 
@@ -215,7 +220,7 @@ export const skein = {
         throw error;
       }
       console.log(
-        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action, need: proposal.need ?? [] })}`,
+        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action })}`,
       );
       proposals.push(proposal.action);
       turns.push({

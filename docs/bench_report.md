@@ -74,6 +74,12 @@ subgoals / 0 claims / 0 checks, only read/grep/run, no edit; `db-wal-recovery` �
 (Docker build/start timeout 1200 s, not agent behaviour). The reference shape of the
 route and the gap analysis — `docs/fix_ocaml_gc_ideal.md`.
 
+**Solved (2026-10-06).** After the engine fixes in `docs/plans/engine_fixes_found.md`
+(reasoning on, focus under a closed ancestor, crash diagnostics, projection retention,
+4 CPU / 6 GB and a background `run`), `fix-ocaml-gc` passes: two acceptance runs, both
+**reward 1.0** (`40 tests passed`) — `2026-10-06__10-57-47` and
+`2026-10-06__14-53-22`. Report: `docs/fix_ocaml_gc_run_report_2026-10-06.md`.
+
 ### 4.3 Non-degradation gate (baseline)
 
 So that the roadmap steps (`docs/plans/logos_roadmap_plan.md`) do not worsen short
@@ -89,9 +95,8 @@ tasks, a deterministic offline gate was introduced:
 
 This is a smoke check, not a statistical test: LLM runs are noisy, so the threshold
 is deliberately soft and the reference is extended as runs appear. The long
-scenario (`fix-ocaml-gc`) is not part of the gate: Skein's baseline there is
-currently `reward 0`, and the goal is convergence, not non-degradation; it is
-tracked in §4.2.
+scenario (`fix-ocaml-gc`) is not part of the gate — it is tracked in §4.2; it now
+passes (reward 1.0).
 
 ## 5. Problems (what broke or hurts)
 

@@ -132,6 +132,18 @@ export function focusEvents(state: State): Event[] {
       break;
     }
 
+    // Invariant 17 extends to the subtree: if the top is still open but an ancestor
+    // above the request root has closed, return out of it (the branch is trimmed under a
+    // closed ancestor, not only when the top itself closes).
+    if (
+      branch.length > 1 &&
+      branch.slice(0, -1).some((id) => id !== rootId && isClosedPredicate(state, id))
+    ) {
+      out.push({ type: "return" });
+      branch.pop();
+      continue;
+    }
+
     if (isClosedPredicate(state, current) && branch.length > 1) {
       out.push({ type: "return" });
       branch.pop();

@@ -67,7 +67,7 @@ subgoal to its plan. Give a plan when the steps are known. List failures fully i
 | `grep` | `{ pattern, path?, include?, exclude?, before?, after?, from?, count? }` | search the workspace: scope, windows over matches, JSON (see §4.2) |
 | `list` | `{ path?, include?, exclude?, from?, limit? }` | list files by mask, JSON (see §4.6) |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
-| `run` | `{ command?, target?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted) |
+| `run` | `{ command?, target?, background?, job?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted); with `background` — start a long command and poll it by `job` (see §4.7) |
 
 ### 2.3 `complete { goal?, note?, under? }`
 
@@ -141,7 +141,7 @@ content. The model asks for 120 lines — it sees ~8.
   (the middle is never cut);
 - pagination is the same `grep` with a new `from`: recomputation is deterministic (like
   re-reading a window in `read`); the window body is kept via `storeOutput`, so recall
-  via `need`/`shown` works exactly as for `read`;
+  via `shown`/`query {id}` works exactly as for `read`;
 - default skips: `SKIP_DIRS` directories + dot files/directories (`.depend`,
   `.mailmap`); `.gitignore` filtering comes later.
 
@@ -161,6 +161,17 @@ content. The model asks for 120 lines — it sees ~8.
 - A failed `edit` (`find` not found) materializes the file's **current content** in the
   failure observation and keeps it in `shown`, so the model copies `find` verbatim from
   there instead of re-reading a file it already read (which the repeat guard refuses).
+- A re-check after an **`inconclusive`** verdict (a timeout) is **not** a repeat: the
+  timeout brought no knowledge, so the same `run {target}` may be repeated. A run of
+  inconclusive checks does not count as progress and leaves the goal `open`.
+- A run killed by a **signal** (a crash, not a controlled exit) carries `signal` (e.g.
+  `SIGSEGV`) — never a bare nonzero exit. The wrapper raises `ulimit -c unlimited`, so
+  when the platform writes a core the engine finds the newest `core*` in the workspace
+  and, if `gdb` is installed, attaches `gdb --batch -c <core> -ex bt -ex "info locals"`
+  as `backtrace`. When no core was written, the engine reports the kernel's
+  `core_pattern` so the absence is explained, not silently swallowed. `lastResult`
+  carries `signal`/`core`/`corePattern`/`backtrace`, and a `calls` note names the
+  signal; a foreground run and a completed background job are both covered.
 
 ### 4.4 Projection: latest result + summary (decided)
 
@@ -169,8 +180,12 @@ content. The model asks for 120 lines — it sees ~8.
   `{ action, status: ok|fail|refused, note, count }`, deduplicated by signature.
   `action` includes the parameters: for `read` — the **range** (`read f [1-100]`),
   for `grep` — the **pattern and context** (`grep sweep 5/5`), for `run` — the
-  command. This gives the model "memory of what was already done" without inflating
-  the context, and makes coverage visible.
+  command, for `edit` — the **short diff** (`-find +replace`), for `complete` —
+  the closed goal and its **note**. This gives the model "memory of what was already
+  done" without inflating the context, and makes coverage visible. An edit keeps
+  `find`/`replace` in its action payload, so a failed or repeated edit shows the exact
+  `find` already tried instead of a blank "applied"; a completed subjective goal leaves
+  `path` (the branch is trimmed under a closed ancestor), so its note surfaces here.
 - `negative` is **merged into `calls`** (one list): status `refused`/`fail` + the rule
   "do not repeat while the world has not changed". A repeated command with the same
   signature (`read`/`grep` too) and an unchanged world is **refused**, and the reason
@@ -178,13 +193,16 @@ content. The model asks for 120 lines — it sees ~8.
   `shown`, use it there; otherwise fetch it via `query {id}` (§4.5). The advice never
   sends the model to `query` a body that is already shown — that is itself refused, and
   the model would loop `read → query → read`.
-- `shown` is the **working set**: `need: [id …]` and `query {id}` place **result
-  bodies** in `shown`, where they are held for **`HELD_TURNS` (6)** turns (re-adding
-  refreshes); the cap is `MAX_NEED` (5) bodies and `2 × OUTPUT_LIMIT` (16000) characters,
-  the least recently requested evicted first. `need` accepts only ids with a body
-  (`observation`/`check`); an id without a body is refused. A read observation whose file
-  has changed since is dropped (stale content is never shown as active). `run`/`check`
-  bodies are historical and never go stale.
+- `shown` is the **working set**, owned by the engine: the produced results of **every
+  level on the current branch** (not just the leaf) are kept, so a stage's evidence (the
+  error that motivated the next stage) stays in view until the parent closes, newest
+  first. `query {id}` adds one **result body** from an earlier level (or an evicted one),
+  held for **`HELD_TURNS` (6)** turns (re-querying refreshes); the cap is `MAX_HELD` (5)
+  bodies and `2 × OUTPUT_LIMIT` (16000) characters, the least recently requested evicted
+  first. A read observation whose file has changed since is dropped (stale content is
+  never shown as active); `run`/`check` bodies are historical and never go stale. There is
+  **no** model-side declaration of what to show: `query {id}` is the single retrieval
+  entrance.
 - `SKEIN_CTX_TOTAL` is not applied; `SKEIN_CTX_EXCERPT` is no longer needed.
 
 ### 4.5 `query`: fetch a result by `id` (decided)
@@ -211,6 +229,21 @@ content. The model asks for 120 lines — it sees ~8.
 - the result is JSON: `{ root, total, from, returned, next?, files: [] }`;
 - read-only and idempotent (a repeat is not a refusal); it gives the model visibility
   of extensions so it can set `include` for `grep` meaningfully.
+
+### 4.7 `run`: long commands in the background (decided)
+
+- A foreground `run` is capped by `SKEIN_RUN_TIMEOUT_MS` (default 120 s); a timeout is
+  `inconclusive`. That cap is too short for a full build or a whole test suite.
+- `run { command, background: true }` starts the command detached and returns **at once**
+  with a job id (`job-N`); the turn is not blocked.
+- `run { job: "job-N" }` polls that job: it returns `running` (retry) or `done` with the
+  job's exit code and the **tail** of stdout/stderr (the full log stays at
+  `.skein/jobs/<id>.{out,err}`). A poll carries only `job` — never `command`/`target`.
+- The CLI runs stdout and stderr into **separate** logs (the §4.3 rule holds: the streams
+  are never merged); a poll that is not `done` leaves no verdict.
+- A background job is never a check (`target` is refused); a poll is never a repeat (each
+  poll reads new state). A background command is refused while a constraint forbids a
+  file, because its mutations land after the turn and cannot be reverted.
 
 ---
 

@@ -1,9 +1,12 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   statSync,
   writeFileSync,
@@ -33,6 +36,39 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   timedOut?: boolean;
+  // The signal that killed the command (SIGSEGV, SIGABRT, …), if any. A crash is a
+  // stronger fact than the exit code and must not be lost (docs/tools.md §4.3).
+  signal?: string;
+}
+
+// A command started in the background: `run` returns at once with this handle, and the
+// model polls it by id instead of blocking a whole turn on a long build (docs/tools.md
+// §4.7). The child writes stdout and stderr to separate logs under `.skein/jobs/`.
+export interface JobHandle {
+  id: string;
+  pid: number;
+  command: string;
+}
+
+export interface JobResult {
+  id: string;
+  command: string;
+  state: "running" | "done";
+  // When the job started (ms epoch): a crash core is searched from this time.
+  startedAt: number;
+  // Both null while the job runs; `signal` is set when the shell was killed by a signal
+  // (a segfault raised to the process group, not a normal exit).
+  exitCode: number | null;
+  signal: string | null;
+  // The tail of each stream (bounded), never the whole log; the full log stays on disk.
+  stdout: string;
+  stderr: string;
+}
+
+export interface WorkspaceOptions {
+  // Cap on a foreground `run`. A background job is not capped here (its caller decides
+  // when to stop polling); this exists so a slow verifier can be allowed to finish.
+  runTimeoutMs?: number;
 }
 
 export interface Workspace {
@@ -46,6 +82,8 @@ export interface Workspace {
   grep(pattern: string, filter?: PathFilter): GrepMatch[];
   listFiles(filter?: PathFilter): string[];
   run(command: string): CommandResult;
+  startJob(command: string): JobHandle;
+  pollJob(id: string): JobResult | undefined;
 }
 
 const SKIP_DIRS = new Set([
@@ -118,8 +156,45 @@ function globMatcher(glob: string): (path: string) => boolean {
   return (path) => re.test(hasSlash ? path : (path.split("/").pop() ?? path));
 }
 
-export function fsWorkspace(root: string): Workspace {
+const DEFAULT_RUN_TIMEOUT_MS = 120_000;
+// How much of a background job's log a poll returns. The full log stays at
+// `.skein/jobs/<id>.{out,err}`; the poll shows only the tail, so a long build does not
+// flood the context (it is the tail — the error — that matters, tools §4.3).
+const JOB_TAIL_BYTES = 8_000;
+
+interface JobRecord extends JobHandle {
+  fullOut: string;
+  fullErr: string;
+  startedAt: number;
+  state: "running" | "done";
+  exitCode: number | null;
+  signal: string | null;
+}
+
+function readTail(full: string): string {
+  let size: number;
+  try {
+    size = statSync(full).size;
+  } catch {
+    return "";
+  }
+  const start = Math.max(0, size - JOB_TAIL_BYTES);
+  const length = size - start;
+  if (length === 0) return "";
+  const fd = openSync(full, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    readSync(fd, buffer, 0, length, start);
+    const text = buffer.toString("utf8");
+    return start > 0 ? `…[truncated ${start} bytes]\n${text}` : text;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Workspace {
   const base = resolve(root);
+  const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
 
   const abs = (path: string): string => {
     const full = resolve(base, path);
@@ -226,10 +301,10 @@ export function fsWorkspace(root: string): Workspace {
     // `spawnSync` returns stdout and stderr separately regardless of the exit code, so
     // an error stream is never lost and never concatenated into stdout. `pipefail` makes
     // a pipeline report the failing stage's exit code: `make | tail` must tell the truth.
-    const result = spawnSync("/bin/bash", ["-c", `set -o pipefail; ${command}`], {
+    const result = spawnSync("/bin/bash", ["-c", `set -o pipefail; ulimit -c unlimited 2>/dev/null; ${command}`], {
       cwd: base,
       encoding: "utf8",
-      timeout: 120_000,
+      timeout: runTimeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
     const timedOut =
@@ -240,6 +315,78 @@ export function fsWorkspace(root: string): Workspace {
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
       ...(timedOut ? { timedOut: true } : {}),
+      ...(result.signal !== undefined && result.signal !== null ? { signal: result.signal } : {}),
+    };
+  };
+
+  // Background jobs live only for the lifetime of this workspace (one agent run): the
+  // loop holds the same workspace across turns, so the registry and the child's `exit`
+  // event are enough — no on-disk job metadata.
+  const jobs = new Map<string, JobRecord>();
+  let jobCounter = 0;
+
+  const startJob = (command: string): JobHandle => {
+    jobCounter += 1;
+    const id = `job-${jobCounter}`;
+    const relOut = `.skein/jobs/${id}.out`;
+    const relErr = `.skein/jobs/${id}.err`;
+    const fullOut = abs(relOut);
+    const fullErr = abs(relErr);
+    mkdirSync(dirname(fullOut), { recursive: true });
+    const outFd = openSync(fullOut, "w");
+    const errFd = openSync(fullErr, "w");
+    const child = spawn("/bin/bash", ["-c", `set -o pipefail; ulimit -c unlimited 2>/dev/null; ${command}`], {
+      cwd: base,
+      stdio: ["ignore", outFd, errFd],
+    });
+    // The child owns the descriptors now; close the parent's copies so they do not keep
+    // the event loop alive.
+    closeSync(outFd);
+    closeSync(errFd);
+    const record: JobRecord = {
+      id,
+      pid: child.pid ?? 0,
+      command,
+      fullOut,
+      fullErr,
+      startedAt: Date.now(),
+      state: "running",
+      exitCode: null,
+      signal: null,
+    };
+    jobs.set(id, record);
+    child.on("exit", (code, signal) => {
+      record.state = "done";
+      record.exitCode = code;
+      record.signal = signal;
+    });
+    child.on("error", (error) => {
+      record.state = "done";
+      record.exitCode = null;
+      record.signal = null;
+      try {
+        writeFileSync(fullErr, `spawn error: ${error.message}\n`);
+      } catch {
+        // The job is still reported done; the empty log is enough.
+      }
+    });
+    // Do not let a long build keep the agent process alive once its run is over.
+    child.unref();
+    return { id, pid: record.pid, command };
+  };
+
+  const pollJob = (id: string): JobResult | undefined => {
+    const record = jobs.get(id);
+    if (record === undefined) return undefined;
+    return {
+      id: record.id,
+      command: record.command,
+      state: record.state,
+      startedAt: record.startedAt,
+      exitCode: record.exitCode,
+      signal: record.signal,
+      stdout: readTail(record.fullOut),
+      stderr: readTail(record.fullErr),
     };
   };
 
@@ -261,5 +408,7 @@ export function fsWorkspace(root: string): Workspace {
     grep,
     listFiles,
     run,
+    startJob,
+    pollJob,
   };
 }

@@ -89,12 +89,15 @@ the stack is the fold of `descend`/`return`.
   (objective goal) → `check`+`verifies` (+`under`), and the **command comes from
   `target.done_when`**, not from the doxa's proposal; `run` without `target` →
   `observation`.
-- **`complete`** `{ goal?, note?, under? }` — only a subjective, non-root goal.
+- **`complete`** `{ goal?, note?, under? }` — only a subjective, non-root goal; the goal
+  must be the current node.
 - **`query`** — read-only addressing (not a doxa operator): reaches nodes/edges.
 
-Gates in `classify`: constraints on `edit`; `stale_base`; `repeated_action`; strict
-`revises`; `repeat_hypothesis`; `apply run { target }` only for an objective goal
-(`subjective_goal_needs_complete`); `complete` only for a subjective non-root goal.
+Gates in `classify`: constraints on `edit`; `stale_base`; `repeated_action` (waived for a
+re-check after `inconclusive`); strict `revises`; `repeat_hypothesis`; `apply run
+{ target }` only for an objective goal that **is the current node**
+(`subjective_goal_needs_complete`, `not_current_goal`); `complete` only for a subjective
+non-root goal that is the current node (`not_current_goal`).
 
 ## 6. Traversal (logos)
 
@@ -111,7 +114,8 @@ semantic key unchanged for N turns), or the budget (`maxTurns`).
 `Context` (`src/ir/project.ts`) is the **traversal branch**, not a dump: `path` (the
 `request → … → focus` stack; a node carries its own `plan`/`alternatives`),
 `constraints`, `lastResult` (the **full** result of the latest call), `shown` (the
-results kept via `need` — the hypothesis's working set), `calls` (a deduplicated
+working set: the branch levels' results plus bodies pulled back with `query {id}`),
+`calls` (a deduplicated
 summary of previous calls: `id`, `action`, `status ok/fail/refused`, `note`,
 `count`), `applicable`, `budget` (turns). No `artifacts`, versions, `index`, `recent`
 or raw payloads — everything else is reached via `query`. There is no total char

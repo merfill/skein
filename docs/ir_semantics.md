@@ -211,7 +211,9 @@ plan.
   subgoal `H`, push `H`, focus → `H`;
 - **return** `return`: pop the top, focus → the parent. It happens when the current goal
   **has closed** (a `check` gave a verdict or a `complete` closed it) or by `W`'s
-  decision (change of branch). A return from the root is impossible.
+  decision (change of branch). A return from the root is impossible. A closed goal does
+  not keep its descendants in focus: the branch is trimmed under a closed ancestor, not
+  only when the top itself closes (invariant 17).
 
 **Applicable at the point `G`** (what the doxa sees as the frontier):
 
@@ -224,6 +226,12 @@ plan.
 - the plan is incomplete → `create goal` (add a subgoal) / `apply` (add a command);
 - the branch is refuted and `alternatives` exist → pick an option;
 - nothing to do and the goal does not close → `return`.
+
+A closing move (`apply` a check, `complete`) acts on the node in focus `G_k` alone: a
+check targets `G_k`, a `complete` names `G_k`. Targeting an ancestor or a sibling is
+refused (`not_current_goal`) — the current node closes first, and the traversal returns to
+the parent on its own. This keeps a closed ancestor from ever being produced from inside
+its own subtree.
 
 **Alternatives.** The option is proposed by the doxa; the chosen one is the one descended
 into (`chosen` is set, the rest are derived `abandoned`). Switching options is also a
@@ -418,7 +426,8 @@ refuted interpretations/options are visible.
 
 **Input:** the current goal `C`; a command `D` (for exploration, required without
 `target`); an optional check target `target` — then the command comes from its
-`done_when`, and `D` is omitted.
+`done_when`, and `D` is omitted. `target` must be `C` itself (a check acts on the focus);
+targeting another goal is refused (`not_current_goal`).
 
 **Admissibility check:** the command is admissible (constraints, executability, the
 presence of a current goal). Without `target` `D` must be present. For a check (`target`)
@@ -466,12 +475,18 @@ not** substitute the command. A subjective goal cannot be checked — only `comp
 a flaky test — these are `inconclusive`: the fact is recorded, but the goal is **not**
 refuted; the case is escalated to the Arbiter. `refuted` comes only from `fail`.
 
+An `inconclusive` check may be repeated: an identical re-check is not a repeat-refusal
+(the timeout brought no knowledge), and a run of `inconclusive` checks does not count as
+progress (§2.7) — the goal stays `open` until a deterministic verdict arrives or the run
+stops on no progress.
+
 **Projection effect:** the action, its result and (for a check) the change of the
 goal's state are visible.
 
 ### 4.3 Complete (`complete`)
 
-**Input:** a goal `G`; a note.
+**Input:** a goal `G` (the current node `C`; naming another goal is refused,
+`not_current_goal`); a note.
 
 **Admissibility check:** `G` has a **subjective** `done_when`. If `done_when` is
 objective — a refusal: the completion of an objective goal is decided only by a check.
@@ -623,11 +638,13 @@ the separate specification `docs/projection.md`.
 | 14 | nodes have no stored statuses: state is entirely derived |
 | 15 | structural edges (`has_plan`, `item`, `has_alternatives`, `chosen`) form a forest — no cycles |
 | 16 | the traversal makes at most K steps without progress at a node (a cursor shift, a new observation/check, a closure); otherwise `return` |
-| 17 | the cursor does not decrease on an unchanged plan; a closed goal does not remain the focus (after closure — `return`) |
+| 17 | the cursor does not decrease on an unchanged plan; a closed goal does not remain the focus, nor do its descendants (the branch is trimmed under a closed ancestor; after closure — `return`) |
 | 18 | on failure `create goal` must list all `refuted`/`abandoned` options of the container (`revises`); otherwise a refusal |
 | 19 | the command of an objective check is the goal's `done_when.command` from the IR, not the doxa's text |
 | 20 | the doxa neither completes nor checks a request: at the request point only `create goal` is applicable |
 | 21 | a refusal or a failure changes the projection (`calls`, §2.8): a repeat creates no knowledge; otherwise a loop |
+| 22 | a closing move (`apply` a check, `complete`) acts only on the node in focus; targeting an ancestor or a sibling is refused (`not_current_goal`) |
+| 23 | an `inconclusive` check leaves the goal `open` and may be repeated; it is not a repeat-refusal and not progress |
 
 ---
 

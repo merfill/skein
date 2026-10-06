@@ -9,8 +9,9 @@ import {
   type State,
 } from "../ir/graph";
 import { currentGoalId, firstUnfulfilledItem, goalPayload } from "../ir/traversal";
-import type { EdgeKind, GoalPayload, Node, Provenance, WitnessEntry } from "../ir/types";
+import type { EdgeKind, GoalPayload, Node, Provenance, Verdict, WitnessEntry } from "../ir/types";
 import type { Action, Apply, GoalItem, PlanItem } from "../llm/schemas";
+import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, Workspace } from "./workspace";
 
 export interface ExecOutcome {
@@ -73,6 +74,19 @@ function bounded(text: string, limit = OUTPUT_LIMIT): string {
   const head = Math.floor(limit / 2);
   const omitted = text.length - limit;
   return `${text.slice(0, head)}\n…[${omitted} chars omitted]…\n${text.slice(-(limit - head))}`;
+}
+
+// The one-line crash summary for a run/poll header: the signal, the core if one was
+// written, else why there is none (core_pattern), and whether a backtrace is attached.
+function crashLine(crash: CrashReport): string {
+  const core =
+    crash.core !== undefined
+      ? ` (core: ${crash.core})`
+      : crash.corePattern !== undefined
+        ? ` (no core: core_pattern ${crash.corePattern})`
+        : "";
+  const backtrace = crash.backtrace !== undefined ? "; backtrace attached" : "";
+  return `killed by ${crash.signal}${core}${backtrace}`;
 }
 
 const QUERY_LIMIT = 50;
@@ -284,6 +298,9 @@ export function commandOf(apply: Apply): string {
     case "edit":
       return `edit ${apply.path}`;
     case "run":
+      // A poll of a background job is addressed by the job id, not by a shell command;
+      // this is only used for display/dedup, the run branch builds its own signature.
+      if (apply.job !== undefined) return `poll ${apply.job}`;
       return apply.command ?? "";
   }
 }
@@ -895,6 +912,13 @@ export function executeAction(
           // the failed edit is the exact moment the content is needed (tools §4.3).
           const label = `edit failed: find not found in ${apply.path}`;
           const full = `${label}\n--- current content of ${apply.path} (copy "find" verbatim) ---\n${original}\n--- end ---`;
+          // Record the attempt too, with the `find`/`replace` that failed, so `calls`
+          // shows what was already tried instead of only the file content (docs §4.4).
+          const command = commandOf(apply);
+          const actionId = ensureAction(command, command, {
+            find: apply.find,
+            replace: apply.replace,
+          });
           const observationSeq = next();
           const observationId = `obs:${observationSeq}`;
           events.push({
@@ -908,6 +932,7 @@ export function executeAction(
               seq: observationSeq,
             },
           });
+          addEdge({ kind: "llm" }, actionId, observationId, "produces");
           return {
             events,
             turn: proposalTurn(bounded(full), observationId),
@@ -921,7 +946,12 @@ export function executeAction(
         const version = workspace.version(apply.path);
         ensureFile(apply.path, ref);
         const command = commandOf(apply);
-        const actionId = ensureAction(command, command);
+        // Keep `find`/`replace` in the action payload: a short diff in `calls` is what
+        // lets the model learn from its edits (docs §4.4).
+        const actionId = ensureAction(command, command, {
+          find: apply.find,
+          replace: apply.replace,
+        });
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         return { events, turn: proposalTurn(`edited ${apply.path}`, actionId), done: false, stopReason: null };
@@ -952,8 +982,124 @@ export function executeAction(
         }
         runCommand = payload.done_when.command;
       }
+      // A poll of a background job: it has no shell of its own, is never a check, and is
+      // never a repeat — each poll reads new state (docs/tools.md §4.7).
+      if (apply.job !== undefined) {
+        const job = workspace.pollJob(apply.job);
+        if (job === undefined) return fail(`no such job: ${apply.job}`);
+        const actionCommand = `poll ${job.id}`;
+        const actionId = ensureAction(actionCommand, actionCommand, {
+          signature: `${actionCommand}\u0000`,
+        });
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const done = job.state === "done";
+        const verdict: Verdict | undefined = done ? (job.exitCode === 0 ? "pass" : "fail") : undefined;
+        // A job killed by a signal crashed: read the core and a backtrace, as for a
+        // foreground run (docs/tools.md §4.3).
+        const crash =
+          done && job.signal !== null
+            ? crashReport(workspace, job.signal, job.startedAt)
+            : undefined;
+        const outputBody = storeStream(observationId, "output", job.stdout);
+        const errorBody = storeStream(observationId, "error", job.stderr);
+        const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
+        const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
+        const crashSummary =
+          crash !== undefined ? crashLine(crash) : `exit ${job.exitCode ?? "?"}`;
+        const header = done
+          ? `$ ${job.command}\njob ${job.id} ${crashSummary}`
+          : `job ${job.id} running (poll again with run {job: "${job.id}"})`;
+        const diagnostic =
+          crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
+        const text = `${job.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: actionCommand,
+            payload: {
+              command: actionCommand,
+              job: job.id,
+              state: job.state,
+              ...(verdict !== undefined ? { verdict } : {}),
+              ...(job.exitCode !== null ? { exitCode: job.exitCode } : {}),
+              ...(job.signal !== null ? { signal: job.signal } : {}),
+              ...(crash?.core !== undefined ? { core: crash.core } : {}),
+              ...(crash?.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
+              ...(crash?.backtrace !== undefined
+                ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
+                : {}),
+              ...(crash?.backtraceError !== undefined
+                ? { backtraceError: bounded(crash.backtraceError, 2000) }
+                : {}),
+              ...(!done ? { summary: `job ${job.id} running` } : {}),
+              ...(job.stdout !== "" ? { output: outputShown } : {}),
+              ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
+              ...(errorShown !== "" ? { error: errorShown } : {}),
+              ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
+            },
+            seq: observationSeq,
+          },
+        });
+        addEdge(
+          verdict !== undefined
+            ? { kind: "check", command: actionCommand, verdict }
+            : { kind: "llm" },
+          actionId,
+          observationId,
+          "produces",
+        );
+        return {
+          events,
+          turn: proposalTurn(text, observationId, errorShown),
+          done: false,
+          stopReason: null,
+        };
+      }
+
       if (runCommand === undefined) {
         return fail("run failed: no command");
+      }
+
+      // Start a long command in the background: this turn returns at once and the model
+      // polls the job by id. A background command cannot be guarded (its mutations land
+      // after this turn), so it is refused while a constraint forbids a file.
+      if (apply.background === true) {
+        if (forbiddenPatterns(state).length > 0) {
+          return fail(
+            "background run unavailable while a constraint forbids files; run it in the foreground",
+          );
+        }
+        const started = workspace.startJob(runCommand);
+        const actionId = ensureAction(runCommand, runCommand, {
+          signature: `${runCommand}\u0000`,
+          background: true,
+        });
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const text = `started job ${started.id} (pid ${started.pid}): ${runCommand}\npoll with run {job: "${started.id}"}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: `started ${started.id}`,
+            payload: {
+              command: runCommand,
+              job: started.id,
+              state: "running",
+              summary: `job ${started.id} running`,
+              output: text,
+            },
+            seq: observationSeq,
+          },
+        });
+        addEdge({ kind: "llm" }, actionId, observationId, "produces");
+        return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
       const readIfPresent = (path: string): string | undefined => {
@@ -973,7 +1119,15 @@ export function executeAction(
       }
 
       const before = signatureMap(workspace);
+      const runStartedAt = Date.now();
       const result = workspace.run(runCommand);
+      // A crash (a signal, not a controlled exit) is knowledge: read the core and, when
+      // gdb is present, a backtrace (docs/tools.md §4.3). A timeout is a SIGTERM we sent
+      // ourselves, not a crash, so it is excluded.
+      const crash =
+        result.signal !== undefined && result.timedOut !== true
+          ? crashReport(workspace, result.signal, runStartedAt)
+          : undefined;
       const violated = [...guards.entries()].filter(([path, guard]) => {
         const content = readIfPresent(path);
         return content === undefined || content !== guard.content;
@@ -1032,8 +1186,12 @@ export function executeAction(
       const errorBody = storeStream(resultId, "error", result.stderr);
       const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
       const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
-      const header = `$ ${runCommand}\nexit ${result.code}`;
-      const text = result.stdout === "" ? header : `${header}\n${outputShown}`;
+      const crashSummary =
+        crash === undefined ? `exit ${result.code}` : crashLine(crash);
+      const header = `$ ${runCommand}\n${crashSummary}`;
+      const diagnostic =
+        crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
+      const text = `${result.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
 
       if (isCheck) {
         events.push({
@@ -1045,6 +1203,19 @@ export function executeAction(
           ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
           ...(errorShown !== "" ? { error: errorShown } : {}),
           ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
+          ...(crash !== undefined
+              ? {
+                  signal: crash.signal,
+                  ...(crash.core !== undefined ? { core: crash.core } : {}),
+                  ...(crash.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
+                  ...(crash.backtrace !== undefined
+                    ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
+                    : {}),
+                  ...(crash.backtraceError !== undefined
+                    ? { backtraceError: bounded(crash.backtraceError, 2000) }
+                    : {}),
+                }
+              : {}),
           actor: "arbiter",
           witness: witnessOfWorkspace(workspace),
           targets: [target as string],
@@ -1083,6 +1254,19 @@ export function executeAction(
             ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
             ...(errorShown !== "" ? { error: errorShown } : {}),
             ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
+            ...(crash !== undefined
+              ? {
+                  signal: crash.signal,
+                  ...(crash.core !== undefined ? { core: crash.core } : {}),
+                  ...(crash.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
+                  ...(crash.backtrace !== undefined
+                    ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
+                    : {}),
+                  ...(crash.backtraceError !== undefined
+                    ? { backtraceError: bounded(crash.backtraceError, 2000) }
+                    : {}),
+                }
+              : {}),
           },
           seq: resultSeq,
         },

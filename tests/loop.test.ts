@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
+import type { Event } from "../src/ir/events";
 import { childrenOf, currentVersion, fold, predicateOf } from "../src/ir/graph";
 import { cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
-import { reasoningOffBody } from "../src/llm/client";
+import { reasoningBody, reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
 import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
@@ -52,18 +53,23 @@ afterEach(() => {
   }
 });
 
-describe("reasoning is disabled", () => {
-  it("puts DeepSeek thinking and RouterAI reasoning in the request body", () => {
+describe("reasoning budget", () => {
+  it("disables thinking for effort none, and enables reasoning otherwise", () => {
     expect(reasoningOffBody("none")).toEqual({
       thinking: { type: "disabled" },
       reasoning: { effort: "none" },
     });
+    expect(reasoningBody("none")).toEqual({
+      thinking: { type: "disabled" },
+      reasoning: { effort: "none" },
+    });
+    expect(reasoningBody("high")).toEqual({ reasoning: { effort: "high" } });
   });
 
   it("loads settings from env with defaults", () => {
     const settings = loadSettings({ SKEIN_TEMPERATURE: "0.5" } as NodeJS.ProcessEnv);
     expect(settings.temperature).toBe(0.5);
-    expect(settings.reasoningEffort).toBe("none");
+    expect(settings.reasoningEffort).toBe("high");
     expect(settings.live).toBe(false);
   });
 });
@@ -319,7 +325,6 @@ describe("classify", () => {
 
   it("guards run: needs a command, and a check may not substitute the goal's command", () => {
     const state = fold([
-      goal,
       {
         type: "add_node",
         node: {
@@ -392,6 +397,88 @@ describe("classify", () => {
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("objective_goal_needs_check");
     expect(verdict.reason).toContain("g2");
+  });
+
+  it("refuses a closing move that targets a non-current goal", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "interp", payload: { what: "interp", done_when: { kind: "objective", command: "node --test" } }, seq: 1 } },
+      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "alt", seq: 2 } },
+      { type: "add_edge", edge: { id: "ea", from: "r1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "ei", from: "alt", to: "g1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "ec", from: "alt", to: "g1", kind: "chosen", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
+      { type: "add_edge", edge: { id: "ep", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 4 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "descend", node: "g1" },
+      { type: "descend", node: "g2" },
+    ]);
+    const check = classify(
+      proposal({ operator: "apply", action: { tool: "run", target: "g1" } }),
+      state,
+    );
+    expect(check.accept).toBe(false);
+    expect(check.reason).toContain("not_current_goal");
+    expect(check.reason).toContain("g2");
+    // The refusal names the concrete move at the focus (P5): g2 is objective, so check it.
+    expect(check.reason).toContain('apply run {target: "g2"}');
+    const complete = classify(proposal({ operator: "complete", goal: "g1" }), state);
+    expect(complete.accept).toBe(false);
+    expect(complete.reason).toContain("not_current_goal");
+    expect(complete.reason).toContain('apply run {target: "g2"}');
+  });
+
+  it("allows an identical re-check after an inconclusive verdict", () => {
+    const checked = (verdict: "inconclusive" | "fail"): Event[] => [
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: { kind: "objective", command: "true" } }, seq: 0 } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "true", payload: { signature: "true\u0000g1", command: "true" }, seq: 1 } },
+      { type: "record_check", id: "chk:1", command: "true", verdict, output: "", targets: ["g1"] },
+      { type: "add_edge", edge: { id: "ep", from: "a1", to: "chk:1", kind: "produces", provenance: { kind: "check", command: "true", verdict } } },
+    ];
+    const retry = proposal({ operator: "apply", action: { tool: "run", target: "g1" } });
+    expect(classify(retry, fold(checked("inconclusive")))).toEqual({ accept: true });
+    // A deterministic failure is still a repeat: retrieve the body instead.
+    expect(classify(retry, fold(checked("fail"))).accept).toBe(false);
+  });
+
+  it("allows a poll of a background job and refuses a malformed one", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+    ]);
+    expect(
+      classify(proposal({ operator: "apply", action: { tool: "run", job: "job-1" } }), state),
+    ).toEqual({ accept: true });
+    const extra = classify(
+      proposal({ operator: "apply", action: { tool: "run", job: "job-1", command: "make" } }),
+      state,
+    );
+    expect(extra.accept).toBe(false);
+    expect(extra.reason).toContain("job_poll");
+  });
+
+  it("accepts a background run but refuses one without a command or with a target", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+    ]);
+    expect(
+      classify(
+        proposal({ operator: "apply", action: { tool: "run", command: "make", background: true } }),
+        state,
+      ),
+    ).toEqual({ accept: true });
+    const noCommand = classify(
+      proposal({ operator: "apply", action: { tool: "run", background: true } }),
+      state,
+    );
+    expect(noCommand.accept).toBe(false);
+    expect(noCommand.reason).toContain("background_run");
+    const withTarget = classify(
+      proposal({ operator: "apply", action: { tool: "run", background: true, target: "r1" } }),
+      state,
+    );
+    expect(withTarget.accept).toBe(false);
+    expect(withTarget.reason).toContain("background_target");
   });
 
   it("allows growing an objective goal's plan when a stage was refuted, not achieved", () => {
@@ -519,6 +606,96 @@ describe("executeAction", () => {
         (event.node.payload as { verdict?: string } | undefined)?.verdict === "fail",
     );
     expect(failure).toBeDefined();
+  });
+
+  it("runs a command in the background and materializes its result on a poll", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "subjective", text: "done" } }, seq: 0 } },
+    ]);
+    const start = executeAction(
+      { operator: "apply", action: { tool: "run", command: "echo bg-ok", background: true } },
+      state,
+      workspace,
+      1,
+    );
+    const started = fold(start.events, state);
+    const handle = [...started.nodes.values()]
+      .map((node) => (node.payload as { job?: string } | undefined)?.job)
+      .find((id): id is string => typeof id === "string");
+    expect(handle).toBeDefined();
+    for (let i = 0; i < 100 && workspace.pollJob(handle as string)?.state !== "done"; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "run", job: handle as string } },
+      started,
+      workspace,
+      2,
+    );
+    expect(outcome.turn.text).toContain("bg-ok");
+    const polled = fold(outcome.events, started);
+    const poll = [...polled.nodes.values()].find((node) => {
+      const payload = node.payload as { job?: string; state?: string } | undefined;
+      return payload?.job === handle && payload?.state === "done";
+    });
+    expect((poll?.payload as { verdict?: string } | undefined)?.verdict).toBe("pass");
+  });
+
+  it("records the crash signal of a run and surfaces it in the projection", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "run", command: "kill -SEGV $$" } },
+      state,
+      workspace,
+      1,
+    );
+    const observed = fold(outcome.events, state);
+    const node = [...observed.nodes.values()].find(
+      (candidate) =>
+        (candidate.payload as { signal?: string } | undefined)?.signal === "SIGSEGV",
+    );
+    expect(node).toBeDefined();
+    expect(project(observed).lastResult?.signal).toBe("SIGSEGV");
+  });
+
+  it("keeps find/replace of an edit in the calls diff", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
+      state,
+      workspace,
+      1,
+    );
+    const call = project(fold(outcome.events, state)).calls.find(
+      (entry) => entry.action === "edit src/sum.mjs",
+    );
+    expect(call?.note).toContain("i < n");
+    expect(call?.note).toContain("i <= n");
+  });
+
+  it("shows the attempted find of a failed edit", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+    ]);
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "NOT PRESENT", replace: "x" } },
+      state,
+      workspace,
+      1,
+    );
+    const call = project(fold(outcome.events, state)).calls.find(
+      (entry) => entry.action === "edit src/sum.mjs",
+    );
+    expect(call?.status).toBe("fail");
+    expect(call?.note).toContain("NOT PRESENT");
   });
 
   it("reads a bounded window and says where to continue", () => {
@@ -772,17 +949,6 @@ describe("query by id (history index)", () => {
     expect(verdict.reason).toContain("w:action:77");
     expect(verdict.reason).toContain("repeated_action");
   });
-
-  it("refuses a need for a non-result id", () => {
-    const state = fold([goal]);
-    const verdict = classify(
-      { thought: "", action: { operator: "query", id: "r1" }, need: ["g1"] },
-      state,
-    );
-    expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("result ids only");
-    expect(verdict.reason).toContain("g1");
-  });
 });
 
 describe("working set (shown) with TTL", () => {
@@ -801,10 +967,7 @@ describe("working set (shown) with TTL", () => {
       }
       if (index === 2) {
         id = context.lastResult?.id;
-        return {
-          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
-          need: id !== undefined ? [id] : [],
-        };
+        return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
       }
       return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
     };
@@ -820,51 +983,7 @@ describe("working set (shown) with TTL", () => {
     expect(shown[5]).toContain(id);
   });
 
-  it("holds a needed cross-level result for HELD_TURNS then drops it", async () => {
-    const workspace = fsWorkspace(setup("off-by-one"));
-    const shown: string[][] = [];
-    let id: string | undefined;
-    let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
-      shown.push(
-        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
-      );
-      index += 1;
-      if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
-      }
-      if (index === 2) {
-        // Descend into a plan item: the read is now at a previous level.
-        id = context.lastResult?.id;
-        return proposal({
-          operator: "create_goal",
-          what: "work",
-          done_when: { kind: "subjective", text: "done" },
-          plan: [{ kind: "goal", what: "stage", done_when: { kind: "subjective", text: "ok" } }],
-        });
-      }
-      if (index === 3) {
-        return {
-          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
-          need: id !== undefined ? [id] : [],
-        };
-      }
-      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
-    };
-    await runAgent(
-      { propose, workspace, maxTurns: 10, noProgress: 10, held: { turns: 2 } },
-      { request: { id: "r1", text: "green" } },
-    );
-
-    expect(id).toBeDefined();
-    const first = shown.findIndex((ids) => id !== undefined && ids.includes(id));
-    expect(first).toBeGreaterThan(0);
-    // Cross-level (only held via `need`, TTL 2): shown at first, gone by the end.
-    expect(shown[first]).toContain(id);
-    expect(shown[shown.length - 1]).not.toContain(id);
-  });
-
-  it("drops a needed read once its file changes", async () => {
+  it("drops a retained read once its file changes", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const shown: string[][] = [];
     let id: string | undefined;
@@ -879,10 +998,7 @@ describe("working set (shown) with TTL", () => {
       }
       if (index === 2) {
         id = context.lastResult?.id;
-        return {
-          ...proposal({ operator: "apply", action: { tool: "run", command: "echo one" } }),
-          need: id !== undefined ? [id] : [],
-        };
+        return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
       }
       if (index === 3) {
         return proposal({
@@ -1077,7 +1193,7 @@ describe("runAgent", () => {
     expect(result.events.some((event) => event.type === "record_rejection")).toBe(true);
   });
 
-  it("shows the results the model asked to keep (need)", async () => {
+  it("keeps the current level's read in shown after a later call", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
@@ -1088,11 +1204,7 @@ describe("runAgent", () => {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       if (index === 2) {
-        const id = contexts[1]?.lastResult?.id;
-        return {
-          ...proposal({ operator: "apply", action: { tool: "run", command: "true" } }),
-          ...(id !== undefined ? { need: [id] } : {}),
-        };
+        return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
       }
       return proposal({ operator: "query", id: "r1" });
     };
@@ -1102,9 +1214,8 @@ describe("runAgent", () => {
     );
     const readId = contexts[1]?.lastResult?.id;
     const shown = contexts[2]?.shown ?? [];
-    expect(shown.map((view) => view.id)).toContain(readId);
-    expect(shown[0]?.kind).toBe("observation");
-    expect(shown[0]?.output).toContain("sumTo");
+    const readView = shown.find((view) => view.id === readId);
+    expect(readView?.output).toContain("sumTo");
   });
 
   it("reports the focus plan and applicable operators in the projection", () => {
@@ -1118,6 +1229,22 @@ describe("runAgent", () => {
     const context = project(state);
     expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1"]);
     expect(context.applicable).toContain("apply");
+  });
+
+  it("keeps a closed goal's note in the calls index", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "interp", payload: { what: "interp", done_when: { kind: "subjective", text: "ok" } }, seq: 1 } },
+      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "alt", seq: 2 } },
+      { type: "add_edge", edge: { id: "ea", from: "r1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "ei", from: "alt", to: "g1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "ec", from: "alt", to: "g1", kind: "chosen", provenance: { kind: "llm" } } },
+      { type: "descend", node: "g1" },
+      { type: "add_node", node: { id: "c1", space: "work", kind: "complete", label: "complete g1", payload: { note: "the run length must equal the neighbours" }, seq: 3 } },
+      { type: "add_edge", edge: { id: "ez", from: "c1", to: "g1", kind: "closes", provenance: { kind: "llm" } } },
+    ]);
+    const call = project(state).calls.find((entry) => entry.action.startsWith("complete"));
+    expect(call?.note).toContain("run length");
   });
 
   it("refuses a repeated read, names the stored id, and can be retrieved by query", async () => {
@@ -1208,66 +1335,6 @@ describe("runAgent", () => {
     const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
     expect(reason).toContain("repeated_action");
     expect(reason).toContain(goalId ?? "?");
-  });
-
-  it("refuses a need for a non-result id, so the paired query is not trapped", async () => {
-    const workspace = fsWorkspace(setup("off-by-one"));
-    let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
-      index += 1;
-      if (index === 1) {
-        return proposal({
-          operator: "create_goal",
-          what: "green",
-          done_when: { kind: "subjective", text: "done" },
-          plan: [{ kind: "action", command: "echo hi" }],
-        });
-      }
-      if (index === 2) {
-        return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
-      }
-      const itemId = context.path[context.path.length - 1]?.plan?.items?.[0]?.id;
-      return {
-        thought: "",
-        action: { operator: "query", id: itemId ?? "missing" },
-        need: itemId !== undefined ? [itemId] : [],
-      };
-    };
-    const result = await runAgent(
-      { propose, workspace, maxTurns: 5, noProgress: 2 },
-      { request: { id: "r1", text: "green" } },
-    );
-
-    const rejection = result.events.find((event) => event.type === "record_rejection");
-    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
-    expect(reason).toContain("result ids only");
-  });
-
-  it("accepts a need and a query of the same result id (not self-refused)", async () => {
-    const workspace = fsWorkspace(setup("off-by-one"));
-    let readId: string | undefined;
-    let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
-      index += 1;
-      if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
-      }
-      if (index === 2) {
-        readId = context.lastResult?.id;
-        return {
-          ...proposal({ operator: "query", id: readId ?? "missing" }),
-          need: readId !== undefined ? [readId] : [],
-        };
-      }
-      return proposal({ operator: "apply", action: { tool: "run", command: `echo done${index}` } });
-    };
-    const result = await runAgent(
-      { propose, workspace, maxTurns: 3, noProgress: 5 },
-      { request: { id: "r1", text: "green" } },
-    );
-
-    expect(readId).toBeDefined();
-    expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
   });
 
   it("refuses to grow an objective goal whose plan is fulfilled; check it instead", async () => {

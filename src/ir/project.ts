@@ -2,6 +2,7 @@ import {
   alternativesOf,
   childrenOf,
   latestChosen,
+  latestComplete,
   planOf,
   predicateOf,
   type State,
@@ -61,6 +62,10 @@ export interface PathNode {
   what?: string;
   why?: string;
   done_when?: DoneWhen;
+  // A subjective goal's closing note: the invariant it was accepted under. A closed root
+  // goal stays on the path; a nested completed goal leaves the branch (trimmed under a
+  // closed ancestor), so its note is surfaced in `calls` (docs §4.4).
+  note?: string;
   plan?: ProjectionPlan;
   alternatives?: { chosen?: string; items: ProjectionAlternative[] };
 }
@@ -77,6 +82,11 @@ export interface ResultView {
   output?: string;
   // stderr, separate from stdout: a failed run's error is the primary signal.
   error?: string;
+  // A crash: the signal, the core file and, best effort, a backtrace (docs/tools.md §4.3).
+  signal?: string;
+  core?: string;
+  corePattern?: string;
+  backtrace?: string;
 }
 
 // A deduplicated summary of a previous call: what was called and its outcome, with
@@ -117,8 +127,9 @@ export interface ProjectOptions {
   lastOutputId?: string;
   // stderr of the latest tool turn, shown separately from the stdout in `lastOutput`.
   lastError?: string;
-  // Results the model asked to see in full this turn (hypothesis + need, §8). Each is
-  // addressed by node id; the caller resolves the body (payload or temp file).
+  // Bodies kept in view this turn (the working set, §8): level results and any body the
+  // model fetched with `query {id}`. Each is addressed by node id; the caller resolves
+  // the body (payload or temp file).
   recalled?: { id: string; output: string; error?: string }[];
 }
 
@@ -212,6 +223,8 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
     const payload = node.payload as { what?: unknown; why?: unknown; done_when?: DoneWhen } | undefined;
     const plan = planView(state, id, maxItems);
     const alternatives = alternativesView(state, id, maxItems);
+    const complete = latestComplete(state, id);
+    const note = (complete?.payload as { note?: unknown } | undefined)?.note;
     return {
       id,
       kind: "goal",
@@ -219,6 +232,7 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
       ...(typeof payload?.what === "string" ? { what: payload.what } : {}),
       ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
       ...(payload?.done_when !== undefined ? { done_when: payload.done_when } : {}),
+      ...(typeof note === "string" && note !== "" ? { note } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(alternatives !== undefined ? { alternatives } : {}),
     };
@@ -243,6 +257,11 @@ function buildView(
   const shownError =
     error !== undefined ? error : typeof payload?.error === "string" ? payload.error : undefined;
   const errorField = shownError !== undefined && shownError !== "" ? { error: shownError } : {};
+  const diagnostic: Pick<ResultView, "signal" | "core" | "corePattern" | "backtrace"> = {};
+  if (typeof payload?.signal === "string") diagnostic.signal = payload.signal;
+  if (typeof payload?.core === "string") diagnostic.core = payload.core;
+  if (typeof payload?.corePattern === "string") diagnostic.corePattern = payload.corePattern;
+  if (typeof payload?.backtrace === "string") diagnostic.backtrace = payload.backtrace;
   if (node.kind === "check") {
     return {
       id: node.id,
@@ -251,6 +270,7 @@ function buildView(
       ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
       ...(output !== undefined ? { output } : {}),
       ...errorField,
+      ...diagnostic,
     };
   }
   if (node.kind === "observation") {
@@ -266,6 +286,7 @@ function buildView(
       ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
       ...(output !== undefined ? { output } : {}),
       ...errorField,
+      ...diagnostic,
     };
   }
   const ref = actionRef(state, node.id);
@@ -276,6 +297,7 @@ function buildView(
     ...(ref !== undefined ? { ref } : {}),
     ...(output !== undefined ? { output } : {}),
     ...errorField,
+    ...diagnostic,
   };
 }
 
@@ -377,6 +399,14 @@ function failureLine(text: string): string {
 function callNote(child: Node | undefined, status: Call["status"]): string | undefined {
   const payload = child?.payload as Record<string, unknown> | undefined;
   if (typeof payload?.summary === "string") return clip(payload.summary, 120);
+  // A crash is the strongest signal: name the signal (and the top failure line under it),
+  // never bury it under the exit code (docs/tools.md §4.3).
+  if (typeof payload?.signal === "string") {
+    const error = typeof payload?.error === "string" ? payload.error : "";
+    const output = typeof payload?.output === "string" ? payload.output : "";
+    const detail = failureLine(error) || failureLine(output);
+    return clip(`killed by ${payload.signal}${detail === "" ? "" : `; ${detail}`}`, 120);
+  }
   if (status === "fail") {
     // stderr is the primary signal: name its failure line, not a stdout line.
     const error = typeof payload?.error === "string" ? payload.error : "";
@@ -397,6 +427,25 @@ function callNote(child: Node | undefined, status: Call["status"]): string | und
     return clip(`${stripRef(payload.ref)} lines ${start}–${end} of ${payload.total}`, 120);
   }
   return undefined;
+}
+
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+// The short diff of an edit, so a failed or repeated edit is not a blank "applied": the
+// model sees the exact `find`/`replace` it already tried (docs §4.4).
+function editNote(
+  payload: { find?: unknown; replace?: unknown } | undefined,
+  status: Call["status"],
+  childNote: string | undefined,
+): string {
+  const find = typeof payload?.find === "string" ? payload.find : undefined;
+  const replace = typeof payload?.replace === "string" ? payload.replace : undefined;
+  if (find === undefined) return childNote ?? "applied";
+  const diff = `-${oneLine(find)} +${oneLine(replace ?? "")}`;
+  const suffix = status === "fail" && childNote !== undefined ? ` (${childNote})` : "";
+  return clip(`${diff}${suffix}`, 120);
 }
 
 function producedChild(state: State, actionId: string): Node | undefined {
@@ -480,16 +529,36 @@ function callsView(state: State, branch: ReadonlySet<string>): Call[] {
     if (node.kind !== "action" || predicateOf(state, node.id) !== "executed") continue;
     const focus = state.focusOf.get(node.id);
     if (focus !== undefined && !branch.has(focus)) continue;
-    const payload = node.payload as { command?: unknown } | undefined;
+    const payload = node.payload as { command?: unknown; find?: unknown; replace?: unknown } | undefined;
     const action = typeof payload?.command === "string" ? payload.command : node.label;
     const child = producedChild(state, node.id);
     const verdict = (child?.payload as { verdict?: unknown } | undefined)?.verdict;
     const status: Call["status"] = verdict === "fail" ? "fail" : "ok";
     let note = callNote(child, status);
-    if (note === undefined && action.startsWith("edit ")) note = "applied";
+    if (action.startsWith("edit ")) note = editNote(payload, status, note);
     // The address of the result is the produced child when there is one, else the
     // action itself (so the model can recall the body).
     put(action, status, note, node.seq, child?.id ?? node.id);
+  }
+
+  // A subjective goal's closing note is knowledge the next stage needs; the completed
+  // goal leaves `path` (the branch is trimmed under a closed ancestor), so surface its
+  // note here as its own call (docs §4.4).
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "complete") continue;
+    const focus = state.focusOf.get(node.id);
+    if (focus !== undefined && !branch.has(focus)) continue;
+    const payload = node.payload as { note?: unknown } | undefined;
+    const note =
+      typeof payload?.note === "string" && payload.note !== "" ? clip(payload.note, 160) : undefined;
+    let goal: string | undefined;
+    for (const edge of state.edges.values()) {
+      if (edge.kind === "closes" && edge.from === node.id) {
+        goal = edge.to;
+        break;
+      }
+    }
+    put(`complete${goal !== undefined ? ` ${goal}` : ""}`, "ok", note, node.seq, node.id);
   }
 
   for (const node of state.nodes.values()) {

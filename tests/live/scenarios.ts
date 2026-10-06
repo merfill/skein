@@ -37,8 +37,8 @@ export const scenarios: Scenario[] = [
     expect: { solved: true, uses: ["create_goal", "revise"] },
   },
   {
-    name: "need-two-outputs",
-    expect: { solved: true,     maxRepeats: 5, uses: ["need"] },
+    name: "two-outputs",
+    expect: { solved: true, maxRepeats: 5 },
   },
   {
     name: "constraint-honored",

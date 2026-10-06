@@ -102,6 +102,11 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - **Явный узел проверки (T1.3)** — `record_check` материализует узел `check`
   (команда, вердикт, свидетельство, `actor`) и ребро `verifies` `check → claim`;
   `query {verdictOf}` читает узел (`docs/plans/tier1_plan_ru.md` §6).
+- **Приёмка fix-ocaml-gc (2026-10-06)** — длинная задача terminal-bench решена
+  (**reward 1.0**, `40 tests passed`) на Flash + reasoning `high`. Исправления движка
+  (фокус под закрытым предком, диагностика падения, удержание в проекции, фоновый
+  `run`, удаление `need`) — `docs/plans/engine_fixes_found_ru.md`; отчёт о прогоне —
+  `docs/fix_ocaml_gc_run_report_2026-10-06_ru.md`.
 
 Проверка: `npm run typecheck`; `npm test` (67 тестов) — offline-тесты, live-гейт
 только при `SKEIN_LIVE=true`.

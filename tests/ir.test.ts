@@ -5,7 +5,7 @@ import { eventSchema, type Event } from "../src/ir/events";
 import { childrenOf, emptyState, fold, predicateOf } from "../src/ir/graph";
 import { knowledgeKey } from "../src/ir/progress";
 import { project } from "../src/ir/project";
-import { applicable } from "../src/ir/traversal";
+import { applicable, focusEvents } from "../src/ir/traversal";
 import type {
   ArtifactKind,
   DoneWhen,
@@ -652,5 +652,40 @@ describe("progress key", () => {
     expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
     const other = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1), refusal("/app/b", 2, 2)]);
     expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
+  });
+});
+
+describe("traversal focus", () => {
+  const interpreted = (check?: Event[]): Event[] => [
+    { type: "add_node", node: workNode("r1", "request", "task", 0, { text: "go" }) },
+    goal("g1", "interp", 1, objective("make test")),
+    { type: "add_node", node: workNode("alt", "alternatives", "alt", 2) },
+    { type: "add_edge", edge: edge("ea", "r1", "alt", "has_alternatives", llm) },
+    { type: "add_edge", edge: edge("ei", "alt", "g1", "item", llm) },
+    { type: "add_edge", edge: edge("ec", "alt", "g1", "chosen", llm) },
+    ...plan("p1", "g1", ["g2"], 3),
+    goal("g2", "stage", 4),
+    { type: "descend", node: "g1" },
+    { type: "descend", node: "g2" },
+    ...(check ?? []),
+  ];
+
+  it("trims the branch under a refuted ancestor, not only when the top closes", () => {
+    const state = fold(
+      interpreted([
+        { type: "record_check", command: "make test", verdict: "fail", output: "", targets: ["g1"] },
+      ]),
+    );
+    expect(state.branch).toEqual(["r1", "g1", "g2"]);
+    expect(predicateOf(state, "g1")).toBe("refuted");
+    const trimmed = fold(focusEvents(state), state);
+    expect(trimmed.branch).toEqual(["r1"]);
+    expect(applicable(trimmed, "r1")).toMatchObject({ createGoal: true, return: false });
+  });
+
+  it("does not trim while every ancestor is still open", () => {
+    const state = fold(interpreted());
+    expect(predicateOf(state, "g1")).toBe("open");
+    expect(focusEvents(state)).toEqual([]);
   });
 });

@@ -26,6 +26,9 @@ interface Step {
   // The step's failed check is a missing path: a proposed objective command must resolve
   // the project directory (not repeat the bare command from the instruction).
   cwdReaction?: boolean;
+  // The focus is a stage whose check was inconclusive, under an open objective
+  // interpretation: a proposed check must target the focus, not the ancestor.
+  focusCheck?: boolean;
   context: Context;
 }
 
@@ -58,6 +61,19 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
       if (proposal.action.operator === "apply" && proposal.action.action.tool === "run") {
         const command = proposal.action.action.command ?? "";
         expect(command, "a proposed run must not merge stdout and stderr").not.toMatch(/2>&1|&>/);
+      }
+
+      if (
+        step.focusCheck === true &&
+        proposal.action.operator === "apply" &&
+        proposal.action.action.tool === "run" &&
+        proposal.action.action.target !== undefined
+      ) {
+        const focus = step.context.path[step.context.path.length - 1]?.id;
+        expect(
+          proposal.action.action.target,
+          "a check must target the node in focus (path[last]), never an ancestor interpretation",
+        ).toBe(focus);
       }
 
       if (step.refusedWhat !== undefined && proposal.action.operator === "create_goal") {

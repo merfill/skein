@@ -14,10 +14,14 @@ import { fsWorkspace } from "../src/tools/workspace";
 
 const roots: string[] = [];
 
-function tempWorkspace() {
+function tempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "skein-tools-"));
   roots.push(root);
-  return fsWorkspace(root);
+  return root;
+}
+
+function tempWorkspace() {
+  return fsWorkspace(tempRoot());
 }
 
 afterEach(() => {
@@ -39,6 +43,54 @@ describe("workspace.run: separate streams", () => {
     expect(result.code).toBe(2);
     expect(result.stdout).toContain("partial");
     expect(result.stderr).toContain("boom");
+  });
+
+  it("honours the configured run timeout", () => {
+    const workspace = fsWorkspace(tempRoot(), { runTimeoutMs: 50 });
+    const result = workspace.run("sleep 2");
+    expect(result.timedOut).toBe(true);
+  });
+
+  it("reports the crash signal instead of a bare exit code", () => {
+    const workspace = tempWorkspace();
+    const result = workspace.run("kill -SEGV $$");
+    expect(result.signal).toBe("SIGSEGV");
+  });
+});
+
+describe("workspace background jobs", () => {
+  async function waitDone(
+    workspace: ReturnType<typeof fsWorkspace>,
+    id: string,
+    timeoutMs = 3000,
+  ) {
+    const started = Date.now();
+    for (;;) {
+      const job = workspace.pollJob(id);
+      if (job === undefined) throw new Error("unknown job");
+      if (job.state === "done") return job;
+      if (Date.now() - started > timeoutMs) throw new Error("job did not finish");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+
+  it("starts a command and polls it to completion", async () => {
+    const workspace = tempWorkspace();
+    const handle = workspace.startJob("echo hello; echo boom 1>&2");
+    expect(handle.id).toBe("job-1");
+    const result = await waitDone(workspace, handle.id);
+    expect(result.exitCode).toBe(0);
+    expect(result.signal).toBeNull();
+    expect(result.stdout).toContain("hello");
+    expect(result.stderr).toContain("boom");
+  });
+
+  it("reports a non-zero exit and rejects an unknown job", async () => {
+    const workspace = tempWorkspace();
+    const handle = workspace.startJob("exit 7");
+    const result = await waitDone(workspace, handle.id);
+    expect(result.exitCode).toBe(7);
+    expect(workspace.pollJob("nope")).toBeUndefined();
   });
 });
 
@@ -112,7 +164,7 @@ describe("resolveBody", () => {
         },
       },
     ]);
-    const proposal = { thought: "t", action: { operator: "query" as const, id: "o2" }, need: ["o2"] };
+    const proposal = { thought: "t", action: { operator: "query" as const, id: "o2" } };
     expect(classify(proposal, state).accept).toBe(true);
   });
 });

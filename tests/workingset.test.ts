@@ -8,7 +8,7 @@ import type { Context } from "../src/ir/project";
 import type { Proposal } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
-import { workingSetStats, type WorkingSetStats } from "./workset";
+import { workingSetStats } from "./workset";
 
 // Long-horizon policy simulation: a scripted proposer (no LLM) drives thousands of
 // "turns" through the real loop, so the working-set machinery is exercised under
@@ -61,20 +61,18 @@ describe("working set under a long synthetic horizon", () => {
       const f0 = resultOf[1];
 
       if (n <= 8) {
-        const need = n >= 2 && resultOf[n - 1] !== undefined ? [resultOf[n - 1] as string] : [];
-        requestsAt.push(need);
+        requestsAt.push([]);
         return {
           thought: "",
           action: { operator: "apply", action: { tool: "read", path: `f${n - 1}.txt` } },
-          ...(need.length > 0 ? { need } : {}),
         };
       }
       if (n === 9) {
         requestsAt.push(f0 !== undefined ? [f0] : []);
+        // Re-acquire the evicted body by query (the only entry into the working set).
         return {
           thought: "",
-          action: { operator: "apply", action: { tool: "run", command: "echo reaccess" } },
-          ...(f0 !== undefined ? { need: [f0] } : {}),
+          action: { operator: "query", id: f0 ?? "missing" },
         };
       }
       if (n === 10) {
@@ -88,11 +86,10 @@ describe("working set under a long synthetic horizon", () => {
         };
       }
       if (n === 11) {
-        requestsAt.push(f0 !== undefined ? [f0] : []);
+        requestsAt.push([]);
         return {
           thought: "",
           action: { operator: "apply", action: { tool: "run", command: "echo after-edit" } },
-          ...(f0 !== undefined ? { need: [f0] } : {}),
         };
       }
       requestsAt.push([]);
@@ -121,10 +118,9 @@ describe("working set under a long synthetic horizon", () => {
     expect(stats.reacquiredIds).toContain(f0);
   });
 
-  it("expires a cross-level needed result after the TTL (compression)", async () => {
+  it("expires an off-branch query-pinned result after the TTL (compression)", async () => {
     const workspace = workspaceWithFiles(3);
     const shownAt: string[][] = [];
-    const requestsAt: string[][] = [];
     let f0: string | undefined;
     let call = 0;
 
@@ -133,13 +129,8 @@ describe("working set under a long synthetic horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        requestsAt.push([]);
-        return { thought: "", action: { operator: "apply", action: { tool: "read", path: "f0.txt" } } };
-      }
-      if (n === 2) {
-        f0 = context.lastResult?.id;
-        requestsAt.push([]);
-        // Descend a level: the read is no longer part of the current level.
+        // Create the interpretation and its stage; the traversal then descends to the
+        // stage, so a result read there belongs to a level that later leaves the branch.
         return {
           thought: "",
           action: {
@@ -150,15 +141,19 @@ describe("working set under a long synthetic horizon", () => {
           },
         };
       }
-      if (n === 3) {
-        requestsAt.push(f0 !== undefined ? [f0] : []);
-        return {
-          thought: "",
-          action: { operator: "apply", action: { tool: "run", command: "echo one" } },
-          ...(f0 !== undefined ? { need: [f0] } : {}),
-        };
+      if (n === 2) {
+        return { thought: "", action: { operator: "apply", action: { tool: "read", path: "f0.txt" } } };
       }
-      requestsAt.push([]);
+      if (n === 3) {
+        f0 = context.lastResult?.id;
+        // Close the stage: the traversal returns to its parent, so the read's level is
+        // off-branch and only a `query` (with its TTL) can keep it.
+        return { thought: "", action: { operator: "complete" } };
+      }
+      if (n === 4) {
+        // Fetch the off-branch body by query: it enters the working set for the TTL.
+        return { thought: "", action: { operator: "query", id: f0 ?? "missing" } };
+      }
       return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo step-${n}` } } };
     };
 
@@ -175,31 +170,22 @@ describe("working set under a long synthetic horizon", () => {
 
   it("stays bounded over hundreds of turns of rotating access", async () => {
     const workspace = workspaceWithFiles(12);
-    const resultOf: (string | undefined)[] = [];
     const shownViews: { id?: string | undefined; output?: string | undefined }[][] = [];
     let call = 0;
 
     const propose = async (context: Context): Promise<Proposal> => {
-      resultOf[call] = context.lastResult?.id;
       shownViews.push(context.shown.map((view) => ({ id: view.id, output: view.output })));
       call += 1;
       const n = call;
       if (n <= 12) {
-        const previous = resultOf[n - 1];
         return {
           thought: "",
           action: { operator: "apply", action: { tool: "read", path: `f${n - 1}.txt` } },
-          ...(n >= 2 && previous !== undefined ? { need: [previous] } : {}),
         };
       }
-      const readIds = resultOf.slice(1, 13).filter((value): value is string => value !== undefined);
-      const a = readIds[n % readIds.length];
-      const b = readIds[(n + 1) % readIds.length];
-      const need = [a, b].filter((value): value is string => value !== undefined);
       return {
         thought: "",
         action: { operator: "apply", action: { tool: "run", command: `echo step-${n}` } },
-        ...(need.length > 0 ? { need } : {}),
       };
     };
 
@@ -214,68 +200,5 @@ describe("working set under a long synthetic horizon", () => {
     const stats = workingSetStats(shownViews.map((shown) => ({ shown, requested: [] as string[] })));
     expect(stats.peakCount).toBeLessThanOrEqual(6);
     expect(stats.peakChars).toBeLessThanOrEqual(charCap);
-  });
-
-  async function runGapPattern(limits: Record<string, unknown>): Promise<WorkingSetStats> {
-    const workspace = workspaceWithFiles(4);
-    const resultOf: (string | undefined)[] = [];
-    const shownViews: { id?: string | undefined; output?: string | undefined }[][] = [];
-    const requests: string[][] = [];
-    let call = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
-      resultOf[call] = context.lastResult?.id;
-      shownViews.push(context.shown.map((view) => ({ id: view.id, output: view.output })));
-      call += 1;
-      const n = call;
-      if (n <= 4) {
-        requests.push([]);
-        return { thought: "", action: { operator: "apply", action: { tool: "read", path: `f${n - 1}.txt` } } };
-      }
-      if (n === 5) {
-        // Move to a deeper level so the reads above are cross-level.
-        requests.push([]);
-        return {
-          thought: "",
-          action: {
-            operator: "create_goal",
-            what: "work",
-            done_when: { kind: "subjective", text: "done" },
-            plan: [{ kind: "goal", what: "stage", done_when: { kind: "subjective", text: "ok" } }],
-          },
-        };
-      }
-      const readIds = resultOf.slice(1, 5).filter((value): value is string => value !== undefined);
-      const id = readIds[(n - 5) % readIds.length];
-      const need = id !== undefined ? [id] : [];
-      requests.push(need);
-      return {
-        thought: "",
-        action: { operator: "apply", action: { tool: "run", command: `echo step-${n}` } },
-        ...(need.length > 0 ? { need } : {}),
-      };
-    };
-    await runAgent(
-      { propose, workspace, maxTurns: 120, noProgress: 10_000, held: limits },
-      { request: { id: "r1", text: "ab" } },
-    );
-    return workingSetStats(
-      shownViews.map((shown, index) => ({ shown, requested: requests[index] ?? [] })),
-    );
-  }
-
-  it("a TTL past the cross-level request gap removes churn without blowing the caps", async () => {
-    const mid = await runGapPattern({ turns: 2 });
-    const long = await runGapPattern({ turns: 8 });
-    const adaptive = await runGapPattern({ turns: 2, adaptive: true, turnsMax: 12 });
-
-    // A short TTL churns (the rotating request outlives it); a long TTL does not
-    // (only the one-off recall of each cross-level id remains).
-    expect(mid.reacquiredTotal).toBeGreaterThan(long.reacquiredTotal);
-    expect(adaptive.reacquiredTotal).toBeLessThanOrEqual(mid.reacquiredTotal);
-
-    for (const stats of [mid, long, adaptive]) {
-      expect(stats.peakCount).toBeLessThanOrEqual(5);
-      expect(stats.peakChars).toBeLessThanOrEqual(2 * 8000);
-    }
   });
 });

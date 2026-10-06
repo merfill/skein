@@ -122,40 +122,40 @@ rollback without losing history.
 - **The form of an item's alternative.** Whether an action item needs a criterion
   ("grep found N") to be "resolved" is a detail of §3–4.
 
-## 8. Evidence and the working set: hypothesis + `need`
+## 8. Evidence and the working set
 
 **Problem #9.** The projection shows only the **latest** result. For one decision a
 coder needs **several** facts together (build output **and** a code window). Hence the
 model oscillates `read ↔ run`: each call evicts the previous one, and they never meet in
 one context.
 
-**The fix — the doxa decides, the logos stores and serves.**
+**The fix — the logos owns the working set; doxa only retrieves.**
 
 1. **Results have addresses.** Each result has an `id`; `calls` shows the `id` (the id
    of the latest occurrence). The model references results by id.
-2. **Level retention.** Everything the **current** goal's actions produced (its plan's
-   attempts: code windows, build output, checks) is shown in `shown` **in full, with no
-   TTL**, until the focus leaves the level; on ascending, the level collapses into the
-   `calls` notes. This removes `read ↔ run` oscillation: the current attempt's evidence
-   stays in view.
-3. **A working set with a TTL — for cross-level recall.** `need: [id …]` (and
-   `query {id}`) add **results** (`observation`/`check`) from **another** level to `shown`
-   for `HELD_TURNS` turns; re-adding refreshes. An id without a body (an `action`/`goal`
-   node) is **refused** in `need` — there is nothing to show.
+2. **Level retention.** Everything the **current** branch's actions produced (the plan
+   attempts of every level on the path: code windows, build output, checks) is shown in
+   `shown` **in full, with no TTL**, until the parent closes; on ascending, the level
+   collapses into the `calls` notes. This removes `read ↔ run` oscillation: the current
+   attempt's evidence stays in view — the engine, not the model, decides.
+3. **A single retrieval entrance — `query {id}`.** There is **no** model-side working-set
+   declaration: the model no longer names what to keep. When it needs a body from an
+   **earlier** level (or one evicted by the caps), it calls `query {id}`, which returns
+   the body and holds it in `shown` for `HELD_TURNS` turns. (`need` was removed: letting
+   doxa shape the context contradicts "doxa proposes, logos decides", and a bad id
+   refused the whole proposal.)
 4. **Storing the bodies.** The logos stores a result's body: **a small one directly in
    the node's payload**; **a large one in a temp file**, with a reference
    (`outputRef`/`errorRef`) in the node. For a run/check, stdout (`output`) and stderr
    (`error`) are stored as separate streams (never concatenated). The projection
-   assembles the requested results (from the payload or, for a reference, at the loop
-   level — `project` stays pure) and shows them next to `lastResult`.
-5. **Caps.** The shared `shown` budget is at most `MAX_NEED` (5) bodies and
-   `2 × OUTPUT_LIMIT` (16000) characters; explicit `need`/`query` come first, the current
-   level fills the rest by recency. The TTL (`HELD_TURNS`, 6) and caps are anchored to
-   observed request gaps; an adaptive TTL variant is compared in
-   `tests/workingset.test.ts`.
+   assembles the level results and the queried bodies (from the payload or, for a
+   reference, at the loop level — `project` stays pure) and shows them next to
+   `lastResult`.
+5. **Caps.** The shared `shown` budget is at most `MAX_HELD` (5) bodies and
+   `2 × OUTPUT_LIMIT` (16000) characters; explicitly queried bodies come first, the
+   current levels fill the rest by recency. The TTL (`HELD_TURNS`, 6) and caps are
+   exercised in `tests/workingset.test.ts`.
 6. **Addressing by `id`** for now; another scheme later if needed.
-7. **Append-only.** `need` is part of the hypothesis record; it changes only through a
-   new proposal.
 7. **Staleness.** `shown` carries only current content: if the file a read was taken
    from has changed since (a different version), the entry is dropped from the working
    set, so the "a `stale` fact is never shown as active content" invariant holds.
@@ -188,7 +188,7 @@ Consequences:
   (`action`/`goal`) a separate set of recently queried ids with the same TTL is kept, so
   a repeated `query` of such a node is refused too. A state query
   (`kind`/`predicate`/`edgesOf`) is not pinned;
-- the instructions must say this explicitly: to re-see a step, call `query` by `id` (or
-  add it to `need`); do not repeat the call. This is part of the contract, not a hint;
-- `need` and `query {id}` are two entrances to one working set; `need` is a batch,
-  `query` a single body.
+- the instructions must say this explicitly: to re-see a step, call `query` by `id`; do
+  not repeat the call. This is part of the contract, not a hint;
+- `query {id}` is the single retrieval entrance to the working set: a body is shown from
+  `shown` for several turns, and a repeated `query` while it is in the set is redundant.

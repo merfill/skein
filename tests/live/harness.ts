@@ -16,7 +16,7 @@ import { workingSetStats } from "../workset";
 
 // Live scenario harness: run the agent on a tiny fixture project and keep the full
 // per-turn projection so a run can be analysed after the fact (which information the
-// model had, what it asked for via `need`, which branches it hit). See
+// model had, what it fetched with `query`, which branches it hit). See
 // docs/testing_ru.md §3.
 
 export interface ScenarioConstraint {
@@ -28,7 +28,6 @@ export interface ScenarioConstraint {
 export interface CapturedTurn {
   turn: number;
   action: Action;
-  need: string[];
   contextChars: number;
   context: Context;
 }
@@ -113,7 +112,6 @@ function dumpRun(
         JSON.stringify({
           turn: turn.turn,
           chars: turn.contextChars,
-          need: turn.need,
           action: turn.action,
           context: turn.context,
         }),
@@ -123,15 +121,14 @@ function dumpRun(
   writeFileSync(join(dir, "events.ndjson"), result.events.map((event) => JSON.stringify(event)).join("\n"));
   writeFileSync(
     join(dir, "proposals.ndjson"),
-    turns.map((turn) => JSON.stringify({ turn: turn.turn, action: turn.action, need: turn.need })).join("\n"),
+    turns.map((turn) => JSON.stringify({ turn: turn.turn, action: turn.action })).join("\n"),
   );
 
   // Working-set telemetry (docs/testing_ru.md §3): per turn and an aggregate, so a run's
   // growth/eviction/re-acquisition is analysable offline.
-  const requested = turns.map((turn) => [
-    ...turn.need,
-    ...(turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : []),
-  ]);
+  const requested = turns.map((turn) =>
+    turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : [],
+  );
   const worksetTurns = turns.map((turn, index) => ({
     shown: turn.context.shown,
     requested: requested[index] ?? [],
@@ -175,7 +172,6 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
     turns.push({
       turn: turns.length,
       action: proposal.action,
-      need: proposal.need ?? [],
       contextChars,
       context,
     });
@@ -214,7 +210,6 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
 }
 
 export type Branch =
-  | "need"
   | "query"
   | "grep"
   | "list"
@@ -227,8 +222,7 @@ export type Branch =
 
 export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
   const used = new Set<Branch>();
-  for (const { action, need } of turns) {
-    if (need.length > 0) used.add("need");
+  for (const { action } of turns) {
     switch (action.operator) {
       case "query":
         used.add("query");

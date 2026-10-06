@@ -30,8 +30,8 @@ operator cannot decide:
 3. **`constraints`** — global, not to be violated;
 4. **`lastResult`** — the **full** result of the latest call (within the tool's
    honestly declared limits), to decide the next move;
-5. **`shown`** — the **working set**: the results the model asked for via `need`/`query`,
-   also in full, with a TTL (§8 of `docs/context_design.md`);
+5. **`shown`** — the **working set**, engine-owned: the branch levels' results in full,
+   plus bodies pulled back via `query {id}`, with a TTL (§8 of `docs/context_design.md`);
 6. **`calls`** — a deduplicated **summary of previous calls without results**: what
    was called, the status (`ok`/`fail`/`refused`) and the reason. It gives memory of
    what was already done without inflating the context (invariant 21, §2.8 of the
@@ -46,7 +46,7 @@ Projection = {
   path:        PathNode[],        // the stack, top = focus
   constraints: { id, forbid[] }[],
   lastResult?: ResultView,        // the full result of the latest call
-  shown:       ResultView[],      // results kept via `need` (the hypothesis)
+  shown:       ResultView[],      // the working set (branch levels + queried bodies)
   calls:       Call[],            // a summary of previous ones (may be empty)
   applicable:  string[],          // names of applicable operators
   checkReady:  boolean,           // a run {target: focus} check is expected now
@@ -77,7 +77,7 @@ ResultView = {                 // a view, not a node
 }
 
 Call = {                       // an aggregate, not an event
-  id?: string,                 // the address of the latest result (for `need`)
+  id?: string,                 // the address of the latest result (for `query`)
   action: string,              // read f [1-100]; grep sweep 5/5; run make; tool target
   status: "ok" | "fail" | "refused",
   note?: string,               // fail/refused: the reason (last output line / reason)

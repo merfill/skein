@@ -6,7 +6,6 @@ import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
 import type { Action, Proposal } from "../llm/schemas";
-import { MAX_NEED } from "../llm/schemas";
 import { OUTPUT_LIMIT, commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
@@ -14,42 +13,26 @@ import { reconcile, type VersionCache } from "./observe";
 import type { Proposer } from "./propose";
 import { LoopState, type HeldEntry, type LoopStateType } from "./state";
 
-// How long a result stays in the working set after the model explicitly asked for it
-// (via `need` or `query {id}`), and the two caps that keep it light (docs §9). The caps
-// are anchored to existing instrument limits, not tuned by feel: the model may request
-// MAX_NEED results at once, and a working set must hold the motivating "a code window
-// AND a build error" pair of full outputs. A fresh request refreshes the entry; eviction
-// drops the least recently requested first. TTL 6 covers the observed request gaps
-// (live p90 = 7, synthetic: 3 churns, 6 stops) — see tests/workingset.test.ts.
+// How long a body stays in the working set after the model fetched it with `query {id}`,
+// and the two caps that keep it light (docs §9). Retention is otherwise structural: the
+// produced results of every level on the branch stay in view until the parent closes.
+// A fresh query refreshes the entry; eviction drops the least recently requested first.
+// TTL 6 covers the observed cross-level gaps — see tests/workingset.test.ts.
 const HELD_TURNS = 6;
-const MAX_HELD = MAX_NEED;
+const MAX_HELD = 5;
 const HELD_CHARS = 2 * OUTPUT_LIMIT;
 
-interface HeldLimits {
-  turns: number;
-  adaptive: boolean;
-  turnsMax: number;
-}
-
-// Upsert the requested ids into the working set. `adaptive` (off by default) scales the
-// TTL by how many distinct times the id was (re-)acquired, capped by `turnsMax`.
+// Upsert the fetched ids into the working set, each held for `turns` turns and refreshed
+// on every fetch. Level results do not go through here — they are kept structurally.
 function pinHeld(
   held: readonly HeldEntry[],
-  counts: Readonly<Record<string, number>>,
   ids: readonly string[],
   turn: number,
-  limits: HeldLimits,
-): { held: HeldEntry[]; counts: Record<string, number> } {
+  turns: number,
+): HeldEntry[] {
   const nextHeld = new Map(held.map((entry) => [entry.id, entry]));
-  const nextCounts: Record<string, number> = { ...counts };
-  for (const id of ids) {
-    const acquired = !nextHeld.has(id);
-    const count = acquired ? (nextCounts[id] ?? 0) + 1 : (nextCounts[id] ?? 1);
-    nextCounts[id] = count;
-    const ttl = limits.adaptive ? Math.min(limits.turns * count, limits.turnsMax) : limits.turns;
-    nextHeld.set(id, { id, expiresAt: turn + ttl, pinnedAt: turn });
-  }
-  return { held: [...nextHeld.values()], counts: nextCounts };
+  for (const id of ids) nextHeld.set(id, { id, expiresAt: turn + turns, pinnedAt: turn });
+  return [...nextHeld.values()];
 }
 
 // A held read whose file has since changed is stale: it must not be shown as active
@@ -103,8 +86,7 @@ export interface AgentDeps {
   maxTurns: number;
   noProgress?: number;
   // Working-set limits (docs §9); overridable so tests can force eviction/expiry.
-  // `adaptive` scales the TTL with how often a result is re-acquired, up to `turnsMax`.
-  held?: { turns?: number; max?: number; chars?: number; adaptive?: boolean; turnsMax?: number };
+  held?: { turns?: number; max?: number; chars?: number };
 }
 
 export interface AgentInput {
@@ -125,11 +107,6 @@ export function compileGraph(deps: AgentDeps) {
   const heldTurns = deps.held?.turns ?? HELD_TURNS;
   const maxHeld = deps.held?.max ?? MAX_HELD;
   const heldCharCap = deps.held?.chars ?? HELD_CHARS;
-  const held: HeldLimits = {
-    turns: heldTurns,
-    adaptive: deps.held?.adaptive ?? false,
-    turnsMax: deps.held?.turnsMax ?? heldTurns * 3,
-  };
 
   const projectNode = (state: LoopStateType) => {
     const base = fold(state.events);
@@ -141,16 +118,28 @@ export function compileGraph(deps: AgentDeps) {
     // Two sources feed `shown`, kept together by recency under the shared caps:
     // - current level: every result the focus goal's own actions produced. These do NOT
     //   expire by TTL — the level's attempts stay in view until the focus leaves it.
-    // - explicit: results pinned by `need`/`query` from other levels, held for HELD_TURNS.
+    // - explicit: bodies the model fetched with `query {id}` from other levels, held for
+    //   HELD_TURNS.
     const explicit = state.held
       .filter((entry) => entry.expiresAt >= state.turn)
       .sort((a, b) => b.pinnedAt - a.pinnedAt);
     const explicitIds = new Set(explicit.map((entry) => entry.id));
-    const levelId = current.branch[current.branch.length - 1] ?? current.rootId;
+    // Every level on the branch, not just the leaf: a stage's evidence (the error that
+    // motivated the next stage) stays in view until the parent closes. Newest first, so
+    // the current level still wins the caps and an open stage never drops its own evidence.
+    const levelIds = new Set(
+      current.branch.length > 0
+        ? current.branch
+        : current.rootId !== undefined
+          ? [current.rootId]
+          : [],
+    );
     const level: HeldEntry[] = [];
-    if (levelId !== undefined) {
+    if (levelIds.size > 0) {
       for (const node of current.nodes.values()) {
-        if (node.kind !== "action" || current.focusOf.get(node.id) !== levelId) continue;
+        if (node.kind !== "action") continue;
+        const focus = current.focusOf.get(node.id);
+        if (focus === undefined || !levelIds.has(focus)) continue;
         if (predicateOf(current, node.id) !== "executed") continue;
         const childId = producedResultId(current, node.id);
         if (childId !== undefined) {
@@ -231,18 +220,16 @@ export function compileGraph(deps: AgentDeps) {
 
   const classifyNode = (state: LoopStateType) => {
     if (!state.proposal) return { classification: null };
-    // Classify against the working set as it was BEFORE this proposal's `need`: an id the
-    // proposal itself asks to pin (need) must not make its own `query {id}` look like a
-    // repeat — the query guard only refuses what a previous turn already showed. `need` is
-    // still pinned regardless of accept/reject, so a rejected proposal can re-show context.
+    // The working set is engine-owned: the projection keeps the branch levels' results,
+    // and only `query {id}` (execute) pins a body from elsewhere. The model does not
+    // declare what to show.
     const classification = classify(
       state.proposal,
       fold(state.events),
       state.held.map((entry) => entry.id),
       state.queried.map((entry) => entry.id),
     );
-    const pinned = pinHeld(state.held, state.heldRequests, state.proposal.need ?? [], state.turn, held);
-    return { classification, held: pinned.held, heldRequests: pinned.counts };
+    return { classification };
   };
 
   const executeNode = (state: LoopStateType) => {
@@ -289,13 +276,11 @@ export function compileGraph(deps: AgentDeps) {
         : []),
       ...(outcome.pin ?? []),
     ];
-    const pinned =
-      pinIds.length > 0
-        ? pinHeld(state.held, state.heldRequests, pinIds, state.turn, held)
-        : { held: state.held, counts: state.heldRequests };
+    const held =
+      pinIds.length > 0 ? pinHeld(state.held, pinIds, state.turn, heldTurns) : state.held;
     const queried =
       proposal.action.operator === "query" && proposal.action.id !== undefined
-        ? pinHeld(state.queried, {}, [proposal.action.id], state.turn, held).held
+        ? pinHeld(state.queried, [proposal.action.id], state.turn, heldTurns)
         : state.queried;
     return {
       events: outcome.events,
@@ -303,8 +288,7 @@ export function compileGraph(deps: AgentDeps) {
       turn: state.turn + 1,
       done: outcome.done,
       stopReason: outcome.stopReason,
-      held: pinned.held,
-      heldRequests: pinned.counts,
+      held,
       queried,
     };
   };

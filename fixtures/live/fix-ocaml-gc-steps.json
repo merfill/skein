@@ -192,6 +192,100 @@
         "checkReady": false,
         "budget": { "turn": 24, "maxTurns": 60, "remaining": 36 }
       }
+    },
+    {
+      "name": "focus-check",
+      "what": "The fix stage in focus checked out inconclusive (timeout); the open interpretation above is also objective. A check must target the node in focus (path[last]), not the ancestor interpretation.",
+      "focusCheck": true,
+      "context": {
+        "path": [
+          {
+            "id": "r1",
+            "kind": "request",
+            "state": "open",
+            "text": "",
+            "alternatives": {
+              "chosen": "w:goal:2",
+              "items": [
+                {
+                  "id": "w:goal:2",
+                  "label": "fix the run-length-compressed free-space sweeping regression so the OCaml compiler bootstraps and the basic testsuite passes",
+                  "state": "open",
+                  "chosen": true,
+                  "why": "the request says the sweeping change broke the compiler bootstrap"
+                }
+              ]
+            }
+          },
+          {
+            "id": "w:goal:2",
+            "kind": "goal",
+            "state": "open",
+            "what": "fix the run-length-compressed free-space sweeping regression so the OCaml compiler bootstraps and the basic testsuite passes",
+            "why": "the request says the sweeping change broke the compiler bootstrap",
+            "done_when": { "kind": "objective", "command": "make -C testsuite one DIR=tests/basic" },
+            "plan": {
+              "cursor": 3,
+              "items": [
+                { "id": "w:goal:5", "kind": "goal", "label": "read HACKING.adoc to learn the build/bootstrap procedure", "state": "achieved_under" },
+                { "id": "w:goal:7", "kind": "goal", "label": "reproduce the bootstrap crash", "state": "achieved_under" },
+                { "id": "w:goal:9", "kind": "goal", "label": "locate the faulty sweeping code", "state": "achieved_under" },
+                { "id": "w:goal:370", "kind": "goal", "label": "fix pool_sweep so the sweep advance skips exactly the run", "state": "open" }
+              ]
+            }
+          },
+          {
+            "id": "w:goal:370",
+            "kind": "goal",
+            "state": "open",
+            "what": "fix pool_sweep so the sweep advance skips exactly the run",
+            "why": "the merge advance double-counts the run length",
+            "done_when": { "kind": "objective", "command": "cd ocaml && ./configure && make" },
+            "plan": {
+              "cursor": 1,
+              "items": [
+                { "id": "w:goal:373", "kind": "goal", "label": "read the run-length macro definitions", "state": "achieved_under" },
+                { "id": "w:goal:375", "kind": "goal", "label": "correct the skip advance and rebuild", "state": "open" }
+              ]
+            }
+          },
+          {
+            "id": "w:goal:375",
+            "kind": "goal",
+            "state": "open",
+            "what": "correct the skip advance and rebuild",
+            "done_when": { "kind": "objective", "command": "cd ocaml && ./configure && make" },
+            "plan": {
+              "cursor": 1,
+              "items": [
+                { "id": "w:action:502", "kind": "action", "label": "cd ocaml && ./configure && make", "state": "executed" }
+              ]
+            }
+          }
+        ],
+        "constraints": [],
+        "lastResult": {
+          "id": "chk:520",
+          "kind": "check",
+          "command": "cd ocaml && ./configure && make",
+          "verdict": "inconclusive",
+          "output": "",
+          "error": "timeout after 120s"
+        },
+        "shown": [],
+        "calls": [
+          {
+            "id": "chk:520",
+            "action": "cd ocaml && ./configure && make",
+            "status": "ok",
+            "note": "inconclusive; timeout after 120s",
+            "count": 1
+          }
+        ],
+        "applicable": ["apply"],
+        "checkReady": true,
+        "budget": { "turn": 19, "maxTurns": 60, "remaining": 41 }
+      }
     }
   ]
 }
