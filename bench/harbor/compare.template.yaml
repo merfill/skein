@@ -29,15 +29,17 @@ agents:
           baseURL: "https://routerai.ru/api/v1"
       configurable:
         maxTurns: 60
-        # The hard-task set: reason at high effort (the default is low).
-        reasoningEffort: high
+        # Cost control: run at low effort. The default is low; set explicitly so
+        # the comparison config does not silently drift.
+        reasoningEffort: low
   # opencode: ordinary monotone message tape, the reference agent.
   - name: opencode
     model_name: routerai/~deepseek/deepseek-v4-flash-latest
     kwargs:
       # opencode's first-class reasoning knob (--variant); the model option
-      # below is the equivalent declarative form.
-      variant: high
+      # below is the equivalent declarative form. Low effort to match Skein and
+      # cut cost.
+      variant: low
       opencode_config:
         provider:
           routerai:
@@ -52,7 +54,7 @@ agents:
                 # Match Skein's reasoning effort (F1 in
                 # docs/plans/engine_fixes_found.md: the reasoning toggle decides).
                 options:
-                  reasoningEffort: high
+                  reasoningEffort: low
 datasets:
   - name: terminal-bench
     version: "2.0"
