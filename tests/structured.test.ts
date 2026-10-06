@@ -9,7 +9,8 @@ import { z } from "zod";
 
 import { loadSettings } from "../src/config/settings";
 import { createChatModel } from "../src/llm/client";
-import { invokeStructured } from "../src/llm/structured";
+import { invokeStructured, invokeTools } from "../src/llm/structured";
+import { toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
 
@@ -176,6 +177,74 @@ describe("runAgent on a broken model", () => {
     );
     expect(result.stopReason).toBe("llm_error");
     expect(result.done).toBe(true);
+  });
+});
+
+// Native tool calling: the flat tool call is mapped into the IR Action (docs/testing_ru.md §8.1).
+describe("tool calling", () => {
+  it("maps a flat tool call into the IR Action", () => {
+    expect(toProposal("write", { path: "a.txt", content: "hi" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "write", path: "a.txt", content: "hi" },
+    });
+    expect(toProposal("complete", {}, "t").action).toEqual({ operator: "complete" });
+    expect(toProposal("run", { target: "w:goal:1" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "run", target: "w:goal:1" },
+    });
+    expect(() => toProposal("nope", {}, "t")).toThrow(/unknown tool/);
+  });
+
+  it("invokeTools reads the first tool call and the message text", async () => {
+    const model = {
+      bindTools: () => ({
+        invoke: async () => ({ content: "do it", tool_calls: [{ name: "read", args: { path: "a" } }] }),
+      }),
+      invoke: async () => {
+        throw new Error("must use the bound model");
+      },
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")]);
+    expect(proposal.thought).toBe("do it");
+    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+  });
+
+  it("invokeTools repairs once when the model called no tool", async () => {
+    let calls = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          return calls === 1 ? { content: "thinking", tool_calls: [] } : { content: "", tool_calls: [{ name: "list", args: {} }] };
+        },
+      }),
+      invoke: async () => {
+        throw new Error("must use the bound model");
+      },
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")]);
+    expect(calls).toBe(2);
+    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+  });
+
+  it("invokeTools repairs once when the tool call is malformed", async () => {
+    let calls = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          return calls === 1
+            ? { content: "", tool_calls: [{ name: "write", args: { path: "a" } }] }
+            : { content: "", tool_calls: [{ name: "read", args: { path: "a" } }] };
+        },
+      }),
+      invoke: async () => {
+        throw new Error("must use the bound model");
+      },
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")]);
+    expect(calls).toBe(2);
+    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
   });
 });
 

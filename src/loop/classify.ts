@@ -384,5 +384,19 @@ export function classify(
     return accept;
   }
 
+  if (apply.tool === "write") {
+    for (const { id, pattern } of forbiddenConstraints(state)) {
+      if (matchesPath(pattern, apply.path)) {
+        return reject(`constraint_violation:${pattern}`, id);
+      }
+    }
+    const ref = `file:${apply.path}`;
+    const readVersion = latestReadVersion(state, ref);
+    if (readVersion !== undefined && currentVersion(state, ref) !== readVersion) {
+      return reject("stale_base");
+    }
+    return accept;
+  }
+
   return accept;
 }

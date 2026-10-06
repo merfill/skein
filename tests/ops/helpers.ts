@@ -80,6 +80,10 @@ export function edit(path: string, find: string, replace: string): Action {
   return applyTool({ tool: "edit", path, find, replace });
 }
 
+export function write(path: string, content: string): Action {
+  return applyTool({ tool: "write", path, content });
+}
+
 export function run(command: string): Action {
   return applyTool({ tool: "run", command });
 }

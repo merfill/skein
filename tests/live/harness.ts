@@ -7,8 +7,8 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import { proposalSchema, type Action, type Proposal } from "../../src/llm/schemas";
-import { invokeStructured } from "../../src/llm/structured";
+import type { Action, Proposal } from "../../src/llm/schemas";
+import { invokeTools } from "../../src/llm/structured";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import { buildMessages, renderContext } from "../../src/loop/propose";
 import { fsWorkspace } from "../../src/tools/workspace";
@@ -166,9 +166,7 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
   const turns: CapturedTurn[] = [];
   const propose = async (context: Context): Promise<Proposal> => {
     const contextChars = renderContext(context).length;
-    const proposal = await invokeStructured(model, proposalSchema, buildMessages(context), {
-      rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
-    });
+    const proposal = await invokeTools(model, buildMessages(context));
     turns.push({
       turn: turns.length,
       action: proposal.action,
@@ -215,6 +213,7 @@ export type Branch =
   | "list"
   | "read"
   | "edit"
+  | "write"
   | "run"
   | "revise"
   | "complete"

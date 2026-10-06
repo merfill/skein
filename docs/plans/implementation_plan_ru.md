@@ -115,12 +115,36 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   стабильным ID в `docs/ir_operations_ru.md` (+EN); офлайн-тесты по операторам
   (`tests/ops/`), property-тесты на 400 случайных легальных деревьях, coverage-gate
   (`tests/coverage.test.ts`) и live step-тесты (`tests/live/ir_operations_step.test.ts`).
+- **Нативные tool calls (structured output)** — агент предлагает через плоские
+  function-инструменты, сгенерированные из zod (`src/llm/tools.ts`); `invokeTools`
+  (`src/llm/structured.ts`) биндит их с `tool_choice: "required"`, маппит вызов в IR
+  `Action` и ремонтирует один битый/отсутствующий вызов. JSON-схема-в-промпте
+  (`invokeStructured`) остаётся общим фолбэком. Это заменило одну глубокую
+  discriminated-union, которая раздувала reasoning и упиралась в completion cap на
+  тяжёлых ходах (`docs/testing_ru.md` §8.1; `docs/bench_report_ru.md` §4.4). Добавлен
+  инструмент `write` (`docs/ir_operations_ru.md` §2.2.6).
+- **Сравнение моделей (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` проваливает
+  синтетический набор (0/4) и дороже текущего DeepSeek; остаёмся на
+  `~deepseek/deepseek-v4-flash-latest`.
 
-Проверка: `npm run typecheck`; `npm test` (67 тестов) — offline-тесты, live-гейт
-только при `SKEIN_LIVE=true`.
+Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
+live-гейт только при `SKEIN_LIVE=true`.
 
 **Отложено (бэклог):**
 
+- **Возможные инструменты.** `write` сделан. Кандидаты по величине пробела: `edit` по
+  диапазону / `multiedit` (find/replace ломается на неоднозначных/повторяющихся
+  фрагментах); `web_fetch` (документация, разбор ошибок — доступен через `run`/`curl`,
+  потому низкий приоритет); LSP `symbol` (definition/references/rename). Non-goals:
+  VCS, инструмент `todo` (план живёт в IR), браузер/скриншоты, субагенты, MCP
+  (`docs/tools_ru.md` §8).
+- **Прогнать `write` вживую.** Ни один live-сценарий не создаёт файл: две «похожие на
+  создание» фикстуры (`command-from-package`, `make-command`) уже содержат
+  `package.json`/`Makefile`, поэтому модель читает команду, а не пишет файл. Надо
+  добавить фикстуру, чей README требует создать файл (например, отсутствующий
+  `package.json`), и прогнать её
+  (`SKEIN_SCENARIOS=<name> SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts`).
+  Сейчас `write` покрыт офлайн (`tests/ops/apply.test.ts`, `OP-AP-WRITE-1..5`).
 - **Стабильный префикс проекции (кэш промпта).** Бенч на `skein-plugin`
   (`bench/`) показал: провайдер кэширует только system-префикс (ровно 1664 токена
   за вызов), а проекция не кэшируется — её стабильный префикс обрывается на

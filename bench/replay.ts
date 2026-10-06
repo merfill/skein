@@ -13,8 +13,8 @@ import { join } from "node:path";
 import { loadSettings } from "../src/config/settings";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
-import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
-import { invokeStructured } from "../src/llm/structured";
+import type { Action, Proposal } from "../src/llm/schemas";
+import { invokeTools } from "../src/llm/structured";
 import { buildMessages } from "../src/loop/propose";
 import { TurnMeter } from "./metrics";
 
@@ -93,7 +93,6 @@ if (traceArg === undefined || traceArg.startsWith("--")) {
 const settings = loadSettings();
 const modelName = flag("--model") ?? settings.model;
 const model = createChatModel({ ...settings, model: modelName });
-const rebuild = (maxTokens: number) => createChatModel({ ...settings, model: modelName, maxTokens });
 
 const limit = Number(flag("--limit") ?? "0") || 0;
 const offset = Number(flag("--offset") ?? "0") || 0;
@@ -115,9 +114,8 @@ for (const turn of turns) {
   const meter = new TurnMeter();
   let lastFinish: string | undefined;
   try {
-    const proposal: Proposal = await invokeStructured(model, proposalSchema, buildMessages(turn.context), {
+    const proposal: Proposal = await invokeTools(model, buildMessages(turn.context), {
       callbacks: [meter],
-      rebuild,
       onResponse: (response) => {
         lastFinish = finishOf(response);
         if (lastFinish !== undefined) finishes.set(lastFinish, (finishes.get(lastFinish) ?? 0) + 1);

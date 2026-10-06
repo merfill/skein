@@ -108,12 +108,34 @@ Beyond Tier 0, the current line adds:
   stable ID in `docs/ir_operations.md` (+`_ru`); offline tests grouped by operator
   (`tests/ops/`), property tests over 400 random legal trees, a coverage gate
   (`tests/coverage.test.ts`), and live step tests (`tests/live/ir_operations_step.test.ts`).
+- **Native tool calls (structured output)** — the agent proposes through flat function
+  tools generated from zod (`src/llm/tools.ts`); `invokeTools`
+  (`src/llm/structured.ts`) binds them with `tool_choice: "required"`, maps the call to
+  the IR `Action` and repairs one malformed/missing call. The JSON-schema-in-prompt path
+  (`invokeStructured`) stays a generic fallback. This replaced the single nested
+  discriminated union, which inflated reasoning and tripped the completion cap on hard
+  turns (`docs/testing.md` §8.1; `docs/bench_report.md` §4.4). Added the `write` tool
+  (`docs/ir_operations.md` §2.2.6).
+- **Model comparison (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` fails the
+  synthetic set (0/4) and costs more than the current DeepSeek; staying on
+  `~deepseek/deepseek-v4-flash-latest`.
 
-Verification: `npm run typecheck`; `npm test` (67 tests) — offline tests, live gate
-only when `SKEIN_LIVE=true`.
+Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
+live gate only when `SKEIN_LIVE=true`.
 
 **Deferred (backlog):**
 
+- **Possible tools.** `write` is done. Still candidates, by size of the gap: `edit` by
+  range / `multiedit` (find/replace breaks on ambiguous or duplicated fragments);
+  `web_fetch` (docs, error analysis — currently reachable through `run`/`curl`, so low
+  priority); LSP `symbol` (definition/references/rename). Non-goals stay: VCS, a `todo`
+  tool (the plan lives in the IR), browser/screenshots, subagents, MCP (`docs/tools.md` §8).
+- **Exercise `write` live.** No live scenario creates a file: the two "creation-looking"
+  fixtures (`command-from-package`, `make-command`) already ship `package.json`/`Makefile`,
+  so the model reads the command instead of writing. Add a fixture whose README requires
+  creating a file (e.g. a missing `package.json`), then run it
+  (`SKEIN_SCENARIOS=<name> SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts`).
+  `write` is covered offline today (`tests/ops/apply.test.ts`, `OP-AP-WRITE-1..5`).
 - **Stable projection prefix (prompt cache).** The `skein-plugin` bench (`bench/`)
   showed the provider caches only the system prefix (exactly 1664 tokens per call)
   while the projection is never cached: its stable prefix ends at

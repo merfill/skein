@@ -23,7 +23,7 @@ export interface ActionItem {
 
 export type PlanItem = GoalItem | ActionItem;
 
-const planItemSchema: z.ZodType<PlanItem> = z.lazy(() =>
+export const planItemSchema: z.ZodType<PlanItem> = z.lazy(() =>
   z.union([
     z.object({
       kind: z.literal("action"),
@@ -71,6 +71,11 @@ export const applySchema = z.discriminatedUnion("tool", [
     path: z.string(),
     find: z.string(),
     replace: z.string(),
+  }),
+  z.object({
+    tool: z.literal("write"),
+    path: z.string(),
+    content: z.string(),
   }),
   z.object({
     tool: z.literal("run"),

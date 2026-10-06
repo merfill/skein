@@ -153,6 +153,19 @@
   stderr (`error`) раздельны; краш добавляет `signal`/`core`/`backtrace`; вердикт
   check — на узле `check`; запись в `calls` несёт `id` для последующего `query`.
 
+#### 2.2.6 `write` (`OP-AP-WRITE`)
+
+| Случай | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| создание | `path` не существует | add `action` (`path`/`content`); `mutate`; версия файла установлена | — | — | `OP-AP-WRITE-1` |
+| перезапись | файл прочитан и с тех пор не изменён; не запрещён | add `action`; `mutate`; версия растёт | зависимые check устаревают | `stale_base`, `constraint_violation:<pattern>` | `OP-AP-WRITE-2` |
+| запрещённый путь | constraint запрещает | — | — | `constraint_violation:<pattern>` | `OP-AP-WRITE-3` |
+| устаревшая база | файл изменён после последнего чтения | — | — | `stale_base` | `OP-AP-WRITE-4` |
+| непрочитанный файл | файл существует, но не читался | — | — | fail-наблюдение (`read it first`) | `OP-AP-WRITE-5` |
+
+- **Проекция** (`PRJ-AP`): как у `edit` — `executed` узел `action` с ребром `mutates`
+  и событием `mutate` с новой версией.
+
 ### 2.3 `complete` (`OP-CP`)
 
 | Случай | Pre | Effects | Derived | Refuses | ID |
@@ -236,6 +249,8 @@
 | `repeated_action` | идентичный read/grep/run или re-query показанного тела | read/grep/run/query | `REF-REPEAT` |
 | `stale_base` | edit файла, изменённого после чтения | edit | `REF-EDIT-STALE` |
 | `constraint_violation:<pattern>` | edit запрещённого пути | edit | `REF-EDIT-CONSTRAINT` |
+| `stale_base` | write поверх файла, изменённого после чтения | write | `REF-WRITE-STALE` |
+| `constraint_violation:<pattern>` | write запрещённого пути | write | `REF-WRITE-CONSTRAINT` |
 
 **Провалы** инструментов (это `fail`-observation, не отказ): нет файла (`read`),
 плохой scope (`grep`/`list`), `find` не найден (`edit`), ненулевой код/таймаут/
@@ -274,6 +289,7 @@
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-EDIT-1..4` | `tests/ops/apply.test.ts` | сценарии `stale-base`, `two-step-fix` |
+| `OP-AP-WRITE-1..5` | `tests/ops/apply.test.ts` | сценарий `command-from-package` |
 | `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
 | `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; сценарий `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | сценарии `retrieve-at-scale`, `reproduce-then-read` |

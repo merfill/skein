@@ -106,7 +106,7 @@ map are `docs/ir_operations.md` (EN + RU).
 recorded trace (a short scenario's `bench/runs/live-<ts>-<name>/contexts.ndjson`, or just
 the scenario name; a Harbor `agent/langgraph-run.log` with `SKEIN_CONTEXT` /
 `SKEIN_PROPOSAL` lines), rebuilds `buildMessages(context)` per turn and runs the current
-`invokeStructured` on the **same context**. It prints per turn: the proposed and recorded
+`invokeTools` on the **same context**. It prints per turn: the proposed and recorded
 `operator`/tool (`=`/`≠`), `thought` length, output tokens, `finish_reason`; and a final
 summary `ok/fail/match/mismatch/outTokens/maxOut/finish=[…]`. This tunes the prompt/schema
 on the real context distribution for cents: e.g. `th=8661 out=31531 finish=length` before
@@ -222,16 +222,19 @@ limits, and the projection does not cut it (`docs/tools.md`).
 
 ### 8.1 Robust structured output
 
-The provider does not hold tool calling well under the long agent prompt: the call
-arguments arrive flat (`operator` at the top level instead of nested under `action`) or as
-invalid JSON, and the library returns `parsed: null` with no `parsing_error`. The agent
-therefore does not use `withStructuredOutput` at all: `src/llm/structured.ts` puts the
-**raw JSON schema** in the prompt (`response_format: json_object` as a hint) and parses
-the reply manually. On a truncated body (`max_tokens`) or a schema violation it retries
-with a higher `max_tokens` (`SKEIN_MAX_TOKENS_CEILING`, bounded by `SKEIN_MAX_TOKENS_BUMPS`)
-and one repair round carrying the validator's message. If everything fails, the loop stops
-with `stopReason: "llm_error"` instead of crashing the run. Covered offline in
-`tests/structured.test.ts`.
+The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
+function tool per operation (`create_goal`, `complete`, `query`, `read`, `grep`, `list`,
+`edit`, `write`, `run`) and `src/llm/structured.ts` `invokeTools` binds them with
+`tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
+per-operation schemas matter: one deeply nested discriminated union came back flat
+(`operator` at the top level instead of nested under `action`), and JSON mode made the
+model reason far more on hard turns (and hit the completion cap, whose retries re-sent
+the whole projection). On a call with no tool, `invokeTools` makes one repair round; if
+that fails the loop stops with `stopReason: "llm_error"` instead of crashing.
+
+`invokeStructured` remains the generic JSON path (schema spelled out in the prompt,
+`response_format: json_object`, manual parse, raised cap on a completion cut, one repair
+round); it is covered offline in `tests/structured.test.ts` and used by no agent path.
 
 ## 9. Keys and secrets
 

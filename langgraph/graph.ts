@@ -21,8 +21,8 @@ import type { Event } from "../src/ir/events";
 import { checkHasUnder, childrenOf, fold, predicateOf } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
-import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
-import { invokeStructured } from "../src/llm/structured";
+import type { Action, Proposal } from "../src/llm/schemas";
+import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, renderContext } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -199,9 +199,8 @@ export const skein = {
       const started = Date.now();
       let proposal: Proposal;
       try {
-        proposal = await invokeStructured(model, proposalSchema, buildMessages(context), {
+        proposal = await invokeTools(model, buildMessages(context), {
           callbacks: [...inherited, meter],
-          rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
           onError: (error, phase) => {
             console.log(
               `SKEIN_LLM_ERROR ${JSON.stringify({

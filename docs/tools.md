@@ -36,7 +36,9 @@ the current state (as-built), then the proposed changes.
 
 ## 2. Interface overview
 
-The model returns `{ thought, action }`; `action` is one of four operators:
+The model proposes an action through **native tool calls** (one flat function tool per
+operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the IR
+`action`, which is one of four operators:
 
 | Operator | Purpose |
 |---|---|
@@ -67,6 +69,7 @@ subgoal to its plan. Give a plan when the steps are known. List failures fully i
 | `grep` | `{ pattern, path?, include?, exclude?, before?, after?, from?, count? }` | search the workspace: scope, windows over matches, JSON (see §4.2) |
 | `list` | `{ path?, include?, exclude?, from?, limit? }` | list files by mask, JSON (see §4.6) |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
+| `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
 | `run` | `{ command?, target?, background?, job?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted); with `background` — start a long command and poll it by `job` (see §4.7) |
 
 ### 2.3 `complete { goal?, note?, under? }`
@@ -78,7 +81,9 @@ goal (only a check settles it).
 
 Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id` — the
 **body of a stored result** (a small one from the payload, a large one behind
-`outputRef`), optionally a line window (`start`/`end`). Does not change state.
+`outputRef`), optionally a line window (`start`/`end`). Does not change state. The
+model-facing tool exposes `{ id, start?, end? }`; the tree selectors (`kind`/`predicate`/
+`edgesOf`) remain an engine capability but are not offered to the model.
 
 ---
 
@@ -361,10 +366,9 @@ is no history, work with files and reproduce the failure" — plus the strategy 
 An extension of the tool set, recorded so it is not lost. Ordered by the size of the
 capability gap; **not part of the current implementation**.
 
-1. **`write`** — create/overwrite a whole file: `{ path, content }`. Not available
-   now: the agent cannot create a new file (a test, a script, a patch), only change an
-   existing one via `find/replace`. Needs a declared `content` maximum; writes a
-   `mutate` with the new version.
+1. **`write`** — create/overwrite a whole file: `{ path, content }` — **done**
+   (`docs/ir_operations.md` §2.2.6): a new file is created; overwriting an existing one
+   requires a fresh read; writes a `mutate` with the new version.
 2. **`list`** (a.k.a. `glob`) — **done**, see §4.6. Removes parsing of `run ls/find`
    (unstructured, unbounded output) and gives the model visibility of extensions.
 3. **`edit` by range / `multiedit`** — editing by line numbers and atomic grouped

@@ -21,8 +21,8 @@ import { pathToFileURL } from "node:url";
 import { loadSettings } from "../src/config/settings";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
-import { proposalSchema, type Action, type Proposal } from "../src/llm/schemas";
-import { invokeStructured } from "../src/llm/structured";
+import type { Action, Proposal } from "../src/llm/schemas";
+import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, renderContext } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -198,9 +198,8 @@ async function main(): Promise<void> {
     contexts.push({ turn: turns.length, chars: contextChars, context });
     const meter = new TurnMeter();
     const started = Date.now();
-    const proposal = await invokeStructured(chat, proposalSchema, buildMessages(context), {
+    const proposal = await invokeTools(chat, buildMessages(context), {
       callbacks: [meter],
-      rebuild: (maxTokens) => createChatModel({ ...settings, model, maxTokens }),
     });
     const elapsedMs = Date.now() - started;
     proposals.push(proposal.action);

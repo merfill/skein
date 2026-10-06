@@ -154,6 +154,19 @@ criterion is run as the oracle, not as exploration.
   verdict is on the `check` node; the `calls` entry carries the `id` for a later
   `query`.
 
+#### 2.2.6 `write` (`OP-AP-WRITE`)
+
+| Case | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| create | `path` does not exist | add `action` (`path`/`content`); `mutate`; file version set | — | — | `OP-AP-WRITE-1` |
+| overwrite | file read and unchanged since that read; not forbidden | add `action`; `mutate`; version bumps | dependent checks stale | `stale_base`, `constraint_violation:<pattern>` | `OP-AP-WRITE-2` |
+| forbidden path | a constraint forbids it | — | — | `constraint_violation:<pattern>` | `OP-AP-WRITE-3` |
+| stale base | file changed after the last read | — | — | `stale_base` | `OP-AP-WRITE-4` |
+| unseen file | file exists but was never read | — | — | fail observation (`read it first`) | `OP-AP-WRITE-5` |
+
+- **Projection** (`PRJ-AP`): as for `edit` — an `executed` `action` node with a `mutates`
+  edge and a `mutate` event carrying the new version.
+
 ### 2.3 `complete` (`OP-CP`)
 
 | Case | Pre | Effects | Derived | Refuses | ID |
@@ -237,6 +250,8 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | `repeated_action` | identical read/grep/run, or re-query of a shown body | read/grep/run/query | `REF-REPEAT` |
 | `stale_base` | edit on a file changed after the read | edit | `REF-EDIT-STALE` |
 | `constraint_violation:<pattern>` | edit a forbidden path | edit | `REF-EDIT-CONSTRAINT` |
+| `stale_base` | write over a file changed after the read | write | `REF-WRITE-STALE` |
+| `constraint_violation:<pattern>` | write a forbidden path | write | `REF-WRITE-CONSTRAINT` |
 
 Tool **failures** (a `fail` observation, not a refusal): missing file (`read`),
 bad scope (`grep`/`list`), `find` not present (`edit`), non-zero/timeout/signal
@@ -276,6 +291,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-EDIT-1..4` | `tests/ops/apply.test.ts` | scenarios `stale-base`, `two-step-fix` |
+| `OP-AP-WRITE-1..5` | `tests/ops/apply.test.ts` | scenario `command-from-package` |
 | `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
 | `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; scenario `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |

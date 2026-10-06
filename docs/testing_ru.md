@@ -107,7 +107,7 @@ N раз и собирает все провалы, так что флаки п�
 записанную трассу (короткий сценарий — `bench/runs/live-<ts>-<name>/contexts.ndjson`,
 допускается имя сценария; Harbor — `agent/langgraph-run.log` со строками `SKEIN_CONTEXT`
 / `SKEIN_PROPOSAL`), восстанавливает `buildMessages(context)` на каждый ход и гоняет
-текущий `invokeStructured` на **том же контексте**. Печатает по ходу: `operator`/tool
+текущий `invokeTools` на **том же контексте**. Печатает по ходу: `operator`/tool
 предложенный и записанный (`=`/`≠`), длину `thought`, выходные токены, `finish_reason`;
 в конце — сводку `ok/fail/match/mismatch/outTokens/maxOut/finish=[…]`. Это позволяет
 отлаживать промпт/схему на реальном распределении контекстов за копейки: например,
@@ -223,15 +223,19 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 
 ### 8.1 Устойчивый structured output
 
-Провайдер плохо держит tool calling под длинным агентым промптом: аргументы вызова
-приходят плоскими (`operator` на верхнем уровне вместо вложенного `action`) или
-невалидным JSON, а библиотека отдаёт `parsed: null` без `parsing_error`. Поэтому агент
-не использует `withStructuredOutput` вовсе: `src/llm/structured.ts` кладёт **сырую
-JSON-схему** в промпт (`response_format: json_object` как подсказка) и разбирает ответ
-руками. При обрезанном ответе (`max_tokens`) или нарушении схемы — повтор с поднятым
-`max_tokens` (`SKEIN_MAX_TOKENS_CEILING`, не более `SKEIN_MAX_TOKENS_BUMPS` раз) и один
-repair-раунд с текстом ошибки валидатора. Если всё не удалось, цикл завершается с
-`stopReason: "llm_error"`, а не падает. Офлайн покрыто в `tests/structured.test.ts`.
+Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
+плоскому function-инструменту на операцию (`create_goal`, `complete`, `query`, `read`,
+`grep`, `list`, `edit`, `write`, `run`), а `invokeTools` в `src/llm/structured.ts`
+биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
+Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
+плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял
+модель думать сильно больше на тяжёлых ходах (и упираться в cap, чьи ретраи
+перепосылали всю проекцию). Если вызова инструмента нет, `invokeTools` делает один
+repair-раунд; иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
+
+`invokeStructured` остаётся общим JSON-путём (схема в промпте, `response_format:
+json_object`, ручной разбор, поднятый cap при обрыве, один repair-раунд); он покрыт
+офлайн в `tests/structured.test.ts` и агентом не используется.
 
 ## 9. Ключи и секреты
 

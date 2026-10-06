@@ -4,6 +4,8 @@ import { HumanMessage } from "@langchain/core/messages";
 import { z } from "zod";
 
 import { loadSettings, type Settings } from "../config/settings";
+import type { Proposal } from "./schemas";
+import { PROPOSAL_TOOLS, toProposal } from "./tools";
 
 // Structured output as plain JSON: the JSON schema is spelled out in the prompt and the
 // reply is parsed manually. Tool/function calling was dropped intentionally — under the
@@ -244,4 +246,82 @@ export async function invokeStructured<T extends z.ZodTypeAny>(
       throw error;
     }
   }
+}
+
+// --- Native tool-calling path (docs/testing_ru.md §8.1) ----------------------
+// Flat function tools instead of a JSON schema in the prompt: the provider holds the
+// call far better and the JSON-mode overhead disappears. The engine rebuilds the
+// projection every turn, so there is no tool-result loop — a call is only the
+// structured-output channel for the proposed `Action`.
+export interface ToolsOptions {
+  callbacks?: unknown[];
+  onError?: (error: unknown, phase: "tools") => void;
+  onResponse?: (response: unknown) => void;
+}
+
+interface ToolCallingModel {
+  bindTools?(
+    tools: unknown[],
+    kwargs?: Record<string, unknown>,
+  ): { invoke(messages: BaseMessage[], options?: unknown): Promise<unknown> };
+  invoke(messages: BaseMessage[], options?: unknown): Promise<unknown>;
+}
+
+function toolCallsOf(response: unknown): { name: string; args: unknown }[] {
+  const calls = (response as { tool_calls?: unknown } | undefined)?.tool_calls;
+  if (!Array.isArray(calls)) return [];
+  const out: { name: string; args: unknown }[] = [];
+  for (const call of calls) {
+    const name = (call as { name?: unknown } | undefined)?.name;
+    const args = (call as { args?: unknown } | undefined)?.args;
+    if (typeof name === "string" && name !== "") out.push({ name, args });
+  }
+  return out;
+}
+
+export async function invokeTools(
+  model: BaseChatModel,
+  messages: BaseMessage[],
+  options: ToolsOptions = {},
+): Promise<Proposal> {
+  const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
+  const target = model as unknown as ToolCallingModel;
+  const bound =
+    typeof target.bindTools === "function"
+      ? target.bindTools(PROPOSAL_TOOLS as unknown[], { tool_choice: "required" })
+      : target;
+  const run = async (msgs: BaseMessage[]): Promise<unknown> => {
+    try {
+      return await bound.invoke(msgs, invokeOptions);
+    } catch (error) {
+      options.onError?.(error, "tools");
+      throw error;
+    }
+  };
+  let lastError: unknown;
+  let repair: HumanMessage | undefined;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const response = await run(repair === undefined ? messages : [...messages, repair]);
+    options.onResponse?.(response);
+    const calls = toolCallsOf(response);
+    const first = calls[0];
+    if (first === undefined) {
+      lastError = new Error("model returned no tool call");
+      repair = new HumanMessage(
+        "You did not call a tool. Call exactly one of the provided tools; put a one-sentence thought in the message text first.",
+      );
+      continue;
+    }
+    try {
+      return toProposal(first.name, first.args, messageText(response));
+    } catch (error) {
+      // A malformed call (unknown tool, args that fail the schema) gets one repair round,
+      // as the JSON path does, instead of sinking the whole run as `llm_error`.
+      lastError = error;
+      repair = new HumanMessage(
+        `Your tool call was invalid (${error instanceof Error ? error.message : String(error)}). Call exactly one tool with valid arguments matching its schema.`,
+      );
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("model returned no tool call");
 }

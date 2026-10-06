@@ -17,8 +17,8 @@ import {
   read,
   request,
   run,
+  write,
 } from "./helpers";
-
 afterEach(cleanupWorkspaces);
 
 describe("apply: read", () => {
@@ -133,6 +133,51 @@ describe("apply: edit", () => {
     // A successful edit mutates the file; the read is now stale.
     const mutated = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
     expect(classification(edit("src/sum.mjs", "a + b", "a - b"), mutated.events).reason).toBe("stale_base");
+  });
+});
+
+describe("apply: write", () => {
+  it("OP-AP-WRITE-1 creates a new file and records a mutate with a version", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { events, state } = exec(write("src/extra.mjs", "export const x = 1;\n"), [request()], ws);
+    expect(events.some((e) => e.type === "mutate")).toBe(true);
+    expect(state.nodes.has("file:src/extra.mjs")).toBe(true);
+    expect(ws.read("src/extra.mjs")).toContain("export const x = 1;");
+    expect(currentVersion(state, "file:src/extra.mjs")).toBeDefined();
+  });
+
+  it("OP-AP-WRITE-2 overwrites after a fresh read and bumps the version", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const first = exec(read("src/sum.mjs"), [request()], ws);
+    const before = currentVersion(first.state, "file:src/sum.mjs");
+    const { events, state } = exec(write("src/sum.mjs", "export const y = 2;\n"), first.events, ws);
+    expect(events.some((e) => e.type === "mutate")).toBe(true);
+    expect(ws.read("src/sum.mjs")).toContain("export const y = 2;");
+    expect(currentVersion(state, "file:src/sum.mjs")).not.toBe(before);
+  });
+
+  it("OP-AP-WRITE-3 / REF-WRITE-CONSTRAINT refuses a forbidden path", () => {
+    const constraint: Event = {
+      type: "add_node",
+      node: { id: "c1", space: "work", kind: "constraint", label: "no src", payload: { forbid: ["src/"] }, seq: 1 },
+    };
+    const reason = classification(write("src/new.mjs", "x"), [request(), constraint]).reason;
+    expect(reason).toMatch(/constraint_violation/);
+  });
+
+  it("OP-AP-WRITE-4 / REF-WRITE-STALE refuses overwriting on a stale read", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const first = exec(read("src/sum.mjs"), [request()], ws);
+    const mutated = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
+    expect(classification(write("src/sum.mjs", "x"), mutated.events).reason).toBe("stale_base");
+  });
+
+  it("OP-AP-WRITE-5 fails to overwrite a file that was never read, leaving it intact", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(write("src/sum.mjs", "x"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(ws.read("src/sum.mjs")).toContain("a - b");
   });
 });
 

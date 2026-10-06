@@ -6,8 +6,7 @@ import { describe, expect, it } from "vitest";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import { proposalSchema } from "../../src/llm/schemas";
-import { invokeStructured } from "../../src/llm/structured";
+import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
 
 // A live check of the fix-ocaml-gc shape without running the whole task: replay a saved
@@ -53,9 +52,7 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
   for (const step of fixture.steps) {
     it(`${step.name}: reacts to the error/refusal without merging streams`, async () => {
       const model = createChatModel(settings);
-      const proposal = await invokeStructured(model, proposalSchema, buildMessages(withInstruction(step.context)), {
-        rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
-      });
+      const proposal = await invokeTools(model, buildMessages(withInstruction(step.context)));
       console.info(`[${step.name}] ${JSON.stringify(proposal.action).slice(0, 400)}`);
 
       if (proposal.action.operator === "apply" && proposal.action.action.tool === "run") {

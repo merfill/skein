@@ -6,8 +6,8 @@ import { fold } from "../../src/ir/graph";
 import { project, type Context } from "../../src/ir/project";
 import { currentGoalId } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
-import { proposalSchema, type Action, type PlanItem } from "../../src/llm/schemas";
-import { invokeStructured } from "../../src/llm/structured";
+import type { Action, PlanItem } from "../../src/llm/schemas";
+import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
 import {
   DEFAULT_FILES,
@@ -207,9 +207,7 @@ describe.skipIf(!settings.live)("IR operations steps (live)", () => {
         const errors: string[] = [];
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           const model = createChatModel(settings);
-          const proposal = await invokeStructured(model, proposalSchema, buildMessages(step.context), {
-            rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
-          });
+          const proposal = await invokeTools(model, buildMessages(step.context));
           console.info(`[${step.name}] attempt ${attempt}: ${JSON.stringify(proposal.action).slice(0, 240)}`);
           try {
             step.expectMove(proposal.action);

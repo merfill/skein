@@ -260,6 +260,19 @@ function changedMutations(
   return mutations;
 }
 
+// The version of the last read of `ref` (an observation carries it). Used to refuse a
+// `write` over content the model never read or that changed since (mirrors classify).
+function latestReadVersion(state: State, ref: string): string | undefined {
+  let best: { seq: number; version: string } | undefined;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "observation") continue;
+    const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
+    if (payload?.ref !== ref || typeof payload.version !== "string") continue;
+    if (best === undefined || node.seq > best.seq) best = { seq: node.seq, version: payload.version };
+  }
+  return best?.version;
+}
+
 function descendTo(state: State, parent: string, node: string): Event[] {
   const stack = state.branch.length > 0 ? state.branch : state.rootId ? [state.rootId] : [];
   const index = stack.lastIndexOf(parent);
@@ -297,6 +310,8 @@ export function commandOf(apply: Apply): string {
     }
     case "edit":
       return `edit ${apply.path}`;
+    case "write":
+      return `write ${apply.path}`;
     case "run":
       // A poll of a background job is addressed by the job id, not by a shell command;
       // this is only used for display/dedup, the run branch builds its own signature.
@@ -955,6 +970,35 @@ export function executeAction(
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         return { events, turn: proposalTurn(`edited ${apply.path}`, actionId), done: false, stopReason: null };
+      }
+
+      if (apply.tool === "write") {
+        const ref = `file:${apply.path}`;
+        // Overwriting unseen or changed content is refused: the model must have read the
+        // file (a new file has no version, so creation is allowed) and it must be fresh.
+        if (workspace.exists(apply.path)) {
+          const readVersion = latestReadVersion(state, ref);
+          if (readVersion === undefined) {
+            return fail(
+              `write failed: ${apply.path} exists; read it before overwriting (use edit for a small change)`,
+            );
+          }
+          if (currentVersion(state, ref) !== readVersion) {
+            return fail(`write failed: stale base: ${apply.path} changed since it was read; re-read first`);
+          }
+        }
+        try {
+          workspace.write(apply.path, apply.content);
+        } catch (error) {
+          return fail(`write failed: ${(error as Error).message}`);
+        }
+        const version = workspace.version(apply.path);
+        ensureFile(apply.path, ref);
+        const command = commandOf(apply);
+        const actionId = ensureAction(command, command, { path: apply.path, bytes: apply.content.length });
+        addEdge({ kind: "llm" }, actionId, ref, "mutates");
+        events.push({ type: "mutate", ref, version, actionId });
+        return { events, turn: proposalTurn(`wrote ${apply.path}`, actionId), done: false, stopReason: null };
       }
 
       // apply.tool === "run"
