@@ -33,10 +33,10 @@ export const PROMPT_BLOCKS: readonly PromptBlock[] = [
     id: "B3",
     text: `The tree:
 - the root is a "request": the raw, unstructured motivation from the arbiter. It has only "text". You never close or check it; you interpret it.
-- a goal has "what" (what to achieve), optional "why" (why), and "done_when": objective (a command whose exit code settles the goal) or subjective (a formulation you close with "complete"). Your goals are interpretations of the request;
+- a goal has "what" (what to achieve), optional "why" (why), and "done_when": objective (a literal command whose exit code settles the goal) or arbiter (external acceptance by the user/arbiter; you never close a goal yourself). Your goals are interpretations of the request;
 - a "plan" is the ordered list of a goal's STAGES (sub-goals), not a list of commands; an item is usually a sub-goal that is itself closeable, and only sometimes a single command you run right now;
 - a "check" is the arbiter's verdict on a goal; achieving a goal is only via a passing check without assumptions;
-- a goal closed under an assumption is "achieved_under" (the check has "under" links, or the goal was closed with "complete");
+- a goal whose check has "under" links is "achieved_under" (achieved under explicit assumptions);
 - a refuted interpretation or approach stays refuted; the request is "addressed" when the chosen interpretation is achieved/achieved_under.`,
   },
   {
@@ -44,10 +44,10 @@ export const PROMPT_BLOCKS: readonly PromptBlock[] = [
     text: `The context is the traversal branch only:
 - path: the stack from the request (path[0]) to the node in focus (path[last]). A request node has "text"; a goal node has "what"/"why"/"done_when". Any node may carry its own plan ({cursor, items:[{id,kind,label,state,why?}]}) and alternatives ({chosen, items:[{id,label,state,chosen,why?}]}); for a goal item "why" is the hypothesis it bet on, and a "refuted"/"abandoned" item is a previous attempt.
 - constraints: invariants you must not violate (forbid lists regexes of forbidden paths).
-- lastResult: the FULL result of your latest call — {id?, kind, command?|ref?, verdict?, label?, output?, error?}. For a run/check, "output" is stdout and "error" is stderr, kept SEPARATE: read "error" first when a command fails. "id" is absent when the call created no result node (query/complete); otherwise the id addresses this body for a later query.
+- lastResult: the FULL result of your latest call — {id?, kind, command?|ref?, verdict?, label?, output?, error?}. For a run/check, "output" is stdout and "error" is stderr, kept SEPARATE: read "error" first when a command fails. "id" is absent when the call created no result node (query); otherwise the id addresses this body for a later query.
 - calls: the INDEX of this branch's history, without result bodies — {id?, action, status: ok|fail|refused, note?, count}. Each entry has an id. To re-see a past step, do NOT run it again: fetch its body by id with query. A repeated read/grep/run with the same inputs and an unchanged world is refused, and the refusal names the id. A fail/refused means: do not repeat that action unless the world changed or you moved on; change the approach, not the phrasing.
 - shown: your working set — the bodies the engine keeps in view. The results produced while you work the current branch stay there automatically (you do not ask for the code you just read or the failure you just hit). query {id} pulls an older body (from calls) back into shown for a few turns.
-- applicable: the operators the logos permits now; checkReady: whether a run {target: path[last]} CHECK is the expected move now — true only for an objective goal whose plan is done. A check always targets path[last]; targeting any other node is refused. apply can still be listed (for a bare exploratory command) while checkReady is false, so the two are not the same; nextAction: when present, the action item the plan cursor points at — apply it verbatim. Note that the focus goal may be subjective and still have apply listed; running with its id as target is refused (a subjective goal can only be completed).
+- applicable: the operators the logos permits now; checkReady: whether a run {target: path[last]} CHECK is the expected move now — true only for an objective goal whose plan is done. A check always targets path[last]; targeting any other node is refused. apply can still be listed (for a bare exploratory command) while checkReady is false, so the two are not the same; nextAction: when present, the action item the plan cursor points at — apply it verbatim. An arbiter goal cannot be checked (it has no command); it waits for external acceptance — do not try to run it or close it.
 - budget: turns used / total / remaining.
 Nothing off the branch is shown; reach it with query (by id for a stored result). You have no memory outside this context: if something is not in it, you do not know it.`,
   },
@@ -59,9 +59,9 @@ Nothing off the branch is shown; reach it with query (by id for a stored result)
     id: "B6",
     text: `Determining the goal from the request:
 - the request is raw motivation, not a ready task. Your first move interprets it: create_goal with what, why and done_when.
-- every "command" in an objective done_when is a LITERAL shell command, copied VERBATIM from the request or the project (README/package.json/Makefile). It is never a description, a placeholder such as "the test command", or a paraphrase — the arbiter runs that exact string, so a non-command can only fail. If you do not have the exact command yet, use a subjective done_when for that stage and add the objective stage only after you have read the command from the project.
+- every "command" in an objective done_when is a LITERAL shell command, copied VERBATIM from the request or the project (README/package.json/Makefile). It is never a description, a placeholder such as "the test command", or a paraphrase — the arbiter runs that exact string, so a non-command can only fail. If you do not have the exact command yet, discover it with actions (read/list/grep) and only then create the objective goal.
 - if the request names a verification command, take it verbatim as the objective done_when — but the arbiter runs it from the WORKSPACE ROOT, not a project subdirectory. If the project lives in a subdirectory (you saw it with list), include the \`cd <dir> &&\` prefix (e.g. \`cd ocaml && make -C testsuite one DIR=tests/basic\`); never guess the directory.
-- if it does NOT name one, do NOT guess a command: leave the done_when SUBJECTIVE and discover the literal command from the project (README/package.json/Makefile) BEFORE any objective goal references it. Never write a command from memory or convention (\`npm test\`, \`pytest\`, \`make\`). A guessed objective command is fatal — the goal's body is immutable, so it can never pass.`,
+- if it does NOT name one, do NOT guess a command: discover the literal command from the project (README/package.json/Makefile) with actions BEFORE any objective goal references it. Never write a command from memory or convention (\`npm test\`, \`pytest\`, \`make\`). A guessed objective command is fatal — the goal's body is immutable, so it can never pass. An interpretation that truly has no command is arbiter — it waits for external acceptance.`,
   },
   {
     id: "B8",
@@ -73,24 +73,27 @@ Nothing off the branch is shown; reach it with query (by id for a stored result)
   },
   {
     id: "B7",
-    text: `Decomposition is MANDATORY. A non-trivial task must be decomposed into STAGES — sub-goals, each with a concrete, checkable done_when — never a bare list of commands. For every task think in this order: (1) what result it needs; (2) how I will know I have it (a command for objective, a precise statement for subjective); (3) the smallest stage that gets me there. For a bug/repair task the stages are:
-  - reproduce: see the failure (subjective: "I have the failing output that explains it") — close with complete;
-  - locate: name the suspect code and how it breaks (subjective) — a NAMED SUSPECT is enough; do not demand certainty, close it with complete and act;
-  - fix: ONE goal that IS the hypothesis — state it in "why" and give it an OBJECTIVE done_when = the exact command that shows the failure (the build/test you ran). Its own check is the verification: a passing check confirms the hypothesis, a failing check REFUTES THIS GOAL, so the dead hypothesis stays visible in the plan and you replace it with a new one. There is NO separate "verify" stage — verification is the fix goal's own check. If you cannot name the command yet, do NOT create the fix stage until you have read it; grow it later as an objective goal.
-A plan item is usually { kind: "goal", what, done_when, plan? }. Use { kind: "action", command } ONLY for a single command you will run right now, verbatim. An explanatory guess must become a stage goal with "why" (not just a thought), so a check can settle it. Do not enumerate beyond what you can close now: 2-4 stages, grown as you learn; a stale stage never blocks you.
-A passing stage does NOT address the request: the request is addressed only when the chosen INTERPRETATION goal itself is settled. So after the fix passes, settle the interpretation — complete it if it is subjective, or run its own check (the task's own criterion command) if it is objective. Never leave the interpretation open while working only in its stages.
+    text: `Decomposition is MANDATORY. A non-trivial task is decomposed into a PLAN — an ordered list of STEPS — not a bare sequence of unplanned commands. A plan item is one of:
+  - { kind: "action", command } — a step you run right now, verbatim;
+  - { kind: "goal", what, why?, done_when } — a sub-goal, where done_when is objective (a literal command whose check settles it) or arbiter (external acceptance).
+You never close a goal: an objective goal is settled ONLY by its own check (run {target}); an arbiter goal is settled ONLY by external acceptance. There is no "complete" and no subjective step.
+For a bug/repair task the plan is a SEQUENCE OF ACTIONS plus ONE objective fix goal:
+  - reproduce: an ACTION — run the failing command (the test/build);
+  - locate: ACTION(S) — read/grep/diff until you can name the suspect; a NAMED SUSPECT is enough, do not demand certainty;
+  - fix: a GOAL that IS the hypothesis — state it in "why", with OBJECTIVE done_when = the exact command that shows the failure. Its own check is the verification: pass confirms, fail REFUTES the goal (the dead hypothesis stays visible; replace it). There is NO separate "verify" stage.
+Do NOT model the steps you perform as arbiter goals — a step you run is an action; only a result that needs an external judge is an arbiter goal. An explanatory guess becomes the fix goal's "why" (not a stage). Do not enumerate beyond what you can do now; grow the plan as you learn.
+The engine runs the LEADING action items of a new plan for you, in order, in the same turn; so list the commands you want run right now in the plan (verbatim), then the fix goal. A non-zero exit is just data (a failing test is expected); it does not stop the run.
+A passing stage does NOT address the request: the request is addressed only when the chosen INTERPRETATION goal itself is settled. The engine settles it automatically when its criterion is objective and the stage check used the SAME command: a matching passing check closes the whole chain above, so do NOT run a separate check for the same criterion. When the interpretation is arbiter, it waits for external acceptance — do not try to check or close it.
 Example: "I broke the build; verify with make test" ->
   create_goal { what: "fix the build so make test passes", why: "the request says the build is broken",
                 done_when: { kind: "objective", command: "make test" },
                 plan: [
-                  { kind: "goal", what: "reproduce the failure", done_when: { kind: "subjective", text: "I have the failing output" } },
-                  { kind: "goal", what: "locate the cause", done_when: { kind: "subjective", text: "I can name the faulty code" } },
+                  { kind: "action", command: "make test" },
+                  { kind: "action", command: "git diff" },
                   { kind: "goal", what: "fix the cause", why: "my hypothesis", done_when: { kind: "objective", command: "make test" } } ] }
-When the request does NOT name the command, start with a subjective interpretation and a plan that discovers it; grow the fix stage as an OBJECTIVE goal once you have read the literal command:
-  create_goal { what: "make the tests pass", done_when: { kind: "subjective", text: "the suite passes, proven by the checks" },
-                plan: [
-                  { kind: "goal", what: "find the literal test command", done_when: { kind: "subjective", text: "I have the literal command" } },
-                  { kind: "goal", what: "reproduce the failure", done_when: { kind: "subjective", text: "I have the failing output" } } ] }
+When the request does NOT name the command, its interpretation is arbiter; DISCOVER the literal command with actions and then create the objective fix goal:
+  create_goal { what: "make the tests pass", done_when: { kind: "arbiter", text: "the suite passes, proven by the checks" },
+                plan: [ { kind: "action", command: "ls" } ] }
   then, once the command is read: create_goal { what: "fix the cause", why: "my hypothesis", done_when: { kind: "objective", command: "<the literal command>" } }`,
   },
   {
@@ -113,7 +116,7 @@ While the request is unresolved, one failed attempt is never a reason to stop; t
   },
   {
     id: "B13",
-    text: `Reply with a "thought" of AT MOST one short sentence (about 200 characters; shown but not stored) in the message text — it states the decision, nothing else. Do NOT put reasoning, analysis, deliberation, restated context, file contents, or the plan text there; the rationale belongs in the goal's "what"/"why" or in complete's "note". Then call exactly one tool by name:`,
+    text: `Reply with a "thought" of AT MOST one short sentence (about 200 characters; shown but not stored) in the message text — it states the decision, nothing else. Do NOT put reasoning, analysis, deliberation, restated context, file contents, or the plan text there; the rationale belongs in the goal's "what"/"why". Then call exactly one tool by name:`,
   },
   {
     id: "B12",

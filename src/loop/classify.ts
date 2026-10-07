@@ -170,8 +170,8 @@ function hasBody(state: State, id: string): boolean {
 }
 
 // A plan "carries a check" when it has at least one checkable step: an action, or an
-// objective sub-goal. A plan of only epistemic (subjective) stages — reproduce/locate —
-// is not complete, because the fix stage is still to come, so growing it must stay legal.
+// objective sub-goal. A plan of only arbiter stages has no runnable criterion yet, so
+// growing it must stay legal.
 function planCarriesCheck(state: State, items: readonly string[]): boolean {
   return items.some((id) => {
     const node = state.nodes.get(id);
@@ -204,7 +204,6 @@ function focusHint(state: State): string | undefined {
       : `descend into the next plan item: ${first}`;
   }
   if (payload?.done_when.kind === "objective") return `check it: apply run {target: "${focus}"}`;
-  if (payload?.done_when.kind === "subjective") return `close it: complete {goal: "${focus}"}`;
   return undefined;
 }
 
@@ -281,28 +280,6 @@ export function classify(
     return accept;
   }
 
-  if (action.operator === "complete") {
-    const goalId = action.goal ?? currentGoalId(state);
-    if (goalId === undefined) return reject("no_current_goal");
-    const goal = state.nodes.get(goalId);
-    if (goal === undefined || goal.kind !== "goal") return reject("invalid_goal");
-    if (goalId === state.rootId) return reject("root_not_completable");
-    const current = currentGoalId(state);
-    if (goalId !== current) {
-      const hint = focusHint(state);
-      return reject(
-        `not_current_goal: complete acts on the node in focus (${current ?? "none"}), not ${goalId}; ${hint ?? `close ${current ?? "it"} first`} — the traversal returns to the parent once it closes`,
-      );
-    }
-    const payload = goalPayload(state, goalId);
-    if (payload === undefined || payload.done_when.kind !== "subjective") {
-      return reject(
-        `objective_goal_needs_check: goal ${goalId} is objective; settle it with a check (apply run with target "${goalId}"), not complete`,
-      );
-    }
-    return accept;
-  }
-
   // action.operator === "apply"
   const apply = action.action;
   // A poll of a background job carries only the job id, and reads new state each time,
@@ -337,7 +314,7 @@ export function classify(
     const payload = goalPayload(state, apply.target);
     if (payload === undefined || payload.done_when.kind !== "objective") {
       return reject(
-        `subjective_goal_needs_complete: goal ${apply.target} is subjective; close it with complete {goal:"${apply.target}"}, then check an objective goal`,
+        `arbiter_goal_needs_acceptance: goal ${apply.target} has no command criterion; it is settled by external acceptance, not by a run`,
       );
     }
     if (apply.command !== undefined && apply.command !== payload.done_when.command) {

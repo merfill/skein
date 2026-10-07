@@ -32,11 +32,6 @@ const createGoalParams = z.object({
   plan: z.array(planItemSchema).nonempty().optional(),
   revises: z.array(z.string()).optional(),
 });
-const completeParams = z.object({
-  goal: z.string().optional(),
-  note: z.string().optional(),
-  under: z.array(z.string()).optional(),
-});
 const queryParams = z.object({
   id: z.string().optional(),
   start: z.number().int().positive().optional(),
@@ -87,12 +82,6 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
     schema: createGoalParams,
   },
   {
-    name: "complete",
-    description:
-      "Close the goal IN FOCUS as satisfied (achieved_under), with an optional note and under (assumption goal ids). Only the focus (path[last]) can be closed; to close an ancestor, settle the focus first. Refused if: it is not the focus (not_current_goal); it is the request; or it is objective (an objective goal is settled only by its own check — run {target}).",
-    schema: completeParams,
-  },
-  {
     name: "query",
     description:
       "Re-read an already-known result by id instead of repeating a read/grep/run — its body is stored under the id shown in calls; optional line window (start/end). The body enters the working set for a few turns. Refused if the id is already in the working set (redundant).",
@@ -125,7 +114,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "run",
     description:
-      "Run a shell command, or check a goal. With target (an objective goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 verifies, non-zero refutes, a timeout is inconclusive and leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. A subjective target is refused (complete it instead). An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). An objective goal whose plan is fully carried out is settled by its own check (run {target}); a stage's check settles only that stage. background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check. under lists assumption goal ids the check relies on.",
+      "Run a shell command, or check a goal. With target (an objective goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 verifies, non-zero refutes, a timeout is inconclusive and leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. An arbiter target (closed only by external acceptance) is refused — it has no command to run. An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). An objective goal whose plan is fully carried out is settled by its own check (run {target}); a stage's check settles only that stage. background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check. under lists assumption goal ids the check relies on.",
     schema: runParams,
   },
   {
@@ -178,9 +167,6 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
   switch (name) {
     case "create_goal":
       action = { operator: "create_goal", ...a };
-      break;
-    case "complete":
-      action = { operator: "complete", ...a };
       break;
     case "query":
       action = { operator: "query", ...a };

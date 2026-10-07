@@ -2,6 +2,9 @@
 
 > Английское зеркало — `docs/plans/fix_ocaml_gc_investigation.md`.
 
+> **Историческое.** Предшествует текущему IR: оператор `complete` удалён, `done_when` —
+> `objective` | `arbiter`. См. `docs/ir_ru.md`, `docs/ir_semantics_ru.md`.
+
 Связанные: `docs/context_design_ru.md` (дизайн проекции и плана),
 `docs/projection_ru.md`, `docs/tools_ru.md`, `docs/ir_semantics_ru.md`,
 `docs/fix_ocaml_gc_ideal_ru.md` (эталон формы).

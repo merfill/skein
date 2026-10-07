@@ -5,7 +5,7 @@
 This is the **as-built**: how the IR is structured in the current code. The source
 of truth for the semantics is `docs/ir_semantics.md`; the code follows it. The
 conceptual overview is `docs/concepts.md`; the foundation is `docs/logos_ir.md`;
-the migration to the semantics is `docs/plans/ir_semantics_migration_plan.md`.
+the traversal stack is `docs/plans/traversal_stack_spec.md`.
 
 ## 1. Four levels
 
@@ -28,13 +28,13 @@ Before `project` the engine reconciles active `ref`s with the filesystem
 ## 2. Nodes and edges
 
 **Nodes** (`src/ir/types.ts`). Space `work`: `request`, `goal`, `action`, `plan`,
-`alternatives`, `observation`, `check`, `complete`, `constraint`. Space
+`alternatives`, `observation`, `check`, `constraint`. Space
 `artifact`: `file` (plus reserved `symbol`/`test`, not produced).
 
 - `request.payload = { text }` — the Arbiter's raw motivation, the root of the
   forest; it is not closed in the IR (acceptance is external);
 - `goal.payload = { what, why?, done_when }`, where `done_when` is
-  `{kind:"objective", command}` or `{kind:"subjective", text}`;
+  `{kind:"objective", command}` or `{kind:"arbiter", text}`;
 - `plan`/`alternatives` are containers; child order is **not** stored in a field
   but derived from the `add_edge item` event order (`State.children`);
 - a read `observation.payload` carries `{ ref, version }`; `check.payload` —
@@ -42,8 +42,7 @@ Before `project` the engine reconciles active `ref`s with the filesystem
   (`output` is stdout, `error` is stderr, kept separate).
 
 **Edges** (`Edge.provenance`, with no status field): `has_plan`, `item`,
-`has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `closes`,
-`mutates`.
+`has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `mutates`.
 
 ## 3. Events (closed vocabulary)
 
@@ -60,8 +59,7 @@ Nodes never change; `fold` computes the predicates (`src/ir/graph.ts`):
 - an action is `executed` iff it has a produced child (`produces`/`mutates`);
 - a goal is `achieved` iff the latest closure is a `check` `pass` **without**
   `under`;
-- a goal is `achieved_under` iff a `check` `pass` has `under` or a `complete`
-  node closes it;
+- a goal is `achieved_under` iff a `check` `pass` has `under`;
 - a goal is `refuted` iff the closing `check` is `fail`; `inconclusive` leaves it
   `open`;
 - a goal is `abandoned` iff it is a variant in `alternatives` not equal to the current
@@ -73,6 +71,13 @@ Nodes never change; `fold` computes the predicates (`src/ir/graph.ts`):
 The rest is derived too: `currentVersion(ref)` = the last `mutate` version,
 otherwise the first read version; `cursor(G)` = the first unfulfilled plan item;
 the stack is the fold of `descend`/`return`.
+
+`fold` also runs the **logos closure** (`closeAncestors`): a passing objective check
+verifies not only its target but every plan ancestor of that target whose
+`done_when.command` equals the check's command, once the rest of that ancestor's plan is
+settled. The synthesized `verifies` edges carry the same check's provenance, so a single
+check at the bottom closes the whole chain above (and can mark the request `addressed`)
+with no extra doxa turn (`docs/plans/step_reduction_plan.md`).
 
 ## 5. Doxa operators
 
@@ -89,22 +94,23 @@ the stack is the fold of `descend`/`return`.
   (objective goal) → `check`+`verifies` (+`under`), and the **command comes from
   `target.done_when`**, not from the doxa's proposal; `run` without `target` →
   `observation`.
-- **`complete`** `{ goal?, note?, under? }` — only a subjective, non-root goal; the goal
-  must be the current node.
 - **`query`** — read-only addressing (not a doxa operator): reaches nodes/edges.
+
+Doxa never closes a goal (there is no `complete`). An objective goal is settled only by
+its own check; an arbiter goal only by external acceptance (`userAcceptance`, a
+`record_check` with `actor: "user"`).
 
 Gates in `classify`: constraints on `edit`; `stale_base`; `repeated_action` (waived for a
 re-check after `inconclusive`); strict `revises`; `repeat_hypothesis`; `apply run
 { target }` only for an objective goal that **is the current node**
-(`subjective_goal_needs_complete`, `not_current_goal`); `complete` only for a subjective
-non-root goal that is the current node (`not_current_goal`).
+(`arbiter_goal_needs_acceptance`, `not_current_goal`).
 
 ## 6. Traversal (logos)
 
 `src/ir/traversal.ts`: `focusEvents` descends from the request into the chosen
 interpretation, then into the first unfulfilled sub-goal, and returns when the
 current goal closes; `applicable` gives doxa the frontier
-(`createGoal`/`apply`/`complete`/`checkReady`/`chooseVariant`). The loop
+(`createGoal`/`apply`/`checkReady`/`chooseVariant`). The loop
 (`src/loop/graph.ts`): `project → propose → classify → execute → progress`;
 stopping via `request_addressed` (the request is `addressed`), `no_progress` (the
 semantic key unchanged for N turns), or the budget (`maxTurns`).
@@ -128,10 +134,10 @@ and action failures are materialized as an observation with `verdict=fail` and l
 ## 8. Honesty and boundaries
 
 - `achieved` — only a `check` `pass` without `under`; doxa does not render a
-  verdict; `achieved_under` — `under` or `complete`.
+  verdict; `achieved_under` — `under`.
 - The request is not closed in the IR: acceptance is external and implicit
   (silence/the harness); inside, only `addressed` is computed. There is no LLM
-  verdict; `userAcceptance` (`src/ir/approval.ts`) gives a subjective goal check.
+  verdict; `userAcceptance` (`src/ir/approval.ts`) gives an arbiter goal acceptance.
 - Deferred: `out_of_fragment` (needs a "declared fragment" design, §10.1 of the
   semantics), witness precision (currently the whole workspace, `SKIP_DIRS`),
   `symbol`/`test`, full staleness precision.

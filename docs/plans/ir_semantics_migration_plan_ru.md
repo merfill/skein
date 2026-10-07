@@ -2,6 +2,9 @@
 
 > Английское зеркало — `docs/plans/ir_semantics_migration_plan.md`.
 
+> **Историческое.** Предшествует текущему IR: оператор `complete` удалён, `done_when` —
+> `objective` | `arbiter`. См. `docs/ir_ru.md`, `docs/ir_semantics_ru.md`.
+
 Связанные документы:
 
 - `docs/ir_semantics_ru.md` — **источник истины по семантике** (цель).

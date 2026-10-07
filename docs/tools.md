@@ -44,7 +44,6 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 |---|---|
 | `create_goal` | introduce a goal (an interpretation of the request or a subgoal) with a plan |
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `run` |
-| `complete` | close a **subjective** goal as an assumption |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
 ### 2.1 `create_goal { what, why?, done_when, plan?, revises? }`
@@ -52,7 +51,8 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 - `what` — what to achieve; non-empty.
 - `why?` — a rationale (text).
 - `done_when` — **objective** (`{kind:"objective", command}` — a command whose exit
-  code settles it) or **subjective** (`{kind:"subjective", text}`).
+  code settles it) or **arbiter** (`{kind:"arbiter", text}` — external acceptance; doxa
+  never closes it).
 - `plan?` — a non-empty list of items: `{kind:"action", command}` or
   `{kind:"goal", what, done_when, plan?}`.
 - `revises?` — ids of **all** failed options of the container when switching approach.
@@ -74,12 +74,7 @@ subgoal to its plan. Give a plan when the steps are known. List failures fully i
 | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
 | `run` | `{ command?, target?, background?, job?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted); with `background` — start a long command and poll it by `job` (see §4.7) |
 
-### 2.3 `complete { goal?, note?, under? }`
-
-Closes a subjective goal (`achieved_under`). Not allowed: the request and an objective
-goal (only a check settles it).
-
-### 2.4 `query { id | kind | predicate | edgesOf, start?, end? }`
+### 2.3 `query { id | kind | predicate | edgesOf, start?, end? }`
 
 Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id` — the
 **body of a stored result** (a small one from the payload, a large one behind
@@ -187,12 +182,10 @@ content. The model asks for 120 lines — it sees ~8.
   `{ action, status: ok|fail|refused, note, count }`, deduplicated by signature.
   `action` includes the parameters: for `read` — the **range** (`read f [1-100]`),
   for `grep` — the **pattern and context** (`grep sweep 5/5`), for `run` — the
-  command, for `edit` — the **short diff** (`-find +replace`), for `complete` —
-  the closed goal and its **note**. This gives the model "memory of what was already
-  done" without inflating the context, and makes coverage visible. An edit keeps
-  `find`/`replace` in its action payload, so a failed or repeated edit shows the exact
-  `find` already tried instead of a blank "applied"; a completed subjective goal leaves
-  `path` (the branch is trimmed under a closed ancestor), so its note surfaces here.
+  command, for `edit` — the **short diff** (`-find +replace`). This gives the model
+  "memory of what was already done" without inflating the context, and makes coverage
+  visible. An edit keeps `find`/`replace` in its action payload, so a failed or repeated
+  edit shows the exact `find` already tried instead of a blank "applied".
 - `negative` is **merged into `calls`** (one list): status `refused`/`fail` + the rule
   "do not repeat while the world has not changed". A repeated command with the same
   signature (`read`/`grep` too) and an unchanged world is **refused**, and the reason
@@ -311,10 +304,10 @@ agent's default reflex ("look at the diff").
    bootstrap; verify with `make -C testsuite one DIR=tests/basic`". Correct:
    - goal: `what: "fix the GC regression so the basic testsuite passes"`,
      `done_when: { kind: "objective", command: "make -C testsuite one DIR=tests/basic" }`;
-   - a plan of **stage sub-goals**: `reproduce` → `locate` → `fix`
-     (the epistemic ones close with `complete`); `fix` IS the hypothesis — `why` + an
-     `objective done_when` = the command that shows the failure, so its own `check`
-     settles it (there is no separate `verify`), not a list of commands.
+   - a plan of **steps**: `reproduce` and `locate` are **actions** (run the command,
+     read/grep/diff); `fix` IS the hypothesis — `why` + an `objective done_when` = the
+     command that shows the failure, so its own `check` settles it (there is no separate
+     `verify`, no `complete`), not a list of bare commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a
    VCS; do not do it. A `git` failure in `calls` is a signal to change the approach,
    not the command.

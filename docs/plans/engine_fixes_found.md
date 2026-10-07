@@ -2,6 +2,9 @@
 
 > Russian mirror — `docs/plans/engine_fixes_found_ru.md`.
 
+> **Historical.** Predates the current IR: the `complete` operator is removed and
+> `done_when` is `objective` | `arbiter`. See `docs/ir.md`, `docs/ir_semantics.md`.
+
 Related: `docs/plans/fix_ocaml_gc_investigation.md` (the run journal),
 `docs/fix_ocaml_gc_run_report_2026-10-05.md` (the focus defect),
 `docs/fix_ocaml_gc_run_report_2026-10-06.md` (the accepted fix),

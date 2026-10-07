@@ -71,8 +71,13 @@ L2 is under the gate, L3 is acceptance.
 - **B5** fixes: the working set is engine-owned; `query {id}` is the only entry point.
 - **B6** forbids guessing a command; the criterion command is literal, from the workspace
   root, with a `cd <dir> &&` prefix in a subdirectory.
-- **B7** makes decomposition mandatory; `fix` is the hypothesis itself and its own `check`
-  is the verification (there is no separate `verify`).
+- **B7** makes decomposition mandatory: a plan is a sequence of **actions** plus one
+  objective `fix` goal (the hypothesis); steps are actions, not arbiter sub-goals.
+  Doxa never closes a goal (no `complete`): an objective goal is settled only by its own
+  `check`, an arbiter goal only by external acceptance. A passing check with the same
+  criterion closes the interpretation **automatically** (logos closure,
+  `docs/plans/step_reduction_plan.md`), so a separate check for the same command is not
+  needed.
 - **B8** (revised in Phase 3): git/history is a normal tool when present; this workspace
   may have no `.git`, and a failed history command must not be retried or probed in other
   roots; local history and an external reference are different things.

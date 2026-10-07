@@ -6,11 +6,12 @@ import {
   alternativesOf,
   childrenOf,
   currentVersion,
+  fold,
   planOf,
   predicateOf,
   type State,
 } from "../ir/graph";
-import { currentGoalId, firstUnfulfilledItem, goalPayload } from "../ir/traversal";
+import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
 import type { EdgeKind, GoalPayload, Node, Provenance, Verdict, WitnessEntry } from "../ir/types";
 import type { Action, Apply, GoalItem, PlanItem } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
@@ -37,6 +38,11 @@ const LIST_LIMIT_DEFAULT = 200;
 // A result body is kept in the node when small, otherwise in a temp file referenced by
 // the node (docs/context_design_ru.md §8).
 const MAX_INLINE_RESULT = 2000;
+
+// How many leading action items of a freshly created plan are run in the same turn
+// (A4, docs/plans/step_reduction_plan.md): the engine executes the doxa's committed
+// commands in order until the next item is a goal (a check/decision) or the cap is hit.
+const AUTO_RUN_ACTIONS = 4;
 
 function clip(text: string, limit = OUTPUT_LIMIT): string {
   if (text.length <= limit) return text;
@@ -691,47 +697,34 @@ export function executeAction(
         addEdge({ kind: "llm" }, plan, id, "item");
       }
       events.push(...descendTo(state, current, id));
-      return {
-        events,
-        turn: proposalTurn(`created goal: ${action.what}`),
-        done: false,
-        stopReason: null,
-      };
-    }
-
-    case "complete": {
-      const goalId = action.goal ?? currentGoalId(state);
-      if (goalId === undefined) return fail("complete failed: no goal");
-      const goal = state.nodes.get(goalId);
-      if (goal === undefined || goal.kind !== "goal") return fail(`complete failed: no goal ${goalId}`);
-      const completeSeq = next();
-      const id = `w:complete:${completeSeq}`;
-      events.push({
-        type: "add_node",
-        node: {
-          id,
-          space: "work",
-          kind: "complete",
-          label: `complete ${goalId}`,
-          payload: action.note !== undefined ? { note: action.note } : {},
-          seq: completeSeq,
-        },
-      });
-      addEdge({ kind: "llm" }, id, goalId, "closes");
-      if (action.under !== undefined) {
-        for (const assumption of action.under) addEdge({ kind: "llm" }, id, assumption, "under");
+      // A4: run the leading action items of the new plan in this same turn, in order,
+      // until the next item is a goal or the cap is hit. A non-zero exit is a normal
+      // observation, not a stop — the ordinary protocol handles failures next turn.
+      let runState = fold(events, state);
+      let lastTurn = proposalTurn(`created goal: ${action.what}`);
+      for (let guard = 0; guard < AUTO_RUN_ACTIONS; guard += 1) {
+        const first = firstUnfulfilledItem(runState, id);
+        if (first === undefined) break;
+        const itemNode = runState.nodes.get(first);
+        if (itemNode?.kind !== "action") break;
+        const itemCommand = (itemNode.payload as { command?: unknown } | undefined)?.command;
+        if (typeof itemCommand !== "string" || itemCommand.trim() === "") break;
+        const sub = executeAction(
+          { operator: "apply", action: { tool: "run", command: itemCommand } },
+          runState,
+          workspace,
+          turn,
+        );
+        events.push(...sub.events);
+        runState = fold(sub.events, runState);
+        lastTurn = sub.turn;
+        if (sub.done) break;
       }
-      return {
-        events,
-        turn: proposalTurn(`completed: ${goalId}`),
-        done: false,
-        stopReason: null,
-      };
+      return { events, turn: lastTurn, done: false, stopReason: null };
     }
 
     case "apply": {
       const apply = action.action;
-      const current = currentGoalId(state);
 
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
@@ -1123,16 +1116,11 @@ export function executeAction(
       }
 
       // apply.tool === "run"
-      let target = apply.target;
-      if (target === undefined && current !== undefined) {
-        const payload = goalPayload(state, current);
-        if (
-          payload?.done_when.kind === "objective" &&
-          payload.done_when.command === apply.command
-        ) {
-          target = current;
-        }
-      }
+      // A run produces a goal verdict only when it explicitly names that goal as its
+      // target. A bare run (no target) is an observation even when its command equals a
+      // goal's `done_when.command`: a reproduce step must never be read as a check, or it
+      // would refute the goal before the fix (docs/plans/traversal_stack_spec.md §9).
+      const target = apply.target;
       const targetNode = target !== undefined ? state.nodes.get(target) : undefined;
       if (target !== undefined && (targetNode === undefined || targetNode.kind !== "goal")) {
         return fail(`check failed: no goal ${target}`);
@@ -1143,7 +1131,7 @@ export function executeAction(
       if (target !== undefined && targetNode?.kind === "goal") {
         const payload = targetNode.payload as GoalPayload | undefined;
         if (payload?.done_when.kind !== "objective") {
-          return fail(`check failed: goal ${target} is subjective; use complete`);
+          return fail(`check failed: goal ${target} is arbiter; it is settled by external acceptance, not by a run`);
         }
         runCommand = payload.done_when.command;
       }

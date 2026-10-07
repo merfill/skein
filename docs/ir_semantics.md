@@ -20,8 +20,11 @@ other way around. A change to the code's behavior goes:
 
 Without step 1, step 2 is not done.
 
-**Status.** The document describes the currently agreed model. The current code is
-arranged differently (it has `claim`/`decision`/modes); the divergences are the
+**Status.** The document describes the currently agreed model. The doxa now has **two
+operators** (`create_goal`, `apply`); the `complete` operator and the `closes` edge are
+removed, and the `done_when` kind `subjective` is renamed to `arbiter`. The traversal
+stack (spine + arms) is described in `docs/plans/traversal_stack_spec.md`. The current
+code is arranged differently (it has `claim`/`decision`/modes); the divergences are the
 subject of bringing the code to the semantics, not a fault of the document. The exact
 state of the code is `docs/ir.md`.
 
@@ -90,7 +93,6 @@ Key consequences:
 | `alternatives` | work | a container of approach options (≥1) |
 | `observation` | work | the result of a command (an observation output) |
 | `check` | work | the arbiter's verdict (payload: `pass`/`fail`/`inconclusive`) |
-| `complete` | work | a goal closure by the doxa (an assumption) |
 | `constraint` | work | a prohibition (payload `forbid`: path regexes) |
 | `file` | artifact | a pointer to a file |
 
@@ -116,7 +118,7 @@ A goal carries fields:
 - `why` — a human-readable rationale ("why"); may be empty; the formal assumptions are
   the `under` references at the closing node (§6);
 - `done_when` — the completion condition: **objective** (a command with a verdict) or
-  **subjective** (a formulation).
+  **arbiter** (external acceptance by the user/arbiter).
 
 **A request carries only `text`.** A request has no completion condition and no plan:
 acceptance of the request is external (the user's silence or the harness verdict) and
@@ -147,10 +149,9 @@ the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
 | `item` | `plan` / `alternatives` → `goal` / `action` | an item/option (order = position) |
 | `has_alternatives` | `request` / `goal` → `alternatives` | a container of interpretations/approach options |
 | `chosen` | `alternatives` → `goal` | the chosen (current) approach option |
-| `under` | `check` / `complete` → `goal` | an assumption a closure rests on |
+| `under` | `check` → `goal` | an assumption a closure rests on |
 | `produces` | `action` → `observation` / `check` | a command result |
 | `verifies` | `check` → `goal` | the check's verdict about the goal |
-| `closes` | `complete` → `goal` | a goal closure by the doxa |
 | `mutates` | `action` → `file` | the command changed the file (with a version) |
 
 Edges do **not** carry item/option order: it is set by the position in the container's
@@ -172,8 +173,7 @@ the projection from incident event nodes:
   the item is merely planned;
 - a goal is `achieved` ⇔ it is closed by a `check` with verdict `pass` and **without**
   `under` edges;
-- a goal is `achieved_under` ⇔ it is closed by a `check` (`pass`, with `under`) or by a
-  `complete` node;
+- a goal is `achieved_under` ⇔ it is closed by a `check` (`pass`, with `under`);
 - a goal is `refuted` ⇔ it is closed by a `check` with verdict `fail`;
 - a goal with a `check` `inconclusive` stays `open` (it needs the Arbiter);
 - a goal is `abandoned` ⇔ it is an option in `alternatives` not equal to the **current**
@@ -212,7 +212,7 @@ plan.
 - **descend** `descend(G → H)`: if the first unperformed item of `G`'s plan is a
   subgoal `H`, push `H`, focus → `H`;
 - **return** `return`: pop the top, focus → the parent. It happens when the current goal
-  **has closed** (a `check` gave a verdict or a `complete` closed it) or by `W`'s
+  **has closed** (a `check` gave a verdict) or by `W`'s
   decision (change of branch). A return from the root is impossible. A closed goal does
   not keep its descendants in focus: the branch is trimmed under a closed ancestor, not
   only when the top itself closes (invariant 17).
@@ -224,16 +224,16 @@ plan.
 - there is an unperformed `action` item → `apply` (execute it);
 - the first unperformed item is a subgoal `H` → `descend` into `H`;
 - all items are performed and `G` is not closed: an objective `done_when` → `apply` (a
-  check); a subjective one → `complete`;
+  check); an arbiter goal is not checked — it waits for external acceptance;
 - the plan is incomplete → `create goal` (add a subgoal) / `apply` (add a command);
 - the branch is refuted and `alternatives` exist → pick an option;
 - nothing to do and the goal does not close → `return`.
 
-A closing move (`apply` a check, `complete`) acts on the node in focus `G_k` alone: a
-check targets `G_k`, a `complete` names `G_k`. Targeting an ancestor or a sibling is
-refused (`not_current_goal`) — the current node closes first, and the traversal returns to
-the parent on its own. This keeps a closed ancestor from ever being produced from inside
-its own subtree.
+A closing move (`apply` a check) acts on the node in focus `G_k` alone: a check targets
+`G_k`. Targeting an ancestor or a sibling is
+refused (`not_current_goal`) — the current node closes first, and the traversal returns
+to the parent on its own. This keeps a closed ancestor from ever being produced from
+inside its own subtree.
 
 **Alternatives.** The option is proposed by the doxa; the chosen one is the one descended
 into (`chosen` is set, the rest are derived `abandoned`). Switching options is also a
@@ -248,22 +248,19 @@ goal is `achieved` (under its assumptions); if all options are refuted, the goal
 | Turn | Stack | Doxa proposal | Logos | Tree |
 |---|---|---|---|---|
 | 0 | `[R]` | — *(the Arbiter)* | — | root `request R` — the instruction text; no goals |
-| 1 | `[R]→[R,I,G1]` | `create goal I` "fix the bootstrap" (plan `[G1 reproduce, G2 localize, G3 fix, G4 verify]`) | accepted | `alternatives A0` under `R`; `item A0→I`; `chosen A0→I`; `I`'s plan; descend into `G1` |
-| 2 | `[R,I,G1]` | `apply` `run` the build | executed | `action` + `observation`; `cursor(G1)` shifted |
-| 3 | `[R,I,G1]→[R,I]` | `complete G1` | accepted | `complete`→`G1`; `G1` `achieved_under`; return |
-| 4 | `[R,I]→[R,I,G2]` | *(focus)* `apply` `read`/`grep` | … | descend into `G2`; `observation` + `file`@`V1` |
-| 5 | `[R,I,G2]` | `apply` the same `read` (the same `V1`) | **refusal** `record_rejection` | no new node; the repeat counter grows (§2.7) |
-| 6 | `[R,I,G2]→[R,I]` | `complete G2` | accepted | `complete`→`G2`; return |
-| 7 | `[R,I]→[R,I,G3]` | `create goal G3` "fix" (`why` = hypothesis, `done_when` = the build) | accepted | `item`→`G3`; descend |
-| 8 | `[R,I,G3]` | `apply` `edit` | executed | `action` + `mutate V1→V2` |
-| 9 | `[R,I,G3]` | `apply` a check | executed | `check` `verifies→G3`, `under→G2` |
-| 10 | `[R,I,G3]→[R,I]` | *(pass)* | derived | `G3` `achieved_under`; return |
-| 10b | `[R,I,G3]→[R,I,G3']` | *(fail)* the doxa proposes an option | accepted | `G3` `refuted`; `alternatives` under `G3`, `G3'`; `chosen`; descend |
-| 11 | `[R,I]` | `apply` `run` the criterion (`G4`) | executed | `check` `verifies→G4` (the command from `done_when`) |
-| 12 | `[R,I]→[R]` | *(all items done)* | derived | `I` `achieved`; return to `R` |
-| 13 | `[R]` | — *(the Arbiter)* | — | the request is `addressed`; stop; acceptance external |
+| 1 | `[R]→[R,I]` | `create goal I` "fix the bootstrap" (plan `[reproduce, localize, G fix]`: reproduce/localize are actions, `G` is the one objective goal) | accepted | `alternatives A0` under `R`; `item A0→I`; `chosen A0→I`; `I`'s plan; focus `I` |
+| 2 | `[R,I]` | `apply` `node --test` (`reproduce`) | executed | `action` + `observation` (a bare `run`, no `target` — an observation, not a verdict); `cursor(I)` shifted |
+| 3 | `[R,I]` | `apply` `read`/`grep` (`localize`) | executed | `action` + `observation` + `file`@`V1`; cursor shifted |
+| 4 | `[R,I]` | `apply` the same `read` (the same `V1`) | **refusal** `record_rejection` | no new node; the repeat counter grows (§2.7) |
+| 5 | `[R,I]→[R,I,G]` | *(the first unperformed item is the goal `G`)* | accepted | `descend` into `G`; `cursor(G)` at its first item |
+| 6 | `[R,I,G]` | `apply` `edit` | executed | `action` + `mutate V1→V2` |
+| 7 | `[R,I,G]` | `apply run { target: G }` (the command from `G`'s `done_when.command`) | executed | `check` `verifies→G` |
+| 8 | `[R,I,G]→[R,I]` | *(pass)* | derived | `G` `achieved`; return to `I` |
+| 8b | `[R,I,G]→[R,I,G']` | *(fail)* `create goal G'` (an option, with `revises`) | accepted | `G` `refuted`; `alternatives` under `G`, `G'`; `chosen`; descend |
+| 9 | `[R,I]→[R]` | *(all items done)* | derived | `I` `achieved`; the logos closure (A1); return to `R` |
+| 10 | `[R]` | — *(the Arbiter)* | — | the request is `addressed`; stop; acceptance external |
 
-The example also shows a repeat (turn 5): the same `read` with the same input version —
+The example also shows a repeat (turn 4): the same `read` with the same input version —
 not progress. A repeat **after** an edit (a different version) is legitimate: the input
 version changes.
 
@@ -358,7 +355,7 @@ remains the truth.
 
 The event vocabulary (closed): `add_node`, `add_edge`, `mutate`, `record_check`,
 `record_rejection`, plus focus changes (`descend`/`return`, §2.6). A state
-change is a **new event node** (`check`, `complete`, …), not an edit of an existing
+change is a **new event node** (`check`, `mutate`, …), not an edit of an existing
 node; `set_status` is not used. New behavior is a new event or a new projection rule,
 never a direct edit of the state bypassing the journal.
 
@@ -373,7 +370,7 @@ external source is file changes; they enter through `mutate`.
 
 ## 4. Doxa operators
 
-The doxa has **three operators**. It can do nothing else; this is its output interface.
+The doxa has **two operators**. It can do nothing else; this is its output interface.
 Each is described by the §0 template: input → admissibility check → operation on the
 tree → derived state → projection effect.
 
@@ -421,8 +418,9 @@ executed; superseded options remain `refuted`/`abandoned`.
 **Projection effect:** `G` becomes the current goal; its plan (if any), rationale and the
 refuted interpretations/options are visible.
 
-**Completion of `G`** (see §6): objective — by an arbiter check; subjective — by the
-"complete" operator; a request — by the Arbiter's acceptance (not closed in the IR).
+**Completion of `G`** (see §6): objective — by an explicit check; arbiter — by external
+acceptance (not a doxa operator); a request — by the Arbiter's acceptance (not closed in
+the IR).
 
 ### 4.2 Command (`apply`)
 
@@ -468,9 +466,9 @@ return to the parent happens.
 
 **The command of an objective check comes from the IR.** For an objective goal the
 command checked is its `done_when.command`; the doxa only initiates the check and **does
-not** substitute the command. A subjective goal cannot be checked — only `complete`
-(`subjective_goal_needs_complete`). Execution must not mask the exit code (no pipes;
-`pipefail`).
+not** substitute the command. An arbiter goal cannot be checked — it is settled by
+external acceptance (`arbiter_goal_needs_acceptance`). Execution must not mask the exit
+code (no pipes; `pipefail`).
 
 **A verdict and a failure are different.** A `check` carries `pass`/`fail` only for a
 **deterministic** outcome (an objective `done_when`). A timeout, an environment crash,
@@ -484,24 +482,6 @@ stops on no progress.
 
 **Projection effect:** the action, its result and (for a check) the change of the
 goal's state are visible.
-
-### 4.3 Complete (`complete`)
-
-**Input:** a goal `G` (the current node `C`; naming another goal is refused,
-`not_current_goal`); a note.
-
-**Admissibility check:** `G` has a **subjective** `done_when`. If `done_when` is
-objective — a refusal: the completion of an objective goal is decided only by a check.
-A request (the root) is not completed by this operator either.
-
-**Operation on the tree:** create a `complete` node with the `closes → G` edge (and, if
-the closure rests on assumptions, `under` edges to assumption-goals). This is the doxa's
-assumption, not a verdict.
-
-**Revocability:** if an assumption from `under` is refuted downstream, the closure loses
-force — **derived**, without edits. The Arbiter (a human) can always revoke it.
-
-**Projection effect:** `G` is shown as achieved under an assumption, not as proven.
 
 ---
 
@@ -556,7 +536,7 @@ trace does not.
 |---|---|---|
 | objective, without assumptions | `check` (verdict `pass`) | `achieved` |
 | objective, with assumptions | `check` (`pass`) + `under` edges | `achieved_under` |
-| epistemic (`done_when` subjective) | a `complete` node (a doxa assumption) | `achieved_under` |
+| arbiter (`done_when` arbiter) | external acceptance (`record_check`, `actor: "user"`) | `achieved` |
 | request (the root) | external acceptance: the user (silence/the next turn) or the harness | `addressed` (derived) |
 
 **A request is not closed in the IR.** There is no "accepted" node/edge: the user's
@@ -568,9 +548,8 @@ chosen interpretation.
 
 - `achieved` — from the arbiter alone (test, typechecker, user) and only if the closure
   does not rest on an assumption (no `under` edges);
-- `achieved_under` — reached **under an assumption**: the closing `check` has `under`,
-  or the goal is closed by a `complete` node; the assumptions are named as references
-  and are **revocable**;
+- `achieved_under` — reached **under an assumption**: the closing `check` has `under`;
+  the assumptions are named as references and are **revocable**;
 - an assumption is an epistemic goal: if it is refuted, closures referencing it via
   `under` lose force (derived).
 
@@ -589,9 +568,9 @@ Three instances:
 
 - the **logos** deterministically computes the *applicable* moves at the current
   traversal point (§2.6): which moves are admissible (execute an item, descend, check,
-  complete, pick an option, fill in a plan);
+  pick an option, fill in a plan);
 - the **doxa** chooses from the applicable and fills it with content (a hypothesis, an
-  option, a subgoal, a command) — this is its output interface, the three operators
+  option, a subgoal, a command) — this is its output interface, the two operators
   (§4);
 - the **Arbiter** — external (a human; objectively — the toolchain/harness): the first
   request, veto/override, stopping, the verdict when no criterion exists, external
@@ -625,7 +604,7 @@ the separate specification `docs/projection.md`.
 | # | Invariant |
 |---|---|
 | 1 | `achieved` — only from a `check` with verdict `pass` and without `under` edges; the doxa does not issue verdicts |
-| 2 | `achieved_under` — with a non-empty `under` at the closing `check` or with `complete`; revocable |
+| 2 | `achieved_under` — with a non-empty `under` at the closing `check`; revocable |
 | 3 | the projection shows only actual facts: current versions and holding assumptions |
 | 4 | `project` is deterministic: same events → same projection |
 | 5 | the doxa only proposes: a goal enters unclosed, an action — without a result |
@@ -643,10 +622,11 @@ the separate specification `docs/projection.md`.
 | 17 | the cursor does not decrease on an unchanged plan; a closed goal does not remain the focus, nor do its descendants (the branch is trimmed under a closed ancestor; after closure — `return`) |
 | 18 | on failure `create goal` must list all `refuted`/`abandoned` options of the container (`revises`); otherwise a refusal |
 | 19 | the command of an objective check is the goal's `done_when.command` from the IR, not the doxa's text |
-| 20 | the doxa neither completes nor checks a request: at the request point only `create goal` is applicable |
+| 20 | the doxa never closes a goal; at the request point only `create goal` is applicable (a request is never checked) |
 | 21 | a refusal or a failure changes the projection (`calls`, §2.8): a repeat creates no knowledge; otherwise a loop |
-| 22 | a closing move (`apply` a check, `complete`) acts only on the node in focus; targeting an ancestor or a sibling is refused (`not_current_goal`) |
+| 22 | a closing move (`apply` a check) acts only on the node in focus; targeting an ancestor or a sibling is refused (`not_current_goal`) |
 | 23 | an `inconclusive` check leaves the goal `open` and may be repeated; it is not a repeat-refusal and not progress |
+| 24 | a verdict comes only from an explicit check (`apply run { target }`); a bare `run` (no target) is an observation, never a verdict |
 
 ---
 

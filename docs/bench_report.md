@@ -253,60 +253,64 @@ The repository is identical (a broken `src/ledger.mjs`, 540 lines, a one-token d
 The prompt is **identical** and points at a reference if one exists.
 
 Run: `SKEIN_CASES=fixtures/synthetic npx tsx bench/run.ts ref-localize-<on|off>`, Flash,
-`reasoningEffort=low`, `maxTurns=24`, three runs per condition (2026-10-07).
+`reasoningEffort=low`, `maxTurns=24`, three runs per condition (2026-10-07, after the logos
+closure and the A1–A4 step reduction with the A4 verification fix —
+`docs/plans/step_reduction_plan.md` §3).
 
-| condition | run | reward | steps | tok in | tok out | cache | `diff` | `read` | rereads |
+| condition | run | reward | steps | checks | tok in | tok out | cache | `diff` | rereads |
 |---|---|---|---|---|---|---|---|---|---|
-| on (reference present) | 1 | 1 | 12 | 106,796 | 3,492 | 85% | 1 | 1 | 0 |
-| on | 2 | 1 | 11 | 94,899 | 2,202 | 87% | 1 | 1 | 0 |
-| on | 3 | 1 | 11 | 95,228 | 2,394 | 87% | 1 | 1 | 0 |
-| off (no reference) | 1 | 1 | 14 | 151,186 | 4,631 | 69% | 0 | 3 | 1 |
-| off | 2 | 1 | 11 | 114,995 | 2,067 | 72% | 0 | 3 | 1 |
-| off | 3 | 1 | 11 | 120,107 | 2,320 | 69% | 0 | 2 | 1 |
-| **on, mean** | | 1.0 | **11.3** | **98,974** | **2,696** | **86%** | 3/3 | 1 | 0 |
-| **off, mean** | | 1.0 | 12.0 | 128,763 | 3,006 | 70% | 0/3 | 2–3 | 1 |
+| on (reference present) | 1 | 1 | 5 | 1 | 44,916 | 1,326 | 47% | 1 | 0 |
+| on | 2 | 1 | 6 | 1 | 54,143 | 2,083 | 83% | 1 | 0 |
+| on | 3 | 1 | 5 | 1 | 42,209 | 1,505 | 84% | 1 | 0 |
+| off (no reference) | 1 | 1 | 7 | 1 | 77,860 | 3,189 | 69% | 0 | 1 |
+| off | 2 | 1 | 7 | 1 | 82,442 | 5,320 | 57% | 0 | 1 |
+| off | 3 | 0 | 12 | 0 | 144,118 | 1,942 | 84% | 0 | 0 |
+| **on, mean** | | 1.0 | **5.3** | **1.0** | **47,089** | **1,638** | **71%** | 3/3 | 0 |
+| **off, mean** | | 0.67 | 8.7 | 0.67 | 101,473 | 3,484 | 70% | 0/3 | 0–1 |
+
+`checks` is the number of objective checks per run; the closure keeps it at **one** (the
+same check closes the whole chain above, a `chk→root` edge).
 
 opencode on the same cases (local `opencode run --variant low --auto --pure`,
 `--format json`, three runs each; `prompt tok` = `input + cache.read`):
 
 | condition | reward | steps | tools | prompt tok | out tok | cache | `diff` |
 |---|---|---|---|---|---|---|---|
-| on, mean | 1.0 | 5.7 | 6.7 | 57,417 | 477 | 83% | 3/3 |
-| off, mean | 1.0 | 6.7 | 7.3 | 93,312 | 677 | 84% | 1/3 |
+| on, mean | 1.0 | 6.0 | 6.0 | 58,432 | 493 | 83% | 3/3 |
+| off, mean | 1.0 | 6.0 | 8.0 | 81,085 | 574 | 82% | 0/3 |
 
 **Reading.**
 
-- **The strategy is adopted when the reference exists and is pointed at** (B9 plus the
-  Phase-4 tools): in all three `on` runs the agent does `list .` and
-  `diff -u reference/src/ledger.mjs src/ledger.mjs`, then **one** `read` and the edit;
-  `off` localizes manually (`read` ×2–3, `rereads=1`) and `diff` never appears.
-- **Accuracy does not change** (both groups 3/3, reward=1): the task is solvable by hand
-  too. The strategy's value is in **cost, not reward**: 23% fewer input tokens (99k vs
-  129k), 10% fewer output tokens, slightly fewer steps (11.3 vs 12.0).
-- **The main effect is cache:** `on` 86% vs `off` 70%. Manual localization re-reads the
-  file, so the context changes more between turns → fewer prefix-cache hits. Local cost
-  estimate: ~0.57₽ vs ~1.53₽ per run.
-- **B9 must be activated by the prompt.** The first `on` run with a *neutral* prompt
-  ignored the reference (solved by hand, 15 steps): block B9 alone did not make the agent
-  `list` the tree. The strategy fires only when the request points at a reference.
-- **No win against opencode.** On this example both agents solve the task (reward=1) and
-  both take the reference+`diff` in `on`; the reference effect is similar (off→on: Skein
-  −23%, opencode −38% prompt tokens). But **opencode is cheaper in total**: ~5.7 steps vs
-  11.3 and 57k vs 99k prompt tokens in `on` (28–42% fewer). Skein's per-call context is
-  even slightly smaller (~8.8k vs ~10.1k), but it makes ~2× the calls — the IR accounting
-  (`create_goal`/`complete`/`check`), exactly the gap from §4.4. On this easy synthetic
-  task the architectures do not separate, and the overhead remains.
+- **The step reduction put Skein ahead on `on`.** A1–A4 (closure, dropping `complete`, the
+  working set, hypothesis + leading actions in one call) cut Skein from 10.3 steps / 95k
+  prompt to **5.3 / 47k** in `on` — now below opencode (6.0 / 58k) on both axes. This is
+  the reference-strategy case the design targets.
+- **The A4 verification bug is fixed.** The auto-run of the leading action `node --test`
+  used to match the goal's `done_when.command` and be **implicitly** promoted to a check,
+  refuting the goal at the reproduce step (runs `09:31`, `09:48`). A verdict now comes
+  **only from an explicit check** (`run {target}`); a bare run is an observation
+  (`docs/plans/traversal_stack_spec.md` §9). All successful runs again show exactly one
+  check.
+- **The reference strategy holds:** `on` — `diff` 3/3 (proposed or auto-run by A4); `off`
+  — manual localization, `diff` 0/3.
+- **`off` is still opencode's:** 8.7 steps / 101k prompt vs 6.0 / 81k, and one Skein run
+  failed (`off#3`, reward 0). Its trace shows the model oscillating between `query obs:16`
+  (the test output) and `query obs:26` (the 400-line source read): with no reference it
+  needs both bodies in view, but the working-set char cap evicts one when the other is
+  fetched, so it never reaches the edit. This is a working-set/context-limit failure, not a
+  localization failure — the next front.
 
-**Caveats.** n=3, one synthetic task, a one-token defect — the step effect is small; the
-cost comparison is noisy (cache and local pricing). opencode ran via the local CLI, not
-Harbor, so steps/tools are only loosely comparable; Skein's `out` includes reasoning while
-opencode's does not, so the comparable axis is **prompt tokens**. The reference is
-**local**, not networked: this is the controlled projection of "reference obtainable vs
-not", whereas the original confound in §4.4 is precisely the network. A true network off/on
-is available via Harbor's `network_mode` (`no-network`/`allowlist` with the model host) on
-a dedicated task — the next step if the network channel itself must be measured.
+**Caveats.** n=3, one task, a one-token defect; the cost is noisy. opencode is the local
+CLI (not Harbor): it sees the whole disk, so the `off` runs were launched with the
+references **isolated** — every `ledger.mjs` on disk hidden except the case's own source,
+covering both pristine references and **fixed copies left by prior run workspaces**
+(`/tmp/skein-bench/*/src/ledger.mjs`); one un-isolated `off` run was caught diffing such a
+fixed copy and rerun. Residual noise: opencode can read arbitrary host files, which Skein
+(a workspace sandbox) cannot; Skein's `out` includes reasoning while opencode's does not,
+so the comparable axis is **prompt tokens**. The reference is **local**, not networked;
+the network channel goes through Harbor's `network_mode`, a next step.
 
-Artifacts: `bench/runs/*-ref-localize-{on,off}-skein/` (`metrics.json`, `trajectory.json`).
+Artifacts: `bench/runs/2026-10-07T12-1{7,8,9}-*-ref-localize-{on,off}-skein/`.
 
 ## 5. Problems (what broke or hurts)
 

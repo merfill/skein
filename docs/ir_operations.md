@@ -25,7 +25,7 @@ Every operator is specified as:
 - **ID** — a stable identifier; a test cites it as the `ID` token in its title.
 
 ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH` apply
-sub-tools, `OP-CP` complete, `OP-QR` query, `TR` traversal/containers, `DER` derived
+sub-tools, `OP-QR` query, `TR` traversal/containers, `DER` derived
 predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced).
 
 ---
@@ -37,13 +37,12 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 | Kind | Payload | Role |
 |---|---|---|
 | `request` | `{text}` | the arbiter's raw motivation; the root; never closed in the IR |
-| `goal` | `{what, why?, done_when}` | an interpretation or a stage; objective or subjective `done_when` |
+| `goal` | `{what, why?, done_when}` | an interpretation or a stage; objective or arbiter `done_when` |
 | `action` | `{command, ...}` | a single tool run; also a plan item of kind `action` |
 | `plan` | — | ordered container of a goal's stage items (`item` edges) |
 | `alternatives` | — | container of interchangeable goals/actions (`item` edges + `chosen`) |
 | `observation` | `{ref?, version?, command?, verdict?, output?...}` | a tool result body |
 | `check` | `{command, verdict, witness?, actor, output/error/...}` | the arbiter's verdict on a goal |
-| `complete` | `{note?}` | a subjective closing |
 | `constraint` | `{forbid: string[]}` | invariant; seeded at run start |
 | `file` (artifact) | — | a referenced file; produced by `mutates` |
 
@@ -55,10 +54,9 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 | `item` | plan/alternatives → goal/action | ordered membership |
 | `has_alternatives` | request/goal → alternatives | the option container |
 | `chosen` | alternatives → option | the currently chosen option |
-| `under` | check/complete → goal | the assumptions a closure relies on |
+| `under` | check → goal | the assumptions a closure relies on |
 | `produces` | action → observation | the action's result body |
 | `verifies` | check → goal | the goal(s) this verdict settles |
-| `closes` | complete → goal | the subjective closure |
 | `mutates` | action → file | the action changed the file |
 
 ### 1.3 Events (`src/ir/events.ts`)
@@ -141,11 +139,12 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
 | exploratory command | `command` present, no `target` | action + observation; `mutate` per changed file | versions; checks stale | `repeated_action` | `OP-AP-RUN-1` |
-| check (`{target}`) | target is the focus, objective | `record_check` node + `verifies` edge | goal `achieved`/`refuted`/`open` | `invalid_target`, `subjective_goal_needs_complete`, command mismatch, `not_current_goal`, `repeated_action` | `OP-AP-RUN-2` |
+| check (`{target}`) | target is the focus, objective | `record_check` node + `verifies` edge | goal `achieved`/`refuted`/`open` | `invalid_target`, `arbiter_goal_needs_acceptance`, command mismatch, `not_current_goal`, `repeated_action` | `OP-AP-RUN-2` |
 | check with `under` | as above + assumptions | `under` edges on the check | `achieved_under` when pass | — | `OP-AP-RUN-3` |
 | inconclusive (timeout) | check | `record_check` verdict `inconclusive` | goal stays `open` | a re-check is allowed (not a repeat) | `OP-AP-RUN-4` |
 | background start | `background: true` + `command` | action; job started; turn returns with `job-N` | — | `background_run` (no command), `background_target` (a check) | `OP-AP-RUN-5` |
 | poll (`{job}`) | a job id | action; carries state/exit/tail | — | `job_poll` (extra fields) | `OP-AP-RUN-6` |
+| logos closure on a passing check | check on an objective goal | the same check also `verifies` every plan ancestor whose `done_when.command` matches and whose other items are settled | ancestors `achieved`/`achieved_under`; request may become `addressed` | — | `OP-AP-RUN-7` |
 
 **Note.** A bare `run {command}` whose command equals the focus objective goal's
 `done_when.command` is treated as that goal's **check** (the target is inferred): the
@@ -196,18 +195,6 @@ upstream change obtained with `fetch`.
 | does not apply | conflicting/already-applied hunk | fail observation | — | — (fail) | `OP-AP-PATCH-2` |
 | forbidden target | a constraint forbids a `---`/`+++` path | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
-### 2.3 `complete` (`OP-CP`)
-
-| Case | Pre | Effects | Derived | Refuses | ID |
-|---|---|---|---|---|---|
-| subjective focus | focus is a subjective `goal` | add `complete` (`note?`); `closes` edge | goal `achieved_under` | `objective_goal_needs_check`, `not_current_goal`, `root_not_completable`, `invalid_goal`, `no_current_goal` | `OP-CP-1` |
-| with `under` | as above | add `under` edges from the `complete` to the assumptions | `achieved_under` | — | `OP-CP-2` |
-| root | focus is the request | — | — | `root_not_completable` | `OP-CP-3` |
-
-- **Projection** (`PRJ-CP`): a closed nested goal leaves the branch (trimmed under a
-  closed ancestor); its `note` is surfaced as a `complete <goal>` entry in `calls`
-  (`PRJ-CALLS-complete`).
-
 ### 2.4 `query` (`OP-QR`)
 
 | Case | Pre | Effects | ID |
@@ -242,14 +229,19 @@ State is always derived from the incident events, never stored.
 |---|---|---|
 | request `addressed` | the chosen interpretation is `achieved`/`achieved_under`; else `open` | `DER-REQ-1` |
 | goal `achieved` | the latest closing check has `verdict=pass` and no `under` | `DER-GOAL-1` |
-| goal `achieved_under` | the latest closing check has `verdict=pass` with `under`, or a `complete` closes it | `DER-GOAL-2` |
+| goal `achieved_under` | the latest closing check has `verdict=pass` with `under` | `DER-GOAL-2` |
 | goal `refuted` | the latest closing check has `verdict=fail` | `DER-GOAL-3` |
 | goal `open` | the latest closing check is `inconclusive`, or there is no closure | `DER-GOAL-4` |
 | goal `abandoned` | it is an unselected variant of a container with a `chosen` sibling | `DER-GOAL-5` |
-| closure order | the newer of the latest `verifies` check and the latest `closes` complete wins (by `seq`) | `DER-GOAL-6` |
+| closure order | the newer `verifies` check wins (by `seq`) | `DER-GOAL-6` |
 | action `executed` | it has a `produces` or `mutates` edge | `DER-ACT-1` |
 | action `abandoned` | its `alternatives` container chose a sibling | `DER-ACT-2` |
 | check stale | a `witness` entry's ref version differs from the current version | `DER-STALE-1` |
+| ancestor `achieved` by closure | a passing check verifies a goal and a plan ancestor with the same `done_when.command`, all other items settled | `DER-CLOSE-1` |
+| no closure on a different criterion | the ancestor's `done_when.command` differs from the check's | `DER-CLOSE-2` |
+| no closure while a sibling is unsettled | some other plan item is not settled | `DER-CLOSE-3` |
+| closure climbs nested plans | the verified goal's owner has an owner, and so on up | `DER-CLOSE-4` |
+| closure carries assumptions | the check has `under`, so the ancestor is `achieved_under` | `DER-CLOSE-5` |
 
 ---
 
@@ -261,15 +253,13 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | Reason (token) | Trigger | Operator | ID |
 |---|---|---|---|
 | `empty_what` / `empty_done_when` / `empty_plan` / `empty_item` | malformed `create_goal` | `create_goal` | `REF-CG-EMPTY` |
-| `no_current_goal` | no focus | create_goal/complete | `REF-NO-FOCUS` |
+| `no_current_goal` | no focus | create_goal | `REF-NO-FOCUS` |
 | `missing_revision` | `revises` omits a failed option | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` at a non-refuted point | create_goal | `REF-REV-UNKNOWN` |
 | `repeat_hypothesis` | `what` repeats a failed option | create_goal | `REF-REPEAT-HYP` |
 | `all_plan_fulfilled` | growing an objective goal whose plan is done | create_goal | `REF-PLAN-DONE` |
-| `invalid_goal` / `root_not_completable` | complete a non-goal / the request | complete | `REF-CP-TARGET` |
-| `not_current_goal` | a closing move (`complete`/check) targets a non-focus | complete/run | `REF-NOT-FOCUS` |
-| `objective_goal_needs_check` | `complete` on an objective goal | complete | `REF-CP-OBJ` |
-| `subjective_goal_needs_complete` | check of a subjective goal | run | `REF-RUN-SUBJ` |
+| `not_current_goal` | a check targets a non-focus | run | `REF-NOT-FOCUS` |
+| `arbiter_goal_needs_acceptance` | check of an arbiter goal (no command) | run | `REF-RUN-ARB` |
 | `invalid_target` | check of a non-goal | run | `REF-RUN-TARGET` |
 | command mismatch | check passes a different command | run | `REF-RUN-CMD` |
 | `job_poll` | poll with extra fields | run | `REF-RUN-POLL` |
@@ -291,7 +281,7 @@ bad scope (`grep`/`list`), `find` not present (`edit`), non-zero/timeout/signal
 ## 4. Invariants
 
 - a goal is `achieved` only via a passing `check` without `under`; `achieved_under`
-  needs a passing check with `under` or a `complete` (`DER-GOAL`).
+  needs a passing check with `under` (`DER-GOAL`).
 - a `stale` check is never shown as active; a stale fact is not active content.
 - `project` is deterministic: same events → same `Context`.
 - structural edges (`has_plan`/`item`/`has_alternatives`/`chosen`) form a forest.
@@ -321,14 +311,13 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | scenarios `stale-base`, `two-step-fix` |
 | `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | scenario `command-from-package` |
-| `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
+| `OP-AP-RUN-1..7` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
 | `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
-| `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; scenario `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |
-| `DER-REQ/GOAL/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-CG/REV/CP/NO-FOCUS` | `tests/ops/create_goal.test.ts`, `tests/ops/complete.test.ts` | step `follow-focus-hint`; scenario `revise-hypothesis` |
+| `DER-REQ/GOAL/ACT/STALE/CLOSE` | `tests/ops/derivation.test.ts` | — |
+| `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; scenario `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; scenario `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |
 

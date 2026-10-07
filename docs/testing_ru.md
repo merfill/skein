@@ -38,8 +38,8 @@ SKEIN_LIVE=false npx vitest run
 ### Операции над IR
 
 Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
-`OP-AP`, `OP-CP`, `OP-QR`, `TR`, `DER`, `REF`). Их офлайн-тесты сгруппированы по
-оператору в `tests/ops/` (`create_goal`, `apply`, `complete`, `query`, `traversal`,
+`OP-AP`, `OP-QR`, `TR`, `DER`, `REF`). Их офлайн-тесты сгруппированы по
+оператору в `tests/ops/` (`create_goal`, `apply`, `query`, `traversal`,
 `derivation`); инварианты проверяются на 400 случайных легальных деревьях
 (`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
 нет теста или тест ссылается на ID вне реестра.
@@ -57,7 +57,7 @@ SKEIN_LIVE=true npx vitest run tests/gate.test.ts
 ### Live-сценарии
 
 Короткие сценарии на отдельные ветки цикла (`query`, ревизия гипотезы,
-ограничения, `complete` без правки, план, восстановление после отказа, поиск при
+ограничения, ответ без правки, план, восстановление после отказа, поиск при
 многих файлах). Отдельная группа — **матрица «команды × действия»**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — задачи,
 где критерий включает реальную команду (в README / `package.json` / `Makefile` /
@@ -89,7 +89,7 @@ SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vit
 **Устойчивость:** `SKEIN_SCENARIO_REPEATS=N` (по умолчанию 1) гоняет каждый сценарий
 N раз и собирает все провалы, так что флаки промпта виден как pass-rate, а не как
 одна выборка; таймаут теста масштабируется на N. Мягкий отчёт по покрытию
-веток печатается в stdout (`branches=[…]`, `MISSING(soft)=[…]`, `need=…`) и намеренно
+веток печатается в stdout (`branches=[…]`, `MISSING(soft)=[…]`) и намеренно
 не роняет тест: это инструмент подбора проекции, ветки промоутятся в жёсткие по мере
 стабилизации. Полная проекция каждого хода и журнал складываются в
 `bench/runs/live-<ts>-<name>/{contexts,events}.ndjson` для офлайн-разбора; туда же
@@ -105,7 +105,7 @@ N раз и собирает все провалы, так что флаки п�
 `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` строит проекцию
 каждой семьи операций **офлайн** (ровно то, что показал бы движок) и проверяет **форму**
 следующего хода живой модели: интерпретировать запрос, чекнуть готовую объективную цель,
-закрыть субъективную, опросить фоновый job, повторить inconclusive-проверку, применить
+принять арбитрную извне, опросить фоновый job, повторить inconclusive-проверку, применить
 следующий пункт плана, последовать подсказке фокуса. `SKEIN_STEP_REPEATS=N` (по умолчанию
 3) повторяет шаг, поэтому стохастический промах — не провал. Спецификация и карта
 покрытия — `docs/ir_operations_ru.md`.
@@ -203,7 +203,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | Строка | Содержимое |
 | --- | --- |
 | `SKEIN_CONTEXT` | **полная проекция** на ход: `{turn, chars, context}` |
-| `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) и `need` (запрошенные id) |
+| `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) |
 | `SKEIN_TURN` | на ход: токены/кэш/`contextChars`/время |
 | `SKEIN_LLM_ERROR` | ошибка вызова модели (с номером попытки) |
 | `SKEIN_EVENTS` | диагностика IR: цели, планы, альтернативы, `checks`, `observations`, `mutates`, отказы |
@@ -233,7 +233,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 ### 8.1 Устойчивый structured output
 
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
-плоскому function-инструменту на операцию (`create_goal`, `complete`, `query`, `read`,
+плоскому function-инструменту на операцию (`create_goal`, `query`, `read`,
 `grep`, `list`, `edit`, `write`, `run`), а `invokeTools` в `src/llm/structured.ts`
 биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила

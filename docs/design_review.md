@@ -124,12 +124,12 @@ the behaviour, the agent is deceived: the context says "settled".
 
 - **Proposal:** human arbiter or an LLM critic that issues `record_check`.
 - **Verdict:** Reframed; the user-approval path is applied.
-- **Why:** the model already names a **subjective arbiter** (user acceptance)
+- **Why:** the model already names an **arbiter** (user acceptance)
   beside the objective toolchain (`docs/concepts.md`). So "there is no arbiter"
   was wrong; what was missing is a mechanism for user approval. An LLM critic
   would re-introduce doxa as logos — unacceptable, so it stays rejected.
 - **Action:** done — `record_check` carries `actor: "arbiter" | "user"`, and
-  `userAcceptance` (`src/ir/approval.ts`) records a subjective verdict out of band.
+  `userAcceptance` (`src/ir/approval.ts`) records an arbiter verdict out of band.
   The LLM cannot emit a check, so `verified` keeps exactly one path. No UI is
   built; the harness calls the helper (`docs/plans/user_approval_plan.md`).
 

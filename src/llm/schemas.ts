@@ -4,7 +4,7 @@ import type { DoneWhen } from "../ir/types";
 
 export const doneWhenSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("objective"), command: z.string() }),
-  z.object({ kind: z.literal("subjective"), text: z.string() }),
+  z.object({ kind: z.literal("arbiter"), text: z.string() }),
 ]);
 
 export interface GoalItem {
@@ -115,12 +115,6 @@ export const actionSchema = z.discriminatedUnion("operator", [
     revises: z.array(z.string()).optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
-  z.object({
-    operator: z.literal("complete"),
-    goal: z.string().optional(),
-    note: z.string().optional(),
-    under: z.array(z.string()).optional(),
-  }),
   z.object({
     operator: z.literal("query"),
     id: z.string().optional(),

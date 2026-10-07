@@ -118,10 +118,11 @@ describe("working set under a long synthetic horizon", () => {
     expect(stats.reacquiredIds).toContain(f0);
   });
 
-  it("expires an off-branch query-pinned result after the TTL (compression)", async () => {
+  it("expires an off-subtree query-pinned result after the TTL (compression)", async () => {
     const workspace = workspaceWithFiles(3);
     const shownAt: string[][] = [];
     let f0: string | undefined;
+    let goalA: string | undefined;
     let call = 0;
 
     const propose = async (context: Context): Promise<Proposal> => {
@@ -129,29 +130,35 @@ describe("working set under a long synthetic horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        // Create the interpretation and its stage; the traversal then descends to the
-        // stage, so a result read there belongs to a level that later leaves the branch.
+        // An objective interpretation with no plan: the traversal descends to it.
         return {
           thought: "",
-          action: {
-            operator: "create_goal",
-            what: "work",
-            done_when: { kind: "subjective", text: "done" },
-            plan: [{ kind: "goal", what: "stage", done_when: { kind: "subjective", text: "ok" } }],
-          },
+          action: { operator: "create_goal", what: "A", done_when: { kind: "objective", command: "false" } },
         };
       }
       if (n === 2) {
+        goalA = context.path.at(-1)?.id;
         return { thought: "", action: { operator: "apply", action: { tool: "read", path: "f0.txt" } } };
       }
       if (n === 3) {
         f0 = context.lastResult?.id;
-        // Close the stage: the traversal returns to its parent, so the read's level is
-        // off-branch and only a `query` (with its TTL) can keep it.
-        return { thought: "", action: { operator: "complete" } };
+        // Refute A: its own criterion fails, so focus returns to the request.
+        return { thought: "", action: { operator: "apply", action: { tool: "run", target: goalA } } };
       }
       if (n === 4) {
-        // Fetch the off-branch body by query: it enters the working set for the TTL.
+        // Choose a new interpretation; A (and its read) is now off the chosen subtree,
+        // so only a `query` (with its TTL) can bring the body back.
+        return {
+          thought: "",
+          action: {
+            operator: "create_goal",
+            what: "B",
+            done_when: { kind: "arbiter", text: "B is accepted externally" },
+            revises: [goalA!],
+          },
+        };
+      }
+      if (n === 5) {
         return { thought: "", action: { operator: "query", id: f0 ?? "missing" } };
       }
       return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo step-${n}` } } };
@@ -163,6 +170,9 @@ describe("working set under a long synthetic horizon", () => {
     );
 
     expect(f0).toBeDefined();
+    // Off-subtree: not shown before the query.
+    expect(shownAt[3]).not.toContain(f0);
+    // Pinned by the query, then expired after the TTL.
     const first = shownAt.findIndex((ids_) => f0 !== undefined && ids_.includes(f0));
     expect(first).toBeGreaterThan(0);
     expect(shownAt.at(-1)).not.toContain(f0); // TTL=2 expired

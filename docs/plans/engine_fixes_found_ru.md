@@ -2,6 +2,9 @@
 
 > Английский оригинал — `docs/plans/engine_fixes_found.md`.
 
+> **Историческое.** Предшествует текущему IR: оператор `complete` удалён, `done_when` —
+> `objective` | `arbiter`. См. `docs/ir_ru.md`, `docs/ir_semantics_ru.md`.
+
 Связанное: `docs/plans/fix_ocaml_gc_investigation_ru.md` (журнал прогонов),
 `docs/fix_ocaml_gc_run_report_2026-10-05_ru.md` (дефект фокуса),
 `docs/fix_ocaml_gc_run_report_2026-10-06_ru.md` (принятый фикс),

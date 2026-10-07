@@ -1,5 +1,8 @@
 # Skein — Tier 1 plan
 
+> **Historical.** Predates the current IR: the `complete` operator is removed and
+> `done_when` is `objective` | `arbiter`. See `docs/ir.md`, `docs/ir_semantics.md`.
+
 Conceptual overview — `docs/concepts.md`. The overall plan and roadmap —
 `docs/plans/implementation_plan.md`. This document fixes the **scope of Tier 1 and
 the order of work**. Code is written only after the corresponding sub-stage is

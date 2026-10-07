@@ -58,7 +58,7 @@ export function interpretation(what: string, command?: string, plan?: PlanItem[]
     what,
     done_when:
       command === undefined
-        ? { kind: "subjective", text: `${what} is done` }
+        ? { kind: "arbiter", text: `${what} is done` }
         : { kind: "objective", command },
     ...(plan !== undefined ? { plan } : {}),
   };
@@ -98,15 +98,6 @@ export function patch(patchText: string, strip?: number): Action {
 
 export function check(target: string): Action {
   return applyTool({ tool: "run", target });
-}
-
-export function complete(goal?: string, note?: string, under?: string[]): Action {
-  return {
-    operator: "complete",
-    ...(goal !== undefined ? { goal } : {}),
-    ...(note !== undefined ? { note } : {}),
-    ...(under !== undefined ? { under } : {}),
-  };
 }
 
 export function query(id?: string): Action {

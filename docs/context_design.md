@@ -24,6 +24,9 @@ know. So the projection has four functions, each covering a class of problems:
 
 Principle: show **derived, deduplicated knowledge**, not a raw dump. But the latest
 result is shown in full: it is the decision's input. "Memory" — yes, a "turn tape" — no.
+The tree is **ReAct unwound along a tree**: traversal is a stack of frames (the spine)
+plus per-level siblings (the arms), and the stack is `fold(journal)` over the append-only
+IR (`docs/plans/traversal_stack_spec.md`).
 
 ## 2. What we show at a given moment
 
@@ -44,11 +47,12 @@ near step and a list of intentions that grows as we go, not a forecast. Hence:
 1. **Decomposition is mandatory.** A non-trivial task is decomposed into
    **stage sub-goals**, each with a concrete, checkable `done_when`. Horizon 2–4,
    grown as we work; no long plans.
-2. **An item is a sub-goal (`goal`)**, closed by predicate (`complete`/`check`). An
-   `action` item is only for a command you run **right now, verbatim**. For a bugfix
-   the stages are `reproduce → locate → fix` (the epistemic ones close with
-   `complete`); `fix` IS the hypothesis: `why` + an `objective done_when` = the command
-   that shows the failure, so its own `check` settles it — there is no separate `verify`.
+2. **An item is a sub-goal (`goal`)**, settled by its own `check` (objective) or by
+   external acceptance (arbiter). An `action` item is only for a command you run
+   **right now, verbatim**. For a bugfix the stages are `reproduce → locate → fix` (an
+   arbiter stage waits for external acceptance, an objective one for its `check`); `fix`
+   IS the hypothesis: `why` + an `objective done_when` = the command that shows the
+   failure, so its own `check` settles it — there is no separate `verify`.
 3. **A hypothesis is a node, not a thought.** An explanatory guess becomes a goal with
    `why`, and a `check` settles it — not the reasoning text.
 4. **Branching on any item.** An item that did not work gets an **alternative**; the

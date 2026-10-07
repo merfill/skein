@@ -72,24 +72,6 @@ function buildSteps(): Step[] {
   }
 
   {
-    // OP-CP-1: a subjective focus whose plan is done is closed with complete.
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [{ kind: "action", command: "true" }];
-    const opened = exec(interpretation("write the explanation", undefined, plan), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const done = exec(run("true"), opened.events, ws);
-    steps.push({
-      name: "complete-subjective",
-      context: projectAt(done.events),
-      expectMove: (a) => {
-        expect(a.operator).toBe("complete");
-        if (a.operator !== "complete") return;
-        expect(a.goal ?? goal).toBe(goal);
-      },
-    });
-  }
-
-  {
     // OP-AP-RUN-5/6: a running background job is polled, not re-run.
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("fix the build", "make check"), [request()], ws);
@@ -164,8 +146,8 @@ function buildSteps(): Step[] {
   }
 
   {
-    // REF-NOT-FOCUS / REF-CP-OBJ: an objective focus is checked, not completed. The
-    // refusal at the focus (with its hint) must point the model at the check.
+    // REF-NOT-FOCUS: an objective focus is settled by its own check. The refusal at the
+    // focus (with its hint) must point the model at the check.
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const plan: PlanItem[] = [{ kind: "action", command: "true" }];
     const opened = exec(interpretation("fix the build", "make check", plan), [request()], ws);
@@ -173,9 +155,9 @@ function buildSteps(): Step[] {
     const done = exec(run("true"), opened.events, ws);
     const refusal: Event = {
       type: "record_rejection",
-      tool: "complete",
-      target: `complete:${goal}`,
-      reason: `objective_goal_needs_check: goal ${goal} is objective; settle it with a check (apply run with target "${goal}"), not complete`,
+      tool: "run",
+      target: `run:${goal}`,
+      reason: `not_current_goal: a check acts on the node in focus; check it: apply run {target: "${goal}"}`,
       turn: 0,
     };
     steps.push({

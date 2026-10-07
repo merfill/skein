@@ -1,5 +1,8 @@
 # Skein — Tier 0 plan
 
+> **Historical.** Predates the current IR: the `complete` operator is removed and
+> `done_when` is `objective` | `arbiter`. See `docs/ir.md`, `docs/ir_semantics.md`.
+
 Conceptual overview — `docs/concepts.md`. Conceptual ground —
 `ankyra/docs/doxa_and_logos.tex` (doxa/logos), `ankyra/docs/concepts_ru.md` (the
 engine's design). This document fixes the **decisions and scope of the first

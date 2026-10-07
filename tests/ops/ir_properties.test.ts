@@ -41,7 +41,7 @@ function generate(seed: number): Event[] {
     const objective = chance(0.5);
     const payload = objective
       ? { what: id, done_when: { kind: "objective", command: "make test" } }
-      : { what: id, why: "hypothesis", done_when: { kind: "subjective", text: "done" } };
+      : { what: id, why: "hypothesis", done_when: { kind: "arbiter", text: "done" } };
     addNode(id, "goal", payload);
 
     // Sometimes a plan of 1..3 items.

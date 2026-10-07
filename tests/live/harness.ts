@@ -211,7 +211,6 @@ export type Branch =
   | "fetch"
   | "apply_patch"
   | "revise"
-  | "complete"
   | "create_goal";
 
 export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
@@ -220,9 +219,6 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
     switch (action.operator) {
       case "query":
         used.add("query");
-        break;
-      case "complete":
-        used.add("complete");
         break;
       case "create_goal":
         used.add("create_goal");

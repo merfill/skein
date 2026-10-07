@@ -16,9 +16,14 @@ The projection is the **context for the next operator**, not a state dump. For t
 model the projection is **all of memory**: what is not in it, the model does not know.
 
 The durable memory is the **tree** (the request, goals with
-`what`/`why`/`done_when`, the plan and item states, alternatives, closures). Tool
+`what`/`why`/`done_when`, the plan and item states, alternatives, settled goals). Tool
 results are **not the tree**: only the latest is shown in full, and previous ones are
 summarized to signatures.
+
+The traversal model: the tree is **ReAct unwound along a tree**; traversal is a **stack
+of frames** — the spine (one frame per level, root→focus) plus each level's **arms** (the
+siblings). The stack is `fold(journal)` over the **append-only** IR. Full spec:
+`docs/plans/traversal_stack_spec.md`.
 
 **Principle:** show the **traversal branch** plus exactly six things without which the
 operator cannot decide:
@@ -26,7 +31,7 @@ operator cannot decide:
 1. **`path`** — the stack: `request → chosen interpretation → … → current node`;
 2. **the containers of the path's nodes** — their `plan` (items + states) and
    `alternatives` (interpretations/options + `chosen`) — what `create_goal`,
-   `revises`, `apply`, `complete`/check rest on;
+   `revises`, `apply`, check rest on;
 3. **`constraints`** — global, not to be violated;
 4. **`lastResult`** — the **full** result of the latest call (within the tool's
    honestly declared limits), to decide the next move;
@@ -94,7 +99,8 @@ Call = {                       // an aggregate, not an event
   path[last]}` **check** is the expected move now (an objective goal whose plan is
   done). `apply` can be listed while `checkReady` is false — that means a bare
   exploratory `run` is available, not a check of the focus; a check requires an
-  **objective** goal (a subjective target is refused).
+  **objective** goal (an arbiter goal is settled only by external acceptance, not by a
+  `run`).
 - `nextAction`, when present, is the action item the plan cursor points at: apply it
   verbatim.
 - `lastResult.output` is full (the projection does not cut it); the limits are set by
@@ -102,13 +108,13 @@ Call = {                       // an aggregate, not an event
 
 ## 3. What is not included
 
-- **`artifacts`** (a file list) — no. A file is a reference and is needed only as the
-  `ref`/`output` of an action.
+- **A file list** — no. A file is a reference and is needed only as the `ref`/`output`
+  of an action.
 - **File versions** — no. A version is an engine detail (`stale_base`); the model does
   not need version history.
-- **`index.counts`** — no.
-- **`recent`** (the turn tape) — no. But **`calls`** is not a tape: it is a
-  deduplicated aggregate of signatures, not a history of every turn.
+- **Per-kind node counts** — no.
+- **A turn tape** — no. But **`calls`** is not a tape: it is a deduplicated aggregate of
+  signatures, not a history of every turn.
 - **Raw event payloads whole** — no: neither a check's `witness`, nor full file
   content; a result is shown only if a tool returned it (`lastResult`), and `calls`
   keeps only signatures.
@@ -151,11 +157,14 @@ Call = {                       // an aggregate, not an event
 
 | Operator | What it reads in the projection |
 |---|---|
-| `create goal` | `path` (the focus and its `done_when`), the focus's `alternatives` (for `revises`), `constraints`, `calls` (do not repeat a failure) |
+| `create_goal` | `path` (the focus and its `done_when`), the focus's `alternatives` (for `revises`), `constraints`, `calls` (do not repeat a failure) |
 | `apply` (read/grep/edit/run) | `path` (the current goal), `lastResult` (to decide), `calls` (what was already tried), `constraints` |
-| `complete` | `path` (the focus and its `done_when`) |
 | a check (`apply run { target }`) | `path` + the goal's objective `done_when` |
 | `query` | addressing: reaches any node/edge by id/kind/predicate |
+
+An **arbiter** goal has no command: it is settled only by external acceptance (a
+`record_check` with `actor: "user"`), never by a `run`. A bare `run` (no target) is an
+observation, never a verdict.
 
 ## 6. Example: off-by-one, turn by turn
 
@@ -186,7 +195,7 @@ Request: "make `node --test` pass; do not edit tests". Constraint `k1`.
       "alternatives": { "chosen": "g1", "items": [
         { "id": "g1", "label": "make the suite pass", "state": "open", "chosen": true } ] } },
     { "id": "g2", "kind": "goal", "state": "open",
-      "what": "reproduce", "done_when": { "kind": "subjective", "text": "see it fail" } } ],
+      "what": "reproduce", "done_when": { "kind": "arbiter", "text": "see it fail" } } ],
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
   "calls": [ { "action": "run make test", "status": "ok", "count": 1 } ],
   "applicable": ["apply", "create_goal"],
@@ -229,7 +238,7 @@ as the `ref`/`output` of the action that touched it, or as a signature in `calls
 ## 7. Counterexample: fix-ocaml-gc
 
 In the run `~/.skein-bench/harbor/2026-10-03__11-00-06` the context jumped
-`37k → 802k → 35k` and again `803k`. The cause: `frontier.lastResult` returned a
+`37k → 802k → 35k` and again `803k`. The cause: `lastResult` returned a
 `check` node **whole**, and its payload held a `witness` — a version for **every file
 in the workspace** (~7000 entries ≈ 767k chars). As soon as a fresher result
 appeared (`read`), the spike vanished.

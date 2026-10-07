@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { currentVersion, predicateOf } from "../../src/ir/graph";
-import { currentGoalId } from "../../src/ir/traversal";
+import { childrenOf, currentVersion, planOf, predicateOf } from "../../src/ir/graph";
+import { chosenInterpretation, currentGoalId } from "../../src/ir/traversal";
+import type { PlanItem } from "../../src/llm/schemas";
 import {
   DEFAULT_FILES,
   applyTool,
@@ -338,6 +339,27 @@ describe("apply: run", () => {
     expect([...state.edges.values()].some((e) => e.kind === "under")).toBe(true);
   });
 
+  it("OP-AP-RUN-7 a real stage check closes a matching objective ancestor (logos closure)", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const plan: PlanItem[] = [
+      { kind: "goal", what: "reproduce", done_when: { kind: "arbiter", text: "seen" } },
+      { kind: "goal", what: "fix", done_when: { kind: "objective", command: "true" } },
+    ];
+    const seeded = exec(interpretation("fix the bug", "true", plan), [request()], ws);
+    const root = chosenInterpretation(seeded.state, "r1")!;
+    const [stage1, stage2] = childrenOf(seeded.state, planOf(seeded.state, root)!);
+    // Settle the arbiter first stage by external acceptance (a passing user check).
+    const events: Event[] = [
+      ...seeded.events,
+      { type: "record_check", id: "chk:done", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [stage1!] },
+    ];
+    const checked = exec(check(stage2!), events, ws);
+    expect(predicateOf(checked.state, stage2!)).toBe("achieved");
+    // The single stage check also settles the interpretation root and the request.
+    expect(predicateOf(checked.state, root)).toBe("achieved");
+    expect(predicateOf(checked.state, "r1")).toBe("addressed");
+  });
+
   it("OP-AP-RUN-4 an inconclusive check stays open and may be retried", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES, { runTimeoutMs: 150 });
     const opened = exec(interpretation("fix", "sleep 5"), [request()], ws);
@@ -375,11 +397,11 @@ describe("apply: run", () => {
     expect(classification(applyTool({ tool: "run" }), [request()]).reason).toMatch(/needs a command/);
   });
 
-  it("REF-RUN-SUBJ rejects a check of a subjective goal", () => {
+  it("REF-RUN-ARB rejects a check of an arbiter goal", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("do it"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
-    expect(classification(check(goal), opened.events).reason).toMatch(/subjective_goal_needs_complete/);
+    expect(classification(check(goal), opened.events).reason).toMatch(/arbiter_goal_needs_acceptance/);
   });
 
   it("REF-RUN-TARGET rejects a check of a non-goal", () => {

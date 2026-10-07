@@ -38,8 +38,8 @@ overwrite an already-set variable. Live tests are marked `describe.skipIf(!setti
 ### IR operations
 
 The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
-`OP-AP`, `OP-CP`, `OP-QR`, `TR`, `DER`, `REF` IDs). Their offline tests are grouped by
-operator under `tests/ops/` (`create_goal`, `apply`, `complete`, `query`, `traversal`,
+`OP-AP`, `OP-QR`, `TR`, `DER`, `REF` IDs). Their offline tests are grouped by
+operator under `tests/ops/` (`create_goal`, `apply`, `query`, `traversal`,
 `derivation`); the invariants are exercised on 400 random legal trees
 (`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
 ID has no test or a test cites an ID outside the registry.
@@ -56,7 +56,7 @@ test without editing the tests. Timeout — 300 s per fixture. Needs a key (§9)
 ### Live scenarios
 
 Short scenarios for individual loop branches (query, hypothesis revision,
-constraints, `complete` without a mutation, plan, recovery after a failure, search over
+constraints, an answer without a mutation, plan, recovery after a failure, search over
 many files). A separate group is the **"commands × actions" matrix**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — tasks whose
 criterion involves a real command (in README / `package.json` / `Makefile` / verbatim)
@@ -89,7 +89,7 @@ for `reference-diff`, git is bounded for `no-vcs`).
 **Stability:** `SKEIN_SCENARIO_REPEATS=N` (default 1) runs each scenario N times and
 collects every failure, so a flaky prompt shows as a pass-rate rather than a single
 draw; the test timeout scales with N. A soft branch-coverage report
-is printed to stdout (`branches=[…]`, `MISSING(soft)=[…]`, `need=…`) and deliberately
+is printed to stdout (`branches=[…]`, `MISSING(soft)=[…]`) and deliberately
 does not fail: it is the instrument for tuning the projection, branches are promoted to
 hard as they stabilise. The full projection per turn and the journal land in
 `bench/runs/live-<ts>-<name>/{contexts,events}.ndjson` for offline analysis; the
@@ -105,7 +105,7 @@ visible, not just the final reward.
 `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` builds each
 operation family's projection **offline** (exactly what the engine would show) and
 asserts the **shape** of the live model's next move: interpret the request, check a ready
-objective goal, complete a subjective one, poll a background job, retry an inconclusive
+objective goal, accept an arbiter one externally, poll a background job, retry an inconclusive
 check, apply the next plan action, follow a focus hint. `SKEIN_STEP_REPEATS=N` (default 3)
 retries a step, so a stochastic miss is not a failure. The specification and the coverage
 map are `docs/ir_operations.md` (EN + RU).
@@ -203,7 +203,7 @@ Results land in the same place, outside the repository:
 | Line | Contents |
 | --- | --- |
 | `SKEIN_CONTEXT` | **the full projection** per turn: `{turn, chars, context}` |
-| `SKEIN_PROPOSAL` | the proposed action (including command text) and `need` (requested ids) |
+| `SKEIN_PROPOSAL` | the proposed action (including command text) |
 | `SKEIN_TURN` | per turn: tokens/cache/`contextChars`/time |
 | `SKEIN_LLM_ERROR` | a model-call error (with the attempt number) |
 | `SKEIN_EVENTS` | IR diagnostics: goals, plans, alternatives, `checks`, `observations`, `mutates`, rejections |
@@ -233,7 +233,7 @@ limits, and the projection does not cut it (`docs/tools.md`).
 ### 8.1 Robust structured output
 
 The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
-function tool per operation (`create_goal`, `complete`, `query`, `read`, `grep`, `list`,
+function tool per operation (`create_goal`, `query`, `read`, `grep`, `list`,
 `edit`, `write`, `run`) and `src/llm/structured.ts` `invokeTools` binds them with
 `tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
 per-operation schemas matter: one deeply nested discriminated union came back flat

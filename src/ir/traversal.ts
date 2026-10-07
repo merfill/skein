@@ -167,7 +167,6 @@ export interface Applicable {
   goalId?: string;
   createGoal: boolean;
   apply: boolean;
-  complete: boolean;
   return: boolean;
   chooseVariant: boolean;
   nextAction?: string;
@@ -180,7 +179,6 @@ export function applicable(state: State, goalId: string | undefined): Applicable
   const none: Applicable = {
     createGoal: false,
     apply: false,
-    complete: false,
     return: false,
     chooseVariant: false,
     checkReady: false,
@@ -214,18 +212,15 @@ export function applicable(state: State, goalId: string | undefined): Applicable
   const done = cursor === undefined || items.length === 0 || cursor >= items.length;
   const payload = goalPayload(state, goalId);
   const objective = payload?.done_when.kind === "objective";
-  const subjective = payload?.done_when.kind === "subjective";
   const first = firstUnfulfilledItem(state, goalId);
   const nextNode = first !== undefined ? state.nodes.get(first) : undefined;
   const nextAction = nextNode?.kind === "action" ? first : undefined;
   const checkReady = done && objective && items.length > 0;
-  const canComplete = done && subjective;
 
   return {
     goalId,
     createGoal: true,
     apply: nextAction !== undefined || checkReady || plan === undefined,
-    complete: canComplete,
     return: false,
     chooseVariant: false,
     ...(nextAction !== undefined ? { nextAction } : {}),

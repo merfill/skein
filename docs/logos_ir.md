@@ -174,7 +174,7 @@ What is added to the reasoning system:
    what state of the code that was. Otherwise a later edit leaves the hypothesis
    "confirmed" for a different code — that is, silently wrong.
 3. **Two arbiters.** The objective one — the toolchain (tests, typechecker) decides
-   whether a check passed. The subjective one — the user decides by acceptance
+   whether a check passed. The arbiter (the user) decides by acceptance
    criteria whether the goal is reached.
 
 The foundation is inherited unchanged: doxa proposes, logos decides, protocol records;
@@ -192,8 +192,8 @@ as a branch of the walk, the coding agent's context must likewise be a **slice o
 walk of this tree**, not a budget window.
 
 Let us name Skein's difference from the Ankyra foundation right away: the doxa issues
-exactly **three operators** — create a goal (`create goal`), execute a command
-(`apply`), complete (`complete`). Actions on the world (`read`/`grep`/`edit`/`run`) are
+exactly **two operators** — create a goal (`create goal`) and execute a command
+(`apply`). Actions on the world (`read`/`grep`/`edit`/`run`) are
 `apply`; there are no belief nodes or grounding quotes (the rationale is the `why`
 text, an assumption is an `under` reference to a goal); there is no preference operator
 (`o_spec`); the environment and tools are part of the **logos**, not a separate role.
@@ -253,7 +253,7 @@ an unmanaged process.
 (`opencode`) peaked at 60k tokens — three times more — and the task passed. The causes
 are in the management:
 
-- **no memory of the work.** Not a single goal with a plan, check, or completion as a
+- **no memory of the work.** Not a single goal with a plan or check as a
   node; Skein kept only a window of "last turns", which quickly "leaks", and it re-read
   and re-ran the same thing.
 - **checks are tied to nothing.** 23 command runs, but not one confirms a concrete
@@ -354,12 +354,12 @@ Already accepted (see `AGENTS.md`):
 New, from this design:
 
 5. **The operator is not chosen by the doxa.** The decision of which operator is
-   appropriate (create a goal, execute a command, complete) is made by the **Arbiter** —
+   appropriate (create a goal, execute a command) is made by the **Arbiter** —
    an external instance (a human or the toolchain); the model only fills the chosen
    operator with content. The "route" is a descriptive policy of the Arbiter, not a
    state object.
 6. **The trace is monotone.** The base only grows; a change of knowledge is a new event
-   node (`check`, `complete`, …), not a silent edit of a node. Knowledge changes, the
+   node (`check`, `mutate`, …), not a silent edit of a node. Knowledge changes, the
    trace of it is not lost.
 7. **The context is necessary and sufficient for the selected operator.** The
    projection must give the model everything needed for the current step and nothing
@@ -368,9 +368,9 @@ New, from this design:
    stops or changes branch instead of spinning to the end of the budget.
 9. **Nodes have no stored statuses.** State (executed, achieved, under an assumption,
    refuted) is **derived** from event nodes; nodes do not change.
-10. **An assumption is honestly named.** Achievement with non-empty `under` or a doxa
-    closure (`complete`) is `achieved_under`, not `achieved`; `achieved` is only a
-    `pass` check **without** assumptions.
+10. **An assumption is honestly named.** Achievement with non-empty `under` is
+    `achieved_under`, not `achieved`; `achieved` is only a `pass` check **without**
+    assumptions.
 
 The full list of invariants is in `docs/ir_semantics.md` §9.
 
@@ -407,15 +407,14 @@ requirement for the logos.
 
 ### 4.1 External operators: the doxa proposes
 
-In Skein the doxa makes exactly **one proposal** per step — one of the **three
+In Skein the doxa makes exactly **one proposal** per step — one of the **two
 operators**:
 
 - **`create goal`** — create a subgoal and embed it as an item in the current goal's
   plan; the new goal may have its own plan (subgoal/command items);
-- **`apply`** — execute a command (this includes `read`/`grep`/`edit`/`run`);
-- **`complete`** — close an epistemic goal (subjective `done_when`) as an assumption.
+- **`apply`** — execute a command (this includes `read`/`grep`/`edit`/`run`).
 
-Actions on the world are a special case of `apply`, not separate operators. All three
+Actions on the world are a special case of `apply`, not separate operators. Both
 are only proposals: none changes state until the logos executes it.
 
 ### 4.2 Internal operators: the logos recomputes
@@ -443,7 +442,7 @@ journal and does the classification:
 - **refusals**: `record_rejection` — a refusal is recorded with a reason;
 - **checks**: `record_check` — the arbiter's verdict becomes a `check` node.
 
-A state change is a **new event node** (`check`, `complete`, …), not an edit of an
+A state change is a **new event node** (`check`, `mutate`, …), not an edit of an
 existing node.
 
 ### 4.4 The Arbiter: verdict and step selection
@@ -452,7 +451,7 @@ The verdict is issued not by the doxa and not by the logos, but by an external
 instance:
 
 - **objective arbiter** — the toolchain: tests, typechecker;
-- **subjective arbiter** — the user: by acceptance criteria.
+- **arbiter** — the user: by acceptance criteria.
 
 The same Arbiter is the external selection function `W: Σ → O`: which operator to apply
 next (§7). The doxa does not interfere.
@@ -496,7 +495,7 @@ Skein; some are the subject of work.
 ### 5.1 The base — accumulated knowledge
 
 This is the graph of the work and the world: nodes (goal, plan, subgoal/command items,
-alternatives, actions, observations, checks, completions, constraints) and the links
+alternatives, actions, observations, checks, constraints) and the links
 between them; here too are pointers to files. The base is **monotone**: nodes and links
 are only added, nothing is deleted. A code change does not erase knowledge about it —
 the previous knowledge merely ceases to be actual (computed, §1.1).
@@ -522,14 +521,17 @@ Work on a task is a tree (§1.3). The **stack** holds the current path in it: go
 item (or an `alternatives` option) → action. Descent (create a subgoal, choose an
 option) pushes a new branch onto the stack; abandoning a failed branch pops it. It is
 the stack that makes the context an "accordion": on descent it grows, on return it
-collapses. This is a new part: currently Skein has no explicit "where we are in the
-tree".
+collapses. Conceptually the tree is "ReAct unwound along a tree": the stack is a stack
+of frames — the **spine** — plus each level's siblings, the **arms**; it is
+`fold(journal)`, a derived value rather than independent state. This is a new part:
+currently Skein has no explicit "where we are in the tree". The full specification is
+`docs/plans/traversal_stack_spec.md`.
 
 ### 5.5 Records of a change of answer
 
 When the answer changes — a goal was `achieved`, and after a code change or the
 withdrawal of an assumption the closure lost force — this is **derived** and requires
-no edits: a new event node (`mutate`, `check`, `complete`) changes the computed state,
+no edits: a new event node (`mutate`, `check`) changes the computed state,
 while the original nodes remain. Thus the base is monotone and the answer honestly
 moves: knowledge changes, the trace of it is preserved.
 
@@ -693,10 +695,9 @@ confirmed by a check, and may not conceal that the confirmation rested on a gues
 - **`achieved`** — the goal is closed by a check (`check` with verdict `pass`) and
   **does not rest on assumptions** (no `under` edges). Example: the test passes.
 - **`achieved_under`** — reached **under an assumption**: the closing check has `under`
-  edges (references to assumption-goals) or the goal is closed by the doxa (`complete`,
-  subjective `done_when`). The assumptions are named and revocable. Example: "suppose
-  the cause is in the handling of free blocks" — the edit helped but the mechanism is
-  not confirmed.
+  edges (references to assumption-goals). The assumptions are named and revocable.
+  Example: "suppose the cause is in the handling of free blocks" — the edit helped but
+  the mechanism is not confirmed.
 - **outside the fragment** (`out_of_fragment`) — the task requires capabilities the
   system lacks: the needed logic, tool, or time. This is an honest refusal, not a weak
   answer posing as a full one. The mechanism is deferred.
@@ -867,8 +868,8 @@ In the spirit of §10: we do not rewrite silently. Relative to the first edition
 The terms and the operator model of this document have been brought to the source of
 truth — `docs/ir_semantics.md`. What changed:
 
-- **Three operators instead of a set of actions.** The doxa proposes `create goal`,
-  `apply`, `complete`; `read`/`grep`/`edit`/`run` are special cases of `apply` (§4.1).
+- **Two operators instead of a set of actions.** The doxa proposes `create goal` and
+  `apply`; `read`/`grep`/`edit`/`run` are special cases of `apply` (§4.1).
   The "mode selection" steps in §7 are renamed to *policy*.
 - **`W` is external.** The operator is chosen by the Arbiter (a human or a rule), not
   by the logos and not by the doxa (§4.5, §7.1). The phrasing "move `W` into the logos"
@@ -909,8 +910,8 @@ will be assembled from this document.
 5. **A stagnation stop appears** (`no_progress`, §3).
 6. **The raw stream of outputs goes away.** Instead of dumps — a compressed summary and
    fetching details by identifier (§6).
-7. **The operator model is refined.** The doxa proposes three operators
-   (`create goal`/`apply`/`complete`); `W` is an external Arbiter; routes are policy;
+7. **The operator model is refined.** The doxa proposes two operators
+   (`create goal`/`apply`); `W` is an external Arbiter; routes are policy;
    honesty is `achieved`/`achieved_under`; state is derived (§4.1, §7, §8).
 
 **What remains unchanged:** the doxa/logos distinction, the invariants (extended but not

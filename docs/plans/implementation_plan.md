@@ -22,7 +22,7 @@ function are the protocol.
 | First slice | bugfix by a failing test; arbiter is the test runner |
 | Orchestration | LangGraph.js (`@langchain/langgraph`) |
 | LLM | as in Ankyra: OpenAI-compatible endpoint, reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
-| Arbiter | objective (test runner) plus subjective (user/acceptance) |
+| Arbiter | objective (test runner) plus `arbiter` (user/acceptance) |
 
 ## 3. Roadmap
 
@@ -82,7 +82,7 @@ Beyond Tier 0, the current line adds:
 - **Context budget** — `index` is a bounded summary (counts + newest window) under
   the addressability contract; the turn budget is shown in `header.budget`
   (`docs/plans/index_budget_plan.md`).
-- **Subjective arbiter** — `userAcceptance` records a user check
+- **Arbiter (user acceptance)** — `userAcceptance` records a user check
   (`actor: "user"`), so non-code work can reach a settled state
   (`docs/plans/user_approval_plan.md`).
 - **Staleness scope** — transitivity is covered by a workspace-wide witness; the
@@ -146,6 +146,9 @@ live gate only when `SKEIN_LIVE=true`.
   `goal`/`constraints`, immediately followed by the volatile `frontier`.
   Optimization (volatile to the tail, settled facts and the file index append-only
   at the front, bounded growth) is deferred as premature; it needs a separate study.
+- **Reducing LLM turns.** Logos closure (a passing objective check verifies ancestors
+  with the same criterion) and a separate context-format A/B (JSON projection vs a
+  transcript with assistant/tool roles) — `docs/plans/step_reduction_plan.md`.
 
 ## 5. Boundaries
 

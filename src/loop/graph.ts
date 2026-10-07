@@ -1,7 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
-import { currentVersion, fold, predicateOf, type State } from "../ir/graph";
+import { childrenOf, currentVersion, fold, planOf, predicateOf, type State } from "../ir/graph";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
@@ -45,6 +45,25 @@ function isStale(state: State, id: string): boolean {
   return currentVersion(state, payload.ref) !== payload.version;
 }
 
+// Every goal on the branch plus its plan descendants. A stage's evidence (the diff that
+// localized the bug) must stay in view while an ancestor on the branch is still open, even
+// after the stage itself closes — otherwise the model re-fetches it with a `query` call.
+// Plan-only (not alternatives): abandoned sibling interpretations stay out.
+function branchSubtree(state: State, roots: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  const stack = [...roots];
+  while (stack.length > 0) {
+    const id = stack.pop() as string;
+    if (out.has(id)) continue;
+    out.add(id);
+    const plan = planOf(state, id);
+    if (plan !== undefined) {
+      for (const child of childrenOf(state, plan)) stack.push(child);
+    }
+  }
+  return out;
+}
+
 // The result a run/read action produced (its newest `produces` child), so the current
 // level's evidence can be recalled without the model re-requesting it.
 function producedResultId(state: State, actionId: string): string | undefined {
@@ -66,9 +85,6 @@ function describeTarget(action: Action): string {
       break;
     case "create_goal":
       target = `goal:${action.what}`;
-      break;
-    case "complete":
-      target = `complete:${action.goal ?? ""}`;
       break;
     case "apply":
       target =
@@ -124,16 +140,16 @@ export function compileGraph(deps: AgentDeps) {
       .filter((entry) => entry.expiresAt >= state.turn)
       .sort((a, b) => b.pinnedAt - a.pinnedAt);
     const explicitIds = new Set(explicit.map((entry) => entry.id));
-    // Every level on the branch, not just the leaf: a stage's evidence (the error that
+    // Every level under the branch, not just the leaf: a stage's evidence (the error that
     // motivated the next stage) stays in view until the parent closes. Newest first, so
     // the current level still wins the caps and an open stage never drops its own evidence.
-    const levelIds = new Set(
+    const roots =
       current.branch.length > 0
         ? current.branch
         : current.rootId !== undefined
           ? [current.rootId]
-          : [],
-    );
+          : [];
+    const levelIds = branchSubtree(current, roots);
     const level: HeldEntry[] = [];
     if (levelIds.size > 0) {
       for (const node of current.nodes.values()) {

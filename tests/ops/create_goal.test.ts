@@ -18,7 +18,7 @@ import {
 afterEach(cleanupWorkspaces);
 
 const PLAN: PlanItem[] = [
-  { kind: "goal", what: "locate the cause", done_when: { kind: "subjective", text: "named" } },
+  { kind: "goal", what: "locate the cause", done_when: { kind: "arbiter", text: "named" } },
   { kind: "action", command: "make test" },
 ];
 
@@ -61,7 +61,7 @@ describe("create_goal", () => {
     expect(predicateOf(fold(refuted), first)).toBe("refuted");
 
     const revised = exec(
-      { operator: "create_goal", what: "second try", done_when: { kind: "subjective", text: "done" }, revises: [first] },
+      { operator: "create_goal", what: "second try", done_when: { kind: "arbiter", text: "done" }, revises: [first] },
       refuted,
       ws,
     );
@@ -85,7 +85,7 @@ describe("create_goal", () => {
   it("OP-CG-5 nests a plan inside an item goal", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const nested: PlanItem[] = [
-      { kind: "goal", what: "child", done_when: { kind: "subjective", text: "x" }, plan: [PLAN[1]!] },
+      { kind: "goal", what: "child", done_when: { kind: "arbiter", text: "x" }, plan: [PLAN[1]!] },
     ];
     const { state } = exec(interpretation("do it", "make test", nested), [request()], ws);
     const goal = currentGoalId(state)!;
@@ -96,10 +96,10 @@ describe("create_goal", () => {
 
   it("REF-CG-EMPTY rejects malformed fields", () => {
     const seeded = [request()];
-    expect(classification({ operator: "create_goal", what: "", done_when: { kind: "subjective", text: "x" } }, seeded).reason).toBe("empty_what");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "subjective", text: "" } }, seeded).reason).toBe("empty_done_when");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "subjective", text: "x" }, plan: [] }, seeded).reason).toBe("empty_plan");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "subjective", text: "x" }, plan: [{ kind: "goal", what: "", done_when: { kind: "subjective", text: "y" } }] }, seeded).reason).toBe("empty_item");
+    expect(classification({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" } }, seeded).reason).toBe("empty_what");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "" } }, seeded).reason).toBe("empty_done_when");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: [] }, seeded).reason).toBe("empty_plan");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: [{ kind: "goal", what: "", done_when: { kind: "arbiter", text: "y" } }] }, seeded).reason).toBe("empty_item");
   });
 
   it("REF-NO-FOCUS rejects create_goal without a root", () => {
@@ -115,7 +115,7 @@ describe("create_goal", () => {
       { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
     ];
     const reason = classification(
-      { operator: "create_goal", what: "second try", done_when: { kind: "subjective", text: "done" } },
+      { operator: "create_goal", what: "second try", done_when: { kind: "arbiter", text: "done" } },
       refuted,
     ).reason;
     expect(reason).toMatch(/missing_revision/);
@@ -126,7 +126,7 @@ describe("create_goal", () => {
     const opened = exec(interpretation("do it"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const reason = classification(
-      { operator: "create_goal", what: "another", done_when: { kind: "subjective", text: "x" }, revises: [goal] },
+      { operator: "create_goal", what: "another", done_when: { kind: "arbiter", text: "x" }, revises: [goal] },
       opened.events,
     ).reason;
     expect(reason).toMatch(/unknown_revision/);
@@ -141,7 +141,7 @@ describe("create_goal", () => {
       { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
     ];
     const reason = classification(
-      { operator: "create_goal", what: "locate", done_when: { kind: "subjective", text: "x" }, revises: [first] },
+      { operator: "create_goal", what: "locate", done_when: { kind: "arbiter", text: "x" }, revises: [first] },
       refuted,
     ).reason;
     expect(reason).toBe("repeat_hypothesis");

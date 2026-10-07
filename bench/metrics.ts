@@ -99,12 +99,10 @@ export function graphCounts(proposals: Action[], events: readonly Event[]): Reco
   const byKind: Record<string, number> = {};
   for (const node of nodes.values()) byKind[node.kind] = (byKind[node.kind] ?? 0) + 1;
   let createGoal = 0;
-  let complete = 0;
   let edits = 0;
   let checks = 0;
   for (const action of proposals) {
     if (action.operator === "create_goal") createGoal++;
-    else if (action.operator === "complete") complete++;
     else if (action.operator === "apply" && action.action.tool === "edit") edits++;
     else if (action.operator === "apply" && action.action.tool === "run" && action.action.target) {
       checks++;
@@ -112,7 +110,6 @@ export function graphCounts(proposals: Action[], events: readonly Event[]): Reco
   }
   return {
     createGoal,
-    complete,
     edits,
     checks: byKind.check ?? 0,
     checkProposals: checks,

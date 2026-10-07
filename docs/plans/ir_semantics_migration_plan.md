@@ -2,6 +2,9 @@
 
 > Russian mirror — `docs/plans/ir_semantics_migration_plan_ru.md`.
 
+> **Historical.** Predates the current IR: the `complete` operator is removed and
+> `done_when` is `objective` | `arbiter`. See `docs/ir.md`, `docs/ir_semantics.md`.
+
 Related documents:
 
 - `docs/ir_semantics.md` — **source of truth for the semantics** (the target).

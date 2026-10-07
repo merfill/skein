@@ -10,7 +10,6 @@ export const WORK_KINDS = [
   "alternatives",
   "observation",
   "check",
-  "complete",
   "constraint",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
@@ -72,9 +71,11 @@ export const PREDICATES = [
 ] as const;
 export type Predicate = (typeof PREDICATES)[number];
 
+// A goal's criterion. `objective` is a literal command the arbiter runs; `arbiter` is an
+// external acceptance (a person or a test runner) — doxa cannot settle either one.
 export type DoneWhen =
   | { kind: "objective"; command: string }
-  | { kind: "subjective"; text: string };
+  | { kind: "arbiter"; text: string };
 
 export interface GoalPayload {
   what: string;
@@ -90,7 +91,6 @@ export const EDGE_KINDS = [
   "under",
   "produces",
   "verifies",
-  "closes",
   "mutates",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];

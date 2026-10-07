@@ -2,6 +2,9 @@
 
 > Russian mirror — `docs/plans/fix_ocaml_gc_investigation_ru.md`.
 
+> **Historical.** Predates the current IR: the `complete` operator is removed and
+> `done_when` is `objective` | `arbiter`. See `docs/ir.md`, `docs/ir_semantics.md`.
+
 Related: `docs/context_design.md` (the projection and plan design),
 `docs/projection.md`, `docs/tools.md`, `docs/ir_semantics.md`,
 `docs/fix_ocaml_gc_ideal.md` (the reference form).

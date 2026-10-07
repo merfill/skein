@@ -187,7 +187,6 @@ describe("tool calling", () => {
       operator: "apply",
       action: { tool: "write", path: "a.txt", content: "hi" },
     });
-    expect(toProposal("complete", {}, "t").action).toEqual({ operator: "complete" });
     expect(toProposal("run", { target: "w:goal:1" }, "t").action).toEqual({
       operator: "apply",
       action: { tool: "run", target: "w:goal:1" },

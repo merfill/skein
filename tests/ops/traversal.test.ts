@@ -7,7 +7,6 @@ import type { DoneWhen } from "../../src/ir/types";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
-  complete,
   exec,
   interpretation,
   makeWorkspace,
@@ -17,7 +16,7 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-const SUBJECTIVE: DoneWhen = { kind: "subjective", text: "done" };
+const SUBJECTIVE: DoneWhen = { kind: "arbiter", text: "done" };
 const OBJECTIVE: DoneWhen = { kind: "objective", command: "make test" };
 
 function goalNode(id: string, what: string, done_when: DoneWhen, seq: number): Event {
@@ -51,11 +50,10 @@ describe("traversal and containers", () => {
     const events: Event[] = [
       request(),
       goalNode("g1", "done", SUBJECTIVE, 1),
-      { type: "add_node", node: { id: "c1", space: "work", kind: "complete", label: "complete g1", seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "c1", to: "g1", kind: "closes", provenance: { kind: "llm" } } },
+      { type: "record_check", id: "chk:2", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: ["g1"] },
       { type: "descend", node: "g1" },
     ];
-    expect(predicateOf(fold(events), "g1")).toBe("achieved_under");
+    expect(predicateOf(fold(events), "g1")).toBe("achieved");
     expect(focusEvents(fold(events))).toEqual([{ type: "return" }]);
   });
 
@@ -98,11 +96,14 @@ describe("traversal and containers", () => {
     expect(items).toHaveLength(2);
     expect(cursorOf(opened.state, goal)).toBe(0);
 
-    // Close A -> cursor advances to the action item.
-    const closed = exec(complete(items[0]!), opened.events, ws);
-    expect(itemFulfilled(closed.state, items[0]!)).toBe(true);
-    expect(itemSucceeded(closed.state, items[0]!)).toBe(true);
-    expect(cursorOf(closed.state, goal)).toBe(1);
+    // Close A by external acceptance -> cursor advances to the action item.
+    const closed = fold([
+      ...opened.events,
+      { type: "record_check", id: "chk:9", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [items[0]!] },
+    ]);
+    expect(itemFulfilled(closed, items[0]!)).toBe(true);
+    expect(itemSucceeded(closed, items[0]!)).toBe(true);
+    expect(cursorOf(closed, goal)).toBe(1);
   });
 
   it("TR-6 a refuted item is fulfilled (resolves the cursor) but not succeeded", () => {
@@ -120,34 +121,39 @@ describe("traversal and containers", () => {
     expect(itemSucceeded(state, "it")).toBe(false);
   });
 
+  // A planned action item is normally executed by the engine the moment the plan is
+  // created (A4). These two tests build the goal + plan directly, with an unexecuted item,
+  // to exercise `ensureAction`'s reuse/branching on its own.
+  function goalWithActionItem(command: string): Event[] {
+    return [
+      request(),
+      goalNode("g1", "fix", OBJECTIVE, 1),
+      { type: "add_node", node: { id: "p", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: command, payload: { command }, seq: 3 } },
+      { type: "add_edge", edge: { id: "e2", from: "p", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "descend", node: "g1" },
+    ];
+  }
+
   it("TR-7 reuses an unexecuted matching action item", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan = [{ kind: "action" as const, command: "make test" }];
-    const opened = exec(interpretation("fix", "make check", plan), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const item = childrenOf(opened.state, planOf(opened.state, goal)!)[0]!;
-
-    const ran = exec(run("make test"), opened.events, ws);
+    const ran = exec(run("echo hi"), goalWithActionItem("echo hi"), ws);
     const actions = [...ran.state.nodes.values()].filter((n) => n.kind === "action");
     expect(actions).toHaveLength(1); // reused, not duplicated
-    expect(actions[0]!.id).toBe(item);
+    expect(actions[0]!.id).toBe("a1");
   });
 
   it("TR-7 branches a bypassed item: the new action becomes the chosen variant", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan = [{ kind: "action" as const, command: "make test" }];
-    const opened = exec(interpretation("fix", "make check", plan), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const item = childrenOf(opened.state, planOf(opened.state, goal)!)[0]!;
-
     // A different command does not match the planned item, so the logos branches it.
-    const ran = exec(run("npm run lint"), opened.events, ws);
-    const alt = alternativesOf(ran.state, item)!;
+    const ran = exec(run("echo other"), goalWithActionItem("echo hi"), ws);
+    const alt = alternativesOf(ran.state, "a1")!;
     expect(alt).toBeDefined();
     const chosen = latestChosen(ran.state, alt)!;
-    expect(chosen).not.toBe(item);
-    expect(predicateOf(ran.state, item)).toBe("abandoned");
-    expect(itemFulfilled(ran.state, item)).toBe(true);
-    expect(cursorOf(ran.state, goal)).toBe(1);
+    expect(chosen).not.toBe("a1");
+    expect(predicateOf(ran.state, "a1")).toBe("abandoned");
+    expect(itemFulfilled(ran.state, "a1")).toBe(true);
+    expect(cursorOf(ran.state, "g1")).toBe(1);
   });
 });

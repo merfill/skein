@@ -13,7 +13,6 @@ export function achievedWithoutCheck(events: readonly Event[]): string[] {
 
     let pass = false;
     let under = false;
-    let complete = false;
     for (const edge of state.edges.values()) {
       if (edge.kind === "verifies" && edge.to === node.id) {
         const check = state.nodes.get(edge.from);
@@ -23,10 +22,9 @@ export function achievedWithoutCheck(events: readonly Event[]): string[] {
           if (checkHasUnder(state, edge.from)) under = true;
         }
       }
-      if (edge.kind === "closes" && edge.to === node.id) complete = true;
     }
     if (predicate === "achieved" && !pass) violations.push(node.id);
-    if (predicate === "achieved_under" && !(complete || (pass && under))) {
+    if (predicate === "achieved_under" && !(pass && under)) {
       violations.push(node.id);
     }
   }

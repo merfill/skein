@@ -51,7 +51,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "no-mutation-answer",
-    expect: { solved: false, noMutation: true, unchanged: [""], uses: ["complete"] },
+    expect: { solved: false, noMutation: true, unchanged: [""], uses: ["create_goal"] },
   },
   {
     name: "multi-step-plan",

@@ -25,7 +25,7 @@
 - **ID** — стабильный идентификатор; тест ссылается на него как на токен `ID` в заголовке.
 
 Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH`
-инструменты `apply`, `OP-CP` complete, `OP-QR` query, `TR` обход/контейнеры, `DER`
+инструменты `apply`, `OP-QR` query, `TR` обход/контейнеры, `DER`
 производные предикаты, `REF` отказы (каталог), `PRJ` проекция (ссылки).
 
 ---
@@ -37,13 +37,12 @@
 | Kind | Payload | Роль |
 |---|---|---|
 | `request` | `{text}` | сырая мотивация арбитра; корень; не закрывается в IR |
-| `goal` | `{what, why?, done_when}` | интерпретация или стадия; `done_when` объективный/субъективный |
+| `goal` | `{what, why?, done_when}` | интерпретация или стадия; `done_when` объективный/арбитр |
 | `action` | `{command, ...}` | один запуск инструмента; также item плана вида `action` |
 | `plan` | — | упорядоченный контейнер стадий цели (`item`-рёбра) |
 | `alternatives` | — | контейнер взаимозаменяемых целей/действий (`item` + `chosen`) |
 | `observation` | `{ref?, version?, command?, verdict?, output?...}` | тело результата инструмента |
 | `check` | `{command, verdict, witness?, actor, output/error/...}` | вердикт арбитра по цели |
-| `complete` | `{note?}` | субъективное закрытие |
 | `constraint` | `{forbid: string[]}` | инвариант; сеется на старте прогона |
 | `file` (artifact) | — | файл-ссылка; производится `mutates` |
 
@@ -55,10 +54,9 @@
 | `item` | plan/alternatives → goal/action | упорядоченное членство |
 | `has_alternatives` | request/goal → alternatives | контейнер вариантов |
 | `chosen` | alternatives → option | текущий выбранный вариант |
-| `under` | check/complete → goal | допущения, на которых стоит закрытие |
+| `under` | check → goal | допущения, на которых стоит закрытие |
 | `produces` | action → observation | тело результата действия |
 | `verifies` | check → goal | цель(и), которые вердикт «решает» |
-| `closes` | complete → goal | субъективное закрытие |
 | `mutates` | action → file | действие изменило файл |
 
 ### 1.3 События (`src/ir/events.ts`)
@@ -141,11 +139,12 @@
 | Случай | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
 | exploratory-команда | есть `command`, нет `target` | action + observation; `mutate` на каждый изменённый файл | версии; проверки устаревают | `repeated_action` | `OP-AP-RUN-1` |
-| check (`{target}`) | target — фокус, объективная | узел `record_check` + ребро `verifies` | цель `achieved`/`refuted`/`open` | `invalid_target`, `subjective_goal_needs_complete`, несовпадение команды, `not_current_goal`, `repeated_action` | `OP-AP-RUN-2` |
+| check (`{target}`) | target — фокус, объективная | узел `record_check` + ребро `verifies` | цель `achieved`/`refuted`/`open` | `invalid_target`, `arbiter_goal_needs_acceptance`, несовпадение команды, `not_current_goal`, `repeated_action` | `OP-AP-RUN-2` |
 | check с `under` | как выше + допущения | рёбра `under` на check | при pass — `achieved_under` | — | `OP-AP-RUN-3` |
 | inconclusive (таймаут) | check | `record_check` вердикт `inconclusive` | цель остаётся `open` | повторный check разрешён (не repeat) | `OP-AP-RUN-4` |
 | background-старт | `background: true` + `command` | action; job запущен; ход сразу возвращает `job-N` | — | `background_run` (нет команды), `background_target` (check) | `OP-AP-RUN-5` |
 | опрос (`{job}`) | id задачи | action; несёт состояние/код/хвост | — | `job_poll` (лишние поля) | `OP-AP-RUN-6` |
+| замыкание логоса на проходящем чеке | чек objective-цели | тот же чек также `verifies` каждого предка плана с совпадающим `done_when.command`, если прочие пункты закрыты | предки `achieved`/`achieved_under`; request может стать `addressed` | — | `OP-AP-RUN-7` |
 
 **Замечание.** Голый `run {command}`, чья команда совпадает с `done_when.command`
 фокусной объективной цели, трактуется как **check** этой цели (target выводится):
@@ -195,18 +194,6 @@ constraint проверяется только для явного `path`.
 | не применяется | конфликт/уже применено | fail-observation | — | — (fail) | `OP-AP-PATCH-2` |
 | запрещённая цель | constraint запрещает путь из `---`/`+++` | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
-### 2.3 `complete` (`OP-CP`)
-
-| Случай | Pre | Effects | Derived | Refuses | ID |
-|---|---|---|---|---|---|
-| субъективный фокус | фокус — субъективная `goal` | add `complete` (`note?`); ребро `closes` | цель `achieved_under` | `objective_goal_needs_check`, `not_current_goal`, `root_not_completable`, `invalid_goal`, `no_current_goal` | `OP-CP-1` |
-| с `under` | как выше | рёбра `under` от `complete` к допущениям | `achieved_under` | — | `OP-CP-2` |
-| корень | фокус — запрос | — | — | `root_not_completable` | `OP-CP-3` |
-
-- **Проекция** (`PRJ-CP`): закрытая вложенная цель уходит с ветки (обрезка под
-  закрытым предком); её `note` выводится как запись `complete <goal>` в `calls`
-  (`PRJ-CALLS-complete`).
-
 ### 2.4 `query` (`OP-QR`)
 
 | Случай | Pre | Effects | ID |
@@ -241,14 +228,19 @@ constraint проверяется только для явного `path`.
 |---|---|---|
 | request `addressed` | выбранная интерпретация `achieved`/`achieved_under`; иначе `open` | `DER-REQ-1` |
 | goal `achieved` | у новейшей закрывающей проверки `verdict=pass` и нет `under` | `DER-GOAL-1` |
-| goal `achieved_under` | у новейшей закрывающей проверки `verdict=pass` с `under`, либо цель закрыта `complete` | `DER-GOAL-2` |
+| goal `achieved_under` | у новейшей закрывающей проверки `verdict=pass` с `under` | `DER-GOAL-2` |
 | goal `refuted` | у новейшей закрывающей проверки `verdict=fail` | `DER-GOAL-3` |
 | goal `open` | новейшая закрывающая проверка `inconclusive`, или закрытия нет | `DER-GOAL-4` |
 | goal `abandoned` | это невыбранный вариант контейнера с `chosen`-сиблингом | `DER-GOAL-5` |
-| порядок закрытий | побеждает новейшее из `verifies`-проверки и `closes`-complete (по `seq`) | `DER-GOAL-6` |
+| порядок закрытий | побеждает новейшая `verifies`-проверка (по `seq`) | `DER-GOAL-6` |
 | action `executed` | есть ребро `produces` или `mutates` | `DER-ACT-1` |
 | action `abandoned` | его контейнер `alternatives` выбрал сиблинга | `DER-ACT-2` |
 | check stale | версия ref из `witness` отличается от текущей | `DER-STALE-1` |
+| предок `achieved` замыканием | проходящий чек верифицирует цель и предка плана с тем же `done_when.command`, прочие пункты закрыты | `DER-CLOSE-1` |
+| нет замыкания при ином критерии | `done_when.command` предка отличается от команды чека | `DER-CLOSE-2` |
+| нет замыкания при незакрытом соседе | другой пункт плана не закрыт | `DER-CLOSE-3` |
+| замыкание поднимается по вложенным планам | у владельца верифицированной цели есть свой владелец, и так выше | `DER-CLOSE-4` |
+| замыкание несёт допущения | у чека есть `under`, поэтому предок `achieved_under` | `DER-CLOSE-5` |
 
 ---
 
@@ -260,15 +252,13 @@ constraint проверяется только для явного `path`.
 | Причина (токен) | Триггер | Оператор | ID |
 |---|---|---|---|
 | `empty_what` / `empty_done_when` / `empty_plan` / `empty_item` | некорректный `create_goal` | create_goal | `REF-CG-EMPTY` |
-| `no_current_goal` | нет фокуса | create_goal/complete | `REF-NO-FOCUS` |
+| `no_current_goal` | нет фокуса | create_goal | `REF-NO-FOCUS` |
 | `missing_revision` | `revises` не перечисляет провалившийся вариант | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` в не-refuted точке | create_goal | `REF-REV-UNKNOWN` |
 | `repeat_hypothesis` | `what` повторяет провалившийся вариант | create_goal | `REF-REPEAT-HYP` |
 | `all_plan_fulfilled` | рост объективной цели с выполненным планом | create_goal | `REF-PLAN-DONE` |
-| `invalid_goal` / `root_not_completable` | complete не-цели / запроса | complete | `REF-CP-TARGET` |
-| `not_current_goal` | closing move (`complete`/check) целится не в фокус | complete/run | `REF-NOT-FOCUS` |
-| `objective_goal_needs_check` | `complete` по объективной цели | complete | `REF-CP-OBJ` |
-| `subjective_goal_needs_complete` | check субъективной цели | run | `REF-RUN-SUBJ` |
+| `not_current_goal` | check целится не в фокус | run | `REF-NOT-FOCUS` |
+| `arbiter_goal_needs_acceptance` | check арбитр-цели (без команды) | run | `REF-RUN-ARB` |
 | `invalid_target` | check не-цели | run | `REF-RUN-TARGET` |
 | несовпадение команды | check передаёт другую команду | run | `REF-RUN-CMD` |
 | `job_poll` | опрос с лишними полями | run | `REF-RUN-POLL` |
@@ -290,7 +280,7 @@ constraint проверяется только для явного `path`.
 ## 4. Инварианты
 
 - цель `achieved` — только через passing `check` без `under`; `achieved_under` —
-  passing check с `under` или `complete` (`DER-GOAL`).
+  passing check с `under` (`DER-GOAL`).
 - `stale`-проверка никогда не показывается как активная; устаревший факт не активен.
 - `project` детерминирован: те же события → тот же `Context`.
 - структурные рёбра (`has_plan`/`item`/`has_alternatives`/`chosen`) — лес.
@@ -319,14 +309,13 @@ constraint проверяется только для явного `path`.
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | сценарии `stale-base`, `two-step-fix` |
 | `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | сценарий `command-from-package` |
-| `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
+| `OP-AP-RUN-1..7` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
 | `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
-| `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; сценарий `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | сценарии `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |
-| `DER-REQ/GOAL/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-CG/REV/CP/NO-FOCUS` | `tests/ops/create_goal.test.ts`, `tests/ops/complete.test.ts` | step `follow-focus-hint`; сценарий `revise-hypothesis` |
+| `DER-REQ/GOAL/ACT/STALE/CLOSE` | `tests/ops/derivation.test.ts` | — |
+| `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; сценарий `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; сценарий `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |
 

@@ -37,7 +37,7 @@ function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: 
 
 const llm: Provenance = { kind: "llm" };
 const objective = (command: string): DoneWhen => ({ kind: "objective", command });
-const subjective = (text: string): DoneWhen => ({ kind: "subjective", text });
+const subjective = (text: string): DoneWhen => ({ kind: "arbiter", text });
 
 function goal(
   id: string,
@@ -210,16 +210,7 @@ describe("record_check", () => {
   });
 });
 
-describe("complete", () => {
-  it("closes a subjective goal as achieved_under", () => {
-    const state = fold([
-      goal("g1", "locate the cause", 0, subjective("I know where it is")),
-      { type: "add_node", node: workNode("c1", "complete", "complete g1", 1) },
-      { type: "add_edge", edge: edge("e1", "c1", "g1", "closes", llm) },
-    ]);
-    expect(predicateOf(state, "g1")).toBe("achieved_under");
-  });
-});
+
 
 describe("alternatives", () => {
   it("marks unselected variants abandoned when a sibling is chosen", () => {

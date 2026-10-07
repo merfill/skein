@@ -1,4 +1,4 @@
-# Skein — user approval plan (a subjective arbiter)
+# Skein — user approval plan (an arbiter: user acceptance)
 
 > Russian mirror — `docs/plans/user_approval_plan_ru.md`.
 
@@ -11,8 +11,8 @@ Status: implemented (see §8).
 
 `verified` is reachable only through `record_check`, which the `run` tool emits
 for a passing command. Non-code work (a document, a design) has no test runner, so
-it can never reach a settled state. The concepts already name a **subjective
-arbiter** (the user, through acceptance criteria) beside the objective toolchain,
+it can never reach a settled state. The concepts already name an **arbiter** (the
+user, through acceptance criteria) beside the objective toolchain,
 but there was no mechanism for it.
 
 An LLM critic issuing checks is rejected: it would put doxa in the role of logos.
@@ -68,7 +68,7 @@ invariant `verifiedWithoutCheck` is untouched.
 
 Implemented. `record_check` carries `actor` (`src/ir/events.ts`); `CheckRecord`
 and `fold` default it to `"arbiter"` (`src/ir/graph.ts`); `userAcceptance`
-records a subjective verdict (`src/ir/approval.ts`); `run` marks `"arbiter"` and
+records an arbiter verdict (`src/ir/approval.ts`); `run` marks `"arbiter"` and
 `query { verdictOf }` exposes the actor (`src/tools/index.ts`). `npm run
 typecheck` is clean and `npm test` passes. Docs updated: `concepts`, `ir`,
 `design_review`.

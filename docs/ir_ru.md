@@ -4,8 +4,8 @@
 
 Это **as-built**: как IR устроен в текущем коде. Источник истины по семантике —
 `docs/ir_semantics_ru.md`; код следует за ним. Концептуальный обзор —
-`docs/concepts_ru.md`; основание — `docs/logos_ir_ru.md`; приведение к семантике —
-`docs/plans/ir_semantics_migration_plan_ru.md`.
+`docs/concepts_ru.md`; основание — `docs/logos_ir_ru.md`; стек обхода —
+`docs/plans/traversal_stack_spec_ru.md`.
 
 ## 1. Четыре уровня
 
@@ -28,14 +28,14 @@
 ## 2. Узлы и рёбра
 
 **Узлы** (`src/ir/types.ts`). Пространство `work`: `request`, `goal`, `action`,
-`plan`, `alternatives`, `observation`, `check`, `complete`, `constraint`.
+`plan`, `alternatives`, `observation`, `check`, `constraint`.
 Пространство `artifact`: `file` (а также зарезервированные `symbol`/`test`, не
 производятся).
 
 - `request.payload = { text }` — сырая мотивация Арбитра, корень леса; не
   закрывается в IR (приёмка внешняя);
 - `goal.payload = { what, why?, done_when }`, где `done_when` —
-  `{kind:"objective", command}` или `{kind:"subjective", text}`;
+  `{kind:"objective", command}` или `{kind:"arbiter", text}`;
 - `plan`/`alternatives` — контейнеры; порядок детей **не** хранится полем, а
   выводится из порядка событий `add_edge item` (поле `State.children`);
 - `observation.payload` чтения несёт `{ ref, version }`; `check.payload` —
@@ -43,8 +43,7 @@
   (`output` — stdout, `error` — stderr, раздельно).
 
 **Рёбра** (`Edge.provenance`, без поля статуса): `has_plan`, `item`,
-`has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `closes`,
-`mutates`.
+`has_alternatives`, `chosen`, `under`, `produces`, `verifies`, `mutates`.
 
 ## 3. События (закрытый словарь)
 
@@ -60,7 +59,7 @@
 
 - действие `executed` ⇔ есть произведённый ребёнок (`produces`/`mutates`);
 - цель `achieved` ⇔ последнее закрытие — `check` `pass` **без** `under`;
-- цель `achieved_under` ⇔ `check` `pass` с `under` либо узел `complete`;
+- цель `achieved_under` ⇔ `check` `pass` с `under`;
 - цель `refuted` ⇔ закрывающий `check` `fail`; `inconclusive` оставляет `open`;
 - цель `abandoned` ⇔ вариант `alternatives`, не равный текущему `chosen`
   (последнее ребро `chosen` контейнера);
@@ -70,6 +69,13 @@
 Прочее производно: `currentVersion(ref)` = последняя `mutate`-версия, иначе
 версия первого чтения; `cursor(G)` = индекс первого невыполненного пункта плана;
 стек — свёртка `descend`/`return`.
+
+`fold` также применяет **замыкание логоса** (`closeAncestors`): проходящий
+objective-чек верифицирует не только свою цель, но и каждого предка плана с тем же
+`done_when.command`, если прочие пункты плана предка закрыты. Синтезированные рёбра
+`verifies` несут провенанс того же чека, поэтому один чек внизу закрывает всю цепочку
+наверх (и может пометить запрос `addressed`) без дополнительного хода доксы
+(`docs/plans/step_reduction_plan_ru.md`).
 
 ## 5. Операторы доксы
 
@@ -85,21 +91,22 @@
   `action`+`mutate`+`mutates`, на устаревшем базисе отклоняется; `run` с `target`
   (объективная цель) → `check`+`verifies` (+`under`), причём **команда берётся из
   `target.done_when`**, а не из предложения доксы; `run` без `target` → `observation`.
-- **`complete`** `{ goal?, note?, under? }` — только субъективная, не корень; цель
-  обязана быть текущим узлом.
 - **`query`** — read-only адресация (не оператор доксы): достаёт узлы/рёбра.
+
+Докса не закрывает цели (`complete` нет). Объективная цель закрывается только своим
+чеком; арбитр-цель — только внешней приёмкой (`userAcceptance`, `record_check` с
+`actor: "user"`).
 
 Врата `classify`: ограничения на `edit`; `stale_base`; `repeated_action` (снимается для
 пере-проверки после `inconclusive`); строгий `revises`; `repeat_hypothesis`; `apply run
 { target }` только для объективной цели, которая **является текущим узлом**
-(`subjective_goal_needs_complete`, `not_current_goal`); `complete` только для
-субъективной не-корневой цели, которая является текущим узлом (`not_current_goal`).
+(`arbiter_goal_needs_acceptance`, `not_current_goal`).
 
 ## 6. Обход (логос)
 
 `src/ir/traversal.ts`: `focusEvents` спускается из запроса в выбранную
 интерпретацию, затем в первую невыполненную подцель, и возвращается при закрытии;
-`applicable` даёт доксе фронтир (`createGoal`/`apply`/`complete`/`checkReady`/
+`applicable` даёт доксе фронтир (`createGoal`/`apply`/`checkReady`/
 `chooseVariant`). Цикл (`src/loop/graph.ts`): `project → propose → classify →
 execute → progress`; остановка — `request_addressed` (запрос `addressed`),
 `no_progress` (семантический ключ не менялся N ходов), бюджет (`maxTurns`).
@@ -121,10 +128,10 @@ execute → progress`; остановка — `request_addressed` (запрос 
 ## 8. Честность и границы
 
 - `achieved` — только `check` `pass` без `under`; докса не выносит вердикт;
-  `achieved_under` — `under` либо `complete`.
+  `achieved_under` — `under`.
 - Запрос в IR не закрывается: приёмка внешняя и неявная (молчание/харнес); внутри
   вычисляется только `addressed`. LLM-вердикта нет; `userAcceptance`
-  (`src/ir/approval.ts`) даёт субъективную проверку цели.
+  (`src/ir/approval.ts`) даёт внешнюю приёмку цели.
 - Отложено: `out_of_fragment` (нужен дизайн «объявленного фрагмента», §10.1
   семантики), точность свидетеля (сейчас весь воркспейс, `SKIP_DIRS`),
   `symbol`/`test`, полная точность устаревания.
