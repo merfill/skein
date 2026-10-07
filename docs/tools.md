@@ -70,6 +70,8 @@ subgoal to its plan. Give a plan when the steps are known. List failures fully i
 | `list` | `{ path?, include?, exclude?, from?, limit? }` | list files by mask, JSON (see §4.6) |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
 | `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
+| `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`) to read and diff (B9); refused on a path outside the workspace / already existing / forbidden / download failure |
+| `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
 | `run` | `{ command?, target?, background?, job?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted); with `background` — start a long command and poll it by `job` (see §4.7) |
 
 ### 2.3 `complete { goal?, note?, under? }`
@@ -373,8 +375,12 @@ capability gap; **not part of the current implementation**.
    (unstructured, unbounded output) and gives the model visibility of extensions.
 3. **`edit` by range / `multiedit`** — editing by line numbers and atomic grouped
    edits: `find/replace` breaks on ambiguous/duplicated fragments.
-4. **Later:** `web_fetch` (docs, error analysis) and LSP operations `symbol`
-   (definition/references/rename) — heavy, a separate stage.
+4. **`fetch`** (URL → workspace as read-only reference) — **done** (Phase 4):
+   `{ url, path? }`, default `.skein/ref/<hash>-<slug>`; it enables B9 (obtain a
+   reference and diff). **`apply_patch`** (unified diff) — **done** (Phase 4):
+   `{ patch, strip? }`.
+5. **Later:** `web_fetch`/`websearch` (docs, error analysis) and LSP operations
+   `symbol` (definition/references/rename) — heavy, a separate stage.
 
 **Non-goals (deliberately):** VCS (`git`), a `todo` tool (the plan lives in the IR),
 browser/screenshots, subagents, MCP — outside the current design.

@@ -88,6 +88,14 @@ export function run(command: string): Action {
   return applyTool({ tool: "run", command });
 }
 
+export function fetchUrl(url: string, path?: string): Action {
+  return applyTool({ tool: "fetch", url, ...(path !== undefined ? { path } : {}) });
+}
+
+export function patch(patchText: string, strip?: number): Action {
+  return applyTool({ tool: "apply_patch", patch: patchText, ...(strip !== undefined ? { strip } : {}) });
+}
+
 export function check(target: string): Action {
   return applyTool({ tool: "run", target });
 }

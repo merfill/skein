@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
 import {
@@ -282,6 +284,17 @@ function descendTo(state: State, parent: string, node: string): Event[] {
   return events;
 }
 
+// The default workspace path for a fetched reference: engine-owned, under `.skein/ref/`
+// (excluded from listings), namespaced by a short URL hash so two references with the same
+// basename do not collide.
+function refPathFor(url: string): string {
+  const clean = url.split(/[?#]/)[0] ?? url;
+  const base = clean.split("/").filter((part) => part !== "").pop() ?? "reference";
+  const slug = base.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 60) || "reference";
+  const hash = createHash("sha1").update(url).digest("hex").slice(0, 8);
+  return `.skein/ref/${hash}-${slug}`;
+}
+
 export function commandOf(apply: Apply): string {
   switch (apply.tool) {
     case "read":
@@ -312,6 +325,10 @@ export function commandOf(apply: Apply): string {
       return `edit ${apply.path}`;
     case "write":
       return `write ${apply.path}`;
+    case "fetch":
+      return `fetch ${apply.url}${apply.path !== undefined ? ` ${apply.path}` : ""}`;
+    case "apply_patch":
+      return `apply_patch -p${apply.strip ?? 1}`;
     case "run":
       // A poll of a background job is addressed by the job id, not by a shell command;
       // this is only used for display/dedup, the run branch builds its own signature.
@@ -717,7 +734,16 @@ export function executeAction(
       const current = currentGoalId(state);
 
       if (apply.tool === "read") {
-        if (!workspace.exists(apply.path)) return fail(`read failed: ${apply.path} does not exist`);
+        // A path outside the workspace is a recorded refusal, not a crash: `exists`
+        // throws `path escapes workspace`, and the loop must turn that into a fail
+        // observation like `grep`/`list` do (docs/bench_report.md §4.4, problem 5).
+        let present: boolean;
+        try {
+          present = workspace.exists(apply.path);
+        } catch (error) {
+          return fail(`read failed: ${(error as Error).message}`);
+        }
+        if (!present) return fail(`read failed: ${apply.path} does not exist`);
         const ref = `file:${apply.path}`;
         let version: string;
         let raw: string;
@@ -914,7 +940,13 @@ export function executeAction(
 
       if (apply.tool === "edit") {
         const ref = `file:${apply.path}`;
-        if (!workspace.exists(apply.path)) return fail(`edit failed: ${apply.path} does not exist`);
+        let present: boolean;
+        try {
+          present = workspace.exists(apply.path);
+        } catch (error) {
+          return fail(`edit failed: ${(error as Error).message}`);
+        }
+        if (!present) return fail(`edit failed: ${apply.path} does not exist`);
         let original: string;
         try {
           original = workspace.read(apply.path);
@@ -976,7 +1008,13 @@ export function executeAction(
         const ref = `file:${apply.path}`;
         // Overwriting unseen or changed content is refused: the model must have read the
         // file (a new file has no version, so creation is allowed) and it must be fresh.
-        if (workspace.exists(apply.path)) {
+        let present: boolean;
+        try {
+          present = workspace.exists(apply.path);
+        } catch (error) {
+          return fail(`write failed: ${(error as Error).message}`);
+        }
+        if (present) {
           const readVersion = latestReadVersion(state, ref);
           if (readVersion === undefined) {
             return fail(
@@ -999,6 +1037,89 @@ export function executeAction(
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         return { events, turn: proposalTurn(`wrote ${apply.path}`, actionId), done: false, stopReason: null };
+      }
+
+      if (apply.tool === "fetch") {
+        const path = apply.path ?? refPathFor(apply.url);
+        // An explicit target must be a fresh path: refuse to clobber anything (a source
+        // file, or a prior reference). `exists` throws on a path outside the workspace.
+        let present: boolean;
+        try {
+          present = workspace.exists(path);
+        } catch (error) {
+          return fail(`fetch failed: ${(error as Error).message}`);
+        }
+        if (present) return fail(`fetch failed: ${path} already exists; choose another path`);
+        let fetched: { path: string; bytes: number };
+        try {
+          fetched = workspace.fetchTo(apply.url, path);
+        } catch (error) {
+          return fail(`fetch failed: ${(error as Error).message}`);
+        }
+        const ref = `file:${fetched.path}`;
+        ensureFile(fetched.path, ref);
+        const version = workspace.version(fetched.path);
+        const command = commandOf(apply);
+        const actionId = ensureAction(command, command, {
+          signature: `${apply.url}\u0000${fetched.path}`,
+          url: apply.url,
+          path: fetched.path,
+        });
+        addEdge({ kind: "llm" }, actionId, ref, "mutates");
+        events.push({ type: "mutate", ref, version, actionId });
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const text = `fetched ${apply.url} -> ${fetched.path} (${fetched.bytes} bytes)`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: text,
+            payload: { url: apply.url, path: fetched.path, bytes: fetched.bytes, ref, version },
+            seq: observationSeq,
+          },
+        });
+        addEdge({ kind: "llm" }, actionId, observationId, "produces");
+        return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
+      }
+
+      if (apply.tool === "apply_patch") {
+        const before = signatureMap(workspace);
+        try {
+          workspace.applyPatch(apply.patch, apply.strip);
+        } catch (error) {
+          return fail(`apply_patch failed: ${(error as Error).message}`);
+        }
+        const after = signatureMap(workspace);
+        const mutations = changedMutations(workspace, before, after, new Set());
+        const command = commandOf(apply);
+        const actionId = ensureAction(command, command, { strip: apply.strip ?? 1 });
+        for (const entry of mutations) {
+          const path = entry.ref.slice("file:".length);
+          ensureFile(path, entry.ref);
+          addEdge({ kind: "llm" }, actionId, entry.ref, "mutates");
+          events.push({ type: "mutate", ref: entry.ref, version: entry.version, actionId });
+        }
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        const paths = mutations.map((entry) => entry.ref.slice("file:".length));
+        const text =
+          paths.length === 0 ? "apply_patch: no files changed" : `applied patch: ${paths.join(", ")}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: text,
+            payload: { paths, applied: mutations.length > 0 },
+            seq: observationSeq,
+          },
+        });
+        addEdge({ kind: "llm" }, actionId, observationId, "produces");
+        return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
       // apply.tool === "run"

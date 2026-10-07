@@ -119,6 +119,10 @@ Beyond Tier 0, the current line adds:
 - **Model comparison (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` fails the
   synthetic set (0/4) and costs more than the current DeepSeek; staying on
   `~deepseek/deepseek-v4-flash-latest`.
+- **System prompt revision (done)** — behavior blocks plus `docs/system_prompt.md`, the
+  `apply` drift removed, a VCS policy and an external reference, the `fetch`/`apply_patch`
+  tools, the out-of-workspace path guard, and a controlled experiment (§4.5 in
+  `docs/bench_report.md`). Outcome — `docs/plans/system_prompt_revision_plan.md`.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.

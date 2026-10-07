@@ -16,6 +16,11 @@ export interface Scenario {
     noMutation?: boolean;
     unchanged?: string[];
     uses?: Branch[];
+    // Run-command shape: for each rule, the number of executed `run` commands matching
+    // `match` (a regex source) must be within [min, max]. Used to test a strategy that
+    // shows up as a command (e.g. diffing a reference) or as a command that is avoided
+    // (e.g. repeated `git` when the workspace has no history).
+    commands?: { match: string; min?: number; max?: number }[];
   };
 }
 
@@ -83,5 +88,17 @@ export const scenarios: Scenario[] = [
   {
     name: "retrieve-at-scale",
     expect: { solved: true,     maxRepeats: 5, uses: ["query"] },
+  },
+  {
+    // A canonical copy sits in the workspace: the expected localization is a diff against
+    // it, not a line-by-line read (B9, docs/system_prompt_ru.md).
+    name: "reference-diff",
+    expect: { solved: true, uses: ["run"], commands: [{ match: "diff", min: 1 }] },
+  },
+  {
+    // No `.git`; the request tempts a history probe. The policy (B8) allows one attempt
+    // but forbids retrying/probing: the run must fall back to files and behavior.
+    name: "no-vcs",
+    expect: { solved: true, maxRepeats: 5, commands: [{ match: "\\bgit\\b", max: 2 }] },
   },
 ];

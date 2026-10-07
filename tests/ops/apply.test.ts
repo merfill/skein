@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
@@ -11,9 +15,11 @@ import {
   cleanupWorkspaces,
   edit,
   exec,
+  fetchUrl,
   grep,
   interpretation,
   makeWorkspace,
+  patch,
   read,
   request,
   run,
@@ -49,6 +55,14 @@ describe("apply: read", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(read("src/sum.mjs"), [request()], ws);
     expect(classification(read("src/sum.mjs"), first.events).reason).toMatch(/repeated_action/);
+  });
+
+  it("OP-AP-READ-5 a path outside the workspace is a fail observation, not a crash", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(read("../outside.mjs"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(outcome.turn.text).toMatch(/escapes workspace/);
   });
 });
 
@@ -134,6 +148,14 @@ describe("apply: edit", () => {
     const mutated = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
     expect(classification(edit("src/sum.mjs", "a + b", "a - b"), mutated.events).reason).toBe("stale_base");
   });
+
+  it("OP-AP-EDIT-5 a path outside the workspace is a fail observation, not a crash", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(edit("../outside.mjs", "a", "b"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(outcome.turn.text).toMatch(/escapes workspace/);
+  });
 });
 
 describe("apply: write", () => {
@@ -178,6 +200,105 @@ describe("apply: write", () => {
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
     expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
     expect(ws.read("src/sum.mjs")).toContain("a - b");
+  });
+
+  it("OP-AP-WRITE-6 a path outside the workspace is a fail observation, not a crash", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(write("../outside.mjs", "x"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(outcome.turn.text).toMatch(/escapes workspace/);
+  });
+});
+
+describe("apply: fetch", () => {
+  // Offline: curl supports file:// URLs, so the download path is exercised without a
+  // network or an in-process server (a server would deadlock a synchronous spawnSync).
+  function withSource(content: string): { url: string; cleanup: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), "skein-ref-"));
+    const file = join(dir, "upstream.mjs");
+    writeFileSync(file, content);
+    return { url: `file://${file}`, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  }
+
+  it("OP-AP-FETCH-1 fetches a URL into the workspace and records a mutate", () => {
+    const src = withSource("export const ref = 1;\n");
+    try {
+      const { ws } = makeWorkspace(DEFAULT_FILES);
+      const { events, state, outcome } = exec(fetchUrl(src.url), [request()], ws);
+      expect(events.some((e) => e.type === "mutate")).toBe(true);
+      expect(outcome.turn.text).toMatch(/fetched/);
+      expect([...state.nodes.values()].some((n) => n.kind === "file")).toBe(true);
+    } finally {
+      src.cleanup();
+    }
+  });
+
+  it("OP-AP-FETCH-2 a failed download is a fail observation", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(fetchUrl("file:///nonexistent/does-not-exist.mjs"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(outcome.turn.text).toMatch(/fetch failed/);
+  });
+
+  it("OP-AP-FETCH-3 a path outside the workspace is a fail observation", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { outcome, state } = exec(fetchUrl("http://127.0.0.1:1/x", "../outside.mjs"), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(outcome.turn.text).toMatch(/escapes workspace/);
+  });
+
+  it("OP-AP-FETCH-3 / REF-FETCH-CONSTRAINT refuses a forbidden explicit target", () => {
+    const constraint: Event = {
+      type: "add_node",
+      node: { id: "c1", space: "work", kind: "constraint", label: "no src", payload: { forbid: ["src/"] }, seq: 1 },
+    };
+    expect(classification(fetchUrl("http://x/y", "src/ref.mjs"), [request(), constraint]).reason).toMatch(
+      /constraint_violation/,
+    );
+  });
+});
+
+describe("apply: apply_patch", () => {
+  const diff = [
+    "--- a/src/sum.mjs",
+    "+++ b/src/sum.mjs",
+    "@@ -1,3 +1,3 @@",
+    " export function sum(a, b) {",
+    "-  return a - b;",
+    "+  return a + b;",
+    " }",
+    "",
+  ].join("\n");
+
+  it("OP-AP-PATCH-1 applies a unified diff and records the changed file", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const before = ws.read("src/sum.mjs");
+    const { events, state, outcome } = exec(patch(diff), [request()], ws);
+    expect(events.some((e) => e.type === "mutate")).toBe(true);
+    expect(outcome.turn.text).toMatch(/applied patch/);
+    expect(ws.read("src/sum.mjs")).toContain("a + b");
+    expect(ws.read("src/sum.mjs")).not.toBe(before);
+    expect(state.nodes.has("file:src/sum.mjs")).toBe(true);
+  });
+
+  it("OP-AP-PATCH-2 a patch that does not apply is a fail observation", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const bad = ["--- a/src/sum.mjs", "+++ b/src/sum.mjs", "@@ -1 +1 @@", "-NOT PRESENT", "+x", ""].join("\n");
+    const { outcome, state } = exec(patch(bad), [request()], ws);
+    const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect(ws.read("src/sum.mjs")).toContain("a - b");
+  });
+
+  it("OP-AP-PATCH-2 / REF-PATCH-CONSTRAINT refuses a patch touching a forbidden path", () => {
+    const constraint: Event = {
+      type: "add_node",
+      node: { id: "c1", space: "work", kind: "constraint", label: "no src", payload: { forbid: ["src/"] }, seq: 1 },
+    };
+    expect(classification(patch(diff), [request(), constraint]).reason).toMatch(/constraint_violation/);
   });
 });
 

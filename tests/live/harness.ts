@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -57,15 +57,6 @@ const REPO_ROOT = join(import.meta.dirname, "..", "..");
 const FIXTURES = join(REPO_ROOT, "fixtures", "scenarios");
 const RUNS = join(REPO_ROOT, "bench", "runs");
 
-const roots: string[] = [];
-
-export function cleanupRuns(): void {
-  while (roots.length > 0) {
-    const root = roots.pop();
-    if (root) rmSync(root, { recursive: true, force: true });
-  }
-}
-
 function snapshotDir(root: string): Map<string, string> {
   const snapshot = new Map<string, string>();
   for (const path of fsWorkspace(root).list()) {
@@ -93,7 +84,10 @@ function dumpRun(
   check: CheckOutcome,
 ): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = join(RUNS, `live-${ts}-${name}`);
+  // A unique suffix keeps parallel runs (and repeats) from colliding on the same
+  // millisecond and overwriting each other's trace.
+  const uniq = Math.random().toString(36).slice(2, 8);
+  const dir = join(RUNS, `live-${ts}-${name}-${uniq}`);
   mkdirSync(dir, { recursive: true });
   // The run's verdict: without it a trace only shows the trajectory, not whether the task
   // was actually solved (docs/testing_ru.md §3).
@@ -159,7 +153,6 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
 
   const root = mkdtempSync(join(tmpdir(), `skein-scn-${name}-`));
   cpSync(join(fixture, "repo"), root, { recursive: true });
-  roots.push(root);
   const before = snapshotDir(root);
 
   const model = createChatModel(settings);
@@ -215,6 +208,8 @@ export type Branch =
   | "edit"
   | "write"
   | "run"
+  | "fetch"
+  | "apply_patch"
   | "revise"
   | "complete"
   | "create_goal";

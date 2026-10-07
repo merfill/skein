@@ -63,6 +63,8 @@ SKEIN_LIVE=true npx vitest run tests/gate.test.ts
 где критерий включает реальную команду (в README / `package.json` / `Makefile` /
 дословно), а решающий должен выполнить последовательность действий
 (`read`→`edit`→`run`, создание конфига через `run … >`, две независимые правки).
+Ещё две — **стратегические**: `reference-diff` (эталонная копия в воркспейсе →
+ожидается `diff`, блок B9) и `no-vcs` (нет `.git` → без повторов git, блок B8).
 Фикстура — `fixtures/scenarios/<name>/{repo, request.txt, check.sh?,
 constraints.json?}`; `check.sh` опционален (по умолчанию `node --test`).
 
@@ -72,11 +74,18 @@ SKEIN_SCENARIOS=two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tes
 SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 ```
 
+Сценарии независимы (у каждого свой temp-воркспейс и след) и идут **параллельно**:
+`it.concurrent` + `test.maxConcurrency: 5` (`vitest.config.ts`), что совпадает с
+`n_concurrent_trials: 5` в Harbor. Каждый тест чистит свой temp-корень, поэтому общего
+`afterEach`-cleanup нет (он гонялся бы за ещё бегущие сценарии). Весь набор — ~3 минуты.
+
 Жёсткие проверки (падение теста): решён ли `check`, закрыт ли запрос
 (`stopReason=request_addressed`, если у сценария `expect.addressed`), целостность
 инвариантов (`tests/invariants.ts`), неизменность `test/` (и явных путей), число
 **различимых** повторно запрошенных результатов (`maxRepeats`; одна и та же цель,
-сколько бы раз ни отказали, — один), отсутствие правок там, где запрещено.
+сколько бы раз ни отказали, — один), отсутствие правок там, где запрещено, форма
+`run`-команд (`expect.commands`: regexp + `min`/`max` — например, `diff` обязателен
+для `reference-diff`, git ограничен для `no-vcs`).
 **Устойчивость:** `SKEIN_SCENARIO_REPEATS=N` (по умолчанию 1) гоняет каждый сценарий
 N раз и собирает все провалы, так что флаки промпта виден как pass-rate, а не как
 одна выборка; таймаут теста масштабируется на N. Мягкий отчёт по покрытию

@@ -89,6 +89,18 @@ function planOk(plan: PlanItem[] | undefined): boolean {
   return plan === undefined || plan.length > 0;
 }
 
+// The workspace-relative paths a unified diff would touch, from its `---`/`+++` headers.
+// Used to enforce constraints on an `apply_patch` before it runs.
+function patchTargets(patch: string): string[] {
+  const out = new Set<string>();
+  for (const line of patch.split("\n")) {
+    const match = line.match(/^(?:\+\+\+|---) (?:[ab]\/)?(.+)$/);
+    const path = match?.[1]?.trim();
+    if (path !== undefined && path !== "" && path !== "/dev/null") out.add(path);
+  }
+  return [...out];
+}
+
 function isFailed(state: State, id: string): boolean {
   const predicate = predicateOf(state, id);
   return predicate === "refuted" || predicate === "abandoned";
@@ -394,6 +406,30 @@ export function classify(
     const readVersion = latestReadVersion(state, ref);
     if (readVersion !== undefined && currentVersion(state, ref) !== readVersion) {
       return reject("stale_base");
+    }
+    return accept;
+  }
+
+  if (apply.tool === "fetch") {
+    // The default target is engine-owned (`.skein/ref/…`); only an explicit path can be
+    // forbidden, so it is the only one checked.
+    if (apply.path !== undefined) {
+      for (const { id, pattern } of forbiddenConstraints(state)) {
+        if (matchesPath(pattern, apply.path)) {
+          return reject(`constraint_violation:${pattern}`, id);
+        }
+      }
+    }
+    return accept;
+  }
+
+  if (apply.tool === "apply_patch") {
+    for (const target of patchTargets(apply.patch)) {
+      for (const { id, pattern } of forbiddenConstraints(state)) {
+        if (matchesPath(pattern, target)) {
+          return reject(`constraint_violation:${pattern}`, id);
+        }
+      }
     }
     return accept;
   }

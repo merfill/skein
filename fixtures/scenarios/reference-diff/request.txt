@@ -1,0 +1,2 @@
+I edited src/sliding.mjs while refactoring and broke it. The original, unmodified copy
+is kept at reference/src/sliding.mjs. Make `node --test` pass; do not edit any test file.

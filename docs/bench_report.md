@@ -244,6 +244,70 @@ The concrete defects:
 7. **The stable-prefix cache stays the biggest structural gap:** 60% vs 96%
    (`implementation_plan.md`, backlog).
 
+### 4.5 Controlled experiment: the reference strategy (Phase 5)
+
+Tests whether **B9** (obtain a canonical reference and diff) changes behavior and cost.
+The design is an A/B on one synthetic task: `fixtures/synthetic/ref-localize-{on,off}`.
+The repository is identical (a broken `src/ledger.mjs`, 540 lines, a one-token defect in
+`applyTax`); only the presence of `reference/src/ledger.mjs` (the pristine copy) differs.
+The prompt is **identical** and points at a reference if one exists.
+
+Run: `SKEIN_CASES=fixtures/synthetic npx tsx bench/run.ts ref-localize-<on|off>`, Flash,
+`reasoningEffort=low`, `maxTurns=24`, three runs per condition (2026-10-07).
+
+| condition | run | reward | steps | tok in | tok out | cache | `diff` | `read` | rereads |
+|---|---|---|---|---|---|---|---|---|---|
+| on (reference present) | 1 | 1 | 12 | 106,796 | 3,492 | 85% | 1 | 1 | 0 |
+| on | 2 | 1 | 11 | 94,899 | 2,202 | 87% | 1 | 1 | 0 |
+| on | 3 | 1 | 11 | 95,228 | 2,394 | 87% | 1 | 1 | 0 |
+| off (no reference) | 1 | 1 | 14 | 151,186 | 4,631 | 69% | 0 | 3 | 1 |
+| off | 2 | 1 | 11 | 114,995 | 2,067 | 72% | 0 | 3 | 1 |
+| off | 3 | 1 | 11 | 120,107 | 2,320 | 69% | 0 | 2 | 1 |
+| **on, mean** | | 1.0 | **11.3** | **98,974** | **2,696** | **86%** | 3/3 | 1 | 0 |
+| **off, mean** | | 1.0 | 12.0 | 128,763 | 3,006 | 70% | 0/3 | 2–3 | 1 |
+
+opencode on the same cases (local `opencode run --variant low --auto --pure`,
+`--format json`, three runs each; `prompt tok` = `input + cache.read`):
+
+| condition | reward | steps | tools | prompt tok | out tok | cache | `diff` |
+|---|---|---|---|---|---|---|---|
+| on, mean | 1.0 | 5.7 | 6.7 | 57,417 | 477 | 83% | 3/3 |
+| off, mean | 1.0 | 6.7 | 7.3 | 93,312 | 677 | 84% | 1/3 |
+
+**Reading.**
+
+- **The strategy is adopted when the reference exists and is pointed at** (B9 plus the
+  Phase-4 tools): in all three `on` runs the agent does `list .` and
+  `diff -u reference/src/ledger.mjs src/ledger.mjs`, then **one** `read` and the edit;
+  `off` localizes manually (`read` ×2–3, `rereads=1`) and `diff` never appears.
+- **Accuracy does not change** (both groups 3/3, reward=1): the task is solvable by hand
+  too. The strategy's value is in **cost, not reward**: 23% fewer input tokens (99k vs
+  129k), 10% fewer output tokens, slightly fewer steps (11.3 vs 12.0).
+- **The main effect is cache:** `on` 86% vs `off` 70%. Manual localization re-reads the
+  file, so the context changes more between turns → fewer prefix-cache hits. Local cost
+  estimate: ~0.57₽ vs ~1.53₽ per run.
+- **B9 must be activated by the prompt.** The first `on` run with a *neutral* prompt
+  ignored the reference (solved by hand, 15 steps): block B9 alone did not make the agent
+  `list` the tree. The strategy fires only when the request points at a reference.
+- **No win against opencode.** On this example both agents solve the task (reward=1) and
+  both take the reference+`diff` in `on`; the reference effect is similar (off→on: Skein
+  −23%, opencode −38% prompt tokens). But **opencode is cheaper in total**: ~5.7 steps vs
+  11.3 and 57k vs 99k prompt tokens in `on` (28–42% fewer). Skein's per-call context is
+  even slightly smaller (~8.8k vs ~10.1k), but it makes ~2× the calls — the IR accounting
+  (`create_goal`/`complete`/`check`), exactly the gap from §4.4. On this easy synthetic
+  task the architectures do not separate, and the overhead remains.
+
+**Caveats.** n=3, one synthetic task, a one-token defect — the step effect is small; the
+cost comparison is noisy (cache and local pricing). opencode ran via the local CLI, not
+Harbor, so steps/tools are only loosely comparable; Skein's `out` includes reasoning while
+opencode's does not, so the comparable axis is **prompt tokens**. The reference is
+**local**, not networked: this is the controlled projection of "reference obtainable vs
+not", whereas the original confound in §4.4 is precisely the network. A true network off/on
+is available via Harbor's `network_mode` (`no-network`/`allowlist` with the model host) on
+a dedicated task — the next step if the network channel itself must be measured.
+
+Artifacts: `bench/runs/*-ref-localize-{on,off}-skein/` (`metrics.json`, `trajectory.json`).
+
 ## 5. Problems (what broke or hurts)
 
 These are from the early baseline runs (`2026-09-26`, `2026-10-02`); some are fixed

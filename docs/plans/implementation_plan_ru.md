@@ -126,6 +126,10 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - **Сравнение моделей (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` проваливает
   синтетический набор (0/4) и дороже текущего DeepSeek; остаёмся на
   `~deepseek/deepseek-v4-flash-latest`.
+- **Ревизия системного промпта (сделано)** — блоки поведения + документ
+  `docs/system_prompt_ru.md`, устранён дрейф `apply`, политика VCS и внешний референс,
+  инструменты `fetch`/`apply_patch`, guard путей вне воркспейса, контролируемый
+  эксперимент (§4.5 `docs/bench_report_ru.md`). Итог — `docs/plans/system_prompt_revision_plan_ru.md`.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
 live-гейт только при `SKEIN_LIVE=true`.

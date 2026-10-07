@@ -87,6 +87,20 @@ export const applySchema = z.discriminatedUnion("tool", [
     // Poll a background job started earlier (its id came back as `job-N`).
     job: z.string().optional(),
   }),
+  z.object({
+    // Fetch a URL into the workspace as read-only reference evidence, so it can be read
+    // and diffed (docs/system_prompt.md B9).
+    tool: z.literal("fetch"),
+    url: z.string(),
+    path: z.string().optional(),
+  }),
+  z.object({
+    // Apply a unified diff to the workspace (e.g. an upstream change obtained with fetch).
+    tool: z.literal("apply_patch"),
+    patch: z.string(),
+    // `patch -p<strip>` level; default 1 (a/…, b/… prefixes).
+    strip: z.number().int().nonnegative().optional(),
+  }),
 ]);
 
 export type Apply = z.infer<typeof applySchema>;

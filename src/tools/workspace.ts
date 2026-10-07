@@ -8,7 +8,9 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
@@ -84,6 +86,11 @@ export interface Workspace {
   run(command: string): CommandResult;
   startJob(command: string): JobHandle;
   pollJob(id: string): JobResult | undefined;
+  // Download a URL into the workspace (read-only reference evidence). Throws on a path
+  // outside the workspace, a failed download, or an unwritable target.
+  fetchTo(url: string, path: string): { path: string; bytes: number };
+  // Apply a unified diff with `patch -p<strip>`; throws if it does not apply cleanly.
+  applyPatch(patch: string, strip?: number): void;
 }
 
 const SKIP_DIRS = new Set([
@@ -390,6 +397,57 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
     };
   };
 
+  // Download a URL into the workspace as read-only reference evidence. Writes to a
+  // `.part` file first and renames on success, so a failed/partial download never leaves
+  // a half-written reference behind. `curl -f` fails on a non-2xx status.
+  const fetchTo = (url: string, path: string): { path: string; bytes: number } => {
+    const full = abs(path);
+    mkdirSync(dirname(full), { recursive: true });
+    const tmp = `${full}.part`;
+    const timeoutSec = Math.max(1, Math.ceil(runTimeoutMs / 1000));
+    const result = spawnSync(
+      "curl",
+      ["-fsSL", "--max-time", String(timeoutSec), "-o", tmp, url],
+      { encoding: "utf8", timeout: runTimeoutMs, maxBuffer: 64 * 1024 * 1024 },
+    );
+    const cleanup = (): void => {
+      try {
+        unlinkSync(tmp);
+      } catch {
+        // The temp file may not have been created; nothing to clean.
+      }
+    };
+    if (result.status !== 0) {
+      cleanup();
+      const detail = (result.stderr ?? "").trim();
+      const reason =
+        result.error !== undefined
+          ? result.error.message
+          : `curl exit ${result.status}`;
+      throw new Error(`${reason}${detail === "" ? "" : `: ${detail}`}`);
+    }
+    const bytes = statSync(tmp).size;
+    renameSync(tmp, full);
+    return { path, bytes };
+  };
+
+  // Apply a unified diff in the workspace root. `--forward`/`--batch` make it
+  // non-interactive and idempotent-leaning: an already-applied or conflicting hunk is an
+  // error, not a prompt. GNU patch refuses absolute/`..` paths itself.
+  const applyPatch = (patch: string, strip = 1): void => {
+    const result = spawnSync("patch", [`-p${strip}`, "--forward", "--batch"], {
+      cwd: base,
+      input: patch,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (result.error !== undefined) throw new Error(result.error.message);
+    if (result.status !== 0) {
+      const detail = (result.stderr ?? "").trim() || (result.stdout ?? "").trim();
+      throw new Error(`patch exit ${result.status}${detail === "" ? "" : `: ${detail}`}`);
+    }
+  };
+
   return {
     root: base,
     read,
@@ -410,5 +468,7 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
     run,
     startJob,
     pollJob,
+    fetchTo,
+    applyPatch,
   };
 }

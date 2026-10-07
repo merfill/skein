@@ -61,7 +61,9 @@ many files). A separate group is the **"commands × actions" matrix**: `fail-rec
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — tasks whose
 criterion involves a real command (in README / `package.json` / `Makefile` / verbatim)
 and whose solver must perform a sequence of actions (`read`→`edit`→`run`, creating a
-config via `run … >`, two independent edits). A fixture is
+config via `run … >`, two independent edits). Two more are **strategy** scenarios:
+`reference-diff` (a reference copy in the workspace → expect a `diff`, block B9) and
+`no-vcs` (no `.git` → no repeated git, block B8). A fixture is
 `fixtures/scenarios/<name>/{repo, request.txt, check.sh?, constraints.json?}`; `check.sh`
 is optional (default `node --test`).
 
@@ -71,11 +73,19 @@ SKEIN_SCENARIOS=two-outputs,revise-hypothesis SKEIN_LIVE=true npx vitest run tes
 SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts
 ```
 
+Scenarios are independent (each has its own temp workspace and trace) and run **in
+parallel**: `it.concurrent` + `test.maxConcurrency: 5` (`vitest.config.ts`), matching
+Harbor's `n_concurrent_trials: 5`. Each test removes its own temp root, so there is no
+shared `afterEach` cleanup (it would race the still-running scenarios). The whole set is
+~3 minutes.
+
 Hard checks (fail the test): whether `check` passed, whether the request was closed
 (`stopReason=request_addressed` when the scenario sets `expect.addressed`), the
 invariants (`tests/invariants.ts`), that `test/` (and explicit paths) is unchanged, the
 number of **distinct** already-known results re-accessed (`maxRepeats`; one target,
-however many refusals, counts once), and no mutation where forbidden.
+however many refusals, counts once), no mutation where forbidden, and the shape of
+`run` commands (`expect.commands`: a regexp plus `min`/`max` — e.g. `diff` is required
+for `reference-diff`, git is bounded for `no-vcs`).
 **Stability:** `SKEIN_SCENARIO_REPEATS=N` (default 1) runs each scenario N times and
 collects every failure, so a flaky prompt shows as a pass-rate rather than a single
 draw; the test timeout scales with N. A soft branch-coverage report

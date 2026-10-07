@@ -1,11 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../../src/config/settings";
 import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
-import { branchesOf, cleanupRuns, mutationsOf, refutedChecks, repeatsOf, runScenario, type ScenarioRun } from "./harness";
+import { branchesOf, mutationsOf, refutedChecks, repeatsOf, runScenario, type ScenarioRun } from "./harness";
 import { scenarios, type Scenario } from "./scenarios";
 import { workingSetStats } from "../workset";
 
@@ -15,8 +15,6 @@ const filter = (process.env.SKEIN_SCENARIOS ?? "")
   .map((name) => name.trim())
   .filter((name) => name.length > 0);
 const selected = filter.length > 0 ? scenarios.filter((s) => filter.includes(s.name)) : scenarios;
-
-afterEach(cleanupRuns);
 
 function prefixOf(run: ScenarioRun, noMutation: boolean): string[] {
   return noMutation ? [""] : ["test/"];
@@ -61,6 +59,14 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
 
 const repeats = Math.max(1, Number(process.env.SKEIN_SCENARIO_REPEATS ?? "1") || 1);
 
+function runCommandsOf(run: ScenarioRun): string[] {
+  return run.turns.flatMap((turn) =>
+    turn.action.operator === "apply" && turn.action.action.tool === "run"
+      ? [turn.action.action.command ?? ""]
+      : [],
+  );
+}
+
 function assertRun(scenario: Scenario, run: ScenarioRun, repeat: number): void {
   const where = repeats > 1 ? ` (repeat ${repeat + 1}/${repeats})` : "";
   const used = branchesOf(run.turns);
@@ -84,6 +90,18 @@ function assertRun(scenario: Scenario, run: ScenarioRun, repeat: number): void {
       scenario.expect.maxRepeats,
     );
   }
+  if (scenario.expect.commands !== undefined) {
+    const commands = runCommandsOf(run);
+    for (const rule of scenario.expect.commands) {
+      const re = new RegExp(rule.match);
+      const count = commands.filter((command) => re.test(command)).length;
+      const min = rule.min ?? 0;
+      const max = rule.max ?? Number.POSITIVE_INFINITY;
+      const detail = `/${rule.match}/ count=${count} in [${min},${max === Number.POSITIVE_INFINITY ? "*" : max}] (${where})`;
+      expect(count, `${scenario.name} run commands: ${detail}`).toBeGreaterThanOrEqual(min);
+      expect(count, `${scenario.name} run commands: ${detail}`).toBeLessThanOrEqual(max);
+    }
+  }
   if (scenario.expect.noMutation === true) {
     expect(mutationsOf(run.result.events), `${scenario.name}${where}`).toEqual([]);
   }
@@ -94,8 +112,11 @@ function assertRun(scenario: Scenario, run: ScenarioRun, repeat: number): void {
 }
 
 describe.skipIf(!settings.live)("live scenarios", () => {
+  // Scenarios are independent (each has its own temp workspace and run trace), so they
+  // run concurrently; vitest's `maxConcurrency` (5) caps how many hit the provider at
+  // once. Each test removes its own temp workspace, so no shared cleanup races.
   for (const scenario of selected) {
-    it(
+    it.concurrent(
       scenario.name,
       async () => {
         // Stability: run the scenario `repeats` times (SKEIN_SCENARIO_REPEATS, default 1)
@@ -111,6 +132,8 @@ describe.skipIf(!settings.live)("live scenarios", () => {
             assertRun(scenario, run, repeat);
           } catch (error) {
             failures.push(`repeat ${repeat + 1}/${repeats}: ${(error as Error).message.split("\n")[0]}`);
+          } finally {
+            rmSync(run.root, { recursive: true, force: true });
           }
         }
         expect(failures, failures.join("\n")).toEqual([]);

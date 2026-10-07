@@ -24,9 +24,9 @@
 - **Projection** — как результат виден в следующем контексте.
 - **ID** — стабильный идентификатор; тест ссылается на него как на токен `ID` в заголовке.
 
-Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN` инструменты
-`apply`, `OP-CP` complete, `OP-QR` query, `TR` обход/контейнеры, `DER` производные
-предикаты, `REF` отказы (каталог), `PRJ` проекция (ссылки).
+Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH`
+инструменты `apply`, `OP-CP` complete, `OP-QR` query, `TR` обход/контейнеры, `DER`
+производные предикаты, `REF` отказы (каталог), `PRJ` проекция (ссылки).
 
 ---
 
@@ -108,6 +108,7 @@
 | продолжение окна | другой `start/end` | новые action/observation | `OP-AP-READ-2` |
 | нет файла | — | action + fail-observation | `OP-AP-READ-3` |
 | повтор | идентичное окно, мир не менялся | отказ `repeated_action` | `OP-AP-READ-4` |
+| путь вне воркспейса | — | action + fail-observation (записанный отказ, без падения) | `OP-AP-READ-5` |
 
 #### 2.2.2 `grep` (`OP-AP-GREP`)
 
@@ -133,6 +134,7 @@
 | `find` не найден | — | action + fail-observation (файл материализуется, пиннится) | — | — | `OP-AP-EDIT-2` |
 | запрещённый путь | constraint запрещает | — | — | `constraint_violation:<pattern>` | `OP-AP-EDIT-3` |
 | устаревшая база | файл изменён после последнего чтения | — | — | `stale_base` | `OP-AP-EDIT-4` |
+| путь вне воркспейса | — | fail-observation (записанный отказ, без падения) | — | — | `OP-AP-EDIT-5` |
 
 #### 2.2.5 `run` (`OP-AP-RUN`)
 
@@ -162,9 +164,36 @@
 | запрещённый путь | constraint запрещает | — | — | `constraint_violation:<pattern>` | `OP-AP-WRITE-3` |
 | устаревшая база | файл изменён после последнего чтения | — | — | `stale_base` | `OP-AP-WRITE-4` |
 | непрочитанный файл | файл существует, но не читался | — | — | fail-наблюдение (`read it first`) | `OP-AP-WRITE-5` |
+| путь вне воркспейса | — | fail-observation (записанный отказ, без падения) | — | — | `OP-AP-WRITE-6` |
 
 - **Проекция** (`PRJ-AP`): как у `edit` — `executed` узел `action` с ребром `mutates`
   и событием `mutate` с новой версией.
+
+#### 2.2.7 `fetch` (`OP-AP-FETCH`)
+
+Достаёт внешний референс (апстрим/опубликованная версия/соседняя копия) в воркспейс,
+чтобы его можно было прочитать и продиффить (B9, `docs/system_prompt_ru.md`).
+
+| Случай | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| fetch | URL достижим; цели нет; не запрещён | action; файл записан; `mutate` + `mutates`; observation (`url`/`path`/`bytes`) | версия файла; зависимые check устаревают | — | `OP-AP-FETCH-1` |
+| сбой загрузки | не-2xx / таймаут | fail-observation | — | — (fail) | `OP-AP-FETCH-2` |
+| цель существует / путь вне воркспейса | — | fail-observation (`choose another path` / записанный отказ) | — | — | `OP-AP-FETCH-3` |
+| запрещённый явный путь | constraint запрещает | — | — | `constraint_violation:<pattern>` | `REF-FETCH-CONSTRAINT` |
+
+Дефолтная цель — собственность движка (`refPathFor`, `.skein/ref/<hash>-<slug>`), поэтому
+constraint проверяется только для явного `path`.
+
+#### 2.2.8 `apply_patch` (`OP-AP-PATCH`)
+
+Применяет unified diff в корне воркспейса (`patch -p<strip>`, по умолчанию 1), например
+апстрим-правку, полученную через `fetch`.
+
+| Случай | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| применение | патч применяется чисто | action; `mutate` на каждый изменённый файл (`patch -p<strip>`) | версии; зависимые check устаревают | — | `OP-AP-PATCH-1` |
+| не применяется | конфликт/уже применено | fail-observation | — | — (fail) | `OP-AP-PATCH-2` |
+| запрещённая цель | constraint запрещает путь из `---`/`+++` | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
 ### 2.3 `complete` (`OP-CP`)
 
@@ -285,12 +314,14 @@
 | Spec ID | Офлайн-тест | Live |
 |---|---|---|
 | `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; сценарий `multi-step-plan` |
-| `OP-AP-READ-1..4` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
+| `OP-AP-READ-1..5` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
-| `OP-AP-EDIT-1..4` | `tests/ops/apply.test.ts` | сценарии `stale-base`, `two-step-fix` |
-| `OP-AP-WRITE-1..5` | `tests/ops/apply.test.ts` | сценарий `command-from-package` |
+| `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | сценарии `stale-base`, `two-step-fix` |
+| `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | сценарий `command-from-package` |
 | `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
+| `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
+| `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; сценарий `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | сценарии `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |

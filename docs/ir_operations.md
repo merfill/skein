@@ -24,8 +24,8 @@ Every operator is specified as:
 - **Projection** — how the result is seen in the next context (§ projection).
 - **ID** — a stable identifier; a test cites it as the `ID` token in its title.
 
-ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN` apply sub-tools,
-`OP-CP` complete, `OP-QR` query, `TR` traversal/containers, `DER` derived
+ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH` apply
+sub-tools, `OP-CP` complete, `OP-QR` query, `TR` traversal/containers, `DER` derived
 predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced).
 
 ---
@@ -108,6 +108,7 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 | continue window | a different `start/end` | new action/observation | `OP-AP-READ-2` |
 | missing file | — | action + fail observation | `OP-AP-READ-3` |
 | repeat | identical window, world unchanged | refused `repeated_action` | `OP-AP-READ-4` |
+| path outside the workspace | — | action + fail observation (recorded refusal, no crash) | `OP-AP-READ-5` |
 
 #### 2.2.2 `grep` (`OP-AP-GREP`)
 
@@ -133,6 +134,7 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 | find not present | — | action + fail observation (file materialized, pinned) | — | — | `OP-AP-EDIT-2` |
 | forbidden path | a constraint forbids it | — | — | `constraint_violation:<pattern>` | `OP-AP-EDIT-3` |
 | stale base | file changed after the last read | — | — | `stale_base` | `OP-AP-EDIT-4` |
+| path outside the workspace | — | fail observation (recorded refusal, no crash) | — | — | `OP-AP-EDIT-5` |
 
 #### 2.2.5 `run` (`OP-AP-RUN`)
 
@@ -163,9 +165,36 @@ criterion is run as the oracle, not as exploration.
 | forbidden path | a constraint forbids it | — | — | `constraint_violation:<pattern>` | `OP-AP-WRITE-3` |
 | stale base | file changed after the last read | — | — | `stale_base` | `OP-AP-WRITE-4` |
 | unseen file | file exists but was never read | — | — | fail observation (`read it first`) | `OP-AP-WRITE-5` |
+| path outside the workspace | — | fail observation (recorded refusal, no crash) | — | — | `OP-AP-WRITE-6` |
 
 - **Projection** (`PRJ-AP`): as for `edit` — an `executed` `action` node with a `mutates`
   edge and a `mutate` event carrying the new version.
+
+#### 2.2.7 `fetch` (`OP-AP-FETCH`)
+
+Obtains external reference evidence (an upstream/published/sibling copy) into the
+workspace, so it can be read and diffed (B9, `docs/system_prompt.md`).
+
+| Case | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| fetch | URL reachable; target does not exist; not forbidden | action; write the file; `mutate` + `mutates`; observation (`url`/`path`/`bytes`) | file version set; dependent checks stale | — | `OP-AP-FETCH-1` |
+| download failure | non-2xx / timeout | fail observation | — | — (fail) | `OP-AP-FETCH-2` |
+| target exists / path outside the workspace | — | fail observation (`choose another path` / recorded refusal) | — | — | `OP-AP-FETCH-3` |
+| forbidden explicit path | a constraint forbids it | — | — | `constraint_violation:<pattern>` | `REF-FETCH-CONSTRAINT` |
+
+The default target is engine-owned (`refPathFor`, `.skein/ref/<hash>-<slug>`), so only an
+explicit `path` is constraint-checked.
+
+#### 2.2.8 `apply_patch` (`OP-AP-PATCH`)
+
+Applies a unified diff in the workspace root (`patch -p<strip>`, default 1), e.g. an
+upstream change obtained with `fetch`.
+
+| Case | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| apply | the patch applies cleanly | action; `mutate` per changed file (`patch -p<strip>`) | changed versions; dependent checks stale | — | `OP-AP-PATCH-1` |
+| does not apply | conflicting/already-applied hunk | fail observation | — | — (fail) | `OP-AP-PATCH-2` |
+| forbidden target | a constraint forbids a `---`/`+++` path | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
 ### 2.3 `complete` (`OP-CP`)
 
@@ -287,12 +316,14 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | Spec ID | Offline test | Live |
 |---|---|---|
 | `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
-| `OP-AP-READ-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
+| `OP-AP-READ-1..5` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
-| `OP-AP-EDIT-1..4` | `tests/ops/apply.test.ts` | scenarios `stale-base`, `two-step-fix` |
-| `OP-AP-WRITE-1..5` | `tests/ops/apply.test.ts` | scenario `command-from-package` |
+| `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | scenarios `stale-base`, `two-step-fix` |
+| `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | scenario `command-from-package` |
 | `OP-AP-RUN-1..6` | `tests/ops/apply.test.ts` | steps `apply-next-action`, `check-ready-objective`, `poll-background-job`, `retry-inconclusive` |
+| `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
+| `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-CP-1..3` | `tests/ops/complete.test.ts` | step `complete-subjective`; scenario `no-mutation-answer` |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |

@@ -71,6 +71,11 @@ const runParams = z.object({
   job: z.string().optional(),
 });
 const writeParams = z.object({ path: z.string(), content: z.string() });
+const fetchParams = z.object({ url: z.string(), path: z.string().optional() });
+const patchParams = z.object({
+  patch: z.string(),
+  strip: z.number().int().nonnegative().optional(),
+});
 
 // The descriptions carry the operation, its required fields and the refusals to avoid;
 // the strategy lives in SYSTEM_PROMPT (single source of truth).
@@ -78,56 +83,68 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "create_goal",
     description:
-      "Propose a goal: an interpretation of the request, a stage sub-goal, or a hypothesis. The focus is the request or an open goal. Give plan (2-4 stage sub-goals) for a non-trivial task. Refused if: what is empty; done_when is empty; switching approach without listing EVERY failed option in revises (missing_revision); repeating a refuted hypothesis.",
+      "Propose a goal: an interpretation of the request (when the focus is the request) or a stage sub-goal / hypothesis (when the focus is an open goal). Include plan (2-4 stage sub-goals: {kind:\"goal\",what,why?,done_when,plan?}; use {kind:\"action\",command} only for a command you run right now, verbatim) for a non-trivial task. When you change the approach, revises MUST list ALL refuted/abandoned options of the container by id. Refused if: what is empty; done_when is empty; a failed option is omitted from revises (missing_revision); a refuted hypothesis is repeated (repeat_hypothesis); or the plan of an objective goal is already fully carried out (check that goal instead).",
     schema: createGoalParams,
   },
   {
     name: "complete",
     description:
-      "Close the goal IN FOCUS as satisfied (subjective goals only). Refused if: it is not the focus (settle the focus first); it is the request; or it is objective (settle an objective goal with run {target}).",
+      "Close the goal IN FOCUS as satisfied (achieved_under), with an optional note and under (assumption goal ids). Only the focus (path[last]) can be closed; to close an ancestor, settle the focus first. Refused if: it is not the focus (not_current_goal); it is the request; or it is objective (an objective goal is settled only by its own check — run {target}).",
     schema: completeParams,
   },
   {
     name: "query",
     description:
-      "Re-read an already-known result by id instead of repeating a read/grep/run — its body is stored under the id shown in calls; optional line window (start/end). Refused if the id is already in shown.",
+      "Re-read an already-known result by id instead of repeating a read/grep/run — its body is stored under the id shown in calls; optional line window (start/end). The body enters the working set for a few turns. Refused if the id is already in the working set (redundant).",
     schema: queryParams,
   },
   {
     name: "read",
     description:
-      "Read a window of at most 400 lines of a file (1-based, end inclusive); without start/end, from the top. Refused if the file does not exist, or the same unchanged window is re-read — fetch that id with query instead.",
+      "Read a window of at most 400 lines of a file (1-based, end inclusive); without start/end, from the top. The result reports \"[lines X-Y of Z; continue from Y+1]\" when the file has more. A different window is a new action; the SAME window with an unchanged world is a repeat (refused) — fetch the stored result by id with query instead. Refused if the file does not exist.",
     schema: readParams,
   },
   {
     name: "grep",
     description:
-      "Search file contents; path scopes to a file or directory, include is a path glob. The result is JSON windows — page with from/count, do not change the pattern. Refused if the same scope+pattern is repeated unchanged — fetch the id with query.",
+      "Search file contents. path scopes to a file or directory; include/exclude are path globs (e.g. include \"**/*.c\" or \"runtime/**\", exclude \"**/.depend\"); before/after set context lines around each match (default 5/5). The result is JSON with matches grouped as windows: count matches per window (default 100, max 200), from is the 1-based start; when more matches remain, the summary says how to continue — page with a new grep (a new from), do NOT change the pattern. Choose where to search from the evidence: sources for logic (include by the project's language), output/logs for failures. Re-running an identical search is refused — fetch its stored result by id with query.",
     schema: grepParams,
   },
   {
     name: "list",
     description:
-      "List files (JSON) to see what exists before choosing a grep include; page with from. Refused if the same listing is repeated unchanged — fetch the id with query.",
+      "List files as JSON; path/include scope the listing, from pages it. Use it to see what exists (e.g. which extensions) before choosing include in grep. Refused if the same listing is repeated unchanged — fetch the id with query.",
     schema: listParams,
   },
   {
     name: "edit",
     description:
-      "Exact substring replacement (path, find, replace) in an EXISTING file. Refused if: find is not present; the file changed since its last read (stale_base) — re-read first; a constraint forbids the path; or the file does not exist (create it with write).",
+      "Exact substring replacement (path, find, replace) in an EXISTING file — it does not create files; use write to create or fully rewrite one. Refused if: find is not present; the file changed since its last read (stale_base) — re-read first; a constraint forbids the path; or the file does not exist.",
     schema: editParams,
   },
   {
     name: "run",
     description:
-      "Run a shell command, or check a goal. With target (an objective goal id) OMIT command — the engine runs the goal's own command, and target MUST be the current focus. Without target pass command (exploratory evidence, not a check). background:true starts a long command; poll it with job:<id>. Refused if: target is not the focus or is subjective; an unchanged check is repeated (a timeout may be retried); a check is backgrounded.",
+      "Run a shell command, or check a goal. With target (an objective goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 verifies, non-zero refutes, a timeout is inconclusive and leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. A subjective target is refused (complete it instead). An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). An objective goal whose plan is fully carried out is settled by its own check (run {target}); a stage's check settles only that stage. background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check. under lists assumption goal ids the check relies on.",
     schema: runParams,
   },
   {
     name: "write",
     description:
-      "Create or overwrite a whole file (path, content). A new file is created; overwriting an EXISTING file requires that it was read and is unchanged (stale_base otherwise) — use edit for a small change. Refused if a constraint forbids the path.",
+      "Create a NEW file, or fully overwrite an existing one (path, content). Overwriting requires that the file was read and is unchanged since (stale_base otherwise); prefer edit for a small change. Refused if a constraint forbids the path.",
     schema: writeParams,
+  },
+  {
+    name: "fetch",
+    description:
+      "Fetch a URL into the workspace as read-only reference evidence (default path .skein/ref/<slug>). Use it to obtain an upstream/published/sibling copy, then DIFF it against the working copy — the diff isolates what changed (a fast localization). Refused if: the target path is outside the workspace or already exists; a constraint forbids it; or the download fails (non-2xx/timeout).",
+    schema: fetchParams,
+  },
+  {
+    name: "apply_patch",
+    description:
+      "Apply a unified diff to the workspace, e.g. an upstream change obtained with fetch (patch, optional strip; default patch -p1). Refused if the patch does not apply cleanly. Records the edited files.",
+    schema: patchParams,
   },
 ];
 
@@ -174,6 +191,8 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
     case "edit":
     case "run":
     case "write":
+    case "fetch":
+    case "apply_patch":
       action = { operator: "apply", action: { tool: name, ...a } };
       break;
     default:

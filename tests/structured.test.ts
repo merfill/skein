@@ -192,6 +192,14 @@ describe("tool calling", () => {
       operator: "apply",
       action: { tool: "run", target: "w:goal:1" },
     });
+    expect(toProposal("fetch", { url: "http://x/y" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "fetch", url: "http://x/y" },
+    });
+    expect(toProposal("apply_patch", { patch: "--- a/x\n+++ b/x\n" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "apply_patch", patch: "--- a/x\n+++ b/x\n" },
+    });
     expect(() => toProposal("nope", {}, "t")).toThrow(/unknown tool/);
   });
 
