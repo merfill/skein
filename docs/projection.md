@@ -64,7 +64,8 @@ PathNode = {
   state,
   text?,                    // request
   what?, why?, done_when?,  // goal
-  plan?:         { cursor?, items: Item[] },   // the node's own plan
+  planHint?,                 // goal: the initial plan as a string sketch (I3)
+  plan?:         { cursor?, items: Item[] },   // the node's own plan (action items)
   alternatives?: { chosen?, items: Alt[] }     // the node's own container
 }
 

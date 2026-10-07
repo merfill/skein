@@ -9,7 +9,7 @@ import {
 } from "../ir/graph";
 import { currentGoalId, cursorOf, firstUnfulfilledItem, goalPayload, itemSucceeded } from "../ir/traversal";
 import type { DoneWhen } from "../ir/types";
-import type { PlanItem, Proposal } from "../llm/schemas";
+import type { Proposal } from "../llm/schemas";
 import { commandOf } from "../tools";
 
 export interface Classification {
@@ -83,10 +83,6 @@ function resultId(state: State, actionId: string): string {
     if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: edge.to };
   }
   return best?.id ?? actionId;
-}
-
-function planOk(plan: PlanItem[] | undefined): boolean {
-  return plan === undefined || plan.length > 0;
 }
 
 // The workspace-relative paths a unified diff would touch, from its `---`/`+++` headers.
@@ -235,10 +231,8 @@ export function classify(
   if (action.operator === "create_goal") {
     if (action.what.trim() === "") return reject("empty_what");
     if (!doneWhenOk(action.done_when)) return reject("empty_done_when");
-    if (!planOk(action.plan)) return reject("empty_plan");
-    if (action.plan?.some((item) => item.kind === "goal" && item.what.trim() === "")) {
-      return reject("empty_item");
-    }
+    if (action.plan.trim() === "") return reject("empty_plan");
+    if (action.step.command.trim() === "") return reject("empty_step");
     const current = currentGoalId(state);
     if (current === undefined) return reject("no_current_goal");
     const required = revisionContext(state, current);
@@ -251,7 +245,7 @@ export function classify(
       }
     } else if (revises.length > 0) {
       return reject(
-        `unknown_revision: the current point ${current} is not refuted; revises apply only then (drop revises; to supersede a refuted plan item, add a new item instead)`,
+        `unknown_revision: the focus goal ${current} is open, not refuted — revises does not apply here. To settle it: if it is objective, run its check (run {target: "${current}"}); if it is arbiter, it is settled only by the arbiter's acceptance — wait for it. To add a step, apply an action instead.`,
       );
     }
     if (repeatOfFailed(state, required ?? [], action.what)) {

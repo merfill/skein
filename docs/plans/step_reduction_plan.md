@@ -34,7 +34,12 @@ Boundary: an **objective** goal is settled by the check verdict (logos); an **ar
 goal only by external acceptance; running a command (a side effect) is initiated by
 doxa. Doxa does not close goals (`complete` is removed, A2).
 
-## 3. Part A — logos closure (immediate)
+## 3. Part A — logos closure (retired)
+
+> **Retired** in `docs/plans/plan_stepwise_redesign.md` (step 2.5, decision §3(a)): under
+> strictly step-by-step traversal plan items are actions only, so nested objective chains
+> with a shared criterion do not arise and `closeAncestors` becomes dead. The code was
+> removed together with step 2.
 
 **3.1 Semantics.** A passing objective check verifies the focus goal **and all its plan
 ancestors** whose `done_when.command` matches, when all other items of their plans are
@@ -125,7 +130,14 @@ and structural closure).
 (until the first goal; cap `AUTO_RUN_ACTIONS = 4`), so `create_goal` + the exploratory
 commands are one call.
 
-**Status:** implemented. Live `ref-localize-on`: **steps 5** (was 9), prompt 45.6k (was
+**Status: reverted.** The auto-run violates step-by-step (I4) and **created the funnel**
+on the long tasks (`docs/bench_report.md` §4.4, run `2026-10-07__16-42-30`: all 9 trials
+`llm_error`): the plan was exhausted in the same turn, and for an `arbiter` goal with an
+exhausted plan `applicable` offered only `create_goal` → nested goals. Reverted in
+`docs/plans/plan_stepwise_redesign.md` step 1 (`AUTO_RUN_ACTIONS` and the loop removed).
+The historical metrics below are kept for context.
+
+Historically (with A4): live `ref-localize-on`: **steps 5** (was 9), prompt 45.6k (was
 77.5k), reward 1; `ref-localize-off`: **steps 5** (was 11.7), prompt 52.6k (was 120.7k),
 reward 1. Online tests that assumed step-by-step execution were updated.
 
@@ -134,7 +146,8 @@ reward 1. Online tests that assumed step-by-step execution were updated.
 was refuted at the reproduce step (runs `09:31`, `09:48`: `record_check` fail before the
 fix). Fix: the verdict is produced **only by an explicit check on the goal**
 (`run {target}`); a command match no longer promotes a run to a check
-(`docs/plans/traversal_stack_spec.md` §9). Offline: 240 passed.
+(`docs/plans/traversal_stack_spec.md` §9). Offline: 240 passed. The fix is **kept** after
+the A4 revert — the verdict is always produced by an explicit check on the goal.
 
 ### A5 — auto-running the objective criterion (rejected)
 
@@ -184,7 +197,8 @@ ids; relation to the "stable projection prefix" backlog item
 
 - **Resolved.** Doxa never closes a goal: an objective goal is settled by its check, an
   arbiter goal by external acceptance (A2); `complete` is removed.
-- **Resolved.** Hypothesis + first actions in one call (A4).
+- **Resolved.** A4 (hypothesis + first actions in one call) is **reverted**: it violates
+  step-by-step and created the funnel (`docs/plans/plan_stepwise_redesign.md` §1).
 - **Open.** Auto-running `done_when.command` by the engine once the plan is done (A5):
   running a command is a side effect, so it must be decided whether that is allowed
   without a doxa turn.

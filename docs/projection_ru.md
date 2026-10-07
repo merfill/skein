@@ -62,7 +62,8 @@ PathNode = {
   state,
   text?,                    // request
   what?, why?, done_when?,  // goal
-  plan?:         { cursor?, items: Item[] },   // собственный план узла
+  planHint?,                 // goal: исходный план наброском-строкой (I3)
+  plan?:         { cursor?, items: Item[] },   // собственный план узла (пункты-действия)
   alternatives?: { chosen?, items: Alt[] }     // собственный контейнер узла
 }
 

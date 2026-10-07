@@ -7,38 +7,17 @@ export const doneWhenSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("arbiter"), text: z.string() }),
 ]);
 
-export interface GoalItem {
-  kind: "goal";
-  what: string;
-  why?: string;
-  done_when: DoneWhen;
-  plan?: PlanItem[];
-}
-
-export interface ActionItem {
-  kind: "action";
+// The first concrete step materialized in a goal's plan container (I2): a plan item is
+// always an action, never a sub-goal.
+export interface ActionStep {
   command: string;
   label?: string;
 }
 
-export type PlanItem = GoalItem | ActionItem;
-
-export const planItemSchema: z.ZodType<PlanItem> = z.lazy(() =>
-  z.union([
-    z.object({
-      kind: z.literal("action"),
-      command: z.string(),
-      label: z.string().optional(),
-    }),
-    z.object({
-      kind: z.literal("goal"),
-      what: z.string(),
-      why: z.string().optional(),
-      done_when: doneWhenSchema,
-      plan: z.array(planItemSchema).nonempty().optional(),
-    }),
-  ]),
-);
+export const stepSchema = z.object({
+  command: z.string(),
+  label: z.string().optional(),
+});
 
 export const applySchema = z.discriminatedUnion("tool", [
   z.object({
@@ -111,7 +90,8 @@ export const actionSchema = z.discriminatedUnion("operator", [
     what: z.string(),
     why: z.string().optional(),
     done_when: doneWhenSchema,
-    plan: z.array(planItemSchema).nonempty().optional(),
+    plan: z.string(),
+    step: stepSchema,
     revises: z.array(z.string()).optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),

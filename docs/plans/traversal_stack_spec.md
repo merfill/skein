@@ -133,15 +133,14 @@ is what makes the revision history explicit.
 - The `calls` index is a compressed memory of what was already done (status, short note).
 - Nothing is deleted: eviction from the working set is not a loss from the IR.
 
-## 9. Verification and the A4 relation
+## 9. Verification
 
-- A goal's verdict is produced **only by an explicit check on the goal**, not by a
-  command match.
+- A goal's verdict is produced **only by an explicit check on the goal** (`run { target }`),
+  never by a command match.
 - Running a command that equals `done_when` as a **plan step** (reproduce) is an
   observation, not a verdict.
-- Consequence: the auto-run of leading actions (A4) must not produce a verdict by string
-  match; verification is a separate explicit act. This removes the A4 bug where a goal was
-  refuted at the reproduce step.
+- The engine does **not** auto-run the plan (A4 was retired): each step is executed by the
+  doxa on its own turn, one at a time.
 
 ## 10. Session
 

@@ -44,15 +44,16 @@ IR (`docs/plans/traversal_stack_spec.md`).
 **We do not know a plan 10 steps ahead.** A plan is a **notebook**: a commitment to the
 near step and a list of intentions that grows as we go, not a forecast. Hence:
 
-1. **Decomposition is mandatory.** A non-trivial task is decomposed into
-   **stage sub-goals**, each with a concrete, checkable `done_when`. Horizon 2–4,
-   grown as we work; no long plans.
-2. **An item is a sub-goal (`goal`)**, settled by its own `check` (objective) or by
-   external acceptance (arbiter). An `action` item is only for a command you run
-   **right now, verbatim**. For a bugfix the stages are `reproduce → locate → fix` (an
-   arbiter stage waits for external acceptance, an objective one for its `check`); `fix`
-   IS the hypothesis: `why` + an `objective done_when` = the command that shows the
-   failure, so its own `check` settles it — there is no separate `verify`.
+1. **A plan is a string sketch plus the first step.** A non-trivial task is given a
+   short `plan` — a free-form string, a note to oneself — and a first concrete `step`
+   (an action). Only that first step is materialized in the plan container; later steps
+   are chosen one at a time as we learn — no long plans.
+2. **A plan item is an action** — a command run **right now, verbatim** — executed one
+   per turn; the engine never auto-runs the plan. A goal is **not** a plan item: it
+   enters only as an **alternative** to a step, when the doxa decomposes that step.
+   For a bugfix, `fix` IS the hypothesis: `why` + an `objective done_when` = the command
+   that shows the failure, so its own `check` settles it — there is no separate
+   `verify`.
 3. **A hypothesis is a node, not a thought.** An explanatory guess becomes a goal with
    `why`, and a `check` settles it — not the reasoning text.
 4. **Branching on any item.** An item that did not work gets an **alternative**; the

@@ -130,10 +130,16 @@ describe("working set under a long synthetic horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        // An objective interpretation with no plan: the traversal descends to it.
+        // An objective interpretation; the traversal descends to it.
         return {
           thought: "",
-          action: { operator: "create_goal", what: "A", done_when: { kind: "objective", command: "false" } },
+          action: {
+            operator: "create_goal",
+            what: "A",
+            done_when: { kind: "objective", command: "false" },
+            plan: "A: a sketch",
+            step: { command: "false" },
+          },
         };
       }
       if (n === 2) {
@@ -154,6 +160,8 @@ describe("working set under a long synthetic horizon", () => {
             operator: "create_goal",
             what: "B",
             done_when: { kind: "arbiter", text: "B is accepted externally" },
+            plan: "B: a sketch",
+            step: { command: "true" },
             revises: [goalA!],
           },
         };

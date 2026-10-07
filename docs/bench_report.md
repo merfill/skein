@@ -312,6 +312,60 @@ the network channel goes through Harbor's `network_mode`, a next step.
 
 Artifacts: `bench/runs/2026-10-07T12-1{7,8,9}-*-ref-localize-{on,off}-skein/`.
 
+> **Note (later).** A1 (objective ancestor closure) and A4 (auto-run of leading actions)
+> were subsequently **retired** by the step-by-step redesign (§4.6): a goal is now settled
+> only by its own check, and the engine never auto-runs a plan. The §4.5 numbers are the
+> snapshot taken while they were in force.
+
+### 4.6 Step-by-step redesign and the synthetic suite (Phase 6)
+
+The long-task regression (§4.4) and the `fix-ocaml-gc` funnel (nine `llm_error` trials;
+the trace built six nested `arbiter` goals) were traced to the **plan representation**: a
+plan item could be a `goal`, `create_goal` appended sub-goals to a plan, and A4 auto-ran a
+new plan in the same turn, so an `arbiter` goal with an exhausted plan left only
+`create_goal` on the frontier. The engine was reworked
+(`docs/plans/plan_stepwise_redesign.md`): a goal carries a `plan` **string sketch** and only
+its first `step` materializes as an action (I1–I3); a sub-goal enters **only** as an
+alternative to a step (I4, I6); A4 is removed and A1 retired (a goal is settled only by its
+own check); `create_goal` takes `{plan, step}` and refuses `empty_plan`/`empty_step`. The
+prompt gained a **command rule** (B6): a request that names a verification command must be
+`objective`, never `arbiter`; and the `unknown_revision` / `no current step to decompose`
+messages now name the correct next move.
+
+The whole synthetic suite (`skein-plugin/pilot/synthetic`, 10 cases), Flash,
+`reasoningEffort=low`, one run each (2026-10-07):
+
+| case | reward | steps | checks | tok in | cost |
+|---|---|---|---|---|---|
+| defeasible-rules | 1 | 10 | 2 | 81,950 | 0.81₽ |
+| early-fact | 1 | 8 | 1 | 64,549 | 0.73₽ |
+| hidden-hypotheses | 1 | 14 | 2 | 127,925 | 1.29₽ |
+| linked-decisions | 1 | 15 | 3 | 122,919 | 2.18₽ |
+| log-flood | 1 | 5 | 1 | 51,540 | 0.72₽ |
+| moving-target | 1 | 7 | 1 | 55,429 | 0.37₽ |
+| multi-bug-calc | 1 | 9 | 1 | 76,362 | 0.86₽ |
+| rounding-trap | 1 | 6 | 1 | 47,026 | 0.30₽ |
+| stale-obvious-fix | 1 | 6 | 1 | 46,847 | 0.31₽ |
+| tempting-wrong | 1 | 6 | 1 | 46,761 | 0.28₽ |
+
+- **The recursion is gone.** Before, `multi-bug-calc` built **40 goals / 39 plans / 0
+  checks** and hit `maxTurns` (the model repeated `create_goal` with a goal plan item).
+  Now it is 1 goal, 1 check, solved.
+- **Arbiters are a first-class outcome.** `defeasible-rules` used to strand an `arbiter`
+  interpretation (8 × `unknown_revision` + 8 × `no current step to decompose`, 0 checks,
+  `maxTurns`). An arbiter goal is settled **only** by external acceptance (I5), so the
+  synthetic runner now plays the **program arbiter** (`AgentDeps.arbiter`): while an open
+  arbiter interpretation is in focus it runs the case's `check.sh` and, on success, emits
+  `record_check {actor:"user"}`. The case then closes cleanly (2 checks: the objective
+  stage check plus the arbiter's acceptance). Without the hook the same run can only end at
+  `maxTurns` — pinned by `tests/loop.test.ts` ("an arbiter goal is settled only by the
+  external arbiter (I5)").
+
+**Caveat.** n=1 per case; one `linked-decisions` run exceeded the 420 s harness timeout and
+was rerun clean (15 steps). Per-run cost/steps are noisy; the **reward** is the signal.
+
+Artifacts: `bench/runs/2026-10-07T18-*` and later `*-skein/`.
+
 ## 5. Problems (what broke or hurts)
 
 These are from the early baseline runs (`2026-09-26`, `2026-10-02`); some are fixed

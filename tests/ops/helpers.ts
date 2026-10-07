@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { Event } from "../../src/ir/events";
 import { fold, type State } from "../../src/ir/graph";
-import type { Action, PlanItem } from "../../src/llm/schemas";
+import type { Action, ActionStep } from "../../src/llm/schemas";
 import { classify, type Classification } from "../../src/loop/classify";
 import { executeAction, type ExecOutcome } from "../../src/tools";
 import { fsWorkspace, type Workspace, type WorkspaceOptions } from "../../src/tools/workspace";
@@ -51,8 +51,11 @@ export function classification(
   return classify({ thought: "", action }, fold(events), held, queried);
 }
 
-// Shorthand constructors.
-export function interpretation(what: string, command?: string, plan?: PlanItem[]): Action {
+// Shorthand constructors. `step` is the first concrete plan item; without it, the step
+// defaults to the criterion command (or `true`), so a goal always carries a plan (I1).
+export function interpretation(what: string, command?: string, step?: ActionStep | string): Action {
+  const resolvedStep: ActionStep =
+    typeof step === "string" ? { command: step } : (step ?? { command: command ?? "true" });
   return {
     operator: "create_goal",
     what,
@@ -60,7 +63,8 @@ export function interpretation(what: string, command?: string, plan?: PlanItem[]
       command === undefined
         ? { kind: "arbiter", text: `${what} is done` }
         : { kind: "objective", command },
-    ...(plan !== undefined ? { plan } : {}),
+    plan: `${what}: a sketch`,
+    step: resolvedStep,
   };
 }
 

@@ -6,14 +6,13 @@ import {
   alternativesOf,
   childrenOf,
   currentVersion,
-  fold,
   planOf,
   predicateOf,
   type State,
 } from "../ir/graph";
 import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
-import type { EdgeKind, GoalPayload, Node, Provenance, Verdict, WitnessEntry } from "../ir/types";
-import type { Action, Apply, GoalItem, PlanItem } from "../llm/schemas";
+import type { DoneWhen, EdgeKind, GoalPayload, Node, Provenance, Verdict, WitnessEntry } from "../ir/types";
+import type { Action, ActionStep, Apply } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, Workspace } from "./workspace";
 
@@ -38,11 +37,6 @@ const LIST_LIMIT_DEFAULT = 200;
 // A result body is kept in the node when small, otherwise in a temp file referenced by
 // the node (docs/context_design_ru.md §8).
 const MAX_INLINE_RESULT = 2000;
-
-// How many leading action items of a freshly created plan are run in the same turn
-// (A4, docs/plans/step_reduction_plan.md): the engine executes the doxa's committed
-// commands in order until the next item is a goal (a check/decision) or the cap is hit.
-const AUTO_RUN_ACTIONS = 4;
 
 function clip(text: string, limit = OUTPUT_LIMIT): string {
   if (text.length <= limit) return text;
@@ -569,7 +563,13 @@ export function executeAction(
     return ensureAlternatives(goalId);
   };
 
-  const buildGoal = (item: GoalItem): string => {
+  const buildGoal = (spec: {
+    what: string;
+    why?: string;
+    done_when: DoneWhen;
+    plan?: string;
+    step?: ActionStep;
+  }): string => {
     const goalSeq = next();
     const id = `w:goal:${goalSeq}`;
     events.push({
@@ -578,26 +578,29 @@ export function executeAction(
         id,
         space: "work",
         kind: "goal",
-        label: item.what,
-        payload: { what: item.what, why: item.why, done_when: item.done_when },
+        label: spec.what,
+        payload: {
+          what: spec.what,
+          why: spec.why,
+          done_when: spec.done_when,
+          ...(spec.plan !== undefined ? { plan: spec.plan } : {}),
+        },
         seq: goalSeq,
       },
     });
-    if (item.plan !== undefined && item.plan.length > 0) {
+    if (spec.step !== undefined) {
       const planId = ensurePlan(id);
-      for (const child of item.plan) {
-        const childId = child.kind === "goal" ? buildGoal(child) : buildActionItem(child.command, child.label);
-        events.push({
-          type: "add_edge",
-          edge: {
-            id: `e:${next()}`,
-            from: planId,
-            to: childId,
-            kind: "item",
-            provenance: { kind: "llm" },
-          },
-        });
-      }
+      const stepId = buildActionItem(spec.step.command, spec.step.label);
+      events.push({
+        type: "add_edge",
+        edge: {
+          id: `e:${next()}`,
+          from: planId,
+          to: stepId,
+          kind: "item",
+          provenance: { kind: "llm" },
+        },
+      });
     }
     return id;
   };
@@ -677,50 +680,48 @@ export function executeAction(
       const current = currentGoalId(state);
       if (current === undefined) return fail("create goal failed: no current goal");
       const currentNode = state.nodes.get(current);
+      const atRequest = currentNode?.kind === "request";
+      const refuted = predicateOf(state, current) === "refuted";
+      // Decomposing an open goal (I6): the sub-goal replaces the current step as its
+      // chosen alternative, so there must be a concrete step to decompose.
+      let step: string | undefined;
+      if (!atRequest && !refuted) {
+        step = firstUnfulfilledItem(state, current);
+        const stepNode = step !== undefined ? state.nodes.get(step) : undefined;
+        if (step === undefined || stepNode?.kind !== "action") {
+          const doneWhen = (currentNode?.payload as { done_when?: { kind?: string } } | undefined)
+            ?.done_when;
+          const hint =
+            doneWhen?.kind === "arbiter"
+              ? `${current} is an arbiter goal: it is settled only by the arbiter's acceptance — it cannot be checked or grown`
+              : `if ${current} is objective and its plan is done, check it (run {target: "${current}"}); to add a step, apply an action`;
+          return fail(
+            `create goal failed: no current step to decompose — a sub-goal can only replace an existing step, and ${hint}`,
+          );
+        }
+      }
       const id = buildGoal({
-        kind: "goal",
         what: action.what,
         ...(action.why !== undefined ? { why: action.why } : {}),
         done_when: action.done_when,
-        ...(action.plan !== undefined ? { plan: action.plan } : {}),
+        plan: action.plan,
+        step: action.step,
       });
-      if (currentNode?.kind === "request") {
+      if (atRequest) {
         const alt = ensureAlternatives(current);
         addEdge({ kind: "llm" }, alt, id, "item");
         addEdge({ kind: "llm" }, alt, id, "chosen");
-      } else if (predicateOf(state, current) === "refuted") {
+      } else if (refuted) {
         const container = variantContainer(current);
         addEdge({ kind: "llm" }, container, id, "item");
         addEdge({ kind: "llm" }, container, id, "chosen");
       } else {
-        const plan = ensurePlan(current);
-        addEdge({ kind: "llm" }, plan, id, "item");
+        const alt = ensureAlternatives(step as string);
+        addEdge({ kind: "llm" }, alt, id, "item");
+        addEdge({ kind: "llm" }, alt, id, "chosen");
       }
       events.push(...descendTo(state, current, id));
-      // A4: run the leading action items of the new plan in this same turn, in order,
-      // until the next item is a goal or the cap is hit. A non-zero exit is a normal
-      // observation, not a stop — the ordinary protocol handles failures next turn.
-      let runState = fold(events, state);
-      let lastTurn = proposalTurn(`created goal: ${action.what}`);
-      for (let guard = 0; guard < AUTO_RUN_ACTIONS; guard += 1) {
-        const first = firstUnfulfilledItem(runState, id);
-        if (first === undefined) break;
-        const itemNode = runState.nodes.get(first);
-        if (itemNode?.kind !== "action") break;
-        const itemCommand = (itemNode.payload as { command?: unknown } | undefined)?.command;
-        if (typeof itemCommand !== "string" || itemCommand.trim() === "") break;
-        const sub = executeAction(
-          { operator: "apply", action: { tool: "run", command: itemCommand } },
-          runState,
-          workspace,
-          turn,
-        );
-        events.push(...sub.events);
-        runState = fold(sub.events, runState);
-        lastTurn = sub.turn;
-        if (sub.done) break;
-      }
-      return { events, turn: lastTurn, done: false, stopReason: null };
+      return { events, turn: proposalTurn(`created goal: ${action.what}`), done: false, stopReason: null };
     }
 
     case "apply": {

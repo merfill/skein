@@ -18,10 +18,11 @@ call, and the only signal that the task is over is the model itself emitting a f
 answer. Skein **unwinds that loop along a tree**:
 
 ```
-request → goal (a hypothesis) → plan (ordered stages) → action → observation / check
+request → goal (a hypothesis) → plan (a string sketch + first step) → action → observation / check
 ```
 
-- The plan may be a single item; the tree grows one node per turn.
+- Only the goal's first step is materialized as a plan item; the plan itself is a string
+  sketch, and steps are chosen one at a time. The tree grows one node per turn.
 - With no alternatives, the tree is a flat, typed, addressable list — exactly the
   ReAct limit, no worse.
 - The tree buys what a tape cannot: an explicit **termination criterion** (an
@@ -90,9 +91,10 @@ a goal is `open`/`achieved`/`achieved_under`/`refuted`/`abandoned`; a request is
 `record_rejection`, `record_check`. There is no `set_status`: a state change is a new
 node-event, not an edit.
 
-**Operators.** `create_goal { what, why?, done_when, plan?, revises? }` interprets the
-request or adds a subgoal; `apply { action }` runs/reads/edits the world. A `run` with
-an explicit `target` (an objective goal) is a **check**; a bare `run` is an
+**Operators.** `create_goal { what, why?, done_when, plan, step, revises? }` interprets
+the request, or decomposes the current step into a sub-goal (an alternative); `plan` is a
+string sketch and `step` the first action. `apply { action }` runs/reads/edits the world.
+A `run` with an explicit `target` (an objective goal) is a **check**; a bare `run` is an
 observation.
 
 ## The cycle

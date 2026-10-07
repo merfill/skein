@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Event } from "../../src/ir/events";
 import { alternativesOf, childrenOf, fold, latestChosen, planOf, predicateOf } from "../../src/ir/graph";
 import { currentGoalId } from "../../src/ir/traversal";
-import type { PlanItem } from "../../src/llm/schemas";
 import {
   DEFAULT_FILES,
   classification,
@@ -16,11 +15,6 @@ import {
 } from "./helpers";
 
 afterEach(cleanupWorkspaces);
-
-const PLAN: PlanItem[] = [
-  { kind: "goal", what: "locate the cause", done_when: { kind: "arbiter", text: "named" } },
-  { kind: "action", command: "make test" },
-];
 
 describe("create_goal", () => {
   it("OP-CG-1 at the request makes an interpretation: alternatives + chosen + descend", () => {
@@ -36,18 +30,20 @@ describe("create_goal", () => {
     expect(events.some((e) => e.type === "descend" && e.node === goal)).toBe(true);
   });
 
-  it("OP-CG-2 at an open goal adds a stage item under a plan", () => {
+  it("OP-CG-2 at an open goal decomposes the current step: the sub-goal becomes its chosen alternative", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("do it"), [request()], ws);
+    const opened = exec(interpretation("do it", "make test", { command: "make test" }), [request()], ws);
     const goal = currentGoalId(opened.state)!;
+    const step = childrenOf(opened.state, planOf(opened.state, goal)!)[0]!;
 
     const staged = exec(interpretation("locate the cause"), opened.events, ws);
-    const plan = planOf(staged.state, goal);
-    expect(plan).toBeDefined();
-    const items = childrenOf(staged.state, plan!);
+    const alt = alternativesOf(staged.state, step);
+    expect(alt).toBeDefined();
+    const items = childrenOf(staged.state, alt!);
     expect(items).toHaveLength(1);
-    expect(predicateOf(staged.state, items[0]!)).toBe("open");
-    expect(currentGoalId(staged.state)).toBe(items[0]);
+    const sub = items[0]!;
+    expect(latestChosen(staged.state, alt!)).toBe(sub);
+    expect(currentGoalId(staged.state)).toBe(sub);
   });
 
   it("OP-CG-3 revises a refuted option: the new goal becomes the chosen sibling", () => {
@@ -61,7 +57,14 @@ describe("create_goal", () => {
     expect(predicateOf(fold(refuted), first)).toBe("refuted");
 
     const revised = exec(
-      { operator: "create_goal", what: "second try", done_when: { kind: "arbiter", text: "done" }, revises: [first] },
+      {
+        operator: "create_goal",
+        what: "second try",
+        done_when: { kind: "arbiter", text: "done" },
+        plan: "second try: a sketch",
+        step: { command: "true" },
+        revises: [first],
+      },
       refuted,
       ws,
     );
@@ -72,34 +75,25 @@ describe("create_goal", () => {
     expect(predicateOf(revised.state, siblings[1]!)).toBe("open");
   });
 
-  it("OP-CG-4 builds a plan whose item kinds and order are preserved", () => {
+  it("OP-CG-4 materializes exactly one plan item: the first step (an action)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { state } = exec(interpretation("do it", "make test", PLAN), [request()], ws);
+    const { state } = exec(interpretation("do it", "make test", { command: "make test" }), [request()], ws);
     const goal = currentGoalId(state)!;
     const items = childrenOf(state, planOf(state, goal)!);
-    expect(items).toHaveLength(2);
-    expect(state.nodes.get(items[0]!)?.kind).toBe("goal");
-    expect(state.nodes.get(items[1]!)?.kind).toBe("action");
-  });
-
-  it("OP-CG-5 nests a plan inside an item goal", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const nested: PlanItem[] = [
-      { kind: "goal", what: "child", done_when: { kind: "arbiter", text: "x" }, plan: [PLAN[1]!] },
-    ];
-    const { state } = exec(interpretation("do it", "make test", nested), [request()], ws);
-    const goal = currentGoalId(state)!;
-    const child = childrenOf(state, planOf(state, goal)!)[0]!;
-    expect(planOf(state, child)).toBeDefined();
-    expect(childrenOf(state, planOf(state, child)!)).toHaveLength(1);
+    expect(items).toHaveLength(1);
+    const step = state.nodes.get(items[0]!);
+    expect(step?.kind).toBe("action");
+    expect((step?.payload as { command?: string } | undefined)?.command).toBe("make test");
+    // The initial sketch is kept on the goal payload (I3) and surfaces as `planHint`.
+    expect((state.nodes.get(goal)?.payload as { plan?: string } | undefined)?.plan).toBe("do it: a sketch");
   });
 
   it("REF-CG-EMPTY rejects malformed fields", () => {
     const seeded = [request()];
-    expect(classification({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" } }, seeded).reason).toBe("empty_what");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "" } }, seeded).reason).toBe("empty_done_when");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: [] }, seeded).reason).toBe("empty_plan");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: [{ kind: "goal", what: "", done_when: { kind: "arbiter", text: "y" } }] }, seeded).reason).toBe("empty_item");
+    expect(classification({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_what");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "" }, plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_done_when");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: "", step: { command: "true" } }, seeded).reason).toBe("empty_plan");
+    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "" } }, seeded).reason).toBe("empty_step");
   });
 
   it("REF-NO-FOCUS rejects create_goal without a root", () => {
@@ -115,7 +109,13 @@ describe("create_goal", () => {
       { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
     ];
     const reason = classification(
-      { operator: "create_goal", what: "second try", done_when: { kind: "arbiter", text: "done" } },
+      {
+        operator: "create_goal",
+        what: "second try",
+        done_when: { kind: "arbiter", text: "done" },
+        plan: "second try: a sketch",
+        step: { command: "true" },
+      },
       refuted,
     ).reason;
     expect(reason).toMatch(/missing_revision/);
@@ -126,7 +126,14 @@ describe("create_goal", () => {
     const opened = exec(interpretation("do it"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const reason = classification(
-      { operator: "create_goal", what: "another", done_when: { kind: "arbiter", text: "x" }, revises: [goal] },
+      {
+        operator: "create_goal",
+        what: "another",
+        done_when: { kind: "arbiter", text: "x" },
+        plan: "another: a sketch",
+        step: { command: "true" },
+        revises: [goal],
+      },
       opened.events,
     ).reason;
     expect(reason).toMatch(/unknown_revision/);
@@ -141,7 +148,14 @@ describe("create_goal", () => {
       { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
     ];
     const reason = classification(
-      { operator: "create_goal", what: "locate", done_when: { kind: "arbiter", text: "x" }, revises: [first] },
+      {
+        operator: "create_goal",
+        what: "locate",
+        done_when: { kind: "arbiter", text: "x" },
+        plan: "locate: a sketch",
+        step: { command: "true" },
+        revises: [first],
+      },
       refuted,
     ).reason;
     expect(reason).toBe("repeat_hypothesis");
@@ -149,10 +163,9 @@ describe("create_goal", () => {
 
   it("REF-PLAN-DONE refuses growing an objective goal whose plan already carries a fulfilled check", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    // The goal's criterion differs from the plan item's command, so running the item is
+    // The goal's criterion differs from the step's command, so running the step is
     // exploratory (not the implicit check of the goal's own command).
-    const objective: PlanItem[] = [{ kind: "action", command: "make test" }];
-    const opened = exec(interpretation("fix", "make check", objective), [request()], ws);
+    const opened = exec(interpretation("fix", "make check", { command: "make test" }), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const ran = exec(run("make test"), opened.events, ws);
     expect(predicateOf(ran.state, goal)).toBe("open");

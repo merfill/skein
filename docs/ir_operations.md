@@ -37,7 +37,7 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 | Kind | Payload | Role |
 |---|---|---|
 | `request` | `{text}` | the arbiter's raw motivation; the root; never closed in the IR |
-| `goal` | `{what, why?, done_when}` | an interpretation or a stage; objective or arbiter `done_when` |
+| `goal` | `{what, why?, done_when, plan?}` | an interpretation or a stage; objective or arbiter `done_when`; `plan` is the initial string sketch (I3) |
 | `action` | `{command, ...}` | a single tool run; also a plan item of kind `action` |
 | `plan` | — | ordered container of a goal's stage items (`item` edges) |
 | `alternatives` | — | container of interchangeable goals/actions (`item` edges + `chosen`) |
@@ -82,17 +82,18 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| at the request (interpretation) | focus is `request:open` | add `goal`; ensure `alternatives` on the request; `item` + `chosen` to it; `descend` into it | request stays `open`; goal `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_item`, `repeat_hypothesis` | `OP-CG-1` |
-| at an open goal (stage) | focus is `goal:open`, not refuted | add `goal`; ensure `plan`; `item` edge | goal `open` | as above; `all_plan_fulfilled` (must check, not grow) | `OP-CG-2` |
+| at the request (interpretation) | focus is `request:open` | add `goal`; ensure `alternatives` on the request; `item` + `chosen` to it; `descend` into it | request stays `open`; goal `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis` | `OP-CG-1` |
+| decompose an open goal | focus is `goal:open`, not refuted, with a current action step | add `goal`; ensure `alternatives` on the current step; `item` + `chosen`; `descend` | the sub-goal is the step's chosen option; the step is superseded | as above; `all_plan_fulfilled` (must check, not grow) | `OP-CG-2` |
 | revision (`revises`) | focus is `request` with failed options, or a `refuted` goal | add `goal`; `item` + `chosen` into the failed options' container; `descend` | failed options → `abandoned`; new goal `open` | `missing_revision` (not all failed options listed), `unknown_revision` (`revises` at a non-refuted point) | `OP-CG-3` |
-| with a plan | any of the above, `plan` present | recursively add item goals/actions and `item` edges in order | items `open` | `empty_item` (a goal item with empty `what`) | `OP-CG-4` |
-| nested plan | an item goal carries its own `plan` | a nested `plan` container per goal | — | — | `OP-CG-5` |
+| plan + first step | any of the above, `plan` (string) and `step` present | store `plan` on the goal; add exactly one action item (`step`) under a new `plan` container | the step item `open` | `empty_plan` (blank sketch), `empty_step` (blank command) | `OP-CG-4` |
 
 - **Projection** (`PRJ-CG`): the focus `path` gains the goal (`what`/`why`/
   `done_when`/`plan`); at the request, the `alternatives` list shows it `chosen`.
 - **Notes.** `why` is the hypothesis and is surfaced on the item so a refuted
   attempt is not repeated (`PRJ-PATH-why`). A `what` equal (normalized) to a failed
-  option is `repeat_hypothesis`.
+  option is `repeat_hypothesis`. Decomposing an open goal requires a current action
+  step; with none, the engine records a fail observation
+  (`create goal failed: no current step to decompose`).
 
 ### 2.2 `apply` (`OP-AP`)
 
@@ -144,11 +145,7 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 | inconclusive (timeout) | check | `record_check` verdict `inconclusive` | goal stays `open` | a re-check is allowed (not a repeat) | `OP-AP-RUN-4` |
 | background start | `background: true` + `command` | action; job started; turn returns with `job-N` | — | `background_run` (no command), `background_target` (a check) | `OP-AP-RUN-5` |
 | poll (`{job}`) | a job id | action; carries state/exit/tail | — | `job_poll` (extra fields) | `OP-AP-RUN-6` |
-| logos closure on a passing check | check on an objective goal | the same check also `verifies` every plan ancestor whose `done_when.command` matches and whose other items are settled | ancestors `achieved`/`achieved_under`; request may become `addressed` | — | `OP-AP-RUN-7` |
-
-**Note.** A bare `run {command}` whose command equals the focus objective goal's
-`done_when.command` is treated as that goal's **check** (the target is inferred): the
-criterion is run as the oracle, not as exploration.
+| closed by its own check | check on an objective goal | the check `verifies` that goal only — no ancestor closure (A1 retired) | goal `achieved`/`refuted`/`open`; request may become `addressed` | — | `OP-AP-RUN-7` |
 
 - **Projection** (`PRJ-AP`): the result node is `lastResult`; stdout (`output`) and
   stderr (`error`) are separate; a crash adds `signal`/`core`/`backtrace`; a check's
@@ -237,11 +234,6 @@ State is always derived from the incident events, never stored.
 | action `executed` | it has a `produces` or `mutates` edge | `DER-ACT-1` |
 | action `abandoned` | its `alternatives` container chose a sibling | `DER-ACT-2` |
 | check stale | a `witness` entry's ref version differs from the current version | `DER-STALE-1` |
-| ancestor `achieved` by closure | a passing check verifies a goal and a plan ancestor with the same `done_when.command`, all other items settled | `DER-CLOSE-1` |
-| no closure on a different criterion | the ancestor's `done_when.command` differs from the check's | `DER-CLOSE-2` |
-| no closure while a sibling is unsettled | some other plan item is not settled | `DER-CLOSE-3` |
-| closure climbs nested plans | the verified goal's owner has an owner, and so on up | `DER-CLOSE-4` |
-| closure carries assumptions | the check has `under`, so the ancestor is `achieved_under` | `DER-CLOSE-5` |
 
 ---
 
@@ -252,7 +244,7 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 
 | Reason (token) | Trigger | Operator | ID |
 |---|---|---|---|
-| `empty_what` / `empty_done_when` / `empty_plan` / `empty_item` | malformed `create_goal` | `create_goal` | `REF-CG-EMPTY` |
+| `empty_what` / `empty_done_when` / `empty_plan` / `empty_step` | malformed `create_goal` | `create_goal` | `REF-CG-EMPTY` |
 | `no_current_goal` | no focus | create_goal | `REF-NO-FOCUS` |
 | `missing_revision` | `revises` omits a failed option | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` at a non-refuted point | create_goal | `REF-REV-UNKNOWN` |
@@ -305,7 +297,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 
 | Spec ID | Offline test | Live |
 |---|---|---|
-| `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
+| `OP-CG-1..4` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
 | `OP-AP-READ-1..5` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
@@ -316,7 +308,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |
-| `DER-REQ/GOAL/ACT/STALE/CLOSE` | `tests/ops/derivation.test.ts` | — |
+| `DER-REQ/GOAL/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; scenario `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; scenario `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |

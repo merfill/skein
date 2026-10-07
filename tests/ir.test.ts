@@ -45,8 +45,14 @@ function goal(
   seq: number,
   done_when: DoneWhen = subjective(what),
   why?: string,
+  plan?: string,
 ): Event {
-  const payload: GoalPayload = { what, done_when, ...(why !== undefined ? { why } : {}) };
+  const payload: GoalPayload = {
+    what,
+    done_when,
+    ...(why !== undefined ? { why } : {}),
+    ...(plan !== undefined ? { plan } : {}),
+  };
   return { type: "add_node", node: workNode(id, "goal", what, seq, payload) };
 }
 
@@ -244,6 +250,14 @@ describe("projection", () => {
     expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1", "g2"]);
     expect(context.path[0]?.plan?.cursor).toBe(0);
     expect(context.budget).toEqual({ turn: 2, maxTurns: 10, remaining: 8 });
+  });
+
+  it("surfaces the goal's plan hint (the initial string sketch, I3)", () => {
+    const state = fold([
+      goal("g1", "green", 0, objective("node --test"), undefined, "reproduce, then fix"),
+    ]);
+    const context = project(state);
+    expect(context.path[0]?.planHint).toBe("reproduce, then fix");
   });
 
   it("starts at the request and shows its interpretations", () => {

@@ -50,7 +50,7 @@ L2 is under the gate, L3 is acceptance.
 | B4 | Reading the projection: `path`/`constraints`/`lastResult`/`calls`/`shown`/`applicable`/`checkReady`/`nextAction`/`budget` | `src/ir/project.ts` | in code |
 | B5 | Memory and working set: `shown`, `query {id}`, "no knowledge outside the context" | `tools` §4.4–4.5 | in code |
 | B6 | Goal from the request: literal commands verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
-| B7 | Decomposition: stage sub-goals; a bug = reproduce/locate/fix; no separate verify | `ir_semantics` §4.1 | in code |
+| B7 | Decomposition: `plan` string + first `step`; one action per turn; a sub-goal only as an alternative; no separate verify | `ir_semantics` §4.1 | in code |
 | B8 | VCS/history policy: git is fine when present; do not retry a failed git | this doc, §4 | in code (revised) |
 | B9 | External reference / differential localization | this doc, §4 | in code |
 | B10 | Failure → cause: log → location, read symbol/macro definitions | `tools` §5 | in code |
@@ -70,14 +70,16 @@ L2 is under the gate, L3 is acceptance.
 - **B4** describes the `Context` fields the model sees.
 - **B5** fixes: the working set is engine-owned; `query {id}` is the only entry point.
 - **B6** forbids guessing a command; the criterion command is literal, from the workspace
-  root, with a `cd <dir> &&` prefix in a subdirectory.
-- **B7** makes decomposition mandatory: a plan is a sequence of **actions** plus one
-  objective `fix` goal (the hypothesis); steps are actions, not arbiter sub-goals.
-  Doxa never closes a goal (no `complete`): an objective goal is settled only by its own
-  `check`, an arbiter goal only by external acceptance. A passing check with the same
-  criterion closes the interpretation **automatically** (logos closure,
-  `docs/plans/step_reduction_plan.md`), so a separate check for the same command is not
-  needed.
+  root, with a `cd <dir> &&` prefix in a subdirectory. **Command rule:** if the request
+  mentions any command that verifies the work, the interpretation's `done_when` MUST be
+  `objective` with that command — `arbiter` only when no command is named at all.
+- **B7** fixes decomposition: every `create_goal` carries a `plan` (a free-form string
+  sketch) and a `step` — the first concrete action. The engine does NOT auto-run the plan;
+  you work one action per turn and choose the next from its result. A sub-goal is allowed
+  only as an **alternative** to the current step (decompose it), never as a plan item and
+  never mandatory. Doxa never closes a goal (no `complete`): an objective goal is settled
+  only by its own `check`, an arbiter goal only by external acceptance; nothing closes a
+  chain of ancestors.
 - **B8** (revised in Phase 3): git/history is a normal tool when present; this workspace
   may have no `.git`, and a failed history command must not be retried or probed in other
   roots; local history and an external reference are different things.

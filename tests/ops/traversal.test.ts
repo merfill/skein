@@ -85,25 +85,29 @@ describe("traversal and containers", () => {
   });
 
   it("TR-6 tracks item order, the cursor, and fulfilled vs succeeded", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan = [
-      { kind: "goal" as const, what: "A", done_when: SUBJECTIVE },
-      { kind: "action" as const, command: "make test" },
+    const events: Event[] = [
+      request(),
+      goalNode("g", "parent", SUBJECTIVE, 1),
+      { type: "add_node", node: { id: "p", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      goalNode("it", "A", SUBJECTIVE, 3),
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 4 } },
+      { type: "add_edge", edge: { id: "e1", from: "g", to: "p", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e2", from: "p", to: "it", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e3", from: "p", to: "a1", kind: "item", provenance: { kind: "llm" } } },
     ];
-    const opened = exec(interpretation("do it", "make test", plan), [request()], ws);
-    const goal = [...opened.state.nodes.keys()].find((id) => id.startsWith("w:goal:"))!;
-    const items = childrenOf(opened.state, planOf(opened.state, goal)!);
+    const state = fold(events);
+    const items = childrenOf(state, "p");
     expect(items).toHaveLength(2);
-    expect(cursorOf(opened.state, goal)).toBe(0);
+    expect(cursorOf(state, "g")).toBe(0);
 
-    // Close A by external acceptance -> cursor advances to the action item.
+    // Close the goal item by external acceptance -> cursor advances to the action item.
     const closed = fold([
-      ...opened.events,
-      { type: "record_check", id: "chk:9", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [items[0]!] },
+      ...events,
+      { type: "record_check", id: "chk:9", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: ["it"] },
     ]);
-    expect(itemFulfilled(closed, items[0]!)).toBe(true);
-    expect(itemSucceeded(closed, items[0]!)).toBe(true);
-    expect(cursorOf(closed, goal)).toBe(1);
+    expect(itemFulfilled(closed, "it")).toBe(true);
+    expect(itemSucceeded(closed, "it")).toBe(true);
+    expect(cursorOf(closed, "g")).toBe(1);
   });
 
   it("TR-6 a refuted item is fulfilled (resolves the cursor) but not succeeded", () => {
@@ -121,9 +125,9 @@ describe("traversal and containers", () => {
     expect(itemSucceeded(state, "it")).toBe(false);
   });
 
-  // A planned action item is normally executed by the engine the moment the plan is
-  // created (A4). These two tests build the goal + plan directly, with an unexecuted item,
-  // to exercise `ensureAction`'s reuse/branching on its own.
+  // A planned action item is executed on the model's own turn (no auto-run). These two
+  // tests build the goal + plan directly, with an unexecuted item, to exercise
+  // `ensureAction`'s reuse/branching on its own.
   function goalWithActionItem(command: string): Event[] {
     return [
       request(),

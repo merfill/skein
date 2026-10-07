@@ -87,9 +87,9 @@ Key consequences:
 | kind | space | meaning |
 |---|---|---|
 | `request` | work | the Arbiter's request: unstructured motivation (the root) |
-| `goal` | work | a goal: what to achieve (the plan is optional) |
-| `action` | work | a command (a plan item) |
-| `plan` | work | a plan container: ordered items (≥1) |
+| `goal` | work | a goal: what to achieve; carries the plan sketch (`plan`, a string) and a plan container (≥1 item) |
+| `action` | work | a command; always a plan item |
+| `plan` | work | a plan container: ordered **action** items (≥1) |
 | `alternatives` | work | a container of approach options (≥1) |
 | `observation` | work | the result of a command (an observation output) |
 | `check` | work | the arbiter's verdict (payload: `pass`/`fail`/`inconclusive`) |
@@ -125,13 +125,14 @@ acceptance of the request is external (the user's silence or the harness verdict
 does not enter the IR. Inside, only the derived `addressed` is computed (§2.5) — "the
 agent has something to show".
 
-The plan is a **separate node** `plan`, linked to the goal by the `has_plan` edge. A
-goal may lack it: the absence of a plan means "the plan is not specified yet". A
-`plan` node, if present, always carries **at least one item**.
-
-A **plan item** is a `goal` (subgoal) or an `action` (command); the items of a `plan`
-node are ordered by their position in the child list. A subgoal-item may have no plan
-of its own — then it is unspecified too.
+The plan is a **separate node** `plan`, linked to the goal by the `has_plan` edge.
+**Every goal is created with a plan** (I1): the goal payload carries `plan` — the
+initial plan as a free-form **string sketch** (I3) — and the `plan` node carries **at
+least one item**. A **plan item is always an `action`** (I2): a concrete command,
+executable now; the items are ordered by their position in the child list. **A sub-goal
+never enters as a plan item** (I6): it enters only as an **alternative** to an existing
+(action) step, when the doxa decomposes that step — and then replaces it (becomes its
+`chosen` option).
 
 **Alternatives** — a container of options: an `alternatives` node, linked to a
 **request** (interpretations of the request) or to a **goal** (approach options), holds
@@ -145,7 +146,7 @@ the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
 
 | kind | from → to | meaning |
 |---|---|---|
-| `has_plan` | `goal` → `plan` | the goal's plan (optional) |
+| `has_plan` | `goal` → `plan` | the goal's plan (mandatory, ≥1 action item) |
 | `item` | `plan` / `alternatives` → `goal` / `action` | an item/option (order = position) |
 | `has_alternatives` | `request` / `goal` → `alternatives` | a container of interpretations/approach options |
 | `chosen` | `alternatives` → `goal` | the chosen (current) approach option |
@@ -156,7 +157,8 @@ the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
 
 Edges do **not** carry item/option order: it is set by the position in the container's
 (`plan` / `alternatives`) child list. Edges give structure, the list gives traversal
-order. A plan item may be a subgoal without a plan of its own (unspecified).
+order. A plan item is always an `action`; a goal appears as a container item only in
+`alternatives`.
 
 ### 2.4 The current node
 
@@ -209,8 +211,9 @@ plan.
 
 - **advance** — executing an `action` item does not change the stack, the cursor shifts
   by itself;
-- **descend** `descend(G → H)`: if the first unperformed item of `G`'s plan is a
-  subgoal `H`, push `H`, focus → `H`;
+- **descend** `descend(G → H)`: push `H`, focus → `H` — the doxa descends into the
+  chosen interpretation at a request, or into a sub-goal just created as an alternative
+  to a step (I6). Plan items themselves are actions, executed in place (no descent);
 - **return** `return`: pop the top, focus → the parent. It happens when the current goal
   **has closed** (a `check` gave a verdict) or by `W`'s
   decision (change of branch). A return from the root is impossible. A closed goal does
@@ -221,11 +224,11 @@ plan.
 
 - the current node is the request `R` → `create goal` (propose an interpretation; on
   failure — with `revises`, §4.1);
-- there is an unperformed `action` item → `apply` (execute it);
-- the first unperformed item is a subgoal `H` → `descend` into `H`;
+- there is an unperformed `action` item → `apply` (execute it — one step per turn, I4);
 - all items are performed and `G` is not closed: an objective `done_when` → `apply` (a
   check); an arbiter goal is not checked — it waits for external acceptance;
-- the plan is incomplete → `create goal` (add a subgoal) / `apply` (add a command);
+- the current step can be decomposed → `create goal` (a sub-goal as an alternative to the
+  step, I6);
 - the branch is refuted and `alternatives` exist → pick an option;
 - nothing to do and the goal does not close → `return`.
 
@@ -248,16 +251,16 @@ goal is `achieved` (under its assumptions); if all options are refuted, the goal
 | Turn | Stack | Doxa proposal | Logos | Tree |
 |---|---|---|---|---|
 | 0 | `[R]` | — *(the Arbiter)* | — | root `request R` — the instruction text; no goals |
-| 1 | `[R]→[R,I]` | `create goal I` "fix the bootstrap" (plan `[reproduce, localize, G fix]`: reproduce/localize are actions, `G` is the one objective goal) | accepted | `alternatives A0` under `R`; `item A0→I`; `chosen A0→I`; `I`'s plan; focus `I` |
+| 1 | `[R]→[R,I]` | `create goal I` "fix the bootstrap" (`plan`: "reproduce, localize, fix"; `step`: `node --test`) | accepted | `alternatives A0` under `R`; `item A0→I`; `chosen A0→I`; `I`'s plan = [`node --test` action]; focus `I` |
 | 2 | `[R,I]` | `apply` `node --test` (`reproduce`) | executed | `action` + `observation` (a bare `run`, no `target` — an observation, not a verdict); `cursor(I)` shifted |
 | 3 | `[R,I]` | `apply` `read`/`grep` (`localize`) | executed | `action` + `observation` + `file`@`V1`; cursor shifted |
 | 4 | `[R,I]` | `apply` the same `read` (the same `V1`) | **refusal** `record_rejection` | no new node; the repeat counter grows (§2.7) |
-| 5 | `[R,I]→[R,I,G]` | *(the first unperformed item is the goal `G`)* | accepted | `descend` into `G`; `cursor(G)` at its first item |
+| 5 | `[R,I]→[R,I,G]` | `create goal G` "fix the cause" (`why`: the hypothesis) — decompose the current step | accepted | `G` becomes the step's `chosen` alternative; `descend` into `G`; `G`'s plan = its step |
 | 6 | `[R,I,G]` | `apply` `edit` | executed | `action` + `mutate V1→V2` |
 | 7 | `[R,I,G]` | `apply run { target: G }` (the command from `G`'s `done_when.command`) | executed | `check` `verifies→G` |
 | 8 | `[R,I,G]→[R,I]` | *(pass)* | derived | `G` `achieved`; return to `I` |
 | 8b | `[R,I,G]→[R,I,G']` | *(fail)* `create goal G'` (an option, with `revises`) | accepted | `G` `refuted`; `alternatives` under `G`, `G'`; `chosen`; descend |
-| 9 | `[R,I]→[R]` | *(all items done)* | derived | `I` `achieved`; the logos closure (A1); return to `R` |
+| 9 | `[R,I]→[R]` | `apply run { target: I }` (I's own objective check) | executed | `check verifies→I`; `I` `achieved`; return to `R` |
 | 10 | `[R]` | — *(the Arbiter)* | — | the request is `addressed`; stop; acceptance external |
 
 The example also shows a repeat (turn 4): the same `read` with the same input version —
@@ -381,12 +384,13 @@ goal. **The first `request` is created by the Arbiter**: it is given from outsid
 not a doxa proposal.
 
 **Input:** the current node `C` (a request or a goal); the content
-`{ what, why, done_when, plan?, revises? }`; `plan` is an optional list of items;
-`revises` is a list of goals the new proposal supersedes.
+`{ what, why, done_when, plan, step, revises? }`; `plan` is the initial plan as a
+**string sketch** (I3); `step` is the **first concrete step** `{ command, label? }` — an
+action; `revises` is a list of goals the new proposal supersedes.
 
-**Admissibility check:** `what` non-empty; if `plan` is given — it is non-empty (at
-least one item); the current node exists. If `C` is a request, or a goal whose
-`alternatives` contains `refuted`/`abandoned` options, then `revises` **must** list
+**Admissibility check:** `what` non-empty; `done_when` non-empty; `plan` a non-empty
+string; `step.command` non-empty; the current node exists. If `C` is a request, or a goal
+whose `alternatives` contains `refuted`/`abandoned` options, then `revises` **must** list
 **all** such options (otherwise a refusal `missing_revision`/`unknown_revision`); if
 there are none — `revises` is empty. Additionally, a `what` repeating a refuted one is
 refused (`repeat_hypothesis`). And finally: if the current goal is **objective** and its
@@ -394,26 +398,31 @@ plan is already **fully and successfully carried out** (every item `achieved`/
 `achieved_under`, or an executed action), the plan must not be grown
 — the goal itself must be checked (`apply run {target: C}`), otherwise a refusal "all
 plan items are fulfilled; check this goal". A `refuted`/`abandoned` item resolves the
-cursor but is **not** a success, so it does **not** trigger this guard: the plan may
-still grow (the failed attempt never blocks the plan). Otherwise — a refusal with a reason.
+cursor but is **not** a success, so it does **not** trigger this guard. Otherwise — a
+refusal with a reason.
+
+Decomposing an **open goal** requires a **current action step** to replace; with none,
+the engine records a fail observation (`create goal failed: no current step to
+decompose`) — not a classify refusal.
 
 **Operation on the tree:**
 
-1. create a `goal` node `G` (fields from the input);
+1. create a `goal` node `G` (fields from the input, storing `plan` on the payload);
 2. **if `C` is a request `R`:** create (if absent) an `alternatives` container `A`, the
    edge `has_alternatives R → A`, the edge `item A → G` and the edge `chosen A → G`
    (the new interpretation becomes current);
-3. **if `C` is a goal:** embed `G` as an item in `C`'s plan (if `C` has no plan, create a
-   `P` node and the edge `has_plan C → P`; then `item P → G`); if `C` is refuted — embed
-   `G` as an option in its `alternatives` (create the container if absent) and set
-   `chosen A → G`;
-4. if `G`'s plan is given: create a `Q` node, the edge `has_plan G → Q`; for each item
-   create a `goal`/`action` node and the edge `item Q → item` in the given order; a
-   command item is an `action` (not yet executed);
-5. move to `G`.
+3. **if `C` is a refuted goal:** embed `G` as an option in its `alternatives` (create the
+   container if absent) and set `chosen A → G`;
+4. **otherwise (`C` an open goal): decompose the current step** (I6) — let `s` be the
+   first unfulfilled (action) plan item of `C`; create (if absent) an `alternatives`
+   container `Aₛ` under `s`, the edges `item Aₛ → G` and `chosen Aₛ → G` (the sub-goal
+   replaces the step it decomposes);
+5. create the `plan` container `Q` of `G` (edge `has_plan G → Q`) with **exactly one**
+   item — the `step` `action` (not yet executed) (I1, I2);
+6. move to `G`.
 
-**State (derived):** `G` and goal-items are not closed; command-items are not yet
-executed; superseded options remain `refuted`/`abandoned`.
+**State (derived):** `G` is not closed; the `step` action is not yet executed;
+superseded options remain `refuted`/`abandoned`.
 
 **Projection effect:** `G` becomes the current goal; its plan (if any), rationale and the
 refuted interpretations/options are visible.
@@ -614,7 +623,7 @@ the separate specification `docs/projection.md`.
 | 9 | no progress — stop (the Arbiter) |
 | 10 | a refusal is recorded with a reason and is not stored as belief |
 | 11 | secrets do not enter the IR; a small tool result's body may live in a node, a large one behind a temp-file reference |
-| 12 | a `plan`/`alternatives` node always carries at least one item (`item`); a `goal` may be without a plan |
+| 12 | a `plan`/`alternatives` node always carries at least one item (`item`); every `goal` is created with a plan (≥1 item), and a plan item is only ever an `action` (I1–I2) |
 | 13 | the first `request` is set by the Arbiter; a request is not closed in the IR — acceptance is external and implicit |
 | 14 | nodes have no stored statuses: state is entirely derived |
 | 15 | structural edges (`has_plan`, `item`, `has_alternatives`, `chosen`) form a forest — no cycles |
@@ -627,6 +636,9 @@ the separate specification `docs/projection.md`.
 | 22 | a closing move (`apply` a check) acts only on the node in focus; targeting an ancestor or a sibling is refused (`not_current_goal`) |
 | 23 | an `inconclusive` check leaves the goal `open` and may be repeated; it is not a repeat-refusal and not progress |
 | 24 | a verdict comes only from an explicit check (`apply run { target }`); a bare `run` (no target) is an observation, never a verdict |
+| 25 | the goal payload stores the initial plan as a string sketch (`plan`); the plan container materializes only the first concrete `step` (I3) |
+| 26 | a sub-goal enters only as an alternative to an existing step; it is never a plan item (I6) |
+| 27 | traversal is strictly step-by-step: one action per turn, the next chosen from its result; the engine never auto-runs the plan (I4) |
 
 ---
 

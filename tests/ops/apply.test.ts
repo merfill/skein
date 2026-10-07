@@ -5,9 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { childrenOf, currentVersion, planOf, predicateOf } from "../../src/ir/graph";
+import { currentVersion, predicateOf } from "../../src/ir/graph";
 import { chosenInterpretation, currentGoalId } from "../../src/ir/traversal";
-import type { PlanItem } from "../../src/llm/schemas";
 import {
   DEFAULT_FILES,
   applyTool,
@@ -339,25 +338,17 @@ describe("apply: run", () => {
     expect([...state.edges.values()].some((e) => e.kind === "under")).toBe(true);
   });
 
-  it("OP-AP-RUN-7 a real stage check closes a matching objective ancestor (logos closure)", () => {
+  it("OP-AP-RUN-7 a goal is closed only by its own check (no implicit ancestor closure)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [
-      { kind: "goal", what: "reproduce", done_when: { kind: "arbiter", text: "seen" } },
-      { kind: "goal", what: "fix", done_when: { kind: "objective", command: "true" } },
-    ];
-    const seeded = exec(interpretation("fix the bug", "true", plan), [request()], ws);
+    const seeded = exec(interpretation("fix the bug", "true"), [request()], ws);
     const root = chosenInterpretation(seeded.state, "r1")!;
-    const [stage1, stage2] = childrenOf(seeded.state, planOf(seeded.state, root)!);
-    // Settle the arbiter first stage by external acceptance (a passing user check).
-    const events: Event[] = [
-      ...seeded.events,
-      { type: "record_check", id: "chk:done", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [stage1!] },
-    ];
-    const checked = exec(check(stage2!), events, ws);
-    expect(predicateOf(checked.state, stage2!)).toBe("achieved");
-    // The single stage check also settles the interpretation root and the request.
-    expect(predicateOf(checked.state, root)).toBe("achieved");
-    expect(predicateOf(checked.state, "r1")).toBe("addressed");
+    const { state } = exec(check(root), seeded.events, ws);
+    expect(predicateOf(state, root)).toBe("achieved");
+    expect(predicateOf(state, "r1")).toBe("addressed");
+    // Exactly the goal's own check verifies it; nothing is synthesized above it.
+    const verifies = [...state.edges.values()].filter((e) => e.kind === "verifies");
+    expect(verifies).toHaveLength(1);
+    expect(verifies[0]!.to).toBe(root);
   });
 
   it("OP-AP-RUN-4 an inconclusive check stays open and may be retried", () => {

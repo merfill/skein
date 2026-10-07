@@ -6,7 +6,7 @@ import { fold } from "../../src/ir/graph";
 import { project, type Context } from "../../src/ir/project";
 import { currentGoalId } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
-import type { Action, PlanItem } from "../../src/llm/schemas";
+import type { Action } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
 import {
@@ -54,8 +54,7 @@ function buildSteps(): Step[] {
     // OP-AP-RUN-2 / TR-6: an objective focus whose plan is done is settled by its check
     // (checkReady), never by complete or by growing the plan.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [{ kind: "action", command: "true" }];
-    const opened = exec(interpretation("fix the build", "make check", plan), [request()], ws);
+    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const done = exec(run("true"), opened.events, ws);
     steps.push({
@@ -105,8 +104,7 @@ function buildSteps(): Step[] {
     // OP-AP-RUN-4: an inconclusive check on a ready objective focus is retried at the
     // same node (checkReady is true, the goal is still open).
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [{ kind: "action", command: "true" }];
-    const opened = exec(interpretation("fix the build", "make check", plan), [request()], ws);
+    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const done = exec(run("true"), opened.events, ws);
     const timedOut: Event = { type: "record_check", command: "make check", verdict: "inconclusive", output: "", targets: [goal] };
@@ -126,9 +124,8 @@ function buildSteps(): Step[] {
   {
     // TR-6 / OP-AP-RUN-1: the plan cursor points at an action item: apply it verbatim.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [{ kind: "action", command: "echo ready" }];
     const opened = exec(
-      interpretation("carry out the request", "make check", plan),
+      interpretation("carry out the request", "make check", "echo ready"),
       [request("First run `echo ready`, then continue with the task.")],
       ws,
     );
@@ -149,8 +146,7 @@ function buildSteps(): Step[] {
     // REF-NOT-FOCUS: an objective focus is settled by its own check. The refusal at the
     // focus (with its hint) must point the model at the check.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const plan: PlanItem[] = [{ kind: "action", command: "true" }];
-    const opened = exec(interpretation("fix the build", "make check", plan), [request()], ws);
+    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const done = exec(run("true"), opened.events, ws);
     const refusal: Event = {

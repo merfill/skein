@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, GoalPayload, Node, Predicate, WitnessEntry } from "./types";
+import type { Edge, Node, Predicate, WitnessEntry } from "./types";
 
 export interface RejectionRecord {
   seq: number;
@@ -173,82 +173,6 @@ function actionSuperseded(state: State, actionId: string): boolean {
   return chosen !== undefined && chosen !== actionId;
 }
 
-// A plan item is successfully settled: an action executed, a goal achieved, or the chosen
-// option of its alternatives settled. Mirrors `itemSucceeded` in traversal, but lives here
-// so `fold` can use it without an import cycle.
-function itemSettled(state: State, itemId: string): boolean {
-  const node = state.nodes.get(itemId);
-  if (node === undefined) return false;
-  if (node.kind === "action") return actionExecuted(state, itemId);
-  if (node.kind !== "goal") return false;
-  const self = goalPredicate(state, itemId);
-  if (self === "achieved" || self === "achieved_under") return true;
-  const alt = alternativesOf(state, itemId);
-  if (alt === undefined) return false;
-  const chosen = latestChosen(state, alt);
-  if (chosen === undefined || chosen === itemId) return false;
-  const option = state.nodes.get(chosen);
-  if (option?.kind === "action") return actionExecuted(state, chosen);
-  if (option?.kind === "goal") {
-    const predicate = goalPredicate(state, chosen);
-    return predicate === "achieved" || predicate === "achieved_under";
-  }
-  return false;
-}
-
-function ownerGoalOfPlan(state: State, planId: string): string | undefined {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "has_plan" && edge.to === planId) return edge.from;
-  }
-  return undefined;
-}
-
-// Logos closure: a passing objective check verifies every plan ancestor of its goals whose
-// criterion (done_when.command) is identical, once the rest of that ancestor's plan is
-// settled. The move is deterministic and carries the check's provenance, so a single check
-// at the bottom closes the whole chain above — no extra doxa turn
-// (docs/plans/step_reduction_plan.md, §3).
-function closeAncestors(state: State): void {
-  for (const [checkId, node] of state.nodes) {
-    if (node.kind !== "check") continue;
-    const payload = node.payload as { command?: unknown; verdict?: unknown } | undefined;
-    if (payload?.verdict !== "pass" || typeof payload.command !== "string") continue;
-    const command = payload.command;
-    const seeds: string[] = [];
-    for (const edge of state.edges.values()) {
-      if (edge.kind === "verifies" && edge.from === checkId) seeds.push(edge.to);
-    }
-    const visited = new Set(seeds);
-    const queue = [...seeds];
-    while (queue.length > 0) {
-      const child = queue.shift() as string;
-      for (const [planId, items] of state.children) {
-        if (!items.includes(child)) continue;
-        if (state.nodes.get(planId)?.kind !== "plan") continue;
-        const owner = ownerGoalOfPlan(state, planId);
-        if (owner === undefined || visited.has(owner)) continue;
-        const goal = state.nodes.get(owner);
-        if (goal?.kind !== "goal") continue;
-        const doneWhen = (goal.payload as GoalPayload | undefined)?.done_when;
-        if (doneWhen?.kind !== "objective" || doneWhen.command !== command) continue;
-        if (!items.every((id) => id === child || itemSettled(state, id))) continue;
-        const edgeId = `${checkId}:c:${owner}`;
-        if (!state.edges.has(edgeId)) {
-          state.edges.set(edgeId, {
-            id: edgeId,
-            from: checkId,
-            to: owner,
-            kind: "verifies",
-            provenance: { kind: "check", command, verdict: "pass" },
-          });
-        }
-        visited.add(owner);
-        queue.push(owner);
-      }
-    }
-  }
-}
-
 function derivePredicates(state: State): void {
   state.predicates = new Map();
   for (const node of state.nodes.values()) {
@@ -279,8 +203,6 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
 
   for (const event of events) applyEvent(state, event);
 
-  derivePredicates(state);
-  closeAncestors(state);
   derivePredicates(state);
 
   return state;

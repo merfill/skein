@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { childrenOf, currentVersion, fold, predicateOf } from "../src/ir/graph";
+import { childrenOf, currentVersion, fold, predicateOf, type State } from "../src/ir/graph";
 import { cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
@@ -266,26 +266,27 @@ describe("classify", () => {
           operator: "create_goal",
           what: "locate",
           done_when: { kind: "arbiter", text: "found it" },
-          plan: [{ kind: "action", command: "node --test" }],
+          plan: "locate: a sketch",
+          step: { command: "node --test" },
         }),
         state,
       ),
     ).toEqual({ accept: true });
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" } }),
+        proposal({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_what");
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "x", done_when: { kind: "objective", command: "" } }),
+        proposal({ operator: "create_goal", what: "x", done_when: { kind: "objective", command: "" }, plan: "p", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_done_when");
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "x", done_when: { kind: "arbiter", text: "y" }, plan: [] }),
+        proposal({ operator: "create_goal", what: "x", done_when: { kind: "arbiter", text: "y" }, plan: "", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_plan");
@@ -295,18 +296,20 @@ describe("classify", () => {
           operator: "create_goal",
           what: "x",
           done_when: { kind: "arbiter", text: "y" },
-          plan: [{ kind: "goal", what: "", done_when: { kind: "arbiter", text: "z" } }],
+          plan: "p",
+          step: { command: "" },
         }),
         state,
       ).reason,
-    ).toBe("empty_item");
+    ).toBe("empty_step");
     expect(
       classify(
         proposal({
           operator: "create_goal",
           what: "x",
           done_when: { kind: "arbiter", text: "y" },
-          plan: [{ kind: "action", command: "node --test" }],
+          plan: "p",
+          step: { command: "node --test" },
         }),
         fold([]),
       ).reason,
@@ -316,6 +319,8 @@ describe("classify", () => {
         operator: "create_goal",
         what: "x",
         done_when: { kind: "arbiter", text: "y" },
+        plan: "p",
+        step: { command: "true" },
         revises: ["g1"],
       }),
       state,
@@ -471,6 +476,8 @@ describe("classify", () => {
           operator: "create_goal",
           what: "add a stage the refuted one did not cover",
           done_when: { kind: "objective", command: "node --test" },
+          plan: "add a stage",
+          step: { command: "node --test" },
         }),
         state,
       ),
@@ -501,6 +508,8 @@ describe("classify", () => {
           what: "fix the cause",
           why: "hypothesis",
           done_when: { kind: "objective", command: "node --test" },
+          plan: "fix the cause",
+          step: { command: "node --test" },
         }),
         state,
       ),
@@ -513,13 +522,19 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
       { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan for g1", seq: 1 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 2 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "descend", node: "g1" },
     ]);
     const outcome = executeAction(
       {
         operator: "create_goal",
         what: "locate",
         done_when: { kind: "arbiter", text: "found" },
-        plan: [{ kind: "action", command: "node --test" }],
+        plan: "locate: a sketch",
+        step: { command: "node --test" },
       },
       root,
       workspace,
@@ -1084,13 +1099,15 @@ describe("runAgent", () => {
     const propose = async (context: Context): Promise<Proposal> => {
       index += 1;
       if (index === 1) {
-        // The plan's leading action (reproduce) is run by the engine in this same turn.
+        // The plan is a hint; the engine does not auto-run it. The model drives each
+        // step on its own turn (here: edit, then check).
         return proposal({
           operator: "create_goal",
           what: "fix the off-by-one",
           why: "the loop stops one short",
           done_when: { kind: "objective", command: "node --test" },
-          plan: [{ kind: "action", command: "echo start" }],
+          plan: "fix the off-by-one: a sketch",
+          step: { command: "echo start" },
         });
       }
       if (index === 2) {
@@ -1121,6 +1138,8 @@ describe("runAgent", () => {
           operator: "create_goal",
           what: "make the suite pass",
           done_when: { kind: "objective", command: "true" },
+          plan: "make the suite pass",
+          step: { command: "true" },
         });
       }
       const goal = context.path[context.path.length - 1]?.id;
@@ -1132,6 +1151,68 @@ describe("runAgent", () => {
     );
     expect(result.turns).toBe(2);
     expect(result.stopReason).toBe("request_addressed");
+  });
+
+  it("an arbiter goal is settled only by the external arbiter (I5)", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "green",
+          done_when: { kind: "arbiter", text: "accepted externally" },
+          plan: "do the work",
+          step: { command: "echo hi" },
+        });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step-${index}` } });
+    };
+    // The external arbiter (a program) supplies the reaction; it is the only closer.
+    const arbiter = (state: State): Event[] => {
+      const goalId = [...state.nodes.values()].find(
+        (node) => node.kind === "goal" && predicateOf(state, node.id) === "open",
+      )?.id;
+      if (goalId === undefined) return [];
+      return [
+        {
+          type: "record_check",
+          id: `chk:u:${state.seq + 1}`,
+          command: "user acceptance",
+          verdict: "pass",
+          output: "",
+          actor: "user",
+          targets: [goalId],
+        },
+      ];
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 6, arbiter },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(result.stopReason).toBe("request_addressed");
+
+    // Without an arbiter, the same run cannot close the arbiter goal: it hits the budget.
+    let index2 = 0;
+    const propose2 = async (): Promise<Proposal> => {
+      index2 += 1;
+      if (index2 === 1) {
+        return proposal({
+          operator: "create_goal",
+          what: "green",
+          done_when: { kind: "arbiter", text: "accepted externally" },
+          plan: "do the work",
+          step: { command: "echo hi" },
+        });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: `echo step-${index2}` } });
+    };
+    const noArbiter = await runAgent(
+      { propose: propose2, workspace: fsWorkspace(setup("off-by-one")), maxTurns: 4, noProgress: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(noArbiter.stopReason).toBe("max_turns");
   });
 
   it("stops with no_progress when nothing changes", async () => {
@@ -1153,7 +1234,8 @@ describe("runAgent", () => {
           operator: "create_goal",
           what: "interpret the request",
           done_when: { kind: "objective", command: "node --test" },
-          plan: [{ kind: "action", command: "echo hi" }],
+          plan: "interpret the request",
+          step: { command: "echo hi" },
         });
       }
       return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
@@ -1277,7 +1359,8 @@ describe("runAgent", () => {
           operator: "create_goal",
           what: "green",
           done_when: { kind: "arbiter", text: "done" },
-          plan: [{ kind: "action", command: "echo hi" }],
+          plan: "green: a sketch",
+          step: { command: "echo hi" },
         });
       }
       goalId = context.path[context.path.length - 1]?.id;
@@ -1310,7 +1393,13 @@ describe("runAgent", () => {
       { type: "descend", node: "g1" },
     ]);
     const reason = classify(
-      proposal({ operator: "create_goal", what: "add another stage", done_when: { kind: "objective", command: "node --test" } }),
+      proposal({
+        operator: "create_goal",
+        what: "add another stage",
+        done_when: { kind: "objective", command: "node --test" },
+        plan: "add another stage",
+        step: { command: "node --test" },
+      }),
       state,
     ).reason;
     expect(reason).toContain("all plan items are fulfilled");
@@ -1347,7 +1436,13 @@ describe("request, revisions and check soundness", () => {
     const state = fold(base);
     expect(predicateOf(state, "g1")).toBe("refuted");
     const missing = classify(
-      proposal({ operator: "create_goal", what: "approach two", done_when: { kind: "arbiter", text: "ok" } }),
+      proposal({
+        operator: "create_goal",
+        what: "approach two",
+        done_when: { kind: "arbiter", text: "ok" },
+        plan: "approach two",
+        step: { command: "true" },
+      }),
       state,
     );
     expect(missing.accept).toBe(false);
@@ -1359,6 +1454,8 @@ describe("request, revisions and check soundness", () => {
           operator: "create_goal",
           what: "approach two",
           done_when: { kind: "arbiter", text: "ok" },
+          plan: "approach two",
+          step: { command: "true" },
           revises: ["g1"],
         }),
         state,
@@ -1370,6 +1467,8 @@ describe("request, revisions and check soundness", () => {
           operator: "create_goal",
           what: "approach one",
           done_when: { kind: "arbiter", text: "ok" },
+          plan: "approach one",
+          step: { command: "true" },
           revises: ["g1"],
         }),
         state,
@@ -1421,21 +1520,22 @@ describe("revise after a refuted fix", () => {
   it("does not give up: two refuted fixes, a third attempt, then the check passes", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
+    let second: string | undefined;
+    let rootId: string | undefined;
     const propose = async (context: Context): Promise<Proposal> => {
       index += 1;
       const focus = context.path[context.path.length - 1]?.id;
-      const root = context.path[1]?.id;
       if (index === 1) {
         return proposal({
           operator: "create_goal",
           what: "make the suite pass",
           done_when: { kind: "objective", command: "node --test" },
-          plan: [
-            { kind: "goal", what: "fix the cause", done_when: { kind: "objective", command: "node --test" } },
-          ],
+          plan: "make the suite pass: reproduce, fix",
+          step: { command: "node --test" },
         });
       }
       if (index === 2) {
+        rootId = context.path[1]?.id;
         // A plausible but wrong fix: `i <= n - 1` is still the off-by-one.
         return proposal({
           operator: "apply",
@@ -1446,15 +1546,19 @@ describe("revise after a refuted fix", () => {
         return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
       }
       if (index === 4) {
-        // After the refutation the plan may grow (the failed item does not count).
+        // After the refutation the goal is replaced by a chosen alternative (a revision).
         return proposal({
           operator: "create_goal",
           what: "fix the cause, second attempt",
           done_when: { kind: "objective", command: "node --test" },
+          plan: "second attempt: fix",
+          step: { command: "node --test" },
+          revises: [rootId!],
         });
       }
       if (index === 5) {
         // A second wrong guess: now the loop is too tight.
+        second = focus;
         return proposal({
           operator: "apply",
           action: { tool: "edit", path: "src/sum.mjs", find: "i <= n - 1", replace: "i <= n - 2" },
@@ -1468,6 +1572,9 @@ describe("revise after a refuted fix", () => {
           operator: "create_goal",
           what: "fix the cause, third attempt",
           done_when: { kind: "objective", command: "node --test" },
+          plan: "third attempt: fix",
+          step: { command: "node --test" },
+          revises: [rootId!, second!],
         });
       }
       if (index === 8) {
@@ -1478,9 +1585,6 @@ describe("revise after a refuted fix", () => {
       }
       if (index === 9) {
         return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
-      }
-      if (index === 10) {
-        return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: root } });
       }
       return proposal({ operator: "query", predicate: "refuted" });
     };
@@ -1495,8 +1599,9 @@ describe("revise after a refuted fix", () => {
         event.type === "record_check",
     );
     expect(checks.filter((check) => check.verdict === "fail")).toHaveLength(2);
-    expect(checks.filter((check) => check.verdict === "pass").length).toBeGreaterThanOrEqual(2);
-    // Three fix goals: two refuted, one achieved — no two-attempt cap.
+    // Each goal is closed only by its own check: the final revision passes once; the two
+    // refuted goals stay refuted and are replaced by alternatives.
+    expect(checks.filter((check) => check.verdict === "pass")).toHaveLength(1);
     const goals = [...state.nodes.values()].filter((node) => node.kind === "goal");
     expect(goals.filter((node) => predicateOf(state, node.id) === "refuted").length).toBe(2);
     expect(predicateOf(state, "r1")).toBe("addressed");
@@ -1516,6 +1621,8 @@ describe("failed edit materializes the file content", () => {
           operator: "create_goal",
           what: "green",
           done_when: { kind: "arbiter", text: "done" },
+          plan: "green: a sketch",
+          step: { command: "echo done" },
         });
       }
       if (index === 2) {

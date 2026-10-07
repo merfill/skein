@@ -66,6 +66,9 @@ export interface PathNode {
   // closed ancestor), so its note is surfaced in `calls` (docs §4.4).
   note?: string;
   plan?: ProjectionPlan;
+  // The goal's initial plan as a string sketch (I3), shown as a hint while the goal is in
+  // focus. Distinct from `plan` (the materialized first step container).
+  planHint?: string;
   alternatives?: { chosen?: string; items: ProjectionAlternative[] };
 }
 
@@ -223,7 +226,7 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
     };
   }
   if (node.kind === "goal") {
-    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: DoneWhen } | undefined;
+    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: DoneWhen; plan?: unknown } | undefined;
     const plan = planView(state, id, maxItems);
     const alternatives = alternativesView(state, id, maxItems);
     return {
@@ -233,6 +236,7 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
       ...(typeof payload?.what === "string" ? { what: payload.what } : {}),
       ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
       ...(payload?.done_when !== undefined ? { done_when: payload.done_when } : {}),
+      ...(typeof payload?.plan === "string" ? { planHint: payload.plan } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(alternatives !== undefined ? { alternatives } : {}),
     };

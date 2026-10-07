@@ -37,7 +37,7 @@
 | Kind | Payload | Роль |
 |---|---|---|
 | `request` | `{text}` | сырая мотивация арбитра; корень; не закрывается в IR |
-| `goal` | `{what, why?, done_when}` | интерпретация или стадия; `done_when` объективный/арбитр |
+| `goal` | `{what, why?, done_when, plan?}` | интерпретация или стадия; `done_when` объективный/арбитр; `plan` — исходный набросок-строка (I3) |
 | `action` | `{command, ...}` | один запуск инструмента; также item плана вида `action` |
 | `plan` | — | упорядоченный контейнер стадий цели (`item`-рёбра) |
 | `alternatives` | — | контейнер взаимозаменяемых целей/действий (`item` + `chosen`) |
@@ -82,17 +82,18 @@
 
 | Случай | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| на запросе (интерпретация) | фокус `request:open` | add `goal`; обеспечить `alternatives` у запроса; `item` + `chosen` к цели; `descend` в неё | запрос остаётся `open`; цель `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_item`, `repeat_hypothesis` | `OP-CG-1` |
-| на открытой цели (стадия) | фокус `goal:open`, не refuted | add `goal`; обеспечить `plan`; ребро `item` | цель `open` | то же; `all_plan_fulfilled` (нужно чекать, не растить) | `OP-CG-2` |
+| на запросе (интерпретация) | фокус `request:open` | add `goal`; обеспечить `alternatives` у запроса; `item` + `chosen` к цели; `descend` в неё | запрос остаётся `open`; цель `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis` | `OP-CG-1` |
+| разложить открытую цель | фокус `goal:open`, не refuted, есть текущий шаг-действие | add `goal`; обеспечить `alternatives` у текущего шага; `item` + `chosen`; `descend` | подцель — выбранный вариант шага; шаг вытеснён | то же; `all_plan_fulfilled` (нужно чекать, не растить) | `OP-CG-2` |
 | ревизия (`revises`) | фокус `request` с провалившимися вариантами, или `refuted` цель | add `goal`; `item` + `chosen` в контейнер провалившихся; `descend` | провалившиеся → `abandoned`; новая `open` | `missing_revision` (перечислены не все), `unknown_revision` (`revises` в не-refuted точке) | `OP-CG-3` |
-| с планом | любой из выше, есть `plan` | рекурсивно add item-целей/действий и `item`-рёбер по порядку | items `open` | `empty_item` (goal-item с пустым `what`) | `OP-CG-4` |
-| вложенный план | item-цель несёт свой `plan` | вложенный контейнер `plan` на каждую цель | — | — | `OP-CG-5` |
+| план + первый шаг | любой из выше, есть `plan` (строка) и `step` | сохранить `plan` в цели; добавить ровно один item-действие (`step`) под новый контейнер `plan` | item-шаг `open` | `empty_plan` (пустой набросок), `empty_step` (пустая команда) | `OP-CG-4` |
 
 - **Проекция** (`PRJ-CG`): фокусный `path` получает цель (`what`/`why`/`done_when`/
   `plan`); на запросе список `alternatives` показывает её `chosen`.
 - **Замечания.** `why` — это гипотеза; она выводится на item, чтобы провалившуюся
   попытку не повторяли (`PRJ-PATH-why`). `what`, совпавший (нормализованно) с
-  провалившимся вариантом, — `repeat_hypothesis`.
+  провалившимся вариантом, — `repeat_hypothesis`. Чтобы разложить открытую цель, нужен
+  текущий шаг-действие; если его нет, движок пишет fail-наблюдение
+  (`create goal failed: no current step to decompose`).
 
 ### 2.2 `apply` (`OP-AP`)
 
@@ -144,11 +145,7 @@
 | inconclusive (таймаут) | check | `record_check` вердикт `inconclusive` | цель остаётся `open` | повторный check разрешён (не repeat) | `OP-AP-RUN-4` |
 | background-старт | `background: true` + `command` | action; job запущен; ход сразу возвращает `job-N` | — | `background_run` (нет команды), `background_target` (check) | `OP-AP-RUN-5` |
 | опрос (`{job}`) | id задачи | action; несёт состояние/код/хвост | — | `job_poll` (лишние поля) | `OP-AP-RUN-6` |
-| замыкание логоса на проходящем чеке | чек objective-цели | тот же чек также `verifies` каждого предка плана с совпадающим `done_when.command`, если прочие пункты закрыты | предки `achieved`/`achieved_under`; request может стать `addressed` | — | `OP-AP-RUN-7` |
-
-**Замечание.** Голый `run {command}`, чья команда совпадает с `done_when.command`
-фокусной объективной цели, трактуется как **check** этой цели (target выводится):
-критерий запускается как оракул, а не как разведка.
+| закрывается своим чеком | чек objective-цели | чек `verifies` только эту цель — замыкания предков нет (A1 снят) | цель `achieved`/`refuted`/`open`; request может стать `addressed` | — | `OP-AP-RUN-7` |
 
 - **Проекция** (`PRJ-AP`): узел результата — `lastResult`; stdout (`output`) и
   stderr (`error`) раздельны; краш добавляет `signal`/`core`/`backtrace`; вердикт
@@ -236,11 +233,6 @@ constraint проверяется только для явного `path`.
 | action `executed` | есть ребро `produces` или `mutates` | `DER-ACT-1` |
 | action `abandoned` | его контейнер `alternatives` выбрал сиблинга | `DER-ACT-2` |
 | check stale | версия ref из `witness` отличается от текущей | `DER-STALE-1` |
-| предок `achieved` замыканием | проходящий чек верифицирует цель и предка плана с тем же `done_when.command`, прочие пункты закрыты | `DER-CLOSE-1` |
-| нет замыкания при ином критерии | `done_when.command` предка отличается от команды чека | `DER-CLOSE-2` |
-| нет замыкания при незакрытом соседе | другой пункт плана не закрыт | `DER-CLOSE-3` |
-| замыкание поднимается по вложенным планам | у владельца верифицированной цели есть свой владелец, и так выше | `DER-CLOSE-4` |
-| замыкание несёт допущения | у чека есть `under`, поэтому предок `achieved_under` | `DER-CLOSE-5` |
 
 ---
 
@@ -251,7 +243,7 @@ constraint проверяется только для явного `path`.
 
 | Причина (токен) | Триггер | Оператор | ID |
 |---|---|---|---|
-| `empty_what` / `empty_done_when` / `empty_plan` / `empty_item` | некорректный `create_goal` | create_goal | `REF-CG-EMPTY` |
+| `empty_what` / `empty_done_when` / `empty_plan` / `empty_step` | некорректный `create_goal` | create_goal | `REF-CG-EMPTY` |
 | `no_current_goal` | нет фокуса | create_goal | `REF-NO-FOCUS` |
 | `missing_revision` | `revises` не перечисляет провалившийся вариант | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` в не-refuted точке | create_goal | `REF-REV-UNKNOWN` |
@@ -303,7 +295,7 @@ constraint проверяется только для явного `path`.
 
 | Spec ID | Офлайн-тест | Live |
 |---|---|---|
-| `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; сценарий `multi-step-plan` |
+| `OP-CG-1..4` | `tests/ops/create_goal.test.ts` | step `interpret-request`; сценарий `multi-step-plan` |
 | `OP-AP-READ-1..5` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-GREP-1..4` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-LIST-1..2` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
@@ -314,7 +306,7 @@ constraint проверяется только для явного `path`.
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-QR-1..6` | `tests/ops/query.test.ts` | сценарии `retrieve-at-scale`, `reproduce-then-read` |
 | `TR-1..7` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `follow-focus-hint` |
-| `DER-REQ/GOAL/ACT/STALE/CLOSE` | `tests/ops/derivation.test.ts` | — |
+| `DER-REQ/GOAL/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; сценарий `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; сценарий `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |

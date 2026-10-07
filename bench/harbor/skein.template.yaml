@@ -1,18 +1,22 @@
 jobs_dir: __SKEIN_JOBS__
-n_attempts: 2
+n_attempts: 3
 timeout_multiplier: 2.0
-n_concurrent_trials: 3
+# 5 concurrent docker builds contend for the daemon; give the build room.
+environment_build_timeout_multiplier: 4.0
+n_concurrent_trials: 5
 quiet: false
 environment:
   type: docker
   force_build: true
   delete: true
-  # The verifier rebuilds OCaml with `make -j4`; task.toml gives cpus=1, so -j4 ran as
-  # -j1. Override the container resources for every task in the job (Harbor applies these
-  # to task_env_config, docs/plans/engine_fixes_found.md P3.1). Values fit the host
-  # (16 CPU, 30G) even at n_concurrent_trials: 3: 3x4 CPU and 3x6G.
+  # Match bench/harbor/compare.template.yaml so a Skein-only run is comparable with the
+  # opencode half of docs/bench_report.md §4.4. The verifier rebuilds OCaml with
+  # `make -j4`; task.toml gives cpus=1, so -j4 ran as -j1. Override the container
+  # resources for every task in the job (Harbor applies these to task_env_config,
+  # docs/plans/engine_fixes_found.md P3.1). 5x4 CPU oversubscribes the 16-CPU host
+  # slightly; 5x5120 MB fits the 30 GB host.
   override_cpus: 4
-  override_memory_mb: 6144
+  override_memory_mb: 5120
 agents:
   - name: langgraph
     model_name: routerai/~deepseek/deepseek-v4-flash-latest
@@ -26,8 +30,8 @@ agents:
           baseURL: "https://routerai.ru/api/v1"
       configurable:
         maxTurns: 60
-        # Cost control: run at low effort (the default).
-        reasoningEffort: low
+        # Match the §4.4 baseline (both agents at high on the long terminal-bench tasks).
+        reasoningEffort: high
 datasets:
   - name: terminal-bench
     version: "2.0"

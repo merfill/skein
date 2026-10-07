@@ -7,4 +7,5 @@ coverage/
 bench/runs/
 bench/harbor/skein.yaml
 bench/harbor/compare.yaml
+bench/harbor/compare-offline.yaml
 *.log

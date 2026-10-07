@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   actionSchema,
   doneWhenSchema,
-  planItemSchema,
+  stepSchema,
   type Action,
   type Proposal,
 } from "./schemas";
@@ -29,7 +29,8 @@ const createGoalParams = z.object({
   what: z.string(),
   why: z.string().optional(),
   done_when: doneWhenSchema,
-  plan: z.array(planItemSchema).nonempty().optional(),
+  plan: z.string(),
+  step: stepSchema,
   revises: z.array(z.string()).optional(),
 });
 const queryParams = z.object({
@@ -78,7 +79,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "create_goal",
     description:
-      "Propose a goal: an interpretation of the request (when the focus is the request) or a stage sub-goal / hypothesis (when the focus is an open goal). Include plan (2-4 stage sub-goals: {kind:\"goal\",what,why?,done_when,plan?}; use {kind:\"action\",command} only for a command you run right now, verbatim) for a non-trivial task. When you change the approach, revises MUST list ALL refuted/abandoned options of the container by id. Refused if: what is empty; done_when is empty; a failed option is omitted from revises (missing_revision); a refuted hypothesis is repeated (repeat_hypothesis); or the plan of an objective goal is already fully carried out (check that goal instead).",
+      "Propose a goal: an interpretation of the request (when the focus is the request) or a stage sub-goal / hypothesis (when the focus is an open goal). If the request mentions a command that verifies the work, done_when MUST be objective with that literal command — arbiter only when the request names no command at all (an arbiter goal is never checked; it waits for the arbiter's acceptance). Always give plan (a short free-form string sketch of the steps) and step: the FIRST concrete action to run now ({command, label?}). A plan item is always an action; steps are executed one at a time — after each, decide the next from its result. A sub-goal is added only as an alternative to the current step. When you change the approach, revises MUST list ALL refuted/abandoned options of the container by id. Refused if: what is empty; done_when is empty; plan is empty; step.command is empty; a failed option is omitted from revises (missing_revision); a refuted hypothesis is repeated (repeat_hypothesis); or the plan of an objective goal is already fully carried out (check that goal instead).",
     schema: createGoalParams,
   },
   {

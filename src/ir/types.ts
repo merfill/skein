@@ -81,6 +81,9 @@ export interface GoalPayload {
   what: string;
   why?: string;
   done_when: DoneWhen;
+  // The initial plan as a free-form string hint (I3). Only the first concrete step is
+  // materialized in the plan container; later steps are appended one at a time.
+  plan?: string;
 }
 
 export const EDGE_KINDS = [

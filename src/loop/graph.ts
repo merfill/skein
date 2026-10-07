@@ -103,6 +103,10 @@ export interface AgentDeps {
   noProgress?: number;
   // Working-set limits (docs §9); overridable so tests can force eviction/expiry.
   held?: { turns?: number; max?: number; chars?: number };
+  // An external arbiter (a human or a program): before each turn it may emit events, e.g.
+  // a `record_check` with `actor: "user"` accepting an open arbiter goal (I5). Absent by
+  // default — an autonomous run has no arbiter, so an arbiter goal waits forever.
+  arbiter?: (state: State, turn: number) => Event[];
 }
 
 export interface AgentInput {
@@ -125,7 +129,11 @@ export function compileGraph(deps: AgentDeps) {
   const heldCharCap = deps.held?.chars ?? HELD_CHARS;
 
   const projectNode = (state: LoopStateType) => {
-    const base = fold(state.events);
+    // The external arbiter may react before the turn (e.g. accept an open arbiter goal).
+    // Its events join the journal like any other, with the same provenance discipline.
+    const external = deps.arbiter ? deps.arbiter(fold(state.events), state.turn) : [];
+    const seed = external.length > 0 ? [...state.events, ...external] : state.events;
+    const base = fold(seed);
     const drift = reconcile(base, deps.workspace, signatures);
     let current = fold(drift, base);
     const focusDrift = focusEvents(current);
@@ -185,7 +193,7 @@ export function compileGraph(deps: AgentDeps) {
       if (explicitIds.has(entry.id)) kept.push(entry);
     }
     return {
-      events: [...drift, ...focusDrift],
+      events: [...external, ...drift, ...focusDrift],
       held: kept,
       queried: state.queried.filter((entry) => entry.expiresAt >= state.turn),
       context: project(current, {

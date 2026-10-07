@@ -72,23 +72,24 @@ The rest is derived too: `currentVersion(ref)` = the last `mutate` version,
 otherwise the first read version; `cursor(G)` = the first unfulfilled plan item;
 the stack is the fold of `descend`/`return`.
 
-`fold` also runs the **logos closure** (`closeAncestors`): a passing objective check
-verifies not only its target but every plan ancestor of that target whose
-`done_when.command` equals the check's command, once the rest of that ancestor's plan is
-settled. The synthesized `verifies` edges carry the same check's provenance, so a single
-check at the bottom closes the whole chain above (and can mark the request `addressed`)
-with no extra doxa turn (`docs/plans/step_reduction_plan.md`).
+A passing objective check verifies **only its target goal**; there is no ancestor
+closure (the former `closeAncestors`/A1 was retired — each goal is settled by its own
+check). The request becomes `addressed` when the chosen interpretation reaches
+`achieved`/`achieved_under`.
 
 ## 5. Doxa operators
 
 `src/llm/schemas.ts`, `src/tools/index.ts`, gates in `src/loop/classify.ts`:
 
-- **`create_goal`** `{ what, why?, done_when, plan?, revises? }` — if the current
+- **`create_goal`** `{ what, why?, done_when, plan, step, revises? }` — if the current
   node is the request, the goal enters as an interpretation in its `alternatives`
   (`item`+`chosen`); if the current goal is `refuted`, as a variant in its
-  `alternatives`; otherwise as an `item` of the current goal's plan. On failure
-  `revises` **must** list all `refuted`/`abandoned` options of the container, else a
-  refusal `missing_revision`; a `what` repeating a refuted one — `repeat_hypothesis`.
+  `alternatives`; otherwise as a **chosen alternative to the current step** (a sub-goal
+  replaces the step it decomposes), and the focus descends into it. `plan` is a string
+  sketch stored on the goal; only the first concrete `step` is materialized as a plan
+  item (an action). On failure `revises` **must** list all `refuted`/`abandoned` options
+  of the container, else a refusal `missing_revision`; a `what` repeating a refuted one
+  — `repeat_hypothesis`.
 - **`apply`** `{ action }` — `read`/`grep` → `action`+`observation`; `edit` →
   `action`+`mutate`+`mutates`, refused on a stale base; `run` with a `target`
   (objective goal) → `check`+`verifies` (+`under`), and the **command comes from
@@ -108,8 +109,8 @@ re-check after `inconclusive`); strict `revises`; `repeat_hypothesis`; `apply ru
 ## 6. Traversal (logos)
 
 `src/ir/traversal.ts`: `focusEvents` descends from the request into the chosen
-interpretation, then into the first unfulfilled sub-goal, and returns when the
-current goal closes; `applicable` gives doxa the frontier
+interpretation and returns when the current goal closes (sub-goals enter as alternatives
+and are focused when created, not by re-descending a plan); `applicable` gives doxa the frontier
 (`createGoal`/`apply`/`checkReady`/`chooseVariant`). The loop
 (`src/loop/graph.ts`): `project → propose → classify → execute → progress`;
 stopping via `request_addressed` (the request is `addressed`), `no_progress` (the
