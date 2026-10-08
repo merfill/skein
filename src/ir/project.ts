@@ -11,9 +11,10 @@ import {
   chosenInterpretation,
   currentGoalId,
   cursorOf,
+  stateOf,
   type Applicable,
 } from "./traversal";
-import type { DoneWhen, Node, Predicate, Verdict } from "./types";
+import type { DoneWhen, Node, NodeState, Verdict } from "./types";
 
 // The projection is the context for the next operator, not a state dump: the
 // traversal branch plus its containers, the global constraints, the full latest
@@ -34,7 +35,7 @@ export interface ProjectionItem {
   id: string;
   kind: "goal" | "action";
   label: string;
-  state: Predicate;
+  state: NodeState;
   // A goal item's hypothesis (`why`): a refuted item is a previous attempt, and this is
   // what it bet on — so the model does not repeat it (docs/context_design_ru.md §8).
   why?: string;
@@ -46,7 +47,7 @@ export interface ProjectionItem {
 export interface ProjectionAlternative {
   id: string;
   label: string;
-  state: Predicate;
+  state: NodeState;
   chosen: boolean;
   why?: string;
 }
@@ -59,7 +60,7 @@ export interface ProjectionPlan {
 export interface PathNode {
   id: string;
   kind: "request" | "goal";
-  state: Predicate;
+  state: NodeState;
   text?: string;
   what?: string;
   why?: string;
@@ -170,7 +171,7 @@ function itemView(state: State, id: string, maxItems: number): ProjectionItem | 
     id,
     kind: node.kind,
     label: node.label,
-    state: predicateOf(state, id),
+    state: stateOf(state, id),
     ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
     ...(alternatives !== undefined && alternatives.items.length > 0 ? { alternatives } : {}),
   };
@@ -203,7 +204,7 @@ function alternativesView(
         {
           id,
           label: node.label,
-          state: predicateOf(state, id),
+          state: stateOf(state, id),
           chosen: chosen === id,
           ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
         },
@@ -216,7 +217,7 @@ function alternativesView(
 function pathNode(state: State, id: string, maxItems: number): PathNode | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
-  const state_ = predicateOf(state, id);
+  const state_ = stateOf(state, id);
   if (node.kind === "request") {
     const payload = node.payload as { text?: unknown } | undefined;
     return {

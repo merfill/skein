@@ -200,6 +200,8 @@ export const skein = {
       try {
         proposal = await invokeTools(model, buildMessages(context), {
           callbacks: [...inherited, meter],
+          settings,
+          rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
           onError: (error, phase) => {
             console.log(
               `SKEIN_LLM_ERROR ${JSON.stringify({

@@ -109,6 +109,17 @@ export function latestClosingCheck(state: State, goalId: string): Node | undefin
   return latest;
 }
 
+// A goal the doxa has finished: it has an outgoing `has_stopped` edge to a stop node.
+// This is a control fact (the arm is done), not truth — `achieved` still needs a check.
+// The edge points goal → stop (like `has_plan`), so from a goal one can always tell it is
+// finished and follow the edge to the stop node (and its why / arm history).
+export function hasStopped(state: State, goalId: string): boolean {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "has_stopped" && edge.from === goalId) return true;
+  }
+  return false;
+}
+
 // The current chosen option of a container is the target of the latest `chosen`
 // edge (Map iteration follows insertion order, i.e. journal order).
 export function latestChosen(state: State, containerId: string): string | undefined {

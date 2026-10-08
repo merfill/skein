@@ -206,8 +206,12 @@ content. The model asks for 120 lines — it sees ~8.
   error that motivated the next stage) stays in view until the parent closes, newest
   first. `query {id}` adds one **result body** from an earlier level (or an evicted one),
   held for **`HELD_TURNS` (6)** turns (re-querying refreshes); the cap is `MAX_HELD` (5)
-  bodies and `2 × OUTPUT_LIMIT` (16000) characters, the least recently requested evicted
-  first. A read observation whose file has changed since is dropped (stale content is
+  bodies, the least recently requested evicted first. Each body is bounded per tool by
+  `OUTPUT_LIMIT` (8000 characters) — `read` included (whole lines, with a continuation
+  hint) — so there is no separate total-character cap: one was removed because it silently
+  dropped a body larger than the cap (the source window being edited), trapping the model
+  in a `query` loop (docs/benches/bench_report.md §4.4). A read observation whose file has
+  changed since is dropped (stale content is
   never shown as active); `run`/`check` bodies are historical and never go stale. There is
   **no** model-side declaration of what to show: `query {id}` is the single retrieval
   entrance.

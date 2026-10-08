@@ -257,6 +257,12 @@ export interface ToolsOptions {
   callbacks?: unknown[];
   onError?: (error: unknown, phase: "tools") => void;
   onResponse?: (response: unknown) => void;
+  settings?: Settings;
+  ceiling?: number;
+  bumps?: number;
+  // LangChain's `max_tokens` is a constructor field, so raising the completion cap needs a
+  // fresh instance; the caller supplies the factory (as in the JSON path).
+  rebuild?: (maxTokens: number) => BaseChatModel;
 }
 
 interface ToolCallingModel {
@@ -284,44 +290,65 @@ export async function invokeTools(
   messages: BaseMessage[],
   options: ToolsOptions = {},
 ): Promise<Proposal> {
+  const settings = options.settings ?? loadSettings();
+  const ceiling = options.ceiling ?? settings.maxTokensCeiling;
+  const bumps = options.bumps ?? settings.maxTokensBumps;
   const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
-  const target = model as unknown as ToolCallingModel;
-  const bound =
-    typeof target.bindTools === "function"
-      ? target.bindTools(PROPOSAL_TOOLS as unknown[], { tool_choice: "required" })
-      : target;
-  const run = async (msgs: BaseMessage[]): Promise<unknown> => {
+
+  let maxTokens: number | undefined;
+  let raised = 0;
+  let repair: HumanMessage | undefined;
+  for (;;) {
+    const base =
+      maxTokens !== undefined && options.rebuild !== undefined
+        ? options.rebuild(maxTokens)
+        : model;
+    const target = base as unknown as ToolCallingModel;
+    const bound =
+      typeof target.bindTools === "function"
+        ? target.bindTools(PROPOSAL_TOOLS as unknown[], { tool_choice: "required" })
+        : target;
+    let response: unknown;
     try {
-      return await bound.invoke(msgs, invokeOptions);
+      response = await bound.invoke(
+        repair === undefined ? messages : [...messages, repair],
+        invokeOptions,
+      );
     } catch (error) {
       options.onError?.(error, "tools");
       throw error;
     }
-  };
-  let lastError: unknown;
-  let repair: HumanMessage | undefined;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const response = await run(repair === undefined ? messages : [...messages, repair]);
     options.onResponse?.(response);
-    const calls = toolCallsOf(response);
-    const first = calls[0];
-    if (first === undefined) {
-      lastError = new Error("model returned no tool call");
-      repair = new HumanMessage(
-        "You did not call a tool. Call exactly one of the provided tools; put a one-sentence thought in the message text first.",
-      );
-      continue;
+    const first = toolCallsOf(response)[0];
+    if (first !== undefined) {
+      try {
+        return toProposal(first.name, first.args, messageText(response));
+      } catch (error) {
+        // A malformed call (unknown tool, args that fail the schema) gets one repair round,
+        // as the JSON path does, instead of sinking the whole run as `llm_error`.
+        if (repair !== undefined) throw error;
+        repair = new HumanMessage(
+          `Your tool call was invalid (${error instanceof Error ? error.message : String(error)}). Call exactly one tool with valid arguments matching its schema.`,
+        );
+        continue;
+      }
     }
-    try {
-      return toProposal(first.name, first.args, messageText(response));
-    } catch (error) {
-      // A malformed call (unknown tool, args that fail the schema) gets one repair round,
-      // as the JSON path does, instead of sinking the whole run as `llm_error`.
-      lastError = error;
-      repair = new HumanMessage(
-        `Your tool call was invalid (${error instanceof Error ? error.message : String(error)}). Call exactly one tool with valid arguments matching its schema.`,
-      );
+    // No tool call. A response cut at the completion cap surfaces exactly as
+    // `finish_reason: "length"` and carries no call: retry with a larger budget, as the
+    // JSON path does, instead of treating a truncation as a bare no-call. Any other
+    // no-call gets one repair round.
+    if (finishReason(response) === "length" && raised < bumps) {
+      const current = maxTokens ?? settings.maxTokens;
+      const next = nextMaxTokens(current, settings.maxTokens, ceiling);
+      if (next !== undefined) {
+        maxTokens = next;
+        raised += 1;
+        continue;
+      }
     }
+    if (repair !== undefined) throw new Error("model returned no tool call");
+    repair = new HumanMessage(
+      "You did not call a tool. Call exactly one of the provided tools; put a one-sentence thought in the message text first.",
+    );
   }
-  throw lastError instanceof Error ? lastError : new Error("model returned no tool call");
 }

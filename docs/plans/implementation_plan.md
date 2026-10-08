@@ -59,10 +59,16 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
    (`docs/plans/archive/constraint_guard_plan.md`).
 2. Long-horizon tasks where the projection should give an advantage
    (multi-file edits, 50+ turns).
-3. Compare Skein vs opencode vs a monotonic agent on the same tasks. **Started** —
-   the first matched run (3 long terminal-bench tasks, k = 3, reasoning `high` both)
-   is in `docs/benches/bench_report.md` §4.4: parity on `fix-ocaml-gc`, no aggregate accuracy
-   gain, and the per-call context saving is offset by more calls and a worse cache.
+3. Compare Skein vs opencode vs a monotonic agent on the same tasks. **Started** — the
+   first matched run (3 long terminal-bench tasks, k = 3, reasoning `high` both) is in
+   `docs/benches/bench_report.md` §4.4, and the first pass of the **local sandbox** (§4.8)
+   runs all thirteen tasks without Harbor (`docs/testing.md` §3.6).
+4. **Comparative testing (next).** Re-run the sandbox on the same tasks at reasoning `high`
+   (to match Harbor), k = 3, and compare per task: turns, LLM calls, tool calls and their
+   breakdown, tokens (`in`/`out`/cache/reasoning) and cost — against opencode. A matched
+   opencode sandbox backend is the prerequisite (opencode runs only through Harbor today).
+   Also fix the premature `stop` on `fix-ocaml-gc`/`custom-memory-heap-crash` (a goal stopped
+   without a mutation) before trusting their accuracy numbers.
 
 ## 4. Current status
 
@@ -134,6 +140,12 @@ Beyond Tier 0, the current line adds:
   `apply` drift removed, a VCS policy and an external reference, the `fetch`/`apply_patch`
   tools, the out-of-workspace path guard, and a controlled experiment (§4.5 in
   `docs/benches/bench_report.md`). Outcome — `docs/plans/archive/system_prompt_revision_plan.md`.
+- **Breadth run (2026-10-08)** — the ten other terminal-bench tasks, online, `low`, k=2
+  (`bench/harbor/skein-unrun.template.yaml`): every attempt that reached the agent solved
+  its task (13/13); `fix-code-vulnerability`/`git-leak-recovery` were lost to Docker image
+  pulls. Blocker fixed first: `invokeTools` now raises the completion cap on a truncated
+  response (`finish_reason: "length"`) instead of ending the run with `llm_error`
+  (`docs/benches/bench_report.md` §4.7).
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.
@@ -160,6 +172,15 @@ live gate only when `SKEIN_LIVE=true`.
 - **Reducing LLM turns.** Logos closure (a passing objective check verifies ancestors
   with the same criterion) and a separate context-format A/B (JSON projection vs a
   transcript with assistant/tool roles) — `docs/plans/step_reduction_plan.md`.
+- **Terminate arbiter goals / stop the refused-`stop` loop.** Every §4.7 root goal is an
+  `arbiter` goal (the requests name no literal check command), and an arbiter goal is
+  settled only by external acceptance — which an autonomous Harbor run never provides. So
+  once the work is done the doxa proposes `stop`, `classify` refuses `not_addressed` with a
+  move an arbiter goal cannot make, and the model retries `stop` until `maxTurns`
+  (28/60 turns on `fix-git`, `bench_report.md` §4.4.2). Options: play the arbiter in the
+  harness, let `stop` settle a carried-out arbiter goal when no arbiter is wired, or make
+  tasks with explicit success criteria classify as `objective`. Also cut the `invokeTools`
+  repair resends and allow batching — the other call-count drivers (§4.4.2).
 
 ## 5. Boundaries
 

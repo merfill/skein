@@ -208,16 +208,23 @@ upstream change obtained with `fetch`.
 
 ### 2.3 `stop` (`OP-ST`)
 
-The doxa's terminal move: it proposes that the request is done.
+The doxa's terminal move. On a **goal** it finishes the frame (the engine returns to the
+parent on the next projection and continues); on the **request** it ends the run. It never
+settles a criterion: `achieved` still requires a check, and an arbiter goal's acceptance
+stays external.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| stop | the focus is the root request and it is `addressed` | add a `stop` node (payload `{why?}`) | unchanged — `addressed` stays derived from the chosen interpretation | `not_addressed` | `OP-ST-1` |
+| stop the request | the focus is the request and its chosen interpretation is `achieved`/`achieved_under` | add a `stop` node | unchanged — `addressed` stays derived | `not_addressed` | `OP-ST-1` |
+| finish a goal | the focus is a goal whose `done_when` is `arbiter` | add a `stop` node and a `has_stopped` edge from the goal | the goal is `stopped` (closed, not `achieved`); the engine returns to the parent | — | `OP-ST-2` |
+| stop the request | the focus is the request and its chosen interpretation is `stopped` | add a `stop` node | unchanged | `not_addressed` | `OP-ST-3` |
+| objective goal | the focus is an `objective` goal not settled by its check | — | — | `check_not_run` | `REF-ST-CHECK` |
 
-- **Projection** (`PRJ-STOP`): the `stop` node is the terminal node; the run stops
-  (`request_addressed`). A request is never checked; acceptance stays external.
-- A `stop` on a request that is not `addressed` is refused, so the doxa can never close
-  the request by itself.
+- **Projection** (`PRJ-STOP`): a stopped goal shows state `stopped`; the `stop` node is
+  terminal at the request. A conclusion does not set `achieved` — the criterion is
+  unchanged and the external arbiter judges after the run.
+- A `stop` on an objective goal before its check is refused (run the check first); a
+  `stop` on a request with no settled/stopped interpretation is refused (`not_addressed`).
 
 ### 2.4 `query` (`OP-QR`)
 
@@ -291,7 +298,8 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | `constraint_violation:<pattern>` | edit a forbidden path | edit | `REF-EDIT-CONSTRAINT` |
 | `stale_base` | write over a file changed after the read | write | `REF-WRITE-STALE` |
 | `constraint_violation:<pattern>` | write a forbidden path | write | `REF-WRITE-CONSTRAINT` |
-| `not_addressed` | `stop` on a request that is not `addressed` (or the focus is not the request) | stop | `REF-ST-STATE` |
+| `not_addressed` | `stop` on a request whose chosen interpretation is neither settled nor stopped | stop | `REF-ST-STATE` |
+| `check_not_run` | `stop` on an objective goal whose check has not passed | stop | `REF-ST-CHECK` |
 | `addressed` | any operator except `stop` at an already-`addressed` request | create_goal/apply | `REF-ADDRESSED` |
 
 Tool **failures** (a `fail` observation, not a refusal): missing file (`read`),

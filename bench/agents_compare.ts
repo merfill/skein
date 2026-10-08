@@ -5,8 +5,9 @@
 // Both agents write per-call token usage in different shapes:
 //   - Skein (langgraph): agent/langgraph-run.log, `SKEIN_TURN` lines
 //     (`inputTokens` per turn) and one `SKEIN_METRICS` summary line.
-//   - opencode: agent/trajectory.json, one step per LLM call with
-//     `metrics.prompt_tokens` (= input + cache, see harbor agents/opencode.py).
+//   - opencode: agent/opencode.txt, one `step-finish` per LLM call carrying
+//     `tokens.{input,output,reasoning,cache.read}` and one `tool_use` per tool call.
+//     Its `trajectory.json` final_metrics has no reasoning/step breakdown.
 //
 // The report this feeds: docs/benches/bench_report.md §4.4.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
@@ -113,35 +114,63 @@ function parseSkein(trialDir: string): Omit<Trial, "agent" | "task" | "reward" |
   };
 }
 
-function parseOpencode(trialDir: string): Omit<Trial, "agent" | "task" | "reward" | "solves" | "exception"> | null {
-  const traj = readJson(join(trialDir, "agent", "trajectory.json"));
-  if (traj === null) return null;
-  const steps = (traj.steps as Record<string, unknown>[] | undefined) ?? [];
-  const agentSteps = steps.filter((step) => step.source === "agent");
+// opencode streams one `step-finish` per LLM call (tokens per call, incl. hidden
+// reasoning and cache) and one `tool_use` per tool call. `trajectory.json` final_metrics
+// only carries input/output/cached totals, no reasoning — so parse the stream.
+function parseOpencodeStream(text: string): Omit<Trial, "agent" | "task" | "reward" | "solves" | "exception"> {
   const promptTokens: number[] = [];
-  let llmCalls = 0;
-  let toolCalls = 0;
+  let inputTotal = 0;
+  let outputVisible = 0;
   let reasoningTotal = 0;
-  for (const step of agentSteps) {
-    const metrics = step.metrics as { prompt_tokens?: number; reasoning_tokens?: number } | undefined;
-    if (typeof metrics?.prompt_tokens === "number") promptTokens.push(metrics.prompt_tokens);
-    if (typeof metrics?.reasoning_tokens === "number") reasoningTotal += metrics.reasoning_tokens;
-    const count = step.llm_call_count;
-    llmCalls += typeof count === "number" ? count : 1;
-    const calls = step.tool_calls as unknown[] | undefined;
-    toolCalls += calls?.length ?? 0;
+  let cacheRead = 0;
+  let llmCalls = 0;
+  const step =
+    /"type":"step-finish","tokens":\{"total":\d+,"input":(\d+),"output":(\d+),"reasoning":(\d+),"cache":\{"write":\d+,"read":(\d+)\}\}/g;
+  for (const m of text.matchAll(step)) {
+    const input = Number(m[1]);
+    const output = Number(m[2]);
+    const reasoning = Number(m[3]);
+    const cache = Number(m[4]);
+    inputTotal += input + cache;
+    outputVisible += output;
+    reasoningTotal += reasoning;
+    cacheRead += cache;
+    promptTokens.push(input + cache);
+    llmCalls += 1;
   }
-  const final = (traj.final_metrics as Record<string, number> | undefined) ?? {};
-  const cacheRead = final.total_cached_tokens ?? 0;
-  const inputTotal = final.total_prompt_tokens ?? promptTokens.reduce((a, b) => a + b, 0);
+  const toolCalls = (text.match(/"type":"tool_use"/g) ?? []).length;
   return {
     promptTokens,
     llmCalls,
     toolCalls,
     cacheRead,
     inputTotal,
+    // Total completion = visible output + hidden reasoning, so `out` is comparable with
+    // Skein's `outputTokens` (which bundles reasoning in the old runs).
+    outputTotal: outputVisible + reasoningTotal,
+    reasoningTotal,
+    cost: 0,
+    costUnit: "$",
+  };
+}
+
+function parseOpencode(trialDir: string): Omit<Trial, "agent" | "task" | "reward" | "solves" | "exception"> | null {
+  const stream = readText(join(trialDir, "agent", "opencode.txt"));
+  if (stream !== null && stream.includes('"type":"step-finish"')) {
+    return parseOpencodeStream(stream);
+  }
+  const traj = readJson(join(trialDir, "agent", "trajectory.json"));
+  if (traj === null) return null;
+  const final = (traj.final_metrics as Record<string, number> | undefined) ?? {};
+  const steps = (traj.steps as Record<string, unknown>[] | undefined) ?? [];
+  return {
+    promptTokens: [],
+    llmCalls: steps.filter((s) => s.source === "agent").length,
+    toolCalls: 0,
+    cacheRead: final.total_cached_tokens ?? 0,
+    inputTotal: final.total_prompt_tokens ?? 0,
     outputTotal: final.total_completion_tokens ?? 0,
-    reasoningTotal: reasoningTotal > 0 ? reasoningTotal : (final.total_reasoning_tokens ?? final.reasoning_tokens ?? 0),
+    reasoningTotal: 0,
     cost: final.total_cost_usd ?? 0,
     costUnit: "$",
   };
@@ -200,26 +229,31 @@ function summarize(label: string, trials: Trial[]): void {
     return;
   }
   const solved = trials.filter((t) => t.solves).length;
-  const ctx = trials.flatMap((t) => t.promptTokens);
-  const cacheRead = trials.reduce((a, t) => a + t.cacheRead, 0);
-  const inputTotal = trials.reduce((a, t) => a + t.inputTotal, 0);
+  // A run killed by a timeout never flushes SKEIN_METRICS/SKEIN_TURN: keep it in the
+  // solved count but out of the token/call means (else zeros dilute them).
+  const withData = trials.filter((t) => t.llmCalls > 0 || t.inputTotal > 0);
+  const base = withData.length > 0 ? withData : trials;
+  const ctx = base.flatMap((t) => t.promptTokens);
+  const cacheRead = base.reduce((a, t) => a + t.cacheRead, 0);
+  const inputTotal = base.reduce((a, t) => a + t.inputTotal, 0);
   const cacheShare = inputTotal === 0 ? 0 : (cacheRead / inputTotal) * 100;
   const ctxStat =
     ctx.length === 0
       ? "n/a"
       : `${k(Math.min(...ctx))}/${k(median(ctx))}/${k(mean(ctx))}/${k(Math.max(...ctx))}`;
   const costUnit = trials[0]?.costUnit ?? "";
+  const dataNote = withData.length < trials.length ? ` (metrics n=${withData.length})` : "";
   console.log(
     [
       label.padEnd(24),
       `solved ${solved}/${trials.length}`,
-      `llm ${mean(trials.map((t) => t.llmCalls)).toFixed(0)}`,
-      `tools ${mean(trials.map((t) => t.toolCalls)).toFixed(0)}`,
-      `tok in/out ${k(mean(trials.map((t) => t.inputTotal)))}/${k(mean(trials.map((t) => t.outputTotal)))}`,
-      `reason ${k(mean(trials.map((t) => t.reasoningTotal)))}`,
+      `llm ${mean(base.map((t) => t.llmCalls)).toFixed(0)}`,
+      `tools ${mean(base.map((t) => t.toolCalls)).toFixed(0)}`,
+      `tok in/out ${k(mean(base.map((t) => t.inputTotal)))}/${k(mean(base.map((t) => t.outputTotal)))}`,
+      `reason ${k(mean(base.map((t) => t.reasoningTotal)))}`,
       `ctx ${ctxStat}`,
       `cache ${cacheShare.toFixed(0)}%`,
-      `cost ${mean(trials.map((t) => t.cost)).toFixed(2)}${costUnit}`,
+      `cost ${mean(base.map((t) => t.cost)).toFixed(2)}${costUnit}${dataNote}`,
     ].join("  "),
   );
 }

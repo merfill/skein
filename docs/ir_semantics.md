@@ -93,7 +93,7 @@ Key consequences:
 | `alternatives` | work | a container of approach options (≥1) |
 | `observation` | work | the result of a command (an observation output) |
 | `check` | work | the arbiter's verdict (payload: `pass`/`fail`/`inconclusive`) |
-| `stop` | work | the doxa's terminal proposal that the request is done; accepted only if `addressed` (derived), stores no status |
+| `stop` | work | the doxa's terminal move: finishes the focused goal (a `has_stopped` edge) or ends the run at the request; never sets `achieved` |
 | `constraint` | work | a prohibition (payload `forbid`: path regexes) |
 | `file` | artifact | a pointer to a file |
 
@@ -187,8 +187,11 @@ the projection from incident event nodes:
 - a request is `addressed` ⇔ its current chosen interpretation is
   `achieved`/`achieved_under`; otherwise the request is `open` (in the IR a request is
   never "closed" — acceptance is external, §6);
-- a `stop` node is the doxa's terminal *proposal* and adds no status: `addressed` stays
-  derived from the chosen interpretation, so a `stop` never closes the request by itself;
+- a goal with a finishing `stop` (a `has_stopped` edge) is `stopped`: closed, but not
+  `achieved` — its criterion is unchanged and acceptance stays external; the engine
+  returns out of it to the parent;
+- a `stop` on the request adds no status: `addressed` stays derived from the chosen
+  interpretation, so a `stop` never makes the request `achieved`;
 - **call summary** `calls` ⇔ a derived list of executed actions and refusals
   (`record_rejection`), deduplicated by `(status, action)` and tied to the focus
   (§2.8);
@@ -523,26 +526,35 @@ making it the `chosen` alternative of the current unfulfilled item is an *altern
 
 ### 4.3 Stop (`stop`)
 
-The operator proposes that the request is done. It is the doxa's terminal move.
+The operator is the doxa's terminal move. On a **goal** it finishes the frame (the engine
+returns to the parent and continues); on the **request** it ends the run. It never settles
+a criterion.
 
-**Input:** the current node `C` (must be the root request `R`); `{ why? }`.
+**Input:** the current node `C` (a goal or the root request `R`); `{ why? }`.
 
-**Admissibility check:** `C` is the root request and the derived predicate of `R` is
-`addressed` (the current chosen interpretation is `achieved`/`achieved_under`). Otherwise
-a refusal `not_addressed`.
+**Admissibility check:**
+- `C` is a goal with `done_when.kind = "arbiter"` → accepted (finishes the frame).
+- `C` is a goal with `done_when.kind = "objective"` → refused `check_not_run` until its
+  own check settles it (run the check first).
+- `C` is the request and its chosen interpretation is `achieved`/`achieved_under`
+  (`addressed`) or `stopped` → accepted.
+- otherwise refused `not_addressed`.
 
-**Operation on the tree:** create a `stop` node (payload `{ why? }`); no edges are
-required. Focus does not move.
+**Operation on the tree:** create a `stop` node (payload `{ why? }`); on a goal also a
+`has_stopped` edge `goal → stop`. Focus does not move on the turn; the next projection
+returns (`return`) out of a stopped goal to its parent.
 
-**State (derived):** unchanged — `addressed` is derived from the chosen interpretation,
-not from `stop`; the request is not closed in the IR (§6).
+**State (derived):** a goal with a finishing `stop` is `stopped` — closed, but **not**
+`achieved` (the criterion is unchanged and acceptance stays external). `addressed` remains
+derived from the chosen interpretation, so a `stop` never makes a request `achieved`.
 
-**Projection effect:** the `stop` node is the terminal node; the run stops
-(`request_addressed`).
+**Projection effect:** a stopped goal shows state `stopped`; the `stop` node is the
+terminal node at the request; the run stops (`request_addressed` when settled,
+`request_stopped` when handed over).
 
-**Why.** It makes the loop explicit and ReAct-shaped — the doxa claims completion, the
-logos validates it against check provenance. The doxa does not issue a verdict: a `stop`
-on a request that is not `addressed` is refused.
+**Why.** It makes the loop explicit and ReAct-shaped — the doxa claims the frame is
+finished, the logos validates it against check provenance. The doxa does not issue a
+verdict: `achieved` still requires a check, and an arbiter goal's acceptance is post-hoc.
 
 ---
 

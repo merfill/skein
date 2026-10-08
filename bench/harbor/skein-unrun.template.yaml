@@ -1,0 +1,49 @@
+jobs_dir: __SKEIN_JOBS__
+n_attempts: 2
+timeout_multiplier: 2.0
+# 5 concurrent docker builds contend for the daemon; give the build room.
+environment_build_timeout_multiplier: 4.0
+n_concurrent_trials: 5
+quiet: false
+environment:
+  type: docker
+  # Use the task's prebuilt image (alexgshaw/<task>:20251031) instead of rebuilding the
+  # Dockerfile per trial: local builds ran concurrently, contended for the daemon and hit
+  # EnvironmentStartTimeoutError (2400 s). Keep the image between trials/batches so a
+  # breadth run does not rebuild. Network is on (no network_mode override).
+  force_build: false
+  delete: false
+  # Same resources as bench/harbor/skein.template.yaml so this breadth run stays
+  # comparable with the §4.4 numbers.
+  override_cpus: 4
+  override_memory_mb: 5120
+agents:
+  - name: langgraph
+    model_name: routerai/~deepseek/deepseek-v4-flash-latest
+    kwargs:
+      project_path: __SKEIN_PROJECT__
+      graph: skein
+      node_version: 22
+      model_kwargs:
+        model: "~deepseek/deepseek-v4-flash-latest"
+        configuration:
+          baseURL: "https://routerai.ru/api/v1"
+      configurable:
+        maxTurns: 60
+        # Breadth scan over tasks Skein has never seen: reasoning `low` to keep the
+        # budget down; hard failures under low are the expected trade-off.
+        reasoningEffort: low
+datasets:
+  - name: terminal-bench
+    version: "2.0"
+    task_names:
+      - fix-code-vulnerability
+      - password-recovery
+      - regex-log
+      - log-summary-date-ranges
+      - fix-git
+      - crack-7z-hash
+      - git-leak-recovery
+      - modernize-scientific-stack
+      - openssl-selfsigned-cert
+      - cobol-modernization

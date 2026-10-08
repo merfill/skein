@@ -49,6 +49,15 @@ describe("system prompt: tool contract", () => {
     const b15 = PROMPT_BLOCKS.find((block) => block.id === "B15");
     expect(b15?.text).toMatch(/once the request is addressed/i);
   });
+
+  // A refuted option (a goal, or a request's interpretation) must not be re-proposed with
+  // the same `what`; the guard is `repeat_hypothesis` and the model must be told, in the
+  // prompt and in the create_goal description (Phase 5, docs/system_prompt_ru.md §4).
+  it("warns against re-proposing a refuted option (repeat_hypothesis)", () => {
+    expect(SYSTEM_PROMPT).toContain("repeat_hypothesis");
+    const createGoal = PROPOSAL_TOOLS.find((tool) => tool.function.name === "create_goal");
+    expect(createGoal?.function.description).toContain("repeat_hypothesis");
+  });
 });
 
 // The engine captures stdout and stderr separately, so the prompt must stop the model

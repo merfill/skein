@@ -234,6 +234,31 @@ describe("tool calling", () => {
     expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
+  it("invokeTools raises the completion cap on a truncated no-tool response", async () => {
+    const caps: number[] = [];
+    let calls = 0;
+    const makeModel = (): unknown => ({
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          return calls === 1
+            ? { content: "", tool_calls: [], response_metadata: { finish_reason: "length" } }
+            : { content: "", tool_calls: [{ name: "list", args: {} }] };
+        },
+      }),
+    });
+    const model = makeModel() as unknown as BaseChatModel;
+    const settings = loadSettings();
+    const rebuild = (maxTokens: number) => {
+      caps.push(maxTokens);
+      return makeModel() as unknown as BaseChatModel;
+    };
+    const proposal = await invokeTools(model, [new HumanMessage("go")], { settings, rebuild });
+    expect(caps).toHaveLength(1);
+    expect(caps[0]).toBeGreaterThan(settings.maxTokens);
+    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+  });
+
   it("invokeTools repairs once when the tool call is malformed", async () => {
     let calls = 0;
     const model = {

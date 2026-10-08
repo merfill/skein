@@ -12,8 +12,10 @@ gate), `bench/harbor/` (real tasks) and `langgraph/graph.ts` (the instrumentatio
 | --- | --- | --- | --- |
 | Types | `npm run typecheck` | `tsc --noEmit` | seconds |
 | Offline tests | `SKEIN_LIVE=false npx vitest run` | IR invariants, projection, loop, gates | seconds |
+| Sandbox (offline) | `SKEIN_LIVE=false npx vitest run tests/sandbox` | engine over a virtual workspace; metric extraction | seconds, free |
 | Live gate | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | fixing bug fixtures with a live model | minutes, money |
 | Live scenarios | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | short scenarios per loop branch | minutes, money |
+| Sandbox (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | one model run over the sandbox, with token breakdown | 1 run, money |
 | Synthetic bench | `npm run bench -- <case>` | one case from `skein-plugin` | minutes, money |
 | Bench gate | `npm run bench:gate -- <runDir>` | a run against `bench/baseline.json` | seconds |
 | Harbor | `bash bench/harbor/run.sh` | real terminal-bench tasks | long, money |
@@ -137,6 +139,127 @@ stale drop and compression. Limits (`turns`/`max`/`chars`) are passed via
 same as in the live dump). This validates the policy over hundreds of turns
 deterministically and for free, before the expensive live runs.
 
+## 3.5 Sandbox (no Docker)
+
+A miniature of the terminal-bench `fix-ocaml-gc` task, with the **real loop** and a
+virtual workspace (`tests/sandbox/`): a small tree (`tests/sandbox/specs/fix-ocaml-gc.ts`)
+and `make`/testsuite commands emulated from the file map, so editing the defect flips the
+check from fail to pass — no Docker, no network. The same `runSandbox` drives a
+**deterministic** (scripted) or a **live** (model) proposer, so the engine is exercised for
+free before any model run.
+
+```sh
+# engine only, no model — classify/refusal/termination; <1s
+SKEIN_LIVE=false npx vitest run tests/sandbox/fix-ocaml.test.ts
+# metric extraction: token/call accounting, offline and free
+SKEIN_LIVE=false npx vitest run tests/sandbox/metrics.test.ts
+# one live run: real model, virtual workspace, ≤16 turns, writes a trace (money)
+SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
+```
+
+`live-trace.ts` writes `bench/runs/sandbox-live-<ts>-fix-ocaml-gc/`:
+
+| File | Contents |
+| --- | --- |
+| `contexts.ndjson` | the full projection per turn (`turn`, `chars`, `context`) |
+| `result.json` | `stopReason`, `turns`, the IR journal (`events`) |
+| `metrics.json` | `stopReason`, `turns`, `fixed`, `totals`, `byTool`, `byOperator`, `perTurn` |
+
+**Recorded parameters.** Per turn (`perTurn`): `operator`/`tool`, `refused`, `chars`,
+`llmCalls`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cacheRead`, `cacheWrite`,
+`cost`. Totals: `turns`/`toolCalls`/`accepted`/`refused`, `inputTokens` (`freshInput` +
+`cacheRead`) and `outputTokens` (`visibleOutput` + `reasoningTokens`), `cacheHitRatio`,
+`costRub`, `contextChars` `first/last/peak`; then the same split `byTool` and `byOperator`.
+
+- `llmCalls` — actual model invocations (a completion-cap bump or a repair round adds one).
+- `toolCalls` — one per turn (`tool_choice: "required"`); a **refused** proposal is still
+  a call (`accepted`/`refused` split it). Retries add `llmCalls`, not `toolCalls`.
+- `in` = fresh input + cache read (same convention as `bench/agents_compare.ts`, §6);
+  `out` = visible output + reasoning.
+- The accounting is `TurnMeter`/`extractUsage` (`bench/metrics.ts`), shared with the
+  Harbor adapter; `tests/sandbox/metrics.ts` is the pure aggregation, verified offline in
+  `metrics.test.ts`.
+
+**Cost discipline.** A live run spends real money:
+
+1. verify **offline first** — `npm run typecheck` and `SKEIN_LIVE=false npx vitest run
+   tests/sandbox`; the metric code must already be green before a model is called;
+2. one deliberate run at a time; a run is bounded by `maxTurns` (16) and the tiny
+   workspace, so it stays cents, but the small tree is **synthetic**: compare the *shape*
+   (per-call tokens, cache/reasoning shares, the context curve), not the absolute totals,
+   against a Harbor run;
+3. decide **in advance** what you will compare, and read the recorded artifact
+   (`metrics.json`, `contexts.ndjson`) instead of re-running;
+4. do not run live to "see if it works" — that is what the scripted sandbox is for.
+
+To compare a saved live run with Harbor, parse the job
+(`npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/<job>`, §6); opencode's per-call
+tokens are in
+`agent/opencode.txt` (`step-finish`), Skein's in `agent/langgraph-run.log`
+(`SKEIN_TURN`/`SKEIN_METRICS`).
+
+## 3.6 Sandbox tasks (real, no Harbor)
+
+Real terminal-bench tasks run locally with the real engine and the task's own verifier, on
+two backends:
+
+- **Docker** (image tasks). The task's own image (`alexgshaw/<task>:20251031`) carries the
+  exact environment, so nothing is installed on the host. The image's `/app` is copied into
+  a temp root, then a `sleep` container bind-mounts that root at `/app`; `run` is `docker
+  exec`. Network is `none` by default, a sane `--ulimit nofile` is set (valgrind), and git
+  `safe.directory=*` (the image's files are owned by its own user, not root).
+- **bwrap** (`container.ts`, used by `regex-log`). A host temp root mounted at `/app` under
+  `bwrap`, sharing the host `/usr` read-only, network off — for a task with no dedicated
+  image.
+
+Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsigned-cert`,
+`git-leak-recovery`, `cobol-modernization`, `modernize-scientific-stack`,
+`custom-memory-heap-crash`, `password-recovery`, `db-wal-recovery`, `crack-7z-hash`,
+`fix-code-vulnerability`, `fix-ocaml-gc`.
+
+| File | Role |
+| --- | --- |
+| `tests/sandbox/docker.ts` | the Docker `Workspace` (image `/app` → temp root → `docker exec`) |
+| `tests/sandbox/container.ts` | the bwrap `Workspace`; file tools rewrite the `/app/` prefix |
+| `tests/sandbox/task.ts` | `SandboxTask` + Harbor-cache lookup + the pytest-free verifier runner and a `pytest` shim |
+| `tests/sandbox/harness.ts` | `runTask`: materialize → setup → `runAgent` → `checkSetup` → verifier → reward |
+| `tests/sandbox/tasks/<id>.ts` | one task's descriptor; `registry.ts` maps id → task |
+| `tests/sandbox/sandbox-run.ts` | the live CLI |
+
+Task files are read from `~/.cache/harbor/tasks/<hash>/<id>/` (they carry a benchmark
+canary), never copied into the repository.
+
+```sh
+# offline: no model, real image(s) + verifier; a no-op scores 0, the task's own solution 1
+SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts
+# the slow fix-ocaml-gc rebuild verifier (minutes), on demand
+SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -t fix-ocaml
+# one live run of a task, with the token breakdown (money)
+npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
+```
+
+Output — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (the projection per
+turn), `result.json` (`stopReason`, `reward`, the verifier result, the IR journal),
+`metrics.json` (the same totals/splits as §3.5), `reward.txt` (the verifier's score).
+
+**Verifier.** The task's `tests/test_outputs.py` is run by a pytest-free wrapper; a `pytest`
+shim is staged so `import pytest` resolves without installing it. `checkIn: "host"` runs the
+verifier via bwrap for an image without Python (`git-leak-recovery`, `password-recovery`,
+`crack-7z-hash`); `checkSetup` runs a pre-verifier command in the task container
+(`fix-ocaml-gc` rebuilds the compiler and regenerates `tests.txt`).
+
+**Isolation / limitations.** Docker tasks keep the network off (except `crack-7z-hash`,
+which installs p7zip), mount no host home, and root-owned files are wiped from inside the
+container on teardown. bwrap tasks share the host `/usr`, so they need the tool on the host.
+A background `run {background: true}` and `fetch` still use the host implementation.
+
+**Adding a task.** Write `tests/sandbox/tasks/<id>.ts` with `{ id, image?, files?, setup?,
+check?, workdir?, checkIn?, checkSetup?, network? }` — `request` defaults to the cached
+`instruction.md`, `check` to the cached `tests/test_outputs.py`; `files` mirror a Docker
+`COPY`, `setup` a Dockerfile/`setup.sh` step. Register it in `tasks/registry.ts`. Verify it
+offline first (a no-op proposer → `reward=0`, the task's `solution/solve.sh` → `reward=1`),
+then run live.
+
 ## 4. Synthetic bench
 
 ```sh
@@ -244,8 +367,10 @@ function tool per operation (`create_goal`, `query`, `read`, `grep`, `list`,
 per-operation schemas matter: one deeply nested discriminated union came back flat
 (`operator` at the top level instead of nested under `action`), and JSON mode made the
 model reason far more on hard turns (and hit the completion cap, whose retries re-sent
-the whole projection). On a call with no tool, `invokeTools` makes one repair round; if
-that fails the loop stops with `stopReason: "llm_error"` instead of crashing.
+the whole projection). When a response is cut at the cap (`finish_reason: "length"`) and
+carries no call, `invokeTools` raises the cap and retries, as the JSON path does; a bare
+no-call gets one repair round; if that fails the loop stops with `stopReason: "llm_error"`
+instead of crashing.
 
 `invokeStructured` remains the generic JSON path (schema spelled out in the prompt,
 `response_format: json_object`, manual parse, raised cap on a completion cut, one repair
@@ -260,7 +385,9 @@ as `OPENAI_API_KEY`.
 ## 10. Principles
 
 - **Offline by default.** `SKEIN_LIVE=false` for an ordinary check; live and Harbor
-  only deliberately.
+  only deliberately. The sandbox is free offline (engine + metric extraction); a live
+  sandbox run is one deliberate run with a defined comparison, never a "does it work" probe
+  (§3.5).
 - **Before an expensive run, save what will be measured.** The full projection and
   the executed commands must reach the log/files (§4, §7), otherwise the analysis is
   impossible.

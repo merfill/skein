@@ -58,7 +58,7 @@ L2 is under the gate, L3 is acceptance.
 | B12 | Tool contract: flat names, generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
 | B13 | Output discipline: `thought` ≤1 sentence, exactly one call | `tests/prompt.test.ts` | in code |
 | B14 | Stream discipline: no `2>&1`/`&>`, no pipe through `tail`/`head` | `tools` §4.3 | in code (B14) |
-| B15 | Stop: the doxa proposes `stop`, accepted only when the request is `addressed` | `ir_semantics` §4.3, §6 | in code (B15) |
+| B15 | Stop: `stop` finishes the focused goal (plan carried out) or ends a settled/stopped request; an objective goal is refused until its check passes | `ir_semantics` §4.3, §6 | in code (B15) |
 | B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read | `ir_semantics` §9 | in code (trimmed) |
 
 ### Per-block detail
@@ -67,8 +67,12 @@ L2 is under the gate, L3 is acceptance.
 - **B2** lists `FRAGMENT` (inspect/modify/execute/verify/abduce).
 - **B3** introduces the node and derived-state vocabulary; there is no separate
   `claim`/`decision` kind. It also names the doxa's three node-kinds — continue,
-  alternative, stop — so every accepted turn adds exactly one node.
-- **B4** describes the `Context` fields the model sees.
+  alternative, stop — so every accepted turn adds exactly one node. The request's
+  `alternatives` is the history of interpretations tried; a new interpretation must be a
+  different `what`, never a repeat of a refuted one (`repeat_hypothesis`).
+- **B4** describes the `Context` fields the model sees; when only `create_goal` is offered
+  (focus is the request), `alternatives.items` is the memory of interpretations already
+  tried — a `refuted`/`abandoned` one must not be re-proposed.
 - **B5** fixes: the working set is engine-owned; `query {id}` is the only entry point.
 - **B6** forbids guessing a command; the criterion command is literal, from the workspace
   root, with a `cd <dir> &&` prefix in a subdirectory. **Command rule:** if the request
@@ -79,9 +83,10 @@ L2 is under the gate, L3 is acceptance.
   you work one action per turn and choose the next from its result. Every accepted turn
   adds exactly one node — continue (the next step), alternative (another approach), or
   stop. A sub-goal is allowed only as an **alternative** to the current step (decompose
-  it), never as a plan item and never mandatory. Doxa never closes a goal (no `complete`):
-  an objective goal is settled only by its own `check`, an arbiter goal only by external
-  acceptance; nothing closes a chain of ancestors.
+  it), never as a plan item and never mandatory. A goal the doxa finishes with `stop` is
+  `stopped` (closed, not `achieved`): an objective goal is settled only by its own
+  `check` (refused `check_not_run` otherwise), an arbiter goal is stopped by `stop` and
+  its acceptance stays external; nothing closes a chain of ancestors.
 - **B8** (revised in Phase 3): git/history is a normal tool when present; this workspace
   may have no `.git`, and a failed history command must not be retried or probed in other
   roots; local history and an external reference are different things.
@@ -91,7 +96,10 @@ L2 is under the gate, L3 is acceptance.
   `curl` through `run`) as read-only evidence; an upstream change is applied with
   `apply_patch`. In IR: an artifact `file`; the diff is an observation.
 - **B10** sets the log-to-location move.
-- **B11** sets the behavior on failure.
+- **B11** sets the behavior on failure: on a refuted goal — or, at the request, a refuted
+  interpretation in `alternatives` — the next `create_goal` must state a DIFFERENT `what`.
+  A `what` equal to a refuted option's label is refused `repeat_hypothesis`, even when
+  `revises` names that option (`ir_semantics` §4.1, §2.7).
 - **B12** lists the tools; it is generated from `PROPOSAL_TOOLS`, so drift (e.g. a
   non-existent `apply`) is impossible.
 - **B13** bounds `thought`.
@@ -127,6 +135,10 @@ L2 is under the gate, L3 is acceptance.
 - **Phase 4 (2026-10-07).** Added the `fetch` tool (URL → workspace, read-only reference)
   and `apply_patch` (unified diff); `read`/`edit`/`write` no longer crash the run on a path
   outside the workspace — a refusal is recorded (like `grep`/`list`).
+- **Phase 5 (2026-10-08).** B3/B4/B11 and the `create_goal` description now state that the
+  request's `alternatives` is the history of interpretations and that a `what` equal to a
+  refuted option's label is refused `repeat_hypothesis`, even with `revises` (a live run
+  re-proposed a refuted interpretation because B11 only spoke of the current goal).
 
 ## 5. Test map
 

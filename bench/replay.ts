@@ -116,6 +116,8 @@ for (const turn of turns) {
   try {
     const proposal: Proposal = await invokeTools(model, buildMessages(turn.context), {
       callbacks: [meter],
+      settings,
+      rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens, model: modelName }),
       onResponse: (response) => {
         lastFinish = finishOf(response);
         if (lastFinish !== undefined) finishes.set(lastFinish, (finishes.get(lastFinish) ?? 0) + 1);

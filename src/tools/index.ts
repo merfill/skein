@@ -43,7 +43,8 @@ function clip(text: string, limit = OUTPUT_LIMIT): string {
   return `${text.slice(0, limit)}\n…[truncated ${text.length - limit} chars]`;
 }
 
-// A read window is capped at MAX_READ_LINES; the tool reports the window it
+// A read window is capped at MAX_READ_LINES and at OUTPUT_LIMIT bytes (whole lines), so a
+// single body is bounded like every other tool result; the tool reports the window it
 // returned so the model knows where to continue.
 function readWindow(
   content: string,
@@ -58,7 +59,19 @@ function readWindow(
   let to = Math.min(requestedEnd, total);
   if (to < from) to = from;
   if (to - from + 1 > MAX_READ_LINES) to = from + MAX_READ_LINES - 1;
-  return { text: lines.slice(from - 1, to).join("\n"), start: from, end: to, total };
+  let last = from;
+  let size = 0;
+  for (let i = from; i <= to; i += 1) {
+    const line = lines[i - 1] ?? "";
+    const added = line.length + (i > from ? 1 : 0);
+    if (i > from && size + added > OUTPUT_LIMIT) break;
+    size += added;
+    last = i;
+  }
+  to = last;
+  let text = lines.slice(from - 1, to).join("\n");
+  if (text.length > OUTPUT_LIMIT) text = clip(text, OUTPUT_LIMIT);
+  return { text, start: from, end: to, total };
 }
 
 function excerpt(text: string, ref: string, limit = OUTPUT_LIMIT): string {
@@ -725,8 +738,10 @@ export function executeAction(
     }
 
     case "stop": {
-      // The doxa's terminal move: record a stop node and end the run. The request itself
-      // is not closed (acceptance stays external); `addressed` remains derived.
+      // The doxa's terminal move. On a goal it finishes the frame (the engine returns to
+      // the parent on the next projection and continues); on the request it ends the run.
+      // It never settles a criterion: `achieved` still requires a check, and an arbiter
+      // goal's external acceptance stays post-hoc.
       const seq = next();
       const stopId = `w:stop:${seq}`;
       events.push({
@@ -740,11 +755,28 @@ export function executeAction(
           seq,
         },
       });
+      const focus = currentGoalId(state);
+      const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
+      if (focusNode?.kind === "goal" && focus !== undefined) {
+        // The goal has stopped: an outgoing `has_stopped` edge (goal → stop). The engine
+        // returns to the parent on the next projection; the goal is not `achieved`.
+        addEdge({ kind: "llm" }, focus, stopId, "has_stopped");
+        return {
+          events,
+          turn: proposalTurn(`stopped goal: ${focus}`, stopId),
+          done: false,
+          stopReason: null,
+        };
+      }
+      const addressed = focus !== undefined && predicateOf(state, focus) === "addressed";
       return {
         events,
-        turn: proposalTurn("stopped: the request is addressed", stopId),
+        turn: proposalTurn(
+          addressed ? "stopped: the request is addressed" : "stopped: handing over to the arbiter",
+          stopId,
+        ),
         done: true,
-        stopReason: "request_addressed",
+        stopReason: addressed ? "request_addressed" : "request_stopped",
       };
     }
 

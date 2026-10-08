@@ -14,13 +14,18 @@ import type { Proposer } from "./propose";
 import { LoopState, type HeldEntry, type LoopStateType } from "./state";
 
 // How long a body stays in the working set after the model fetched it with `query {id}`,
-// and the two caps that keep it light (docs §9). Retention is otherwise structural: the
-// produced results of every level on the branch stay in view until the parent closes.
-// A fresh query refreshes the entry; eviction drops the least recently requested first.
-// TTL 6 covers the observed cross-level gaps — see tests/workingset.test.ts.
+// and how many bodies it holds (docs §9). Retention is otherwise structural: the produced
+// results of every level on the branch stay in view until the parent closes. A fresh query
+// refreshes the entry; eviction drops the least recently requested first. TTL 6 covers the
+// observed cross-level gaps — see tests/workingset.test.ts.
+//
+// The working set is bounded by the number of bodies only: every tool result is already
+// bounded per body (`grep`/`list`/`read`/`run` ≤ `OUTPUT_LIMIT`), so `MAX_HELD * OUTPUT_LIMIT`
+// is the ceiling. A total-character cap was removed: it silently dropped a body larger than
+// the cap (a source window being edited), which trapped the model in a `query` loop
+// (docs/benches/bench_report.md §4.4).
 const HELD_TURNS = 6;
 const MAX_HELD = 5;
-const HELD_CHARS = 2 * OUTPUT_LIMIT;
 
 // Upsert the fetched ids into the working set, each held for `turns` turns and refreshed
 // on every fetch. Level results do not go through here — they are kept structurally.
@@ -105,7 +110,7 @@ export interface AgentDeps {
   maxTurns: number;
   noProgress?: number;
   // Working-set limits (docs §9); overridable so tests can force eviction/expiry.
-  held?: { turns?: number; max?: number; chars?: number };
+  held?: { turns?: number; max?: number };
   // An external arbiter (a human or a program): before each turn it may emit events, e.g.
   // a `record_check` with `actor: "user"` accepting an open arbiter goal (I5). Absent by
   // default — an autonomous run has no arbiter, so an arbiter goal waits forever.
@@ -129,7 +134,6 @@ export function compileGraph(deps: AgentDeps) {
   const noProgress = deps.noProgress ?? 10;
   const heldTurns = deps.held?.turns ?? HELD_TURNS;
   const maxHeld = deps.held?.max ?? MAX_HELD;
-  const heldCharCap = deps.held?.chars ?? HELD_CHARS;
 
   const projectNode = (state: LoopStateType) => {
     // The external arbiter may react before the turn (e.g. accept an open arbiter goal).
@@ -182,17 +186,14 @@ export function compileGraph(deps: AgentDeps) {
     const kept: HeldEntry[] = [];
     const seen = new Set<string>();
     let shownCount = 0;
-    let heldChars = 0;
     for (const entry of candidates) {
       if (seen.has(entry.id) || isStale(current, entry.id)) continue;
       const body = resolveBody(current, entry.id, deps.workspace);
       if (body === undefined) continue;
-      const chars = body.output.length + body.error.length;
-      if (shownCount >= maxHeld || heldChars + chars > heldCharCap) continue;
+      if (shownCount >= maxHeld) continue;
       seen.add(entry.id);
       recalled.push({ id: entry.id, output: body.output, error: body.error });
       shownCount += 1;
-      heldChars += chars;
       if (explicitIds.has(entry.id)) kept.push(entry);
     }
     return {

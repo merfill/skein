@@ -97,7 +97,7 @@ describe("working set under a long synthetic horizon", () => {
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 18, noProgress: 30, held: { turns: 100, max: 4, chars: 1_000_000 } },
+      { propose, workspace, maxTurns: 18, noProgress: 30, held: { turns: 100, max: 4 } },
       { request: { id: "r1", text: "grow" } },
     );
 
@@ -173,7 +173,7 @@ describe("working set under a long synthetic horizon", () => {
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 10, noProgress: 30, held: { turns: 2, max: 100, chars: 1_000_000 } },
+      { propose, workspace, maxTurns: 10, noProgress: 30, held: { turns: 2, max: 100 } },
       { request: { id: "r1", text: "ttl" } },
     );
 
@@ -207,16 +207,42 @@ describe("working set under a long synthetic horizon", () => {
       };
     };
 
-    const charCap = 300;
     await runAgent(
-      { propose, workspace, maxTurns: 120, noProgress: 1000, held: { turns: 3, max: 6, chars: charCap } },
+      { propose, workspace, maxTurns: 120, noProgress: 1000, held: { turns: 3, max: 6 } },
       { request: { id: "r1", text: "rotate" } },
     );
 
-    // Long and bounded: context is set by the caps, not by the number of turns.
+    // Long and bounded: the working set is capped by the number of bodies, not the number
+    // of turns (each body is bounded per tool by OUTPUT_LIMIT).
     expect(shownViews.length).toBeGreaterThan(100);
     const stats = workingSetStats(shownViews.map((shown) => ({ shown, requested: [] as string[] })));
     expect(stats.peakCount).toBeLessThanOrEqual(6);
-    expect(stats.peakChars).toBeLessThanOrEqual(charCap);
+  });
+
+  // Regression: a total-character cap used to silently drop a body larger than the cap, so
+  // the model lost the source window it was editing and looped on `query`
+  // (docs/benches/bench_report.md §4.4). Several large bodies must now stay in view; only
+  // the body-count cap evicts.
+  it("keeps several large bodies in view (no total-character cap)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-wset-big-"));
+    tempDirs.push(root);
+    for (let i = 0; i < 3; i += 1) writeFileSync(join(root, `big${i}.txt`), `${"x".repeat(20_000)}\n${i}\n`);
+    const workspace = fsWorkspace(root);
+    const shownCounts: number[] = [];
+    let call = 0;
+
+    const propose = async (context: Context): Promise<Proposal> => {
+      call += 1;
+      const n = call;
+      if (n <= 3) {
+        return { thought: "", action: { operator: "apply", action: { tool: "read", path: `big${n - 1}.txt` } } };
+      }
+      shownCounts.push(ids(context).length);
+      return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo t${n}` } } };
+    };
+
+    // Each body is capped at OUTPUT_LIMIT (8000); three of them exceed the old 16,000 total.
+    await runAgent({ propose, workspace, maxTurns: 6, noProgress: 30 }, { request: { id: "r1", text: "read all" } });
+    expect(Math.max(...shownCounts)).toBeGreaterThanOrEqual(3);
   });
 });

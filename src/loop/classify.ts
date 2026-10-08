@@ -3,11 +3,19 @@ import {
   alternativesOf,
   childrenOf,
   currentVersion,
+  hasStopped,
   planOf,
   predicateOf,
   type State,
 } from "../ir/graph";
-import { currentGoalId, cursorOf, firstUnfulfilledItem, goalPayload, itemSucceeded } from "../ir/traversal";
+import {
+  chosenInterpretation,
+  currentGoalId,
+  cursorOf,
+  firstUnfulfilledItem,
+  goalPayload,
+  itemSucceeded,
+} from "../ir/traversal";
 import type { DoneWhen } from "../ir/types";
 import type { Proposal } from "../llm/schemas";
 import { commandOf } from "../tools";
@@ -212,16 +220,35 @@ export function classify(
   const action = proposal.action;
 
   if (action.operator === "stop") {
-    // The doxa's terminal move: accepted only when the focus is the request and it is
-    // already addressed (its chosen interpretation is achieved/achieved_under).
+    // The doxa's terminal move. On a goal it finishes the frame (the engine then returns
+    // to the parent and continues); on the request it ends the run. It does not settle a
+    // criterion: an objective goal must pass its own check first, and external acceptance
+    // of an arbiter goal stays post-hoc.
     const current = currentGoalId(state);
     const node = current !== undefined ? state.nodes.get(current) : undefined;
-    if (node?.kind === "request" && predicateOf(state, current as string) === "addressed") {
-      return accept;
+    if (node?.kind === "request") {
+      const chosen = chosenInterpretation(state, current as string);
+      // Settled (achieved/achieved_under) or finished by stop (`has_stopped`): the
+      // request may end. External acceptance (arbiter) stays post-hoc.
+      if (
+        predicateOf(state, current as string) === "addressed" ||
+        (chosen !== undefined && hasStopped(state, chosen))
+      ) {
+        return accept;
+      }
+      return reject(
+        "not_addressed: the request is not addressed yet — settle the chosen interpretation (an objective goal by its own check; an arbiter goal by finishing it with stop)",
+      );
     }
-    return reject(
-      "not_addressed: the request is not addressed yet — settle the focus first (an objective goal by its own check), then propose stop",
-    );
+    if (node?.kind === "goal") {
+      const payload = goalPayload(state, current as string);
+      // An arbiter goal has no in-loop criterion: the doxa finishes it and hands over.
+      if (payload?.done_when.kind === "arbiter") return accept;
+      return reject(
+        `check_not_run: goal ${current} is objective — settle it by its own check (run {target: "${current}"}) before stop`,
+      );
+    }
+    return reject("not_addressed: no request or goal in focus to stop");
   }
 
   if (action.operator === "query") {

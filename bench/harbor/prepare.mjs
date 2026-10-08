@@ -28,7 +28,7 @@ function routeraiKey() {
   }
 }
 
-const templates = ["skein.template.yaml", "compare.template.yaml"];
+const templates = ["skein.template.yaml", "compare.template.yaml", "skein-unrun.template.yaml"];
 const key = routeraiKey();
 
 for (const name of templates) {

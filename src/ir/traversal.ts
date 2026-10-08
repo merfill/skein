@@ -2,12 +2,13 @@ import type { Event } from "./events";
 import {
   alternativesOf,
   childrenOf,
+  hasStopped,
   latestChosen,
   planOf,
   predicateOf,
   type State,
 } from "./graph";
-import type { GoalPayload } from "./types";
+import type { GoalPayload, NodeState } from "./types";
 
 export function stackOf(state: State): string[] {
   return [...state.branch];
@@ -15,6 +16,12 @@ export function stackOf(state: State): string[] {
 
 export function currentGoalId(state: State): string | undefined {
   return state.branch[state.branch.length - 1] ?? state.rootId;
+}
+
+// The node's displayed state: "stopped" when the doxa finished it (a `has_stopped`
+// edge), else its truth predicate.
+export function stateOf(state: State, id: string): NodeState {
+  return hasStopped(state, id) ? "stopped" : predicateOf(state, id);
 }
 
 export function isClosedPredicate(state: State, id: string): boolean {
@@ -25,6 +32,13 @@ export function isClosedPredicate(state: State, id: string): boolean {
     predicate === "refuted" ||
     predicate === "abandoned"
   );
+}
+
+// A frame the engine must return out of: closed by truth/refutation, or finished by the
+// doxa's stop (`has_stopped`). The latter is the universal control completion — the doxa
+// declares the arm done; the engine pops to the parent and continues (docs §4.3).
+export function isFinished(state: State, id: string): boolean {
+  return isClosedPredicate(state, id) || hasStopped(state, id);
 }
 
 function isSettledSuccess(predicate: string): boolean {
@@ -42,7 +56,7 @@ export function itemFulfilled(state: State, itemId: string): boolean {
     node.kind === "action"
       ? predicateOf(state, itemId) === "executed"
       : node.kind === "goal"
-        ? isClosedPredicate(state, itemId)
+        ? isFinished(state, itemId)
         : false;
   if (selfDone) return true;
 
@@ -52,7 +66,7 @@ export function itemFulfilled(state: State, itemId: string): boolean {
   if (chosen === undefined || chosen === itemId) return false;
   const option = state.nodes.get(chosen);
   if (option?.kind === "action") return predicateOf(state, chosen) === "executed";
-  if (option?.kind === "goal") return isClosedPredicate(state, chosen);
+  if (option?.kind === "goal") return isFinished(state, chosen);
   return false;
 }
 
@@ -121,10 +135,9 @@ export function focusEvents(state: State): Event[] {
     if (node?.kind === "request") {
       const chosen = chosenInterpretation(state, current);
       if (chosen !== undefined && chosen !== current) {
-        const predicate = predicateOf(state, chosen);
-        if (isSettledSuccess(predicate) || predicate === "refuted" || predicate === "abandoned") {
-          break;
-        }
+        // A finished chosen interpretation (achieved/refuted/abandoned, or stopped) is not
+        // descended into: the request stays the focus and the doxa may stop it.
+        if (isFinished(state, chosen)) break;
         out.push({ type: "descend", node: chosen });
         branch.push(chosen);
         continue;
@@ -137,19 +150,19 @@ export function focusEvents(state: State): Event[] {
     // closed ancestor, not only when the top itself closes).
     if (
       branch.length > 1 &&
-      branch.slice(0, -1).some((id) => id !== rootId && isClosedPredicate(state, id))
+      branch.slice(0, -1).some((id) => id !== rootId && isFinished(state, id))
     ) {
       out.push({ type: "return" });
       branch.pop();
       continue;
     }
 
-    if (isClosedPredicate(state, current) && branch.length > 1) {
+    if (isFinished(state, current) && branch.length > 1) {
       out.push({ type: "return" });
       branch.pop();
       continue;
     }
-    if (isClosedPredicate(state, current)) break;
+    if (isFinished(state, current)) break;
     const first = firstUnfulfilledItem(state, current);
     if (first === undefined) break;
     const firstNode = state.nodes.get(first);
@@ -189,9 +202,13 @@ export function applicable(state: State, goalId: string | undefined): Applicable
 
   const node = state.nodes.get(goalId);
   if (node?.kind === "request") {
-    // An addressed request accepts only the doxa's `stop`; an open one is interpreted.
+    // A request accepts the doxa's `stop` when its chosen interpretation is settled
+    // (`addressed`, i.e. achieved/achieved_under) or finished by stop (`has_stopped`).
+    // Otherwise it is still interpreted.
     const addressed = predicateOf(state, goalId) === "addressed";
-    return addressed
+    const chosen = chosenInterpretation(state, goalId);
+    const done = addressed || (chosen !== undefined && hasStopped(state, chosen));
+    return done
       ? { ...none, goalId, stop: true }
       : { ...none, goalId, createGoal: true };
   }
@@ -203,9 +220,7 @@ export function applicable(state: State, goalId: string | undefined): Applicable
     return { ...none, goalId, createGoal: true };
   }
 
-  const closed =
-    predicate === "achieved" || predicate === "achieved_under" || predicate === "abandoned";
-  if (closed) return { ...none, goalId, return: true };
+  if (isFinished(state, goalId)) return { ...none, goalId, return: true };
 
   const plan = planOf(state, goalId);
   const items = plan === undefined ? [] : childrenOf(state, plan);
@@ -218,6 +233,10 @@ export function applicable(state: State, goalId: string | undefined): Applicable
   const nextAction = nextNode?.kind === "action" ? first : undefined;
   const checkReady = done && objective && items.length > 0;
 
+  // A doxa `stop` is a terminal move: on an arbiter goal (no in-loop criterion) it
+  // finishes the frame and returns to the parent; on an objective goal it is refused
+  // until the check settles the frame.
+  const arbiter = payload?.done_when.kind === "arbiter";
   return {
     goalId,
     // Decompose the current step: only with an unfulfilled action step (I6).
@@ -225,7 +244,7 @@ export function applicable(state: State, goalId: string | undefined): Applicable
     // Any open goal: a command may be executed now (continue or alternative).
     apply: true,
     return: false,
-    stop: false,
+    stop: arbiter,
     ...(nextAction !== undefined ? { nextAction } : {}),
     checkReady,
   };

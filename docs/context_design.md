@@ -156,10 +156,14 @@ one context.
    assembles the level results and the queried bodies (from the payload or, for a
    reference, at the loop level — `project` stays pure) and shows them next to
    `lastResult`.
-5. **Caps.** The shared `shown` budget is at most `MAX_HELD` (5) bodies and
-   `2 × OUTPUT_LIMIT` (16000) characters; explicitly queried bodies come first, the
-   current levels fill the rest by recency. The TTL (`HELD_TURNS`, 6) and caps are
-   exercised in `tests/workingset.test.ts`.
+5. **Caps.** The shared `shown` budget is at most `MAX_HELD` (5) bodies; each body is
+    bounded per tool by `OUTPUT_LIMIT` (8000 characters — `grep`/`list`/`read`/`run`), so
+    the working set is bounded without a **total-character** cap. A total cap
+    (`2 × OUTPUT_LIMIT`) was removed: it silently dropped a body larger than the cap — the
+    source window being edited — so the model could not see its file and looped on `query`
+    (`docs/benches/bench_report.md` §4.4). Explicitly queried bodies come first, the current
+    levels fill the rest by recency. The TTL (`HELD_TURNS`, 6) and the count cap are
+    exercised in `tests/workingset.test.ts`.
 6. **Addressing by `id`** for now; another scheme later if needed.
 7. **Staleness.** `shown` carries only current content: if the file a read was taken
    from has changed since (a different version), the entry is dropped from the working

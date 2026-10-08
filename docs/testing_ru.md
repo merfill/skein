@@ -12,8 +12,10 @@
 | --- | --- | --- | --- |
 | Типы | `npm run typecheck` | `tsc --noEmit` | секунды |
 | Офлайн-тесты | `SKEIN_LIVE=false npx vitest run` | инварианты IR, проекция, цикл, проверка допустимости | секунды |
+| Песочница (офлайн) | `SKEIN_LIVE=false npx vitest run tests/sandbox` | движок на виртуальном воркспейсе; извлечение метрик | секунды, бесплатно |
 | Live-гейт | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | починка багфиксов живой моделью | минуты, деньги |
 | Live-сценарии | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | короткие сценарии на ветки движка | минуты, деньги |
+| Песочница (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | один прогон моделью по песочнице, с разрезом токенов | 1 прогон, деньги |
 | Синтетический бенч | `npm run bench -- <case>` | один кейс из `skein-plugin` | минуты, деньги |
 | Гейт бенча | `npm run bench:gate -- <runDir>` | прогон против `bench/baseline.json` | секунды |
 | Harbor | `bash bench/harbor/run.sh` | реальные задачи terminal-bench | долго, деньги |
@@ -138,6 +140,129 @@ N раз и собирает все провалы, так что флаки п�
 `tests/workset.ts` (те же, что в live-дампе). Это позволяет проверять политику на
 сотнях ходов детерминированно и бесплатно, до дорогих live-прогонов.
 
+## 3.5 Песочница (без Docker)
+
+Миниатюра задачи terminal-bench `fix-ocaml-gc` с **настоящим циклом** и виртуальным
+воркспейсом (`tests/sandbox/`): маленькое дерево
+(`tests/sandbox/specs/fix-ocaml-gc.ts`), а команды `make`/testsuite эмулируются по карте
+файлов — правка дефекта переключает чек с fail на pass, без Docker и сети. Тот же
+`runSandbox` управляет **детерминированным** (скриптовым) или **живым** (модельным)
+пропозером, так что движок проверяется бесплатно до любого прогона моделью.
+
+```sh
+# только движок, без модели — classify/refusal/терминация; <1s
+SKEIN_LIVE=false npx vitest run tests/sandbox/fix-ocaml.test.ts
+# извлечение метрик: учёт токенов/вызовов, офлайн и бесплатно
+SKEIN_LIVE=false npx vitest run tests/sandbox/metrics.test.ts
+# один живой прогон: реальная модель, виртуальный воркспейс, ≤16 ходов (деньги)
+SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
+```
+
+`live-trace.ts` пишет `bench/runs/sandbox-live-<ts>-fix-ocaml-gc/`:
+
+| Файл | Содержимое |
+| --- | --- |
+| `contexts.ndjson` | полная проекция по ходам (`turn`, `chars`, `context`) |
+| `result.json` | `stopReason`, `turns`, IR-журнал (`events`) |
+| `metrics.json` | `stopReason`, `turns`, `fixed`, `totals`, `byTool`, `byOperator`, `perTurn` |
+
+**Записываемые параметры.** По ходу (`perTurn`): `operator`/`tool`, `refused`, `chars`,
+`llmCalls`, `inputTokens`, `outputTokens`, `reasoningTokens`, `cacheRead`, `cacheWrite`,
+`cost`. Итоги: `turns`/`toolCalls`/`accepted`/`refused`, `inputTokens` (`freshInput` +
+`cacheRead`) и `outputTokens` (`visibleOutput` + `reasoningTokens`), `cacheHitRatio`,
+`costRub`, `contextChars` `first/last/peak`; далее тот же разрез по `byTool` и
+`byOperator`.
+
+- `llmCalls` — реальные вызовы модели (bump по completion-cap или repair-раунд добавляет
+  один).
+- `toolCalls` — один на ход (`tool_choice: "required"`); **отклонённое** предложение —
+  тоже вызов (разделяется на `accepted`/`refused`). Ретраи добавляют `llmCalls`, не
+  `toolCalls`.
+- `in` = свежий ввод + чтение кэша (как в `bench/agents_compare.ts`, §6); `out` = видимый
+  вывод + reasoning.
+- Учёт — `TurnMeter`/`extractUsage` (`bench/metrics.ts`), общий с Harbor-адаптером;
+  `tests/sandbox/metrics.ts` — чистая агрегация, проверяется офлайн в `metrics.test.ts`.
+
+**Дисциплина расходов.** Живой прогон тратит реальные деньги:
+
+1. сначала проверь **офлайн** — `npm run typecheck` и `SKEIN_LIVE=false npx vitest run
+   tests/sandbox`; код метрик обязан быть зелёным до вызова модели;
+2. один осознанный прогон за раз; прогон ограничен `maxTurns` (16) и крошечным
+   воркспейсом, т.е. стоит копейки, но дерево **синтетическое**: сравнивай *форму*
+   (токены на вызов, доли cache/reasoning, кривую контекста), а не абсолютные итоги, с
+   прогоном Harbor;
+3. реши **заранее**, что будешь сравнивать, и читай записанный артефакт (`metrics.json`,
+   `contexts.ndjson`) вместо повторного запуска;
+4. не запускай живой прогон «проверить, работает ли» — для этого есть скриптовая
+   песочница.
+
+Чтобы сравнить сохранённый живой прогон с Harbor, разбери job
+(`npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/<job>`, §6): у opencode токены по
+вызовам в `agent/opencode.txt` (`step-finish`), у Skein — в `agent/langgraph-run.log`
+(`SKEIN_TURN`/`SKEIN_METRICS`).
+
+## 3.6 Песочница задач (реальные, без Harbor)
+
+Реальные задачи terminal-bench гоняются локально настоящим движком и родным верификатором
+задачи на двух бэкендах:
+
+- **Docker** (задачи с образом). Родной образ задачи (`alexgshaw/<task>:20251031`) несёт
+  точное окружение, на хост ничего не ставится. `/app` образа копируется во временный
+  корень, затем контейнер `sleep` бинд-маунтит этот корень в `/app`; `run` = `docker
+  exec`. Сеть по умолчанию `none`, выставлен разумный `--ulimit nofile` (valgrind), и git
+  `safe.directory=*` (файлы образа принадлежат его пользователю, не root).
+- **bwrap** (`container.ts`, для `regex-log`). Временный корень хоста в `/app` под `bwrap`
+  с read-only `/usr` хоста, сеть выключена — для задачи без своего образа.
+
+Портировано (13): `regex-log`, `fix-git`, `log-summary-date-ranges`,
+`openssl-selfsigned-cert`, `git-leak-recovery`, `cobol-modernization`,
+`modernize-scientific-stack`, `custom-memory-heap-crash`, `password-recovery`,
+`db-wal-recovery`, `crack-7z-hash`, `fix-code-vulnerability`, `fix-ocaml-gc`.
+
+| Файл | Роль |
+| --- | --- |
+| `tests/sandbox/docker.ts` | Docker-`Workspace` (`/app` образа → временный корень → `docker exec`) |
+| `tests/sandbox/container.ts` | bwrap-`Workspace`; файловые инструменты рерайтят префикс `/app/` |
+| `tests/sandbox/task.ts` | `SandboxTask` + поиск в кэше Harbor + обёртка верификатора и `pytest`-шим |
+| `tests/sandbox/harness.ts` | `runTask`: материализация → setup → `runAgent` → `checkSetup` → верификатор → reward |
+| `tests/sandbox/tasks/<id>.ts` | дескриптор задачи; `registry.ts` — id → задача |
+| `tests/sandbox/sandbox-run.ts` | live-CLI |
+
+Файлы задач читаются из `~/.cache/harbor/tasks/<hash>/<id>/` (в них canary бенчмарка), в
+репозиторий не копируются.
+
+```sh
+# офлайн: без модели, реальный образ(ы) + верификатор; no-op → 0, родное решение → 1
+SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts
+# тяжёлый rebuild-верификатор fix-ocaml-gc (минуты), по требованию
+SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -t fix-ocaml
+# один живой прогон задачи, с разрезом токенов (деньги)
+npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
+```
+
+Вывод — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (проекция по ходам),
+`result.json` (`stopReason`, `reward`, результат верификатора, IR-журнал), `metrics.json`
+(те же итоги/разрезы, что в §3.5), `reward.txt` (оценка верификатора).
+
+**Верификатор.** `tests/test_outputs.py` запускается обёрткой без pytest; рядом кладётся
+шим `pytest`, чтобы `import pytest` резолвился без установки. `checkIn: "host"` гонит
+верификатор через bwrap для образа без Python (`git-leak-recovery`, `password-recovery`,
+`crack-7z-hash`); `checkSetup` исполняет команду до верификатора в контейнере задачи
+(`fix-ocaml-gc` пересобирает компилятор и пересоздаёт `tests.txt`).
+
+**Изоляция / ограничения.** Docker-задачи держат сеть выключенной (кроме `crack-7z-hash`,
+который ставит p7zip), домашний каталог хоста не монтируется, root-овые файлы вычищаются
+изнутри контейнера при закрытии. bwrap-задачи делят `/usr` хоста, поэтому нужен инструмент
+на хосте. Фоновая задача (`run {background: true}`) и `fetch` пока используют хостовую
+реализацию.
+
+**Как добавить задачу.** Напиши `tests/sandbox/tasks/<id>.ts` с `{ id, image?, files?,
+setup?, check?, workdir?, checkIn?, checkSetup?, network? }` — `request` по умолчанию из
+кэшированного `instruction.md`, `check` — из кэшированного `tests/test_outputs.py`;
+`files` повторяют Docker `COPY`, `setup` — шаг Dockerfile/`setup.sh`. Зарегистрируй в
+`tasks/registry.ts`. Сначала проверь офлайн (no-op → `reward=0`, родной `solution/solve.sh`
+→ `reward=1`), потом живой прогон.
+
 ## 4. Синтетический бенч
 
 ```sh
@@ -244,8 +369,9 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
 плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял
 модель думать сильно больше на тяжёлых ходах (и упираться в cap, чьи ретраи
-перепосылали всю проекцию). Если вызова инструмента нет, `invokeTools` делает один
-repair-раунд; иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
+перепосылали всю проекцию). Если ответ обрезан по cap (`finish_reason: "length"`) и вызова
+нет, `invokeTools` поднимает cap и повторяет вызов, как JSON-путь; для голого отсутствия
+вызова — один repair-раунд; иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
 
 `invokeStructured` остаётся общим JSON-путём (схема в промпте, `response_format:
 json_object`, ручной разбор, поднятый cap при обрыве, один repair-раунд); он покрыт
@@ -260,7 +386,9 @@ json_object`, ручной разбор, поднятый cap при обрыв�
 ## 10. Принципы
 
 - **Офлайн по умолчанию.** `SKEIN_LIVE=false` для обычной проверки; live и
-  Harbor — только намеренно.
+  Harbor — только намеренно. Песочница офлайн бесплатна (движок + извлечение метрик);
+  живой прогон песочницы — один осознанный запуск с заданным сравнением, а не проба
+  «работает ли вообще» (§3.5).
 - **Перед дорогим прогоном — сохранить, что измеряем.** Полная проекция и
   исполненные команды должны попасть в лог/файлы (§4, §7), иначе разбор
   невозможен.

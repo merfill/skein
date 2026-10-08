@@ -72,6 +72,11 @@ export const PREDICATES = [
 ] as const;
 export type Predicate = (typeof PREDICATES)[number];
 
+// The state shown for a node: its truth predicate, or "stopped" for a goal the doxa has
+// finished (an outgoing `has_stopped` edge). "stopped" is a control fact, not truth: it
+// is derived from the edge and kept out of `Predicate`, which stays about the criterion.
+export type NodeState = Predicate | "stopped";
+
 // A goal's criterion. `objective` is a literal command the arbiter runs; `arbiter` is an
 // external acceptance (a person or a test runner) — doxa cannot settle either one.
 export type DoneWhen =
@@ -95,6 +100,7 @@ export const EDGE_KINDS = [
   "under",
   "produces",
   "verifies",
+  "has_stopped",
   "mutates",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];

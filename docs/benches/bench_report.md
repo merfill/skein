@@ -244,6 +244,113 @@ The concrete defects:
 7. **The stable-prefix cache stays the biggest structural gap:** 60% vs 96%
    (`implementation_plan.md`, backlog).
 
+### 4.4.1 Call- and token-level comparison
+
+`npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/2026-10-06__17-31-37`. The parser
+was fixed to read opencode's per-call usage from `agent/opencode.txt` (each `step-finish`
+carries `tokens.{input,output,reasoning,cache.read}`, each `tool_use` a tool call) —
+`trajectory.json` has no reasoning/step breakdown, which is why reasoning read 0 before.
+
+Columns: **llm** = LLM calls (Skein: `SKEIN_TURN` rows; opencode: `step-finish`), **tools**
+= tool calls (`SKEIN_METRICS.toolCalls`; opencode: `tool_use` events), **in** = prompt
+tokens incl. cache, **out** = total completion (visible + hidden reasoning), **reason** =
+hidden reasoning inside `out` (opencode only), **cache** = cacheRead / in, **ctx** =
+per-call prompt min/median/mean/peak. Means are over trials that flushed metrics (a
+timeout does not).
+
+**Aggregate** (job `2026-10-06__17-31-37`, 9 trials/agent at `high`):
+
+| agent | solved | llm | tools | in | out | reason | cache | ctx (med) |
+|---|---|---|---|---|---|---|---|---|
+| Skein | 4/9 | 62¹ | 46¹ | 911.7k | 311.6k | n/a | 60% | 16.2k |
+| opencode | 6/9 | 21 | 26 | 697.9k | 12.9k | 9.9k | 96% | 30.7k |
+
+¹ metrics n=6 (three trials timed out without flushing).
+
+**Per task:**
+
+| task / agent | solved | llm | tools | in | out | reason | cache | ctx (med) |
+|---|---|---|---|---|---|---|---|---|
+| fix-ocaml-gc / Skein | 3/3 | 69 | 52 | 1044.6k | 327.5k | n/a | 56% | 16.4k |
+| fix-ocaml-gc / opencode | 3/3 | 26 | 30 | 1063.4k | 13.5k | 10.5k | 96% | 43.1k |
+| db-wal-recovery / Skein | 1/3 | 18² | 18² | 164.8k² | 22.8k² | n/a | 60% | 9.2k |
+| db-wal-recovery / opencode | 3/3 | 13 | 15 | 241.2k | 9.3k | 7.5k | 96% | 12.8k |
+| custom-memory-heap-crash / Skein | 0/3 | 72² | 50² | 1085.9k² | 432.3k² | n/a | 66% | 17.0k |
+| custom-memory-heap-crash / opencode | 0/3 | 25 | 33 | 788.9k | 15.8k | 11.6k | 97% | 29.8k |
+
+² metrics n=1 (db-wal) / n=2 (custom-memory); the rest timed out or exited non-zero without
+flushing `SKEIN_METRICS`.
+
+**Reading.** On the matched task, `fix-ocaml-gc` (both 3/3), Skein makes **~2.6× the LLM
+calls** (69 vs 26) and **~24× the completion tokens** (327.5k vs 13.5k), while its median
+per-call context is **~2.6× smaller** (16.4k vs 43.1k) and its cache far worse (56% vs
+96%); total input lands in the same place (~1.04M vs 1.06M). opencode's completion is
+mostly hidden reasoning (10.5k of 13.5k). Skein's reasoning is **not separable** in these
+runs — `outputTokens` already contains it (the per-turn `reasoningTokens` field was added
+later, commit `d06bcb2`), so only `out` is comparable across agents here.
+
+### 4.4.2 Why Skein makes ~2.6× more calls than opencode
+
+Method: `SKEIN_TURN` (`turn`, `llmCalls`, `accepted`), `SKEIN_PROPOSAL` (operator/tool) and
+`SKEIN_EVENTS.rejections`. `retries = Σ(llmCalls − 1)` counts the repair rounds inside
+`invokeTools` (no tool call / malformed / completion-cap); every turn is otherwise one call.
+
+**On the matched task, `fix-ocaml-gc` (old engine):**
+
+| attempt | turns | llm | retries | run shell/check/poll | IR bookkeeping |
+|---|---|---|---|---|---|
+| `brVESz3` | 52 | 63 | 11 | 3 / 11 / **17** | 9 |
+| `fNwUyxJ` | 48 | 63 | 15 | 3 / 4 / 1 | 20 |
+| `fa7HV3F` | 57 | 82 | 25 | 4 / 3 / 1 | 36 |
+
+Three sources there: **repair retries** (11–25 = 20–44 % of calls), **IR bookkeeping**
+(`create_goal`/`complete`/`query`, 9–36 turns), **background-build polling** (one attempt
+polled 17×; the current engine no longer polls — 0 in §4.7).
+
+**The current engine (§4.7, `maxTurns: 60`) has a different, larger driver — refused `stop`:**
+
+| run | turns | llm | retries | refused `stop` | other refusals |
+|---|---|---|---|---|---|
+| fix-git `6yMDVuU` | 60 | 60 | 0 | **28** | 2 repeated_action |
+| crack `AyRhoAz` | 57 | 70 | 13 | **18** | 0 |
+| cobol `3U2yRLB` | 60 | 79 | 19 | **16** | 8 revision |
+| openssl `D3KLzq9` | 60 | 64 | 4 | **16** | 1 revision |
+| log-summary `xQqCnF7` | 60 | 71 | 11 | **8** | 3 revision |
+| fix-git `6R6p3Lw` | 60 | 71 | 11 | **4** | 0 |
+
+**Bug 1 — arbiter goals cannot be settled in an autonomous run (the biggest source).**
+Every §4.7 root goal is `done_when.kind = "arbiter"`: the requests name no literal check
+command (fix-git "…merge them into master", crack-7z-hash "create /app/solution.txt", cobol
+"…identical content-wise"), so they are not `objective`. An arbiter goal is settled **only**
+by external acceptance (I5), which Harbor never provides. Once the work is done the doxa
+proposes `stop`; `classify` refuses `not_addressed` ("settle the focus first by its own
+check") — a move an arbiter goal cannot make — and the model proposes `stop` again, for the
+rest of the budget. 28/60 turns on `fix-git`, 16/60 on `cobol`/`openssl`, 18/57 on `crack`:
+each a full-context LLM call on non-work. The synthetic runner avoids this by playing the
+program arbiter (`AgentDeps.arbiter`); Harbor does not. `applicable` correctly excludes
+`stop` on those turns, yet the model proposes it anyway and is refused.
+
+**Bug 2 — `invokeTools` repair retries.** 0–32 per run; each repair resends the whole
+projection (cache-hostile). On the old `custom-memory` run, 32/85 = 38 % of calls.
+
+**Bug 3 — one action per turn.** opencode batches (30 tool calls in 26 steps); Skein is
+strictly one action per turn.
+
+**Bug 4 — refusals beyond `stop`** (`repeated_action`, `unknown_revision`, 1–9) — minor
+but non-zero.
+
+**Design gap — no termination.** Because an arbiter goal never becomes addressed, the run
+always reaches `maxTurns` (or the 1800 s timeout) even when the verifier would pass.
+
+**Word on tokens.** The extra calls *are* the extra tokens: each call resends the
+projection, and opencode's cache covers 96 % vs Skein's 56–66 %. It is not "bigger context
+per call" — Skein's median per-call context is the smaller one.
+
+**Recommended, in order.** (a) Give the autonomous harness an arbiter (Harbor plays
+acceptance / the verifier), or let `stop` settle an arbiter goal whose plan is carried out
+when no arbiter is wired; (b) cap and terminate on repeated refused `stop`; (c) remove the
+repair resend (isolate the cause; reuse the cache); (d) allow batching independent actions.
+
 ### 4.5 Controlled experiment: the reference strategy (Phase 5)
 
 Tests whether **B9** (obtain a canonical reference and diff) changes behavior and cost.
@@ -366,6 +473,113 @@ was rerun clean (15 steps). Per-run cost/steps are noisy; the **reward** is the 
 
 Artifacts: `bench/runs/2026-10-07T18-*` and later `*-skein/`.
 
+### 4.7 Breadth run: the ten other terminal-bench tasks (Phase 7)
+
+Goal: run Skein on terminal-bench tasks it had never seen — beyond the three of §4.4 —
+**online**, to widen the coverage map. Config `bench/harbor/skein-unrun.template.yaml`:
+terminal-bench 2.0, DeepSeek V4 Flash, `reasoningEffort: low`, `maxTurns: 60`,
+`n_attempts: 2`, network on (no `network_mode` override), 4 CPU / 5120 MB,
+`n_concurrent_trials: 5`. Only Skein ran (no opencode half).
+
+**Blocker found and fixed first.** The draft long run `2026-10-07__16-42-30` had failed
+**9/9 with `llm_error`** (`model returned no tool call`). The smoke
+(`2026-10-08__13-53-04`, `password-recovery`) reproduced it at turn 15: replaying the
+recorded turns through the live model showed a turn at **out = 7427 tokens against the
+8192 cap** (`finish_reason: "length"` is what a cut produces), and the tools path — unlike
+the JSON path — had no completion-cap bump, so a truncated no-call was treated as a bare
+no-call and the run stopped. Fix in `src/llm/structured.ts` `invokeTools`: on
+`finish_reason === "length"` raise `max_tokens` and retry (rebuild + re-bind), as
+`invokeStructured` already did. After the fix the same smoke reached **reward 1.0 with 0
+`llm_error`** (`2026-10-08__14-04-29`); `stopReason` is never `llm_error` in §4.7.
+
+**Harness (not the agent).** `force_build: true` made Harbor rebuild each task's Dockerfile
+per trial; concurrent builds contended and hit `EnvironmentStartTimeoutError` (2400 s). The
+tasks ship prebuilt images (`alexgshaw/<task>:20251031`); switching to `force_build: false`
+uses them. On this host Docker Hub pulls were themselves slow/throttled, so several trials
+lost their environment start; the images were built locally from the task `environment/`
+Dockerfiles to unblock.
+
+**Results** (only attempts where the agent actually ran; `steps`/`out`/`rea` from
+`SKEIN_METRICS` when it flushed, i.e. on a clean exit):
+
+| task | valid/k | solved | exception | steps (out / reasoning) |
+|---|---|---|---|---|
+| `password-recovery` | 1/1 | 1 | AgentTimeout | — |
+| `crack-7z-hash` | 2/2 | 2 | — | 57–60 (163k–304k / 156k–277k) |
+| `fix-git` | 2/2 | 2 | — | 60 (86k, 312k / 74k, 304k) |
+| `log-summary-date-ranges` | 2/2 | 2 | 1 × AgentTimeout | 60 (329k / 316k) |
+| `regex-log` | 2/2 | 2 | 1 × AgentTimeout | 27 (189k / 184k) |
+| `openssl-selfsigned-cert` | 2/2 | 2 | — | 8 (3k / 1.4k); 60 (137k / 128k) |
+| `modernize-scientific-stack` | 1/2 | 1 | AgentTimeout | — |
+| `cobol-modernization` | 1/2 | 1 | AgentTimeout | 60 (431k / 416k) |
+| `fix-code-vulnerability` | 0/2 | — | 2 × infra | no agent run |
+| `git-leak-recovery` | 0/2 | — | 2 × infra | no agent run |
+
+**Reading.**
+
+- **Every attempt that reached the agent solved its task: 13/13, all at `low`.** This
+  includes the loop-heavy tasks from `tier1_plan.md` §8 (`cobol-modernization`,
+  `openssl-selfsigned-cert`, `modernize-scientific-stack`), where the plugin baseline had a
+  measured loop.
+- **The failures were infrastructure, not model.** 6 attempts (`fix-git` 2,
+  `log-summary` 2 in the first job, `cobol` 1, `modernize` 1) and the 4 fix-code/git-leak
+  attempts were lost to Docker environment start / build, never to a wrong answer. They are
+  excluded from "valid/k".
+- **Runs are slow and expensive.** Half the valid runs hit `maxTurns: 60`, and four hit
+  `AgentTimeoutError` (1800 s) even though the verifier still rewarded 1 — the agent keeps
+  working instead of proposing `stop` once the task is addressed. Output is ~90 % hidden
+  reasoning (`out` ≈ `rea`). Visible per-trial cost 8–77 ₽; the breadth run's visible total
+  is ~330 ₽ across the two batches (timeouts do not flush `SKEIN_METRICS`, so the true
+  total is higher).
+- **No opencode half**, so §4.7 is a capability map, not a head-to-head. (§4.4 remains the
+  matched comparison.)
+
+**Caveats.** n = 1–2 per task; reward is the signal, steps/tokens are noisy. `fix-code-vulnerability`
+and `git-leak-recovery` have **no valid agent attempt** — the Docker Hub pull of their prebuilt
+images failed; they were not re-run. Two `AgentTimeout` cells have no `steps`/tokens (metrics
+not flushed). `force_build`/local-image changes are harness-only and do not touch the engine.
+
+Artifacts: jobs `~/.skein-bench/harbor/2026-10-08__14-04-29` (smoke),
+`2026-10-08__14-38-28` + `2026-10-08__15-38-44` (batch A), `2026-10-08__16-18-02` (batch B).
+
+### 4.8 Local sandbox: all thirteen tasks, a working-set fix, and the token comparison
+
+`tests/sandbox/` (`docs/testing.md` §3.6) runs the thirteen terminal-bench tasks we had on
+Harbor **without Harbor**: each task's own image (`alexgshaw/<task>:20251031`) carries the
+environment, the real engine runs in a `bwrap`/Docker-isolated container, and the task's own
+verifier scores it. A smoke pass (N=1, 24-turn cap, 5-way parallel, reasoning `low`) solved
+**11/13** for ~44₽. Both misses hit the turn cap: `fix-ocaml-gc` and
+`custom-memory-heap-crash` (reward 0), and `fix-code-vulnerability` solved but did not stop.
+
+**A working-set bug was found and fixed.** `fix-ocaml-gc` and `fix-code-vulnerability`
+ended on `no_progress`; `fix-code`'s trace shows a `query` loop — the agent could not keep
+the source window it was editing in view. Root cause: the working set had a
+**total-character cap** (`HELD_CHARS = 2 × OUTPUT_LIMIT = 16,000`) that **silently dropped
+any body larger than the cap** (`src/loop/graph.ts`). A 400-line window of `bottle.py` is
+~15.6k, so it was dropped as soon as another body was pinned; the `repeated_action` refusal
+then told the model to `query` again, and the anti-stall ended the run (`no_progress`). This
+is the same failure already flagged in §4.4 (the "next front"). Fix: removed the
+total-character cap; the set is bounded by `MAX_HELD` (5) bodies, each bounded per tool by
+`OUTPUT_LIMIT` (`read` included now). After the fix `fix-code-vulnerability` solves
+(reward 1, 18 turns, 2.33₽) and `fix-ocaml-gc` no longer loops (55 → 14 turns), though it
+still stops without editing — a model/prompt issue, not a limit.
+
+**Token comparison** (`fix-ocaml-gc`; sandbox reasoning `low`, Harbor `high` — see caveat):
+
+| run | reward | llm | tools | in | out (visible + reasoning) | cache | cost |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sandbox (new engine) | 0 | 14 | 14 | 172.9k (fresh 68.0k) | 14.5k (1.4k + 13.1k) | 61% | 2.38₽ |
+| Harbor Skein (old) | 3/3 | 69 | 52 | 1044.6k | 327.5k (−) | 56% | — |
+| Harbor opencode | 3/3 | 26 | 30 | 1063.4k | 13.5k (3.0k + 10.5k) | 96% | — |
+
+`fix-code-vulnerability`: sandbox reward 1, 18 llm / 18 tools, in 269.5k (fresh 117.2k) /
+out 9.3k (1.7k + 7.6k), cost 2.33₽ — **no Harbor/opencode record** (batch B trials are empty,
+an infra failure). opencode's cache share is 96% (of its 1063.4k `in`, 1015.7k is cache
+reads), so its fresh input is only ~47.7k.
+
+Caveat: the sandbox runs at reasoning `low` while the Harbor runs used `high`, so the
+sandbox numbers are not yet matched; the sandbox can be re-run at `high` (plan §3).
+
 ## 5. Problems (what broke or hurts)
 
 These are from the early baseline runs (`2026-09-26`, `2026-10-02`); some are fixed
@@ -417,6 +631,9 @@ by now — the engine fixes and the current comparison are in §4.2 and §4.4.
    not treat `run` without claims as a check, and do not carry build artifacts.
 4. After the changes, re-run `fix-ocaml-gc` and 2–3 more tasks and compare with the
    saved baseline.
+5. **Comparative testing (§4.8, plan §3 item 4):** re-run the sandbox on the same tasks at
+   reasoning `high`, k = 3, and compare turns / LLM calls / tool calls / tokens / cost
+   against opencode on matched tasks; fix the premature `stop` before trusting accuracy.
 
 Separately deferred: optimizing the projection for a stable prefix/cache
 (`docs/plans/implementation_plan.md`, backlog).
@@ -427,6 +644,8 @@ Separately deferred: optimizing the projection for a stable prefix/cache
   `trajectory.json`, `reward.txt`).
 - Harbor: `~/.skein-bench/harbor/<job>/<trial>/` (`agent/langgraph-run.log` with
   `SKEIN_TURN`/`SKEIN_METRICS`, `verifier/reward.txt`, `result.json`).
+- Local sandbox (`tests/sandbox/`, §4.8): `bench/runs/sandbox-tasks/<ts>-<id>/`
+  (`contexts.ndjson`, `result.json`, `metrics.json`, `reward.txt`).
 - Plugin baseline: `skein-plugin/pilot/harbor/jobs/2026-09-26__11-50-39/`.
 - Non-degradation gate: `bench/baseline.json`, `bench/compare.ts`, `bench/gate.ts`
   (`npm run bench:gate -- <runDir>`), test `tests/bench_gate.test.ts`.
