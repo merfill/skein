@@ -8,7 +8,7 @@ Related documents:
 - `docs/ir.md` — **as-built**: how the IR is arranged in the current code.
 - `docs/ir_operations.md` — the operational reference of every operator and the
   test-coverage map (`OP-*`, `TR-*`, `DER-*`, `REF-*`).
-- `docs/fix_ocaml_gc_ideal.md` — the model instance: a reference trajectory.
+- `docs/benches/fix_ocaml_gc_ideal.md` — the model instance: a reference trajectory.
 - `docs/plans/implementation_plan.md` — stages and status.
 
 This is the **source of truth about the IR semantics**. The code follows it, not the
@@ -25,7 +25,7 @@ operators** (`create_goal`, `apply`, `stop`); the `complete` operator and the `c
 edge are removed, and the `done_when` kind `subjective` is renamed to `arbiter`. The
 traversal model (arm + cursor, one frontier) is described in
 `docs/plans/traversal_stack_spec.md`; the revision that introduced `stop` and the shared
-frontier is `docs/plans/ir_operations_revision_plan.md`. The exact state of the code is
+frontier is `docs/plans/archive/ir_operations_revision_plan.md`. The exact state of the code is
 `docs/ir.md`.
 
 ---

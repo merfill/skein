@@ -12,7 +12,7 @@ environment:
   # Both agents run under identical resources, so the comparison is fair. 5
   # concurrent trials x 4 CPU oversubscribes the 16-CPU host slightly (the OCaml
   # build is CPU-bound); 5 x 5120 MB = 25.6 GB fits the 30 GB host. See
-  # docs/bench_report.md §4.4.
+  # docs/benches/bench_report.md §4.4.
   override_cpus: 4
   override_memory_mb: 5120
 agents:
@@ -51,7 +51,7 @@ agents:
               "~deepseek/deepseek-v4-flash-latest":
                 name: DeepSeek V4 Flash
                 # Match Skein's reasoning effort (F1 in
-                # docs/plans/engine_fixes_found.md: the reasoning toggle decides).
+                # docs/benches/engine_fixes_found.md: the reasoning toggle decides).
                 options:
                   reasoningEffort: high
 datasets:

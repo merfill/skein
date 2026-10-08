@@ -4,7 +4,7 @@
 
 Related: `docs/ir_semantics.md` (§2.8 — negative/summary, §8 — the place of the
 projection), `docs/ir.md` (as-built), `docs/tools.md` (the tool contract),
-`docs/fix_ocaml_gc_run_report.md` (the context counterexample).
+`docs/benches/fix_ocaml_gc_run_report.md` (the context counterexample).
 
 This is the source of truth about the **composition** of the projection. The code
 (`src/ir/project.ts`) follows it. A projection change: first here, then the code, then

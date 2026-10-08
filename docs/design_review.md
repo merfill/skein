@@ -42,7 +42,7 @@ Legend: **Applied** (already in code), **Accepted** (valid, still open),
   `query` (`id`/`kind`/`status`/`edgesOf`/`verdictOf`, `QUERY_LIMIT = 50`), so
   enumeration is not required for the guarantee. `index` is now `{ counts, recent }`
   — a bounded summary plus a window of the newest `tail` nodes.
-- **Action:** done (`docs/plans/index_budget_plan.md`); resolved Q4 in
+- **Action:** done (`docs/plans/archive/index_budget_plan.md`); resolved Q4 in
   `docs/concepts.md` reworded from "always includes the index" to "always
   guarantees addressability".
 
@@ -99,10 +99,10 @@ the behaviour, the agent is deceived: the context says "settled".
 - **Action:** done. (a) A check's source observation carries a witness; `mutate`
   stales the `verifies` edge; the projection shows a claim as verified only with a
   live check and lists the rest under `invalidated`
-  (`docs/plans/check_soundness_plan.md`). (b) Transitivity is covered by
+  (`docs/plans/archive/check_soundness_plan.md`). (b) Transitivity is covered by
   over-approximation — the witness is a snapshot of the whole workspace, so any
   change, imported modules included, stales the check; the witness now lives once,
-  on the observation (`docs/plans/staleness_scope_plan.md`). Precision (an import
+  on the observation (`docs/plans/archive/staleness_scope_plan.md`). Precision (an import
   graph) is deliberately deferred.
 
 ### R4. Goal-closure paradox
@@ -131,7 +131,7 @@ the behaviour, the agent is deceived: the context says "settled".
 - **Action:** done — `record_check` carries `actor: "arbiter" | "user"`, and
   `userAcceptance` (`src/ir/approval.ts`) records an arbiter verdict out of band.
   The LLM cannot emit a check, so `verified` keeps exactly one path. No UI is
-  built; the harness calls the helper (`docs/plans/user_approval_plan.md`).
+  built; the harness calls the helper (`docs/plans/archive/user_approval_plan.md`).
 
 ### C2. Graph or tree
 
@@ -183,7 +183,7 @@ the behaviour, the agent is deceived: the context says "settled".
   `recent`, so the model could forget and repeat a forbidden action.
 - **Action:** done — a refusal is recorded as a `record_rejection` event with the
   action signature and reason, and shown under `frontier.refusals`
-  (`docs/plans/rejection_plan.md`). No node is materialized and the provenance
+  (`docs/plans/archive/rejection_plan.md`). No node is materialized and the provenance
   split is not done.
 
 ### P4. Budget in `Context`
@@ -194,7 +194,7 @@ the behaviour, the agent is deceived: the context says "settled".
   Turn count is trivial and deterministic; token counts are not.
 - **Action:** done — the loop passes `{ turn, maxTurns }` as a projection option
   and `header.budget` exposes `{ turn, maxTurns, remaining }`; token accounting is
-  left out (`docs/plans/index_budget_plan.md`).
+  left out (`docs/plans/archive/index_budget_plan.md`).
 
 ## What the recent commit changed here
 

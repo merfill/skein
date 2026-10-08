@@ -19,7 +19,7 @@ if [ -z "$key" ]; then
 fi
 
 # Config selection: SKEIN_HARBOR_CONFIG (default skein.yaml). Use compare.yaml
-# for the Skein-vs-opencode comparison (see docs/bench_report.md §4.4).
+# for the Skein-vs-opencode comparison (see docs/benches/bench_report.md §4.4).
 config="${SKEIN_HARBOR_CONFIG:-skein.yaml}"
 
 cd "$repo"

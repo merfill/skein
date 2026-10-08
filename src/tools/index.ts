@@ -754,7 +754,7 @@ export function executeAction(
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
         // throws `path escapes workspace`, and the loop must turn that into a fail
-        // observation like `grep`/`list` do (docs/bench_report.md §4.4, problem 5).
+        // observation like `grep`/`list` do (docs/benches/bench_report.md §4.4, problem 5).
         let present: boolean;
         try {
           present = workspace.exists(apply.path);

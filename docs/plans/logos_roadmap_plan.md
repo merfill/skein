@@ -3,7 +3,7 @@
 > Russian mirror — `docs/plans/logos_roadmap_plan_ru.md`.
 
 Related: `docs/logos_ir.md` (§7–§9), `docs/plans/implementation_plan.md` (Tier 2),
-`docs/plans/staleness_scope_plan.md`, `docs/plans/tier1_plan.md`. Overall plan —
+`docs/plans/archive/staleness_scope_plan.md`, `docs/plans/archive/tier1_plan.md`. Overall plan —
 `docs/plans/implementation_plan.md`.
 
 Status: plan; work not started.
@@ -48,7 +48,7 @@ each step stands alone and is checked against the non-degradation gate.
   `bench/gate.ts` (CLI `npm run bench:gate -- <runDir|metrics.json>`); test
   `tests/bench_gate.test.ts`. No `src/` changes.
 - Remaining: refresh the live baseline on the full simple set (12 cases) and record
-  it in `docs/bench_report.md`; wire the gate into the acceptance of steps 1–6.
+  it in `docs/benches/bench_report.md`; wire the gate into the acceptance of steps 1–6.
 
 ### Step 1 — `W` gate and linear modes
 
@@ -151,7 +151,7 @@ Progress is relative to the mode, so looping is caught by layers
 ### Step 7 (deferred) — full witness precision
 
 - Narrow the witness to a dependency closure via each ecosystem's tooling; without
-  read tracing a narrow witness is unsound (`docs/plans/staleness_scope_plan.md`
+  read tracing a narrow witness is unsound (`docs/plans/archive/staleness_scope_plan.md`
   §6).
 
 ## 4. Verification
@@ -159,7 +159,7 @@ Progress is relative to the mode, so looping is caught by layers
 - `npm run typecheck`; `npm test` (offline; live only when `SKEIN_LIVE=true`).
 - Non-degradation gate: `npm run bench:gate -- <runDir>` — `reward` not below the
   reference, steps/tokens/cost/peak not above the reference × 1.2 (see
-  `docs/bench_report.md` §4.3).
+  `docs/benches/bench_report.md` §4.3).
 - `fix-ocaml-gc`: Skein either converges or stops honestly; comparison with the
   saved baseline run.
 - The invariants of §3 of `logos_ir.md` hold by tests: no `verified` without a

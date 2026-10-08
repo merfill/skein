@@ -4,7 +4,7 @@
 
 Связанные документы: `docs/ir_semantics_ru.md` (семантика IR: промпт — политика доксы
 над ней), `docs/tools_ru.md` (контракт инструментов), `docs/projection_ru.md` (что
-видит модель), `docs/plans/system_prompt_revision_plan_ru.md` (план ревизии и фазы),
+видит модель), `docs/plans/archive/system_prompt_revision_plan_ru.md` (план ревизии и фазы),
 `src/loop/prompt/` (сборка), `tests/prompt.test.ts` (L1-тесты).
 
 Это **источник истины о поведении промпта**. Код следует за ним: правка поведения идёт
@@ -135,7 +135,7 @@
 | L1 | `tests/prompt.test.ts` | сборка из блоков; уникальность ID; дисциплина потоков; workspace root; реакция на неверный каталог |
 | L1 (Фаза 2) | `tests/prompt.test.ts` | каждый инструмент `PROPOSAL_TOOLS` назван; нет `apply {`/`{ tool:` |
 | L2 | `tests/live/scenarios.test.ts` | форма траектории на фикстуре (B7/B8/B9/B10/B11/B15) |
-| L3 | `bench/`, `docs/bench_report_ru.md` | приёмка; контролируемый эксперимент (Фаза 5) |
+| L3 | `bench/`, `docs/benches/bench_report_ru.md` | приёмка; контролируемый эксперимент (Фаза 5) |
 
 ## 6. Открытые вопросы
 

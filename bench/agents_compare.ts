@@ -8,7 +8,7 @@
 //   - opencode: agent/trajectory.json, one step per LLM call with
 //     `metrics.prompt_tokens` (= input + cache, see harbor agents/opencode.py).
 //
-// The report this feeds: docs/bench_report.md §4.4.
+// The report this feeds: docs/benches/bench_report.md §4.4.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

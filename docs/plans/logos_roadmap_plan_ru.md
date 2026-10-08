@@ -3,12 +3,12 @@
 > Английское зеркало — `docs/plans/logos_roadmap_plan.md`.
 
 Связанные: `docs/logos_ir_ru.md` (§7–§9), `docs/plans/implementation_plan_ru.md`
-(Tier 2), `docs/plans/staleness_scope_plan_ru.md`,
-`docs/plans/tier1_plan_ru.md`. Общий план —
+(Tier 2), `docs/plans/archive/staleness_scope_plan_ru.md`,
+`docs/plans/archive/tier1_plan_ru.md`. Общий план —
 `docs/plans/implementation_plan_ru.md`.
 
 Статус: **надстроен** приведением к семантике IR — см.
-`docs/plans/ir_semantics_migration_plan_ru.md`. Шаги ниже (режимы, `cited`,
+`docs/plans/archive/ir_semantics_migration_plan_ru.md`. Шаги ниже (режимы, `cited`,
 `Revision`) заменены трёхоператорной моделью и производным состоянием;
 документ оставлен как история (§9.6 `docs/logos_ir_ru.md`).
 
@@ -52,7 +52,7 @@
   (CLI `npm run bench:gate -- <runDir|metrics.json>`); тест
   `tests/bench_gate.test.ts`. Правок `src/` нет.
 - Осталось: освежить live-baseline на полном простом наборе (12 кейсов) и
-  зафиксировать в `docs/bench_report_ru.md`; включить гейт в приёмку шагов 1–6.
+  зафиксировать в `docs/benches/bench_report_ru.md`; включить гейт в приёмку шагов 1–6.
 
 ### Шаг 1 — `W`-гейт и линейные режимы
 
@@ -153,14 +153,14 @@
 
 - Сузить свидетель до замыкания зависимостей через инструменты экосистемы; без
   трассировки чтений узкий свидетель несостоятелен
-  (`docs/plans/staleness_scope_plan_ru.md` §6).
+  (`docs/plans/archive/staleness_scope_plan_ru.md` §6).
 
 ## 4. Проверка
 
 - `npm run typecheck`; `npm test` (офлайн; live — при `SKEIN_LIVE=true`).
 - Гейт недеградации: `npm run bench:gate -- <runDir>` — `reward` не ниже
   референса, шаги/токены/стоимость/пик не выше референса × 1.2 (см.
-  `docs/bench_report_ru.md` §4.3).
+  `docs/benches/bench_report_ru.md` §4.3).
 - `fix-ocaml-gc`: Skein либо сходится, либо останавливается честно; сравнение с
   сохранённым прогоном эталона.
 - Инварианты §3 `logos_ir_ru.md` держатся по тестам: нет `verified` без `check`;

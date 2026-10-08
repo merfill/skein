@@ -7,12 +7,8 @@ projection are the protocol.
 
 ## Documents
 
-- `docs/concepts.md` — conceptual overview.
-- `docs/ir.md` — the IR: operations, state, and control.
-- `docs/plans/traversal_stack_spec.md` — the traversal stack (spine and arms).
-- `docs/testing.md` — how to run tests and benches, and where output lands.
-- `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
-- `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
+Start at `docs/README.md` — the documentation index (concepts, the IR, the model
+surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 
 ## Commands
 

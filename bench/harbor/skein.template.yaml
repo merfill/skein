@@ -10,10 +10,10 @@ environment:
   force_build: true
   delete: true
   # Match bench/harbor/compare.template.yaml so a Skein-only run is comparable with the
-  # opencode half of docs/bench_report.md §4.4. The verifier rebuilds OCaml with
+  # opencode half of docs/benches/bench_report.md §4.4. The verifier rebuilds OCaml with
   # `make -j4`; task.toml gives cpus=1, so -j4 ran as -j1. Override the container
   # resources for every task in the job (Harbor applies these to task_env_config,
-  # docs/plans/engine_fixes_found.md P3.1). 5x4 CPU oversubscribes the 16-CPU host
+  # docs/benches/engine_fixes_found.md P3.1). 5x4 CPU oversubscribes the 16-CPU host
   # slightly; 5x5120 MB fits the 30 GB host.
   override_cpus: 4
   override_memory_mb: 5120

@@ -4,7 +4,7 @@
 
 Related: `docs/ir_semantics.md` (IR semantics: the prompt is the doxa's policy over it),
 `docs/tools.md` (tool contract), `docs/projection.md` (what the model sees),
-`docs/plans/system_prompt_revision_plan.md` (revision plan and phases),
+`docs/plans/archive/system_prompt_revision_plan.md` (revision plan and phases),
 `src/loop/prompt/` (assembly), `tests/prompt.test.ts` (L1 tests).
 
 This is the **source of truth about prompt behavior**. The code follows it: a behavior
@@ -135,7 +135,7 @@ L2 is under the gate, L3 is acceptance.
 | L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; stream discipline; workspace root; wrong-directory reaction |
 | L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is named; no `apply {`/`{ tool:` |
 | L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7/B8/B9/B10/B11/B15) |
-| L3 | `bench/`, `docs/bench_report.md` | acceptance; the controlled experiment (Phase 5) |
+| L3 | `bench/`, `docs/benches/bench_report.md` | acceptance; the controlled experiment (Phase 5) |
 
 ## 6. Open questions
 

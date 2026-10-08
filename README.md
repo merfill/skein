@@ -139,8 +139,8 @@ traversal stack, and verification by an explicit check are documented below.
 - `docs/plans/traversal_stack_spec.md` — the traversal stack (spine and arms).
 - `docs/plans/step_reduction_plan.md` — step reduction and context format.
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
-- `docs/plans/tier0_plan.md` — detailed Tier 0 spec.
-- `docs/plans/user_approval_plan.md` — an arbiter records a user check.
+- `docs/plans/archive/tier0_plan.md` — detailed Tier 0 spec.
+- `docs/plans/archive/user_approval_plan.md` — an arbiter records a user check.
 
 ## License
 

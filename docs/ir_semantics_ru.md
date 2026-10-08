@@ -8,7 +8,7 @@
 - `docs/ir_ru.md` — **as-built**: как IR устроен в текущем коде.
 - `docs/ir_operations_ru.md` — операционный справочник по каждой операции и карта
   покрытия (`OP-*`, `TR-*`, `DER-*`, `REF-*`).
-- `docs/fix_ocaml_gc_ideal_ru.md` — инстанс модели: эталонная траектория.
+- `docs/benches/fix_ocaml_gc_ideal_ru.md` — инстанс модели: эталонная траектория.
 - `docs/plans/implementation_plan_ru.md` — этапы и статус.
 
 Это **источник истины о семантике IR**. Код следует за ним, а не наоборот.
@@ -24,7 +24,7 @@
 оператора** (`create_goal`, `apply`, `stop`); оператор `complete` и ребро `closes`
 удалены, а вид `done_when` `subjective` переименован в `arbiter`. Модель обхода
 (рука + курсор, один фронтьер) описана в `docs/plans/traversal_stack_spec_ru.md`;
-ревизия, введшая `stop` и общий фронтьер, — `docs/plans/ir_operations_revision_plan_ru.md`.
+ревизия, введшая `stop` и общий фронтьер, — `docs/plans/archive/ir_operations_revision_plan_ru.md`.
 Точное состояние кода — `docs/ir_ru.md`.
 
 ---

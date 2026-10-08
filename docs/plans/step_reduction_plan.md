@@ -1,7 +1,7 @@
 # Skein — plan for reducing LLM turns and the context format
 
 > English mirror of `docs/plans/step_reduction_plan_ru.md`.
-> Basis — the `ref-localize` run analysis (`docs/bench_report.md` §4.5) and the
+> Basis — the `ref-localize` run analysis (`docs/benches/bench_report.md` §4.5) and the
 > doxa/logos principle discussion. Touches `docs/ir.md`, `docs/system_prompt.md`.
 
 ## 1. Cost methodology
@@ -36,7 +36,7 @@ doxa. Doxa does not close goals (`complete` is removed, A2).
 
 ## 3. Part A — logos closure (retired)
 
-> **Retired** in `docs/plans/plan_stepwise_redesign.md` (step 2.5, decision §3(a)): under
+> **Retired** in `docs/plans/archive/plan_stepwise_redesign.md` (step 2.5, decision §3(a)): under
 > strictly step-by-step traversal plan items are actions only, so nested objective chains
 > with a shared criterion do not arise and `closeAncestors` becomes dead. The code was
 > removed together with step 2.
@@ -131,10 +131,10 @@ and structural closure).
 commands are one call.
 
 **Status: reverted.** The auto-run violates step-by-step (I4) and **created the funnel**
-on the long tasks (`docs/bench_report.md` §4.4, run `2026-10-07__16-42-30`: all 9 trials
+on the long tasks (`docs/benches/bench_report.md` §4.4, run `2026-10-07__16-42-30`: all 9 trials
 `llm_error`): the plan was exhausted in the same turn, and for an `arbiter` goal with an
 exhausted plan `applicable` offered only `create_goal` → nested goals. Reverted in
-`docs/plans/plan_stepwise_redesign.md` step 1 (`AUTO_RUN_ACTIONS` and the loop removed).
+`docs/plans/archive/plan_stepwise_redesign.md` step 1 (`AUTO_RUN_ACTIONS` and the loop removed).
 The historical metrics below are kept for context.
 
 Historically (with A4): live `ref-localize-on`: **steps 5** (was 9), prompt 45.6k (was
@@ -201,23 +201,45 @@ and carries the volatile `state`/plan, so within-node key order cannot extend th
 **telemetry kept**. A genuine prefix needs a stable/volatile split (an immutable brief
 before the focus) — folded into options B/C below.
 
+**4.2b B (transcript) — prototype.** The transcript is the current branch, not the global
+journal: `system`, an immutable brief (request + constraints), the branch's steps as
+`assistant(call)/tool(result)` pairs in chronological order, and the volatile board last.
+Short result bodies are inline; a long body stays addressable by id (`query`) — the
+existing working-set/storage rule is unchanged. History is scoped to the chosen
+interpretation, so a failed alternative's steps are not expanded — only its marker
+(`refuted`/`abandoned` with `why`) shows in `path`; on a rollback the prefix before the
+divergence node is unchanged and only the suffix is re-rendered. `assistant` carries the
+tool call only (no `thought`, B.3). Selected with `SKEIN_CONTEXT_FORMAT=transcript`
+(default `json`); the bench and live harness now measure the real prompt payload
+(`promptText`). Guarded by `tests/prompt.test.ts` ("context format: transcript").
+
 **4.3 A/B experiment.** Cases: `ref-localize-on` + one live scenario. Compare A/B(/C) by
 LLM turns, input/output, cache%, `reasoning_tokens`/turn, reward. Hypothesis: B lowers
 reasoning/turn and raises cache% at equal reward.
+
+**Metric caveat (for the full opencode comparison, deferred).** opencode reports reasoning
+separately: its local JSON carries `tokens.reasoning` alongside `tokens.output`, and
+`tokens.total = input + output + reasoning + cache.read`. The plugin's
+`tools/measure.ts` sums only `tokens.output`, so the cached opencode `out` **excludes**
+reasoning; Skein's LangChain `output_tokens` **includes** it. When comparing, sum
+`tokens.reasoning` from the raw `opencode.txt` and compare reasoning↔reasoning (and never
+`out`↔`out`). The full opencode runs on `ref-localize-on` and `multi-bug-calc` are
+deferred.
 
 **4.4 Decisions before implementing.** Window size K; generating tool messages and their
 ids; relation to the "stable projection prefix" backlog item
 (`docs/plans/implementation_plan.md` §4).
 
-**Status:** telemetry implemented and used; A+ measured and rejected (reverted). B/C
-(transcript/hybrid, incl. a stable/volatile brief split) remain.
+**Status:** telemetry implemented and used; A+ measured and rejected (reverted). B
+(transcript) implemented behind `SKEIN_CONTEXT_FORMAT`; the live A/B (json vs transcript)
+is pending. C remains.
 
 ## 5. Open questions
 
 - **Resolved.** Doxa never closes a goal: an objective goal is settled by its check, an
   arbiter goal by external acceptance (A2); `complete` is removed.
 - **Resolved.** A4 (hypothesis + first actions in one call) is **reverted**: it violates
-  step-by-step and created the funnel (`docs/plans/plan_stepwise_redesign.md` §1).
+  step-by-step and created the funnel (`docs/plans/archive/plan_stepwise_redesign.md` §1).
 - **Open.** Auto-running `done_when.command` by the engine once the plan is done (A5):
   running a command is a side effect, so it must be decided whether that is allowed
   without a doxa turn.

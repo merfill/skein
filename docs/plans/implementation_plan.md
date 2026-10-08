@@ -2,7 +2,7 @@
 
 Concept — `docs/concepts.md`. Conceptual frame — doxa/logos in
 `ankyra/docs/doxa_and_logos.tex` and `ankyra/docs/concepts_ru.md`. Detailed spec
-of the current stage — `docs/plans/tier0_plan.md`. This document is the overall plan,
+of the current stage — `docs/plans/archive/tier0_plan.md`. This document is the overall plan,
 decisions, roadmap, and status.
 
 ## 1. Essence
@@ -28,7 +28,7 @@ function are the protocol.
 
 **Tier 0 — bugfix by a failing test (done).**
 Closed loop `goal → locate → claim → action → check → done`; IR and projection;
-staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
+staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
 
 **Tier 1 — working on a task (done).**
 - `Decision` as first-class: choice, rejected alternatives, rationale.
@@ -36,12 +36,12 @@ staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 - Subgoals and their decomposition.
 - Path-based relevance: reachability from the goal through decision/action edges
   (C2).
-  Details and order of work — `docs/plans/tier1_plan.md`.
+  Details and order of work — `docs/plans/archive/tier1_plan.md`.
 
 **Tier 2 — non-monotonic knowledge.**
 - Statuses `superseded`/`refuted`, specificity, `Revision` as a record.
 - Staleness precision (R3b): scope the witness to a dependency closure, via each
-  ecosystem's tooling; deferred from Tier 1 (`docs/plans/tier1_plan.md` §7).
+  ecosystem's tooling; deferred from Tier 1 (`docs/plans/archive/tier1_plan.md` §7).
 
 **Tier 3 — doxastic operators.**
 - `analogy`, `intuition` — asking the LLM for the non-derivable, as explicit
@@ -51,19 +51,19 @@ staleness; objective arbiter. Details — `docs/plans/tier0_plan.md`.
 1. Tighten classification: a constraint must forbid a `run` (shell) workaround,
    not only `edit`. **Done** — effect guard: `edit` is checked in `classify`; a
    `run` that changes a forbidden file is reverted and recorded as a violation
-   (`docs/plans/constraint_guard_plan.md`).
+   (`docs/plans/archive/constraint_guard_plan.md`).
 2. Long-horizon tasks where the projection should give an advantage
    (multi-file edits, 50+ turns).
 3. Compare Skein vs opencode vs a monotonic agent on the same tasks. **Started** —
    the first matched run (3 long terminal-bench tasks, k = 3, reasoning `high` both)
-   is in `docs/bench_report.md` §4.4: parity on `fix-ocaml-gc`, no aggregate accuracy
+   is in `docs/benches/bench_report.md` §4.4: parity on `fix-ocaml-gc`, no aggregate accuracy
    gain, and the per-call context saving is offset by more calls and a worse cache.
 
 ## 4. Current status
 
-Tier 0 is implemented (steps 1–5 of `docs/plans/tier0_plan.md` §11): `src/ir`,
+Tier 0 is implemented (steps 1–5 of `docs/plans/archive/tier0_plan.md` §11): `src/ir`,
 `src/config`, `src/llm`, `src/tools`, `src/loop`, three fixtures, offline and live
-gates. Full status and deliberate simplifications — `docs/plans/tier0_plan.md` §13.
+gates. Full status and deliberate simplifications — `docs/plans/archive/tier0_plan.md` §13.
 
 Beyond Tier 0, the current line adds:
 
@@ -71,39 +71,39 @@ Beyond Tier 0, the current line adds:
   traces to a source (`docs/concepts.md`).
 - **Check soundness** — a check carries a witness; a later change stales it and
   the claim moves to `frontier.invalidated`
-  (`docs/plans/check_soundness_plan.md`).
+  (`docs/plans/archive/check_soundness_plan.md`).
 - **Observation of change** — `run` records a `mutate` per changed file; the
   engine reconciles active `ref`s before each projection, with a signature cache;
   `fs.watch` is left for a future streaming mode
-  (`docs/plans/observation_plan.md`, `docs/plans/watcher_plan.md`).
+  (`docs/plans/observation_plan.md`, `docs/plans/archive/watcher_plan.md`).
 - **Rejection recording** — a refused proposal is recorded as a
   `record_rejection` event and shown under `frontier.refusals`, so it survives
-  tail eviction and replay (`docs/plans/rejection_plan.md`).
+  tail eviction and replay (`docs/plans/archive/rejection_plan.md`).
 - **Context budget** — `index` is a bounded summary (counts + newest window) under
   the addressability contract; the turn budget is shown in `header.budget`
-  (`docs/plans/index_budget_plan.md`).
+  (`docs/plans/archive/index_budget_plan.md`).
 - **Arbiter (user acceptance)** — `userAcceptance` records a user check
   (`actor: "user"`), so non-code work can reach a settled state
-  (`docs/plans/user_approval_plan.md`).
+  (`docs/plans/archive/user_approval_plan.md`).
 - **Staleness scope** — transitivity is covered by a workspace-wide witness; the
   witness now lives once, on the observation
-  (`docs/plans/staleness_scope_plan.md`).
+  (`docs/plans/archive/staleness_scope_plan.md`).
 - **Work graph (T1.1)** — `decompose`/`decide` produce subgoals, decisions, and
   connecting edges (`decomposes`/`justifies`/`chosen_over`/`supports`) with
   `provenance.llm`; attachment to a parent is mandatory (the `classify` gate);
   `superseded`/`achieved` statuses are derived; the projection shows subgoals and
-  links (`docs/plans/tier1_plan.md`).
+  links (`docs/plans/archive/tier1_plan.md`).
 - **Path-based relevance (T1.2)** — `frontier` is the reachable closure from the
   goal along path edges; the unreachable stays retrievable through `query`
-  (`docs/plans/tier1_plan.md` §5).
+  (`docs/plans/archive/tier1_plan.md` §5).
 - **Explicit check node (T1.3)** — `record_check` materializes a `check` node
   (command, verdict, witness, `actor`) and a `verifies` `check → claim` edge;
-  `query {verdictOf}` reads the node (`docs/plans/tier1_plan.md` §6).
+  `query {verdictOf}` reads the node (`docs/plans/archive/tier1_plan.md` §6).
 - **fix-ocaml-gc acceptance (2026-10-06)** — the long terminal-bench task is solved
   (**reward 1.0**, `40 tests passed`) on Flash + reasoning `high`. The engine fixes
   (focus under a closed ancestor, crash diagnostics, projection retention, background
-  `run`, removal of `need`) — `docs/plans/engine_fixes_found.md`; the run report —
-  `docs/fix_ocaml_gc_run_report_2026-10-06.md`.
+  `run`, removal of `need`) — `docs/benches/engine_fixes_found.md`; the run report —
+  `docs/benches/fix_ocaml_gc_run_report_2026-10-06.md`.
 - **IR operations reference & coverage** — every tree operator is specified with a
   stable ID in `docs/ir_operations.md` (+`_ru`); offline tests grouped by operator
   (`tests/ops/`), property tests over 400 random legal trees, a coverage gate
@@ -114,7 +114,7 @@ Beyond Tier 0, the current line adds:
   the IR `Action` and repairs one malformed/missing call. The JSON-schema-in-prompt path
   (`invokeStructured`) stays a generic fallback. This replaced the single nested
   discriminated union, which inflated reasoning and tripped the completion cap on hard
-  turns (`docs/testing.md` §8.1; `docs/bench_report.md` §4.4). Added the `write` tool
+  turns (`docs/testing.md` §8.1; `docs/benches/bench_report.md` §4.4). Added the `write` tool
   (`docs/ir_operations.md` §2.2.6).
 - **Model comparison (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` fails the
   synthetic set (0/4) and costs more than the current DeepSeek; staying on
@@ -122,7 +122,7 @@ Beyond Tier 0, the current line adds:
 - **System prompt revision (done)** — behavior blocks plus `docs/system_prompt.md`, the
   `apply` drift removed, a VCS policy and an external reference, the `fetch`/`apply_patch`
   tools, the out-of-workspace path guard, and a controlled experiment (§4.5 in
-  `docs/bench_report.md`). Outcome — `docs/plans/system_prompt_revision_plan.md`.
+  `docs/benches/bench_report.md`). Outcome — `docs/plans/archive/system_prompt_revision_plan.md`.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.

@@ -3,7 +3,7 @@
 > Russian mirror — `docs/plans/observation_plan_ru.md`.
 
 Related: `docs/concepts.md` (first principle), `docs/design_review.md` (R3),
-`docs/plans/check_soundness_plan.md`. Overall plan —
+`docs/plans/archive/check_soundness_plan.md`. Overall plan —
 `docs/plans/implementation_plan.md`.
 
 Status: (a),(b) implemented; (c) open (see §8).
@@ -33,7 +33,7 @@ a source.
   versions of the `ref`s that current activity depends on (witnesses of live
   checks and live read facts) and emits `mutate` on drift. This is the guarantee.
   A `mtime`/`ctime`/size signature cache avoids re-hashing unchanged files
-  (`docs/plans/watcher_plan.md`).
+  (`docs/plans/archive/watcher_plan.md`).
 - (c) **Watcher.** A filesystem watcher turns external changes into `mutate`
   events promptly. This is an optimization (a fast path); it does not replace
   (b).
@@ -91,7 +91,7 @@ Implemented (a) and (b); (c) remains open.
 - (b) the loop reconciles active `ref`s before `project` (`src/loop/observe.ts`,
   wired in `src/loop/graph.ts`); an observed drift becomes a `mutate`. A
   signature cache avoids re-hashing unchanged files
-  (`docs/plans/watcher_plan.md`).
+  (`docs/plans/archive/watcher_plan.md`).
 - (c) the filesystem watcher is not implemented: reconciliation is the
   guarantee, the watcher only adds promptness, and it can be added later without
   touching the correctness path.

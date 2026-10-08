@@ -3,7 +3,7 @@
 > Английское зеркало — `docs/plans/observation_plan.md`.
 
 Связанные: `docs/concepts_ru.md` (первый принцип), `docs/design_review_ru.md`
-(R3), `docs/plans/check_soundness_plan_ru.md`. Общий план —
+(R3), `docs/plans/archive/check_soundness_plan_ru.md`. Общий план —
 `docs/plans/implementation_plan_ru.md`.
 
 Статус: (a),(b) реализованы; (c) открыт (см. §8).
@@ -32,7 +32,7 @@
   зависит текущая активность (свидетели живых проверок и живые факты чтения), и
   при дрейфе пишет `mutate`. Это гарантия. Кэш отпечатков `mtime`/`ctime`/размер
   избавляет от повторного хэширования неизменённых файлов
-  (`docs/plans/watcher_plan_ru.md`).
+  (`docs/plans/archive/watcher_plan_ru.md`).
 - (c) **Watcher.** Наблюдатель файловой системы сразу превращает внешние
   изменения в события `mutate`. Это оптимизация (быстрый путь); она не заменяет
   (b).
@@ -89,7 +89,7 @@
 - (b) цикл сверяет активные `ref` перед `project` (`src/loop/observe.ts`,
   подключён в `src/loop/graph.ts`); замеченный дрейф становится `mutate`. Кэш
   отпечатков избавляет от повторного хэширования неизменённых файлов
-  (`docs/plans/watcher_plan_ru.md`).
+  (`docs/plans/archive/watcher_plan_ru.md`).
 - (c) наблюдатель файловой системы не реализован: гарантия — это сверка,
   watcher добавляет лишь скорость и может быть добавлен позже, не затрагивая
   путь корректности.

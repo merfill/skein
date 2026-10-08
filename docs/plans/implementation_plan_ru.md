@@ -4,7 +4,7 @@
 
 Концепция — `docs/concepts_ru.md`. Концептуальный каркас — докса/логос в
 `ankyra/docs/doxa_and_logos.tex` и `ankyra/docs/concepts_ru.md`. Детальный спек
-текущего этапа — `docs/plans/tier0_plan_ru.md`. Этот документ — общий план, решения,
+текущего этапа — `docs/plans/archive/tier0_plan_ru.md`. Этот документ — общий план, решения,
 роадмап и статус.
 
 ## 1. Суть
@@ -29,7 +29,7 @@ Skein — агент кодирования, у которого контекс�
 
 **Tier 0 — багфикс по падающему тесту (выполнен).**
 Замкнутый цикл `goal → locate → claim → action → check → done`; IR + проекция;
-staleness; объективный арбитр. Детали — `docs/plans/tier0_plan_ru.md`.
+staleness; объективный арбитр. Детали — `docs/plans/archive/tier0_plan_ru.md`.
 
 **Tier 1 — работа над задачей (выполнен).**
 - `Decision` как first-class: выбор, отвергнутые альтернативы, обоснование.
@@ -37,12 +37,12 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - Подцели и их декомпозиция.
 - Path-based релевантность: достижимость от цели через рёбра решений/действий
   (C2).
-  Детали и порядок работ — `docs/plans/tier1_plan_ru.md`.
+  Детали и порядок работ — `docs/plans/archive/tier1_plan_ru.md`.
 
 **Tier 2 — немонотонность знания.**
 - Статусы `superseded`/`refuted`, специфичность, `Revision` как запись.
 - Точность устаревания (R3b): сузить свидетельство до замыкания зависимостей,
-  инструментами экосистемы; отложено из Tier 1 (`docs/plans/tier1_plan_ru.md` §7).
+  инструментами экосистемы; отложено из Tier 1 (`docs/plans/archive/tier1_plan_ru.md` §7).
 
 **Tier 3 — доксические операторы.**
 - `analogy`, `intuition` — запрос у LLM невыводимого, как явные операторы.
@@ -51,12 +51,12 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 1. Ужесточить классификацию: constraint должен запрещать обход через `run`
    (shell), а не только через `edit`. **Сделано** — эффект-гард: `edit`
    проверяется в `classify`; `run`, меняющий запрещённый файл, откатывается и
-   записывается нарушением (`docs/plans/constraint_guard_plan_ru.md`).
+   записывается нарушением (`docs/plans/archive/constraint_guard_plan_ru.md`).
 2. Задачи на длинный горизонт, где проекция должна дать преимущество
    (многофайловые правки, 50+ шагов).
 3. Сравнение Skein vs opencode vs монотонный агент на одних задачах. **Начато** —
    первый сопоставимый прогон (3 длинные задачи terminal-bench, k = 3, reasoning
-   `high` у обоих) в `docs/bench_report_ru.md` §4.4: паритет на `fix-ocaml-gc`,
+   `high` у обоих) в `docs/benches/bench_report_ru.md` §4.4: паритет на `fix-ocaml-gc`,
    суммарного выигрыша по точности нет, а экономия контекста на вызове съедается
    большим числом вызовов и худшим кэшем.
 
@@ -65,12 +65,12 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 > **Приведение к семантике IR.** Код приведён к `docs/ir_semantics_ru.md`:
 > старая модель (`claim`/`decision`/`subgoal`, статусы-поля, `mode`) заменена
 > трёхоператорной моделью и производным состоянием. План и статус —
-> `docs/plans/ir_semantics_migration_plan_ru.md`; текущий as-built — `docs/ir_ru.md`.
+> `docs/plans/archive/ir_semantics_migration_plan_ru.md`; текущий as-built — `docs/ir_ru.md`.
 > Описанная ниже линия Tier 0/Tier 1 — история.
 
-Реализован Tier 0 (шаги 1–5 `docs/plans/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
+Реализован Tier 0 (шаги 1–5 `docs/plans/archive/tier0_plan_ru.md` §11): `src/ir`, `src/config`,
 `src/llm`, `src/tools`, `src/loop`, три фикстуры, offline- и live-гейт. Полный
-статус и осознанные упрощения — `docs/plans/tier0_plan_ru.md` §13.
+статус и осознанные упрощения — `docs/plans/archive/tier0_plan_ru.md` §13.
 
 Поверх Tier 0 текущая линия добавляет:
 
@@ -78,39 +78,39 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   прослеживается до источника (`docs/concepts_ru.md`).
 - **Достоверность проверок** — проверка несёт свидетельство; позднее изменение
   обесценивает его, и утверждение уходит в `frontier.invalidated`
-  (`docs/plans/check_soundness_plan_ru.md`).
+  (`docs/plans/archive/check_soundness_plan_ru.md`).
 - **Наблюдение изменений** — `run` пишет `mutate` на каждый изменённый файл;
   движок сверяет активные `ref` перед каждой проекцией, с кэшем отпечатков;
   `fs.watch` оставлен для будущего стримингового режима
-  (`docs/plans/observation_plan_ru.md`, `docs/plans/watcher_plan_ru.md`).
+  (`docs/plans/observation_plan_ru.md`, `docs/plans/archive/watcher_plan_ru.md`).
 - **Фиксация отказов** — отклонённое предложение пишется событием
   `record_rejection` и показывается в `frontier.refusals`, поэтому переживает
-  вытеснение из хвоста и реплей (`docs/plans/rejection_plan_ru.md`).
+  вытеснение из хвоста и реплей (`docs/plans/archive/rejection_plan_ru.md`).
 - **Бюджет контекста** — `index` есть ограниченная сводка (счётчики + окно
   новейших) по контракту адресуемости; бюджет ходов показан в `header.budget`
-  (`docs/plans/index_budget_plan_ru.md`).
+  (`docs/plans/archive/index_budget_plan_ru.md`).
 - **Арбитр (приёмка пользователя)** — `userAcceptance` фиксирует пользовательскую проверку
   (`actor: "user"`), поэтому не-кодовая работа может достичь settled-состояния
-  (`docs/plans/user_approval_plan_ru.md`).
+  (`docs/plans/archive/user_approval_plan_ru.md`).
 - **Охват устаревания** — транзитивность покрыта снимком всего воркспейса;
   свидетельство теперь живёт один раз, в наблюдении
-  (`docs/plans/staleness_scope_plan_ru.md`).
+  (`docs/plans/archive/staleness_scope_plan_ru.md`).
 - **Рабочий граф (T1.1)** — `decompose`/`decide` производят подцели, решения и
   связующие рёбра (`decomposes`/`justifies`/`chosen_over`/`supports`) с
   `provenance.llm`; привязка к родителю обязательна (проверка допустимости `classify`); статусы
   `superseded`/`achieved` производны; проекция показывает подцели и связи
-  (`docs/plans/tier1_plan_ru.md`).
+  (`docs/plans/archive/tier1_plan_ru.md`).
 - **Path-based релевантность (T1.2)** — `frontier` есть достижимое замыкание от
   цели по рёбрам пути; недостижимое остаётся доставаемым через `query`
-  (`docs/plans/tier1_plan_ru.md` §5).
+  (`docs/plans/archive/tier1_plan_ru.md` §5).
 - **Явный узел проверки (T1.3)** — `record_check` материализует узел `check`
   (команда, вердикт, свидетельство, `actor`) и ребро `verifies` `check → claim`;
-  `query {verdictOf}` читает узел (`docs/plans/tier1_plan_ru.md` §6).
+  `query {verdictOf}` читает узел (`docs/plans/archive/tier1_plan_ru.md` §6).
 - **Приёмка fix-ocaml-gc (2026-10-06)** — длинная задача terminal-bench решена
   (**reward 1.0**, `40 tests passed`) на Flash + reasoning `high`. Исправления движка
   (фокус под закрытым предком, диагностика падения, удержание в проекции, фоновый
-  `run`, удаление `need`) — `docs/plans/engine_fixes_found_ru.md`; отчёт о прогоне —
-  `docs/fix_ocaml_gc_run_report_2026-10-06_ru.md`.
+  `run`, удаление `need`) — `docs/benches/engine_fixes_found_ru.md`; отчёт о прогоне —
+  `docs/benches/fix_ocaml_gc_run_report_2026-10-06_ru.md`.
 - **Справочник операций IR и покрытие** — каждая операция над деревом специфицирована
   стабильным ID в `docs/ir_operations_ru.md` (+EN); офлайн-тесты по операторам
   (`tests/ops/`), property-тесты на 400 случайных легальных деревьях, coverage-gate
@@ -121,7 +121,7 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
   `Action` и ремонтирует один битый/отсутствующий вызов. JSON-схема-в-промпте
   (`invokeStructured`) остаётся общим фолбэком. Это заменило одну глубокую
   discriminated-union, которая раздувала reasoning и упиралась в completion cap на
-  тяжёлых ходах (`docs/testing_ru.md` §8.1; `docs/bench_report_ru.md` §4.4). Добавлен
+  тяжёлых ходах (`docs/testing_ru.md` §8.1; `docs/benches/bench_report_ru.md` §4.4). Добавлен
   инструмент `write` (`docs/ir_operations_ru.md` §2.2.6).
 - **Сравнение моделей (DeepSeek vs Qwen)** — `qwen3-30b-a3b-instruct-2507` проваливает
   синтетический набор (0/4) и дороже текущего DeepSeek; остаёмся на
@@ -129,7 +129,7 @@ staleness; объективный арбитр. Детали — `docs/plans/tie
 - **Ревизия системного промпта (сделано)** — блоки поведения + документ
   `docs/system_prompt_ru.md`, устранён дрейф `apply`, политика VCS и внешний референс,
   инструменты `fetch`/`apply_patch`, guard путей вне воркспейса, контролируемый
-  эксперимент (§4.5 `docs/bench_report_ru.md`). Итог — `docs/plans/system_prompt_revision_plan_ru.md`.
+  эксперимент (§4.5 `docs/benches/bench_report_ru.md`). Итог — `docs/plans/archive/system_prompt_revision_plan_ru.md`.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
 live-гейт только при `SKEIN_LIVE=true`.

@@ -4,7 +4,7 @@
 
 Связанные: `docs/ir_semantics_ru.md` (§2.8 — негатив/сводка, §8 — место проекции),
 `docs/ir_ru.md` (as-built), `docs/tools_ru.md` (контракт инструментов),
-`docs/fix_ocaml_gc_run_report_ru.md` (контрпример по контексту).
+`docs/benches/fix_ocaml_gc_run_report_ru.md` (контрпример по контексту).
 
 Это источник истины о **составе** проекции. Код (`src/ir/project.ts`) следует за
 ним. Правка проекции: сперва здесь, затем код, затем тест.
