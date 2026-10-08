@@ -53,9 +53,9 @@ Projection = {
   lastResult?: ResultView,        // the full result of the latest call
   shown:       ResultView[],      // the working set (branch levels + queried bodies)
   calls:       Call[],            // a summary of previous ones (may be empty)
-  applicable:  string[],          // names of applicable operators
-  checkReady:  boolean,           // a run {target: focus} check is expected now
-  nextAction?: string,            // the action item the plan cursor points at
+  applicable:  string[],          // names of applicable operators (create_goal/apply/stop)
+  checkReady:  boolean,           // a run {target: focus} check is the expected move now
+  nextAction?: string,            // informational: the action item the plan cursor points at
   budget:      { turn, maxTurns, remaining }
 }
 
@@ -69,7 +69,8 @@ PathNode = {
   alternatives?: { chosen?, items: Alt[] }     // the node's own container
 }
 
-Item = { id, kind: "goal" | "action", label, state, why? }
+Item = { id, kind: "goal" | "action", label, state, why?,
+         alternatives?: { chosen?, items: Alt[] } }   // the item's revision history
 Alt  = { id, label, state, chosen: boolean, why? }
 
 ResultView = {                 // a view, not a node
@@ -96,14 +97,18 @@ Call = {                       // an aggregate, not an event
 - A `goal` may have a `plan`, `alternatives`, or neither.
 - A plan/alternatives item carries `why?`: for a `refuted`/`abandoned` item it is the
   failed hypothesis, so the next attempt does not repeat it.
-- `applicable` lists the operator names; `checkReady` says whether a `run {target:
-  path[last]}` **check** is the expected move now (an objective goal whose plan is
-  done). `apply` can be listed while `checkReady` is false — that means a bare
-  exploratory `run` is available, not a check of the focus; a check requires an
-  **objective** goal (an arbiter goal is settled only by external acceptance, not by a
-  `run`).
-- `nextAction`, when present, is the action item the plan cursor points at: apply it
-  verbatim.
+- `applicable` lists the operator names truly admissible at the focus, from the **same
+  frontier** the gates use (`create_goal`, `apply`, `stop`). `checkReady` says whether a
+  `run {target: path[last]}` **check** is the expected move now (an objective goal whose
+  plan is done). `apply` is listed for any open goal — a bare exploratory `run` is always
+  available, not only a check of the focus; a check requires an **objective** goal (an
+  arbiter goal is settled only by external acceptance, not by a `run`). `stop` is listed
+  only when the request is `addressed`.
+- `nextAction`, when present, is informational: the action item the plan cursor points
+  at. The doxa is handed the whole **arm** (with the cursor on the current node) and
+  chooses the next move — continue, alternative, or stop.
+- `plan.items[].alternatives` renders an item's revision history in place, so a bypassed
+  or decomposed step's "did not work" siblings stay visible (`TR-9`).
 - `lastResult.output` is full (the projection does not cut it); the limits are set by
   the tool itself and **declared** in the result (see `docs/tools.md`).
 
@@ -161,6 +166,7 @@ Call = {                       // an aggregate, not an event
 | `create_goal` | `path` (the focus and its `done_when`), the focus's `alternatives` (for `revises`), `constraints`, `calls` (do not repeat a failure) |
 | `apply` (read/grep/edit/run) | `path` (the current goal), `lastResult` (to decide), `calls` (what was already tried), `constraints` |
 | a check (`apply run { target }`) | `path` + the goal's objective `done_when` |
+| `stop` | the request is `addressed` (the chosen interpretation is `achieved`/`achieved_under`) |
 | `query` | addressing: reaches any node/edge by id/kind/predicate |
 
 An **arbiter** goal has no command: it is settled only by external acceptance (a

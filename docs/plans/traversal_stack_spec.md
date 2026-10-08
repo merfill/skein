@@ -42,6 +42,11 @@ frame = {
   interpretations; for a goal frame, the plan items. One mechanism covers both choosing
   a hypothesis and the steps of a plan.
 - **Move** = push a new frame (descended into a sibling) or pop (returned).
+- **An arm is ReAct in place.** Within one arm the loop is exactly ReAct: a goal is created
+  with a plan of one item-command, the item runs on its own turn, the result is journaled
+  and fed to the doxa, which adds the next node or stops; a tree appears only where an
+  item has alternatives (§6). Every such step is an IR event, which plain ReAct does not
+  keep.
 
 The parent arm is the container the node was chosen from: **alternatives** (for an
 interpretation/variant) or the **parent's plan** (for a subgoal/item). In the projection,

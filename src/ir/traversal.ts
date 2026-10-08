@@ -168,38 +168,39 @@ export interface Applicable {
   createGoal: boolean;
   apply: boolean;
   return: boolean;
-  chooseVariant: boolean;
+  stop: boolean;
   nextAction?: string;
   checkReady: boolean;
 }
 
-// What doxa may propose at the current point (§2.6). The logos still gates the
-// concrete operator in `classify`; this is the frontier the model sees.
+// The frontier: the moves admissible at the focus. One computation feeds both the
+// projection and `classify`, so the two cannot drift (docs/ir_semantics.md §2.6). The
+// doxa is handed the whole arm; `nextAction` is only informational. `return` is an
+// engine-internal move, never a doxa operator.
 export function applicable(state: State, goalId: string | undefined): Applicable {
   const none: Applicable = {
     createGoal: false,
     apply: false,
     return: false,
-    chooseVariant: false,
+    stop: false,
     checkReady: false,
   };
   if (goalId === undefined) return none;
 
   const node = state.nodes.get(goalId);
   if (node?.kind === "request") {
+    // An addressed request accepts only the doxa's `stop`; an open one is interpreted.
     const addressed = predicateOf(state, goalId) === "addressed";
-    return { ...none, goalId, createGoal: !addressed, return: addressed };
+    return addressed
+      ? { ...none, goalId, stop: true }
+      : { ...none, goalId, createGoal: true };
   }
 
   const predicate = predicateOf(state, goalId);
 
+  // A refuted goal is revised by a variant (create_goal with revises).
   if (predicate === "refuted") {
-    return {
-      ...none,
-      goalId,
-      chooseVariant: alternativesOf(state, goalId) !== undefined,
-      createGoal: true,
-    };
+    return { ...none, goalId, createGoal: true };
   }
 
   const closed =
@@ -219,10 +220,12 @@ export function applicable(state: State, goalId: string | undefined): Applicable
 
   return {
     goalId,
-    createGoal: true,
-    apply: nextAction !== undefined || checkReady || plan === undefined,
+    // Decompose the current step: only with an unfulfilled action step (I6).
+    createGoal: nextAction !== undefined,
+    // Any open goal: a command may be executed now (continue or alternative).
+    apply: true,
     return: false,
-    chooseVariant: false,
+    stop: false,
     ...(nextAction !== undefined ? { nextAction } : {}),
     checkReady,
   };

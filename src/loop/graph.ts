@@ -86,6 +86,9 @@ function describeTarget(action: Action): string {
     case "create_goal":
       target = `goal:${action.what}`;
       break;
+    case "stop":
+      target = "stop";
+      break;
     case "apply":
       target =
         action.action.tool === "run" && action.action.command === undefined && action.action.target !== undefined
@@ -324,8 +327,14 @@ export function compileGraph(deps: AgentDeps) {
     if (rootId !== undefined) {
       const predicate = predicateOf(current, rootId);
       const root = current.nodes.get(rootId);
-      if (root?.kind === "request" ? predicate === "addressed" : predicate === "achieved" || predicate === "achieved_under") {
-        return { done: true, stopReason: root?.kind === "request" ? "request_addressed" : "root_closed" };
+      if (root?.kind === "request") {
+        // An addressed request normally ends with the doxa's `stop` (which sets done in
+        // execute). If the budget runs out first, closure still wins over `max_turns`.
+        if (predicate === "addressed" && state.turn >= deps.maxTurns) {
+          return { done: true, stopReason: "request_addressed" };
+        }
+      } else if (predicate === "achieved" || predicate === "achieved_under") {
+        return { done: true, stopReason: "root_closed" };
       }
     }
     // Closure wins over the budget: if the last allowed turn closed the request, that is

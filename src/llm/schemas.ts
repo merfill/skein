@@ -95,6 +95,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     revises: z.array(z.string()).optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
+  z.object({ operator: z.literal("stop"), why: z.string().optional() }),
   z.object({
     operator: z.literal("query"),
     id: z.string().optional(),

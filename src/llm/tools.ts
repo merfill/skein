@@ -72,6 +72,7 @@ const patchParams = z.object({
   patch: z.string(),
   strip: z.number().int().nonnegative().optional(),
 });
+const stopParams = z.object({ why: z.string().optional() });
 
 // The descriptions carry the operation, its required fields and the refusals to avoid;
 // the strategy lives in SYSTEM_PROMPT (single source of truth).
@@ -136,6 +137,12 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
       "Apply a unified diff to the workspace, e.g. an upstream change obtained with fetch (patch, optional strip; default patch -p1). Refused if the patch does not apply cleanly. Records the edited files.",
     schema: patchParams,
   },
+  {
+    name: "stop",
+    description:
+      "Stop: propose that the request is done. Use it ONLY when the request is already addressed (its chosen interpretation is achieved/achieved_under) — the projection lists stop among the applicable operators then. It records a stop node and ends the run; acceptance of the request stays external. Refused (not_addressed) if the request is not addressed — do not use it to abandon unfinished work.",
+    schema: stopParams,
+  },
 ];
 
 function parametersOf(schema: z.ZodTypeAny): Record<string, unknown> {
@@ -171,6 +178,9 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "query":
       action = { operator: "query", ...a };
+      break;
+    case "stop":
+      action = { operator: "stop", ...a };
       break;
     case "read":
     case "grep":

@@ -38,6 +38,9 @@ export interface ProjectionItem {
   // A goal item's hypothesis (`why`): a refuted item is a previous attempt, and this is
   // what it bet on — so the model does not repeat it (docs/context_design_ru.md §8).
   why?: string;
+  // The item's revision history: a bypassed or decomposed step keeps its "did not work"
+  // siblings in place (docs/plans/traversal_stack_spec.md §7).
+  alternatives?: { chosen?: string; items: ProjectionAlternative[] };
 }
 
 export interface ProjectionAlternative {
@@ -61,7 +64,7 @@ export interface PathNode {
   what?: string;
   why?: string;
   done_when?: DoneWhen;
-  // A subjective goal's closing note: the invariant it was accepted under. A closed root
+  // An arbiter goal's closing note: the invariant it was accepted under. A closed root
   // goal stays on the path; a nested completed goal leaves the branch (trimmed under a
   // closed ancestor), so its note is surfaced in `calls` (docs §4.4).
   note?: string;
@@ -157,17 +160,19 @@ function bySeqDesc(a: { seq: number }, b: { seq: number }): number {
   return b.seq - a.seq;
 }
 
-function itemView(state: State, id: string): ProjectionItem | undefined {
+function itemView(state: State, id: string, maxItems: number): ProjectionItem | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
   if (node.kind !== "goal" && node.kind !== "action") return undefined;
   const payload = node.payload as { why?: unknown } | undefined;
+  const alternatives = alternativesView(state, id, maxItems);
   return {
     id,
     kind: node.kind,
     label: node.label,
     state: predicateOf(state, id),
     ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
+    ...(alternatives !== undefined && alternatives.items.length > 0 ? { alternatives } : {}),
   };
 }
 
@@ -175,7 +180,7 @@ function planView(state: State, goalId: string, maxItems: number): ProjectionPla
   const planId = planOf(state, goalId);
   if (planId === undefined) return undefined;
   const items = childrenOf(state, planId)
-    .map((id) => itemView(state, id))
+    .map((id) => itemView(state, id, maxItems))
     .filter((item): item is ProjectionItem => item !== undefined)
     .slice(0, maxItems);
   return { cursor: cursorOf(state, goalId), items };
@@ -192,7 +197,7 @@ function alternativesView(
   const items = childrenOf(state, altId)
     .flatMap((id) => {
       const node = state.nodes.get(id);
-      if (node === undefined || node.kind !== "goal") return [];
+      if (node === undefined || (node.kind !== "goal" && node.kind !== "action")) return [];
       const payload = node.payload as { why?: unknown } | undefined;
       return [
         {
@@ -360,6 +365,7 @@ function applicableNames(value: Applicable): string[] {
   const names: string[] = [];
   if (value.createGoal) names.push("create_goal");
   if (value.apply) names.push("apply");
+  if (value.stop) names.push("stop");
   return names;
 }
 

@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
+import { predicateOf, type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
+import { currentGoalId, goalPayload } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
 import type { Action, Proposal } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
@@ -169,15 +171,45 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
     return proposal;
   };
 
+  // The program arbiter (mirrors bench/run.ts): while an open arbiter interpretation is
+  // in focus, run the fixture's acceptance check; on success accept it with a
+  // `record_check` actor "user" — the only way an arbiter goal closes (I5). Without it,
+  // a request that names no literal command can never become `addressed`.
+  const checkCommand = resolveCheck(fixture, options.check);
+  const arbiter = (state: State): Event[] => {
+    const goalId = currentGoalId(state);
+    if (goalId === undefined) return [];
+    const payload = goalPayload(state, goalId);
+    if (payload?.done_when.kind !== "arbiter") return [];
+    if (predicateOf(state, goalId) !== "open") return [];
+    const acceptance = spawnSync("bash", ["-c", checkCommand], {
+      cwd: root,
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+    if (acceptance.status !== 0) return [];
+    return [
+      {
+        type: "record_check",
+        id: `chk:arbiter:${state.seq + 1}`,
+        command: "user acceptance",
+        verdict: "pass",
+        output: "",
+        actor: "user",
+        targets: [goalId],
+      },
+    ];
+  };
+
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns },
+    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns, arbiter },
     {
       request: { id: "r1", text: request },
       ...(constraints.length > 0 ? { constraints } : {}),
     },
   );
 
-  const check = spawnSync("bash", ["-c", resolveCheck(fixture, options.check)], {
+  const check = spawnSync("bash", ["-c", checkCommand], {
     cwd: root,
     encoding: "utf8",
     timeout: 120_000,

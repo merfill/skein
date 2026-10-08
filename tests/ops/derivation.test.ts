@@ -39,7 +39,7 @@ function checkEvent(
   };
 }
 
-const SUBJECTIVE: DoneWhen = { kind: "arbiter", text: "done" };
+const ARBITER: DoneWhen = { kind: "arbiter", text: "done" };
 const OBJECTIVE: DoneWhen = { kind: "objective", command: "make test" };
 
 describe("derived predicates", () => {
@@ -64,7 +64,7 @@ describe("derived predicates", () => {
     const withUnder: Event[] = [
       request(),
       goalNode("g1", "fix it", OBJECTIVE, 1),
-      goalNode("asm", "assume x", SUBJECTIVE, 2),
+      goalNode("asm", "assume x", ARBITER, 2),
       checkEvent(3, ["g1"], "pass", ["asm"]),
     ];
     expect(predicateOf(fold(withUnder), "g1")).toBe("achieved_under");
@@ -84,8 +84,8 @@ describe("derived predicates", () => {
     const events: Event[] = [
       request(),
       { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "opts", seq: 1 } },
-      goalNode("g1", "first try", SUBJECTIVE, 2),
-      goalNode("g2", "second try", SUBJECTIVE, 3),
+      goalNode("g1", "first try", ARBITER, 2),
+      goalNode("g2", "second try", ARBITER, 3),
       { type: "add_edge", edge: { id: "e1", from: "r1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
       { type: "add_edge", edge: { id: "e2", from: "alt", to: "g1", kind: "item", provenance: { kind: "llm" } } },
       { type: "add_edge", edge: { id: "e3", from: "alt", to: "g2", kind: "item", provenance: { kind: "llm" } } },

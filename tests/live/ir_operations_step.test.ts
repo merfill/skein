@@ -4,13 +4,14 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import { fold } from "../../src/ir/graph";
 import { project, type Context } from "../../src/ir/project";
-import { currentGoalId } from "../../src/ir/traversal";
+import { currentGoalId, focusEvents } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
 import type { Action } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
 import {
   DEFAULT_FILES,
+  check,
   cleanupWorkspaces,
   exec,
   interpretation,
@@ -30,7 +31,12 @@ const settings = loadSettings();
 afterEach(cleanupWorkspaces);
 
 function projectAt(events: readonly Event[]): Context {
-  return project(fold(events), { budget: { turn: 0, maxTurns: 20 } });
+  // Fold the deterministic focus normalization the loop applies before projecting, so an
+  // addressed request is shown with the focus already returned to it.
+  const base = fold(events);
+  const drift = focusEvents(base);
+  const current = drift.length > 0 ? fold(drift, base) : base;
+  return project(current, { budget: { turn: 0, maxTurns: 20 } });
 }
 
 interface Step {
@@ -166,6 +172,33 @@ function buildSteps(): Step[] {
         if (a.action.tool !== "run") return;
         expect(a.action.target).toBe(goal);
       },
+    });
+  }
+
+  {
+    // OP-ST-1: an addressed request accepts only stop.
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const opened = exec(interpretation("fix the build", "true", "true"), [request()], ws);
+    const goal = currentGoalId(opened.state)!;
+    const ran = exec(run("true"), opened.events, ws);
+    const checked = exec(check(goal), ran.events, ws);
+    steps.push({
+      name: "stop-addressed",
+      context: projectAt(checked.events),
+      expectMove: (a) => expect(a.operator, "an addressed request is stopped").toBe("stop"),
+    });
+  }
+
+  {
+    // TR-8 (F2): an arbiter goal whose one step is done continues with an action
+    // (apply), never the create_goal funnel.
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const opened = exec(interpretation("investigate the failure", undefined, "true"), [request()], ws);
+    const ran = exec(run("true"), opened.events, ws);
+    steps.push({
+      name: "continue-open-goal",
+      context: projectAt(ran.events),
+      expectMove: (a) => expect(a.operator, "an arbiter goal continues with an action").toBe("apply"),
     });
   }
 

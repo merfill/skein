@@ -25,7 +25,8 @@ Every operator is specified as:
 - **ID** — a stable identifier; a test cites it as the `ID` token in its title.
 
 ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH` apply
-sub-tools, `OP-QR` query, `TR` traversal/containers, `DER` derived
+sub-tools, `OP-AP-CONT|ALT` how an `apply` lands in the tree, `OP-ST` stop, `OP-QR`
+query, `TR` traversal/containers, `DER` derived
 predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced).
 
 ---
@@ -43,6 +44,7 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 | `alternatives` | — | container of interchangeable goals/actions (`item` edges + `chosen`) |
 | `observation` | `{ref?, version?, command?, verdict?, output?...}` | a tool result body |
 | `check` | `{command, verdict, witness?, actor, output/error/...}` | the arbiter's verdict on a goal |
+| `stop` | `{why?}` | the doxa's terminal proposal that the request is done; accepted only if the request is `addressed` |
 | `constraint` | `{forbid: string[]}` | invariant; seeded at run start |
 | `file` (artifact) | — | a referenced file; produced by `mutates` |
 
@@ -73,6 +75,10 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 - **plan** — `has_plan` target; **items** — `item` edges in insertion order.
 - **alternatives** — `has_alternatives` target; **chosen** — the target of the
   latest `chosen` edge (journal order).
+- **frontier** — the admissible moves at the focus, computed **once** and shared by the
+  projection and `classify` (`TR-8`). The doxa is handed the whole **arm** (the level's
+  siblings) with the **cursor** on the current node only; the engine does not dictate a
+  single next move.
 
 ---
 
@@ -98,6 +104,12 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 ### 2.2 `apply` (`OP-AP`)
 
 The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
+
+**How an `apply` lands in the plan** — the *continue* vs *alternative* distinction
+(`docs/ir_semantics.md` §2.6): reuse an unexecuted action item with the same command
+(`OP-AP-CONT-1`); else attach the new action as the `chosen` alternative of the first
+unfulfilled item (`OP-AP-ALT-1`); else create the action and append it as a new plan
+`item` (`OP-AP-CONT-2`). The engine never moves into the action.
 
 #### 2.2.1 `read` (`OP-AP-READ`)
 
@@ -192,6 +204,19 @@ upstream change obtained with `fetch`.
 | does not apply | conflicting/already-applied hunk | fail observation | — | — (fail) | `OP-AP-PATCH-2` |
 | forbidden target | a constraint forbids a `---`/`+++` path | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
+### 2.3 `stop` (`OP-ST`)
+
+The doxa's terminal move: it proposes that the request is done.
+
+| Case | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| stop | the focus is the root request and it is `addressed` | add a `stop` node (payload `{why?}`) | unchanged — `addressed` stays derived from the chosen interpretation | `not_addressed` | `OP-ST-1` |
+
+- **Projection** (`PRJ-STOP`): the `stop` node is the terminal node; the run stops
+  (`request_addressed`). A request is never checked; acceptance stays external.
+- A `stop` on a request that is not `addressed` is refused, so the doxa can never close
+  the request by itself.
+
 ### 2.4 `query` (`OP-QR`)
 
 | Case | Pre | Effects | ID |
@@ -217,6 +242,7 @@ upstream change obtained with `fetch`.
 | container choice | a goal's stage container is a `plan` (`has_plan`); a request or a `refuted` goal's option container is `alternatives` (`has_alternatives`) | `TR-5` |
 | item order and cursor | items follow the `item` edge order; the cursor is the first not `itemFulfilled`; `itemFulfilled` (resolved, incl. refuted) vs `itemSucceeded` (only a success) differ | `TR-6` |
 | variant branching | an unexecuted action item with the same command is reused; otherwise the new action becomes the `chosen` option of the first unfulfilled action item's `alternatives`; unselected variants become `abandoned` | `TR-7` |
+| item revision history | a plan item's `alternatives` (the step's revision history) is rendered in the projection | `TR-9` |
 
 ### 2.6 Derived predicates (`DER`)
 
@@ -263,6 +289,7 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | `constraint_violation:<pattern>` | edit a forbidden path | edit | `REF-EDIT-CONSTRAINT` |
 | `stale_base` | write over a file changed after the read | write | `REF-WRITE-STALE` |
 | `constraint_violation:<pattern>` | write a forbidden path | write | `REF-WRITE-CONSTRAINT` |
+| `not_addressed` | `stop` on a request that is not `addressed` (or the focus is not the request) | stop | `REF-ST-STATE` |
 
 Tool **failures** (a `fail` observation, not a refusal): missing file (`read`),
 bad scope (`grep`/`list`), `find` not present (`edit`), non-zero/timeout/signal
@@ -312,6 +339,10 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; scenario `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; scenario `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |
+| `OP-ST-1`, `REF-ST-STATE` | `tests/ops/stop.test.ts` | step `stop-addressed` |
+| `OP-AP-CONT/ALT` | `tests/ops/apply.test.ts`, `tests/ops/create_goal.test.ts` | steps `apply-next-action` |
+| `TR-8` | `tests/ops/applicable.test.ts` | steps `check-ready-objective`, `stop-addressed` |
+| `TR-9` | `tests/ops/traversal.test.ts` | — |
 
 **Coverage gate** (`tests/coverage.test.ts`): every ID in this registry must appear
 as a token in at least one test, and no test may cite an ID outside the registry —

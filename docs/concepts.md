@@ -21,6 +21,17 @@ answer. Skein **unwinds that loop along a tree**:
 request → goal (a hypothesis) → plan (a string sketch + first step) → action → observation / check
 ```
 
+**The arm is ReAct in place.** Within one level — an arm — a goal is proposed whose
+plan materializes exactly one item (a command); that item is executed on its own turn;
+its result is recorded (`observation`/`mutate`/`check`) and shown to the doxa; the doxa
+then either adds the next node or stops. This is the ReAct loop unchanged: one step per
+turn, the next chosen from the result. What ReAct cannot do is *keep* it — here every
+step is an event in the append-only journal. An arm stops being flat only when a step
+**branches**: the doxa proposes an alternative to that step (another command) or
+decomposes it into a composite sub-goal — and each branch is still an arm, i.e. ReAct
+again, one level down. In this sense the tree is "ReAct unwound": not a different
+policy, but ReAct plus explicit memory, branching, and a termination criterion.
+
 - Only the goal's first step is materialized as a plan item; the plan itself is a string
   sketch, and steps are chosen one at a time. The tree grows one node per turn.
 - With no alternatives, the tree is a flat, typed, addressable list — exactly the

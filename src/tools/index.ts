@@ -724,6 +724,30 @@ export function executeAction(
       return { events, turn: proposalTurn(`created goal: ${action.what}`), done: false, stopReason: null };
     }
 
+    case "stop": {
+      // The doxa's terminal move: record a stop node and end the run. The request itself
+      // is not closed (acceptance stays external); `addressed` remains derived.
+      const seq = next();
+      const stopId = `w:stop:${seq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: stopId,
+          space: "work",
+          kind: "stop",
+          label: action.why ?? "stop",
+          ...(action.why !== undefined ? { payload: { why: action.why } } : {}),
+          seq,
+        },
+      });
+      return {
+        events,
+        turn: proposalTurn("stopped: the request is addressed", stopId),
+        done: true,
+        stopReason: "request_addressed",
+      };
+    }
+
     case "apply": {
       const apply = action.action;
 

@@ -28,7 +28,7 @@ Before `project` the engine reconciles active `ref`s with the filesystem
 ## 2. Nodes and edges
 
 **Nodes** (`src/ir/types.ts`). Space `work`: `request`, `goal`, `action`, `plan`,
-`alternatives`, `observation`, `check`, `constraint`. Space
+`alternatives`, `observation`, `check`, `stop`, `constraint`. Space
 `artifact`: `file` (plus reserved `symbol`/`test`, not produced).
 
 - `request.payload = { text }` — the Arbiter's raw motivation, the root of the
@@ -96,30 +96,40 @@ check). The request becomes `addressed` when the chosen interpretation reaches
   `target.done_when`**, not from the doxa's proposal; `run` without `target` →
   `observation`.
 - **`query`** — read-only addressing (not a doxa operator): reaches nodes/edges.
+- **`stop`** `{ why? }` — the terminal move: accepted only when the focus is the request
+  and it is `addressed` (else `not_addressed`); records a `stop` node and ends the run.
+  It sets no status: acceptance of the request stays external.
 
 Doxa never closes a goal (there is no `complete`). An objective goal is settled only by
 its own check; an arbiter goal only by external acceptance (`userAcceptance`, a
-`record_check` with `actor: "user"`).
+`record_check` with `actor: "user"`). Every accepted doxa turn adds one node (continue /
+alternative / stop).
 
 Gates in `classify`: constraints on `edit`; `stale_base`; `repeated_action` (waived for a
 re-check after `inconclusive`); strict `revises`; `repeat_hypothesis`; `apply run
 { target }` only for an objective goal that **is the current node**
-(`arbiter_goal_needs_acceptance`, `not_current_goal`).
+(`arbiter_goal_needs_acceptance`, `not_current_goal`); `not_addressed`; and at an
+`addressed` request only `stop` is accepted (apply/create_goal are refused).
 
 ## 6. Traversal (logos)
 
 `src/ir/traversal.ts`: `focusEvents` descends from the request into the chosen
 interpretation and returns when the current goal closes (sub-goals enter as alternatives
-and are focused when created, not by re-descending a plan); `applicable` gives doxa the frontier
-(`createGoal`/`apply`/`checkReady`/`chooseVariant`). The loop
+and are focused when created, not by re-descending a plan); `applicable` gives doxa the
+frontier (`createGoal`/`apply`/`stop`/`checkReady`). The same computation backs the
+projection and the gates, so they cannot drift: `apply` is available for any open goal,
+`createGoal` only with a current unfulfilled action step (or a refuted goal/request), and
+`stop` only at an addressed request. The loop
 (`src/loop/graph.ts`): `project → propose → classify → execute → progress`;
-stopping via `request_addressed` (the request is `addressed`), `no_progress` (the
+stopping via the accepted `stop` (`request_addressed`, also reported if the budget runs
+out with the request addressed), `no_progress` (the
 semantic key unchanged for N turns), or the budget (`maxTurns`).
 
 ## 7. Projection
 
 `Context` (`src/ir/project.ts`) is the **traversal branch**, not a dump: `path` (the
-`request → … → focus` stack; a node carries its own `plan`/`alternatives`),
+`request → … → focus` stack; a node carries its own `plan`/`alternatives`, and a plan
+item carries its own `alternatives` — the step's revision history),
 `constraints`, `lastResult` (the **full** result of the latest call), `shown` (the
 working set: the branch levels' results plus bodies pulled back with `query {id}`),
 `calls` (a deduplicated

@@ -16,10 +16,11 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// Generate a random but LEGAL IR tree: every non-root goal is bound to a plan or
-// alternatives container, closures use a check (objective) or complete (subjective),
-// and structural edges form a forest. The generator only needs the shapes the engine
-// must keep invariant, not the exact operator paths.
+// Generate a random but LEGAL IR tree under the current semantics: every plan holds
+// action items only (I2); a sub-goal enters as an alternative (item + chosen) to a step;
+// an objective goal closes by its own check, an arbiter goal by an external (user)
+// acceptance; structural edges form a forest. The generator only needs the shapes the
+// engine must keep invariant, not the exact operator paths.
 function generate(seed: number): Event[] {
   const rng = mulberry32(seed);
   const events: Event[] = [];
@@ -34,6 +35,14 @@ function generate(seed: number): Event[] {
   const addEdge = (from: string, to: string, kind: string): void => {
     events.push({ type: "add_edge", edge: { id: `e${next()}`, from, to, kind: kind as never, provenance: { kind: "llm" } } });
   };
+  const close = (id: string, objective: boolean): void => {
+    if (objective) {
+      events.push({ type: "record_check", command: "make test", verdict: pick(["pass", "fail", "inconclusive"] as const), output: "", targets: [id] });
+    } else {
+      // An arbiter goal is settled only by external acceptance (actor "user").
+      events.push({ type: "record_check", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [id] });
+    }
+  };
 
   let goals = 0;
   const buildGoal = (depth: number): string => {
@@ -44,31 +53,30 @@ function generate(seed: number): Event[] {
       : { what: id, why: "hypothesis", done_when: { kind: "arbiter", text: "done" } };
     addNode(id, "goal", payload);
 
-    // Sometimes a plan of 1..3 items.
+    // A plan of 1..3 ACTION items; sometimes a step carries an alternative sub-goal.
     if (depth > 0 && chance(0.6)) {
       const plan = `p${id}`;
       addNode(plan, "plan");
       addEdge(id, plan, "has_plan");
       const count = 1 + Math.floor(rng() * 3);
       for (let i = 0; i < count; i += 1) {
-        if (chance(0.5)) {
-          const child = buildGoal(depth - 1);
-          addEdge(plan, child, "item");
-        } else {
-          const action = `a${next()}`;
-          addNode(action, "action", { command: "make test" });
-          addEdge(plan, action, "item");
+        const action = `a${next()}`;
+        addNode(action, "action", { command: "make test" });
+        addEdge(plan, action, "item");
+        if (depth > 1 && chance(0.4)) {
+          const sub = buildGoal(depth - 1);
+          const alt = `alt${action}`;
+          addNode(alt, "alternatives");
+          addEdge(action, alt, "has_alternatives");
+          addEdge(alt, sub, "item");
+          addEdge(alt, sub, "chosen");
         }
       }
     }
 
     // Close it (at most once) so the predicates vary across seeds.
-    if (objective && chance(0.5)) {
-      events.push({ type: "record_check", command: "make test", verdict: pick(["pass", "fail", "inconclusive"] as const), output: "", targets: [id] });
-    } else if (!objective && chance(0.5)) {
-      const c = `c${id}`;
-      addNode(c, "complete", { note: "accepted" });
-      addEdge(c, id, "closes");
+    if (chance(0.5)) {
+      close(id, objective);
     } else if (chance(0.2)) {
       // An observation produced by an exploratory action under this goal.
       const obs = `o${clock}`;

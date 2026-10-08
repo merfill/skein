@@ -386,8 +386,13 @@ describe("classify", () => {
       { type: "add_edge", edge: { id: "ec", from: "alt", to: "g1", kind: "chosen", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
       { type: "add_edge", edge: { id: "ep", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 4 } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run", payload: { command: "run" }, seq: 4 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "alt2", space: "work", kind: "alternatives", label: "opts", seq: 5 } },
+      { type: "add_edge", edge: { id: "e3", from: "a1", to: "alt2", kind: "has_alternatives", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 6 } },
+      { type: "add_edge", edge: { id: "e4", from: "alt2", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e5", from: "alt2", to: "g2", kind: "chosen", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
       { type: "descend", node: "g2" },
     ]);
@@ -454,19 +459,23 @@ describe("classify", () => {
     expect(withTarget.reason).toContain("background_target");
   });
 
-  it("allows growing an objective goal's plan when a stage was refuted, not achieved", () => {
+  it("allows growing an objective goal's plan when a step's alternative was refuted", () => {
+    // A plan item is an action (I2); its sub-goal is an alternative. A refuted option
+    // resolves the step but is not a success, so the plan may still grow.
     const state = fold([
       {
         type: "add_node",
         node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: { kind: "objective", command: "node --test" } }, seq: 0 },
       },
-      {
-        type: "add_node",
-        node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 1 },
-      },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
       { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run", payload: { command: "run" }, seq: 2 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "opts", seq: 3 } },
+      { type: "add_edge", edge: { id: "e3", from: "a1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 4 } },
+      { type: "add_edge", edge: { id: "e4", from: "alt", to: "g2", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e5", from: "alt", to: "g2", kind: "chosen", provenance: { kind: "llm" } } },
       { type: "record_check", command: "node --test", verdict: "fail", output: "no", targets: ["g2"] },
     ]);
     expect(predicateOf(state, "g2")).toBe("refuted");
@@ -477,38 +486,6 @@ describe("classify", () => {
           what: "add a stage the refuted one did not cover",
           done_when: { kind: "objective", command: "node --test" },
           plan: "add a stage",
-          step: { command: "node --test" },
-        }),
-        state,
-      ),
-    ).toEqual({ accept: true });
-  });
-
-  it("allows growing a plan whose only stages are fulfilled epistemic goals", () => {
-    // g1 objective, plan = [g2 subjective] completed; the fix stage is still to come.
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: { kind: "objective", command: "node --test" } }, seq: 0 },
-      },
-      {
-        type: "add_node",
-        node: { id: "g2", space: "work", kind: "goal", label: "locate", payload: { what: "locate", done_when: { kind: "arbiter", text: "named" } }, seq: 1 },
-      },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "g2", kind: "item", provenance: { kind: "llm" } } },
-      { type: "record_check", id: "chk:3", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: ["g2"] },
-    ]);
-    expect(predicateOf(state, "g2")).toBe("achieved");
-    expect(
-      classify(
-        proposal({
-          operator: "create_goal",
-          what: "fix the cause",
-          why: "hypothesis",
-          done_when: { kind: "objective", command: "node --test" },
-          plan: "fix the cause",
           step: { command: "node --test" },
         }),
         state,

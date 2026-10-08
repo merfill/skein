@@ -25,7 +25,8 @@
 - **ID** — стабильный идентификатор; тест ссылается на него как на токен `ID` в заголовке.
 
 Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH`
-инструменты `apply`, `OP-QR` query, `TR` обход/контейнеры, `DER`
+инструменты `apply`, `OP-AP-CONT|ALT` как `apply` ложится в дерево, `OP-ST` stop,
+`OP-QR` query, `TR` обход/контейнеры, `DER`
 производные предикаты, `REF` отказы (каталог), `PRJ` проекция (ссылки).
 
 ---
@@ -43,6 +44,7 @@
 | `alternatives` | — | контейнер взаимозаменяемых целей/действий (`item` + `chosen`) |
 | `observation` | `{ref?, version?, command?, verdict?, output?...}` | тело результата инструмента |
 | `check` | `{command, verdict, witness?, actor, output/error/...}` | вердикт арбитра по цели |
+| `stop` | `{why?}` | терминальное предложение доксы, что запрос выполнен; принимается только если запрос `addressed` |
 | `constraint` | `{forbid: string[]}` | инвариант; сеется на старте прогона |
 | `file` (artifact) | — | файл-ссылка; производится `mutates` |
 
@@ -73,6 +75,9 @@
 - **plan** — цель `has_plan`; **items** — рёбра `item` в порядке вставки.
 - **alternatives** — цель `has_alternatives`; **chosen** — цель новейшего ребра
   `chosen` (порядок журнала).
+- **фронтьер** — допустимые ходы в фокусе, вычисляется **один раз** и общий для
+  проекции и `classify` (`TR-8`). Доксе отдают **руку целиком** (сиблинги уровня), а
+  **курсор** — только на текущем узле; движок не диктует единственный следующий ход.
 
 ---
 
@@ -98,6 +103,12 @@
 ### 2.2 `apply` (`OP-AP`)
 
 Диспетчер одного инструмента под фокусом (`src/tools/index.ts`, `OP-AP-*`).
+
+**Как `apply` ложится в план** — различение *continue* / *alternative*
+(`docs/ir_semantics_ru.md` §2.6): переиспользовать невыполненный action-item с той же
+командой (`OP-AP-CONT-1`); иначе приделать новое действие `chosen`-альтернативой первого
+невыполненного item (`OP-AP-ALT-1`); иначе создать действие и добавить его новым
+`item` плана (`OP-AP-CONT-2`). В само действие движок **не** переходит.
 
 #### 2.2.1 `read` (`OP-AP-READ`)
 
@@ -191,6 +202,19 @@ constraint проверяется только для явного `path`.
 | не применяется | конфликт/уже применено | fail-observation | — | — (fail) | `OP-AP-PATCH-2` |
 | запрещённая цель | constraint запрещает путь из `---`/`+++` | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
+### 2.3 `stop` (`OP-ST`)
+
+Терминальный ход доксы: предлагает, что запрос выполнен.
+
+| Случай | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| stop | фокус — корневой запрос, и он `addressed` | add узел `stop` (payload `{why?}`) | не меняется — `addressed` остаётся производным от выбранной интерпретации | `not_addressed` | `OP-ST-1` |
+
+- **Проекция** (`PRJ-STOP`): узел `stop` — терминальный; прогон останавливается
+  (`request_addressed`). Запрос никогда не проверяется; приёмка остаётся внешней.
+- `stop` на запросе, который не `addressed`, отклоняется, поэтому докса не может закрыть
+  запрос сама.
+
 ### 2.4 `query` (`OP-QR`)
 
 | Случай | Pre | Effects | ID |
@@ -216,6 +240,7 @@ constraint проверяется только для явного `path`.
 | выбор контейнера | контейнер стадий цели — `plan` (`has_plan`); контейнер вариантов запроса или `refuted`-цели — `alternatives` (`has_alternatives`) | `TR-5` |
 | порядок items и курсор | items идут в порядке рёбер `item`; курсор — первый не `itemFulfilled`; `itemFulfilled` (разрешён, вкл. refuted) и `itemSucceeded` (только успех) различаются | `TR-6` |
 | ветвление варианта | неисполненный action-item с той же командой переиспользуется; иначе новое действие становится `chosen`-вариантом в `alternatives` первого невыполненного action-item; невыбранные варианты → `abandoned` | `TR-7` |
+| история ревизий пункта | `alternatives` пункта плана (история ревизий шага) рендерятся в проекции | `TR-9` |
 
 ### 2.6 Производные предикаты (`DER`)
 
@@ -262,6 +287,7 @@ constraint проверяется только для явного `path`.
 | `constraint_violation:<pattern>` | edit запрещённого пути | edit | `REF-EDIT-CONSTRAINT` |
 | `stale_base` | write поверх файла, изменённого после чтения | write | `REF-WRITE-STALE` |
 | `constraint_violation:<pattern>` | write запрещённого пути | write | `REF-WRITE-CONSTRAINT` |
+| `not_addressed` | `stop` на запросе, который не `addressed` (или фокус не запрос) | stop | `REF-ST-STATE` |
 
 **Провалы** инструментов (это `fail`-observation, не отказ): нет файла (`read`),
 плохой scope (`grep`/`list`), `find` не найден (`edit`), ненулевой код/таймаут/
@@ -310,6 +336,10 @@ constraint проверяется только для явного `path`.
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; сценарий `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; сценарий `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |
+| `OP-ST-1`, `REF-ST-STATE` | `tests/ops/stop.test.ts` | step `stop-addressed` |
+| `OP-AP-CONT/ALT` | `tests/ops/apply.test.ts`, `tests/ops/create_goal.test.ts` | step `apply-next-action` |
+| `TR-8` | `tests/ops/applicable.test.ts` | steps `check-ready-objective`, `stop-addressed` |
+| `TR-9` | `tests/ops/traversal.test.ts` | — |
 
 **Coverage-gate** (`tests/coverage.test.ts`): каждый ID реестра обязан встретиться
 токеном минимум в одном тесте, и ни один тест не может ссылаться на ID вне реестра

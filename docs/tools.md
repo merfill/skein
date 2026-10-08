@@ -38,28 +38,30 @@ the current state (as-built), then the proposed changes.
 
 The model proposes an action through **native tool calls** (one flat function tool per
 operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the IR
-`action`, which is one of four operators:
+`action`, one of the operators:
 
 | Operator | Purpose |
 |---|---|
 | `create_goal` | introduce a goal (an interpretation of the request or a subgoal) with a plan |
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `run` |
+| `stop` | the terminal proposal that the request is done (accepted only if `addressed`) |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
-### 2.1 `create_goal { what, why?, done_when, plan?, revises? }`
+### 2.1 `create_goal { what, why?, done_when, plan, step, revises? }`
 
 - `what` — what to achieve; non-empty.
-- `why?` — a rationale (text).
+- `why?` — a rationale (text); the hypothesis for a fix.
 - `done_when` — **objective** (`{kind:"objective", command}` — a command whose exit
   code settles it) or **arbiter** (`{kind:"arbiter", text}` — external acceptance; doxa
   never closes it).
-- `plan?` — a non-empty list of items: `{kind:"action", command}` or
-  `{kind:"goal", what, done_when, plan?}`.
+- `plan` — a non-empty **string sketch** of the plan (a note to oneself), not a list.
+- `step` — the **first concrete action** `{ command, label? }`, run verbatim; it is the
+  only plan item materialized at creation (an action).
 - `revises?` — ids of **all** failed options of the container when switching approach.
 
-Instruction: at a request node it creates an interpretation; at an open goal it adds a
-subgoal to its plan. Give a plan when the steps are known. List failures fully in
-`revises`, otherwise a refusal.
+Instruction: at a request node it creates an interpretation; at an open goal it decomposes
+the current step into a sub-goal (an alternative to that step). Give a plan sketch and the
+first step. List failures fully in `revises`, otherwise a refusal.
 
 ### 2.2 `apply { action }`
 
@@ -81,6 +83,13 @@ Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id
 `outputRef`), optionally a line window (`start`/`end`). Does not change state. The
 model-facing tool exposes `{ id, start?, end? }`; the tree selectors (`kind`/`predicate`/
 `edgesOf`) remain an engine capability but are not offered to the model.
+
+### 2.4 `stop { why? }`
+
+The doxa's terminal move: it proposes that the request is done. Accepted only when the
+request is already `addressed` (the chosen interpretation is `achieved`/`achieved_under`);
+otherwise refused (`not_addressed`). It adds a `stop` node and stops the run; it never
+closes the request (acceptance stays external).
 
 ---
 

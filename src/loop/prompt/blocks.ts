@@ -37,7 +37,8 @@ export const PROMPT_BLOCKS: readonly PromptBlock[] = [
 - a goal also carries "plan" — the initial plan as a short STRING sketch (a note to yourself). Only its FIRST concrete step is materialized, as an ACTION item in the goal's plan container; later steps are chosen one at a time as you learn; a plan item in the tree is always an action;
 - a "check" is the arbiter's verdict on a goal; achieving a goal is only via a passing check without assumptions;
 - a goal whose check has "under" links is "achieved_under" (achieved under explicit assumptions);
-- a refuted interpretation or approach stays refuted; the request is "addressed" when the chosen interpretation is achieved/achieved_under.`,
+- a refuted interpretation or approach stays refuted; the request is "addressed" when the chosen interpretation is achieved/achieved_under.
+- every turn you add exactly ONE node: continue (an action via apply), an alternative (a new goal/hypothesis), or stop (when the request is already addressed). A proposal that is refused adds no node and must be replaced, never repeated.`,
   },
   {
     id: "B4",
@@ -47,7 +48,7 @@ export const PROMPT_BLOCKS: readonly PromptBlock[] = [
 - lastResult: the FULL result of your latest call — {id?, kind, command?|ref?, verdict?, label?, output?, error?}. For a run/check, "output" is stdout and "error" is stderr, kept SEPARATE: read "error" first when a command fails. "id" is absent when the call created no result node (query); otherwise the id addresses this body for a later query.
 - calls: the INDEX of this branch's history, without result bodies — {id?, action, status: ok|fail|refused, note?, count}. Each entry has an id. To re-see a past step, do NOT run it again: fetch its body by id with query. A repeated read/grep/run with the same inputs and an unchanged world is refused, and the refusal names the id. A fail/refused means: do not repeat that action unless the world changed or you moved on; change the approach, not the phrasing.
 - shown: your working set — the bodies the engine keeps in view. The results produced while you work the current branch stay there automatically (you do not ask for the code you just read or the failure you just hit). query {id} pulls an older body (from calls) back into shown for a few turns.
-- applicable: the operators the logos permits now; checkReady: whether a run {target: path[last]} CHECK is the expected move now — true only for an objective goal whose plan is done. A check always targets path[last]; targeting any other node is refused. apply can still be listed (for a bare exploratory command) while checkReady is false, so the two are not the same; nextAction: when present, the action item the plan cursor points at — apply it verbatim. An arbiter goal cannot be checked (it has no command); it waits for external acceptance — do not try to run it or close it.
+- applicable: the operators the logos permits now (create_goal / apply / stop); checkReady: whether a run {target: path[last]} CHECK is the expected move now — true only for an objective goal whose plan is done. A check always targets path[last]; targeting any other node is refused. apply is listed for any open goal (a bare exploratory command is always available while checkReady is false, so the two are not the same); when the request is addressed, only stop is applicable. nextAction: when present, the action item the plan cursor points at — informational; you may continue it or branch. An arbiter goal cannot be checked (it has no command); it waits for external acceptance — do not try to run it or close it. A plan item may carry "alternatives": the step's revision history (a bypassed/decomposed attempt and the option that replaced it) — a "refuted"/"abandoned" option is a previous attempt, never repeat it.
 - budget: turns used / total / remaining.
 Nothing off the branch is shown; reach it with query (by id for a stored result). You have no memory outside this context: if something is not in it, you do not know it.`,
   },
@@ -77,7 +78,7 @@ Nothing off the branch is shown; reach it with query (by id for a stored result)
     text: `Every create_goal carries a plan and a first step:
   - "plan": a short free-form STRING sketch of the steps — a note to yourself, not a list of objects;
   - "step": the FIRST concrete action to run now — { command, label? }, verbatim.
-The engine does NOT run the plan for you. Work ONE step per turn: apply the current step (run/edit/read/grep/...), read its result, then choose the next step from what you learned. In the tree a plan item is always an ACTION; steps are actions, one at a time.
+The engine does NOT run the plan for you. Work ONE step per turn: apply the current step (run/edit/read/grep/...), read its result, then choose the next step from what you learned. In the tree a plan item is always an ACTION; steps are actions, one at a time. Every accepted turn adds exactly one node — continue (the next step), alternative (another approach), or stop (when the request is addressed).
 A sub-goal is allowed ONLY as an alternative: create_goal while an open goal is in focus, with a current action step, replaces that step with a chosen ALTERNATIVE — the sub-goal — and the focus descends into it. Use it when a sub-result genuinely needs its own criterion; it is not required.
 You never close a goal: an objective goal is settled ONLY by its own check (run {target}); an arbiter goal is settled ONLY by external acceptance. There is no "complete", and nothing closes a chain for you — each goal is settled by its own check.
 For a bug/repair task, work like this:
@@ -129,7 +130,7 @@ While the request is unresolved, one failed attempt is never a reason to stop; t
   },
   {
     id: "B15",
-    text: `Stop condition: once the request is addressed — its chosen interpretation is achieved/achieved_under — stop; do not propose new interpretations.`,
+    text: `Stop condition: once the request is addressed — its chosen interpretation is achieved/achieved_under — the only move is stop: call stop { why? }. Do not propose new interpretations or more actions then; stop is refused (not_addressed) while the request is still open.`,
   },
   {
     id: "B16",

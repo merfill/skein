@@ -79,6 +79,12 @@ Harbor's `n_concurrent_trials: 5`. Each test removes its own temp root, so there
 shared `afterEach` cleanup (it would race the still-running scenarios). The whole set is
 ~3 minutes.
 
+The scenario harness plays a **program arbiter** (mirrors `bench/run.ts`): while an open
+arbiter interpretation is in focus, it runs the fixture's acceptance check and, on
+success, records a user acceptance (`record_check` with `actor: "user"`) — the only way
+an arbiter goal closes. Without it, a request that names no literal command can never
+become `addressed`.
+
 Hard checks (fail the test): whether `check` passed, whether the request was closed
 (`stopReason=request_addressed` when the scenario sets `expect.addressed`), the
 invariants (`tests/invariants.ts`), that `test/` (and explicit paths) is unchanged, the

@@ -28,7 +28,7 @@
 ## 2. Узлы и рёбра
 
 **Узлы** (`src/ir/types.ts`). Пространство `work`: `request`, `goal`, `action`,
-`plan`, `alternatives`, `observation`, `check`, `constraint`.
+`plan`, `alternatives`, `observation`, `check`, `stop`, `constraint`.
 Пространство `artifact`: `file` (а также зарезервированные `symbol`/`test`, не
 производятся).
 
@@ -92,29 +92,39 @@
   (объективная цель) → `check`+`verifies` (+`under`), причём **команда берётся из
   `target.done_when`**, а не из предложения доксы; `run` без `target` → `observation`.
 - **`query`** — read-only адресация (не оператор доксы): достаёт узлы/рёбра.
+- **`stop`** `{ why? }` — терминальный ход: принимается только когда фокус — запрос и
+  он `addressed` (иначе `not_addressed`); пишет узел `stop` и завершает прогон.
+  Статус не ставит: приёмка запроса остаётся внешней.
 
 Докса не закрывает цели (`complete` нет). Объективная цель закрывается только своим
 чеком; арбитр-цель — только внешней приёмкой (`userAcceptance`, `record_check` с
-`actor: "user"`).
+`actor: "user"`). Каждый принятый ход доксы добавляет один узел (continue / alternative /
+stop).
 
 Врата `classify`: ограничения на `edit`; `stale_base`; `repeated_action` (снимается для
 пере-проверки после `inconclusive`); строгий `revises`; `repeat_hypothesis`; `apply run
 { target }` только для объективной цели, которая **является текущим узлом**
-(`arbiter_goal_needs_acceptance`, `not_current_goal`).
+(`arbiter_goal_needs_acceptance`, `not_current_goal`); `not_addressed`; а на `addressed`
+запросе принимается только `stop` (apply/create_goal отклоняются).
 
 ## 6. Обход (логос)
 
 `src/ir/traversal.ts`: `focusEvents` спускается из запроса в выбранную
 интерпретацию и возвращается при закрытии текущей цели (подцели входят альтернативами и
-фокусируются при создании, а не повторным спуском по плану); `applicable` даёт доксе фронтир (`createGoal`/`apply`/`checkReady`/
-`chooseVariant`). Цикл (`src/loop/graph.ts`): `project → propose → classify →
-execute → progress`; остановка — `request_addressed` (запрос `addressed`),
-`no_progress` (семантический ключ не менялся N ходов), бюджет (`maxTurns`).
+фокусируются при создании, а не повторным спуском по плану); `applicable` даёт доксе
+фронтир (`createGoal`/`apply`/`stop`/`checkReady`). Одно вычисление питает и проекцию, и
+врата: `apply` доступен для любой открытой цели, `createGoal` — только при текущем
+невыполненном action-шаге (или refuted-цели/запросе), `stop` — только на addressed
+запросе. Цикл (`src/loop/graph.ts`): `project → propose → classify →
+execute → progress`; остановка — принятый `stop` (`request_addressed`, он же сообщается,
+если бюджет кончился на addressed запросе), `no_progress` (семантический ключ не менялся
+N ходов), бюджет (`maxTurns`).
 
 ## 7. Проекция
 
 `Context` (`src/ir/project.ts`) — **ветка обхода**, а не дамп: `path` (стек
-`request → … → фокус`; узел несёт свои `plan`/`alternatives`), `constraints`,
+`request → … → фокус`; узел несёт свои `plan`/`alternatives`, а пункт плана — свои
+`alternatives`, историю ревизий шага), `constraints`,
 `lastResult` (**полный** результат последнего вызова), `shown` (рабочее множество:
 результаты уровней ветки плюс тела, возвращённые по `query {id}`), `calls` (дедуплицированная
 сводка предыдущих вызовов: `id`, `action`, `status ok/fail/refused`, `note`,

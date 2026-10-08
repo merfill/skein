@@ -46,7 +46,7 @@ L2 is under the gate, L3 is acceptance.
 |---|---|---|---|
 | B1 | Frame: the doxa proposes exactly one operator, the logos decides; the context is a projection, not a dialogue | `ir_semantics` §1, §7 | in code |
 | B2 | Capabilities from `FRAGMENT`; anything else is outside the fragment | `src/ir/fragment.ts` | in code |
-| B3 | Tree vocabulary: `request`/`goal`/`plan`/`check`/`achieved_under`/`refuted`/`addressed` | `ir_semantics` §2 | in code |
+| B3 | Tree vocabulary: `request`/`goal`/`plan`/`check`/`achieved_under`/`refuted`/`addressed`/`stop`; the doxa's three node-kinds | `ir_semantics` §2, §2.6 | in code |
 | B4 | Reading the projection: `path`/`constraints`/`lastResult`/`calls`/`shown`/`applicable`/`checkReady`/`nextAction`/`budget` | `src/ir/project.ts` | in code |
 | B5 | Memory and working set: `shown`, `query {id}`, "no knowledge outside the context" | `tools` §4.4–4.5 | in code |
 | B6 | Goal from the request: literal commands verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
@@ -58,7 +58,7 @@ L2 is under the gate, L3 is acceptance.
 | B12 | Tool contract: flat names, generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
 | B13 | Output discipline: `thought` ≤1 sentence, exactly one call | `tests/prompt.test.ts` | in code |
 | B14 | Stream discipline: no `2>&1`/`&>`, no pipe through `tail`/`head` | `tools` §4.3 | in code (B14) |
-| B15 | Stop condition: request `addressed` → stop | `ir_semantics` §6 | in code (B15) |
+| B15 | Stop: the doxa proposes `stop`, accepted only when the request is `addressed` | `ir_semantics` §4.3, §6 | in code (B15) |
 | B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read | `ir_semantics` §9 | in code (trimmed) |
 
 ### Per-block detail
@@ -66,7 +66,8 @@ L2 is under the gate, L3 is acceptance.
 - **B1** sets the role: the doxa only proposes; the verdict belongs to the logos/arbiter.
 - **B2** lists `FRAGMENT` (inspect/modify/execute/verify/abduce).
 - **B3** introduces the node and derived-state vocabulary; there is no separate
-  `claim`/`decision` kind.
+  `claim`/`decision` kind. It also names the doxa's three node-kinds — continue,
+  alternative, stop — so every accepted turn adds exactly one node.
 - **B4** describes the `Context` fields the model sees.
 - **B5** fixes: the working set is engine-owned; `query {id}` is the only entry point.
 - **B6** forbids guessing a command; the criterion command is literal, from the workspace
@@ -75,11 +76,12 @@ L2 is under the gate, L3 is acceptance.
   `objective` with that command — `arbiter` only when no command is named at all.
 - **B7** fixes decomposition: every `create_goal` carries a `plan` (a free-form string
   sketch) and a `step` — the first concrete action. The engine does NOT auto-run the plan;
-  you work one action per turn and choose the next from its result. A sub-goal is allowed
-  only as an **alternative** to the current step (decompose it), never as a plan item and
-  never mandatory. Doxa never closes a goal (no `complete`): an objective goal is settled
-  only by its own `check`, an arbiter goal only by external acceptance; nothing closes a
-  chain of ancestors.
+  you work one action per turn and choose the next from its result. Every accepted turn
+  adds exactly one node — continue (the next step), alternative (another approach), or
+  stop. A sub-goal is allowed only as an **alternative** to the current step (decompose
+  it), never as a plan item and never mandatory. Doxa never closes a goal (no `complete`):
+  an objective goal is settled only by its own `check`, an arbiter goal only by external
+  acceptance; nothing closes a chain of ancestors.
 - **B8** (revised in Phase 3): git/history is a normal tool when present; this workspace
   may have no `.git`, and a failed history command must not be retried or probed in other
   roots; local history and an external reference are different things.
@@ -94,7 +96,8 @@ L2 is under the gate, L3 is acceptance.
   non-existent `apply`) is impossible.
 - **B13** bounds `thought`.
 - **B14** forbids `2>&1`/`&>` and pipes through `tail`/`head`.
-- **B15** stops on `addressed`.
+- **B15** stops on `addressed`: the doxa proposes `stop`, and the engine accepts it only
+  then — the doxa cannot close the request by itself.
 - **B16** is trimmed to unique safety rules (constraints, stale read, "suspect → edit",
   explanatory gap); the duplicates moved to B6/B7/B11/B14/B15 and to the tool
   `description`s.

@@ -20,13 +20,13 @@ other way around. A change to the code's behavior goes:
 
 Without step 1, step 2 is not done.
 
-**Status.** The document describes the currently agreed model. The doxa now has **two
-operators** (`create_goal`, `apply`); the `complete` operator and the `closes` edge are
-removed, and the `done_when` kind `subjective` is renamed to `arbiter`. The traversal
-stack (spine + arms) is described in `docs/plans/traversal_stack_spec.md`. The current
-code is arranged differently (it has `claim`/`decision`/modes); the divergences are the
-subject of bringing the code to the semantics, not a fault of the document. The exact
-state of the code is `docs/ir.md`.
+**Status.** The document describes the currently agreed model. The doxa has **three
+operators** (`create_goal`, `apply`, `stop`); the `complete` operator and the `closes`
+edge are removed, and the `done_when` kind `subjective` is renamed to `arbiter`. The
+traversal model (arm + cursor, one frontier) is described in
+`docs/plans/traversal_stack_spec.md`; the revision that introduced `stop` and the shared
+frontier is `docs/plans/ir_operations_revision_plan.md`. The exact state of the code is
+`docs/ir.md`.
 
 ---
 
@@ -93,6 +93,7 @@ Key consequences:
 | `alternatives` | work | a container of approach options (≥1) |
 | `observation` | work | the result of a command (an observation output) |
 | `check` | work | the arbiter's verdict (payload: `pass`/`fail`/`inconclusive`) |
+| `stop` | work | the doxa's terminal proposal that the request is done; accepted only if `addressed` (derived), stores no status |
 | `constraint` | work | a prohibition (payload `forbid`: path regexes) |
 | `file` | artifact | a pointer to a file |
 
@@ -183,6 +184,8 @@ the projection from incident event nodes:
 - a request is `addressed` ⇔ its current chosen interpretation is
   `achieved`/`achieved_under`; otherwise the request is `open` (in the IR a request is
   never "closed" — acceptance is external, §6);
+- a `stop` node is the doxa's terminal *proposal* and adds no status: `addressed` stays
+  derived from the chosen interpretation, so a `stop` never closes the request by itself;
 - **call summary** `calls` ⇔ a derived list of executed actions and refusals
   (`record_rejection`), deduplicated by `(status, action)` and tied to the focus
   (§2.8);
@@ -220,17 +223,35 @@ plan.
   not keep its descendants in focus: the branch is trimmed under a closed ancestor, not
   only when the top itself closes (invariant 17).
 
-**Applicable at the point `G`** (what the doxa sees as the frontier):
+**The arm and the cursor.** At a focus the doxa is handed the whole **arm** — the ordered
+siblings (`plan` items or `alternatives` options) with their states — and the **cursor**
+marks the current node only. The engine does not dictate a single next move; it states
+the **frontier**: what is admissible at this point. One frontier computation feeds both
+the projection and `classify` — there is no second copy.
 
-- the current node is the request `R` → `create goal` (propose an interpretation; on
-  failure — with `revises`, §4.1);
-- there is an unperformed `action` item → `apply` (execute it — one step per turn, I4);
-- all items are performed and `G` is not closed: an objective `done_when` → `apply` (a
-  check); an arbiter goal is not checked — it waits for external acceptance;
-- the current step can be decomposed → `create goal` (a sub-goal as an alternative to the
-  step, I6);
-- the branch is refuted and `alternatives` exist → pick an option;
-- nothing to do and the goal does not close → `return`.
+**The doxa's three node-kinds.** Every accepted doxa turn adds exactly one node (a
+rejected one adds `record_rejection` and changes the projection):
+
+- **continue** — `apply` a command: execute the next step. The engine attaches it to the
+  plan (reuse an unexecuted matching action item; else it becomes the `chosen`
+  alternative of the current unfulfilled item; else a new `item`) — §4.2;
+- **alternative** — "let's try another": `create_goal` (a new interpretation at the
+  request, a variant of a refuted goal, or a sub-goal decomposing the current step) or
+  `apply` a different command (recorded as the `chosen` alternative of the current item);
+- **stop** — `stop`: claim the request is done; accepted only if `addressed` (§4.3).
+
+**Applicable at the point `G`** (the frontier the doxa sees):
+
+- the current node is the request `R` → `create_goal` (propose an interpretation; on
+  failure — with `revises`, §4.1); when the request is `addressed`, only `stop` applies;
+- the current node is an open `goal` → `apply` is always available (execute a command —
+  one step per turn, I4); `create_goal` is available while there is a current unfulfilled
+  `action` step to decompose (I6);
+- all items are performed and `G` is an objective goal → a check
+  (`apply run {target: G}`) is the expected move (`checkReady`);
+- the branch is refuted and `alternatives` exist → propose a variant (`create_goal`);
+- `return` is an engine-internal move, never a doxa operator: a closed goal does not stay
+  in focus and the branch is trimmed under a closed ancestor (invariant 17).
 
 A closing move (`apply` a check) acts on the node in focus `G_k` alone: a check targets
 `G_k`. Targeting an ancestor or a sibling is
@@ -373,9 +394,9 @@ external source is file changes; they enter through `mutate`.
 
 ## 4. Doxa operators
 
-The doxa has **two operators**. It can do nothing else; this is its output interface.
-Each is described by the §0 template: input → admissibility check → operation on the
-tree → derived state → projection effect.
+The doxa has **three operators** (`create goal`, `apply`, `stop`). It can do nothing
+else; this is its output interface. Each is described by the §0 template: input →
+admissibility check → operation on the tree → derived state → projection effect.
 
 ### 4.1 Goal (`create goal`)
 
@@ -492,6 +513,33 @@ stops on no progress.
 **Projection effect:** the action, its result and (for a check) the change of the
 goal's state are visible.
 
+**Continue vs alternative.** Attaching `A` as a new `item` of the plan is a *continue*;
+making it the `chosen` alternative of the current unfulfilled item is an *alternative*
+(§2.6). Both are `apply`; the distinction is only in where the node lands.
+
+### 4.3 Stop (`stop`)
+
+The operator proposes that the request is done. It is the doxa's terminal move.
+
+**Input:** the current node `C` (must be the root request `R`); `{ why? }`.
+
+**Admissibility check:** `C` is the root request and the derived predicate of `R` is
+`addressed` (the current chosen interpretation is `achieved`/`achieved_under`). Otherwise
+a refusal `not_addressed`.
+
+**Operation on the tree:** create a `stop` node (payload `{ why? }`); no edges are
+required. Focus does not move.
+
+**State (derived):** unchanged — `addressed` is derived from the chosen interpretation,
+not from `stop`; the request is not closed in the IR (§6).
+
+**Projection effect:** the `stop` node is the terminal node; the run stops
+(`request_addressed`).
+
+**Why.** It makes the loop explicit and ReAct-shaped — the doxa claims completion, the
+logos validates it against check provenance. The doxa does not issue a verdict: a `stop`
+on a request that is not `addressed` is refused.
+
 ---
 
 ## 5. Time, versions, witness
@@ -579,10 +627,11 @@ Three instances:
   traversal point (§2.6): which moves are admissible (execute an item, descend, check,
   pick an option, fill in a plan);
 - the **doxa** chooses from the applicable and fills it with content (a hypothesis, an
-  option, a subgoal, a command) — this is its output interface, the two operators
+  option, a subgoal, a command, or a `stop`) — this is its output interface, the three
+  operators
   (§4);
 - the **Arbiter** — external (a human; objectively — the toolchain/harness): the first
-  request, veto/override, stopping, the verdict when no criterion exists, external
+  request, veto/override, the final acceptance when no criterion exists, external
   acceptance of the request.
 
 **`W: Σ → O`** — the operator-selection function. Usually the doxa realizes it within
@@ -592,7 +641,8 @@ exists (two equally consistent hypotheses).
 **There is no mode as a primitive.** "Reproduce/localize/…" are sections of *policy*
 (descriptive), not state objects.
 
-**Stopping** is the Arbiter's decision.
+**Stopping** is the doxa's proposal (`stop`), validated by the logos against the derived
+`addressed`; acceptance of the request itself stays external (the Arbiter/harness).
 
 ---
 
@@ -631,7 +681,7 @@ the separate specification `docs/projection.md`.
 | 17 | the cursor does not decrease on an unchanged plan; a closed goal does not remain the focus, nor do its descendants (the branch is trimmed under a closed ancestor; after closure — `return`) |
 | 18 | on failure `create goal` must list all `refuted`/`abandoned` options of the container (`revises`); otherwise a refusal |
 | 19 | the command of an objective check is the goal's `done_when.command` from the IR, not the doxa's text |
-| 20 | the doxa never closes a goal; at the request point only `create goal` is applicable (a request is never checked) |
+| 20 | the doxa never closes a goal; `stop` is a proposal validated by the derived `addressed`; at the request point `create goal` (open) or `stop` (addressed) applies — a request is never checked |
 | 21 | a refusal or a failure changes the projection (`calls`, §2.8): a repeat creates no knowledge; otherwise a loop |
 | 22 | a closing move (`apply` a check) acts only on the node in focus; targeting an ancestor or a sibling is refused (`not_current_goal`) |
 | 23 | an `inconclusive` check leaves the goal `open` and may be repeated; it is not a repeat-refusal and not progress |
@@ -639,6 +689,7 @@ the separate specification `docs/projection.md`.
 | 25 | the goal payload stores the initial plan as a string sketch (`plan`); the plan container materializes only the first concrete `step` (I3) |
 | 26 | a sub-goal enters only as an alternative to an existing step; it is never a plan item (I6) |
 | 27 | traversal is strictly step-by-step: one action per turn, the next chosen from its result; the engine never auto-runs the plan (I4) |
+| 28 | every accepted doxa turn adds a node (continue / alternative / stop); a rejected one adds `record_rejection` and changes the projection |
 
 ---
 

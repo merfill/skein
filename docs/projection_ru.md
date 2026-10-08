@@ -51,9 +51,9 @@ Projection = {
   lastResult?: ResultView,        // полный результат последнего вызова
   shown:       ResultView[],      // рабочее множество (уровни ветки + тела по query)
   calls:       Call[],            // сводка предыдущих (может быть пуст)
-  applicable:  string[],          // имена применимых операторов
+  applicable:  string[],          // имена применимых операторов (create_goal/apply/stop)
   checkReady:  boolean,           // сейчас ожидается run {target: фокус} = check
-  nextAction?: string,            // action-пункт, на который указывает курсор плана
+  nextAction?: string,            // информационно: action-пункт, на который указывает курсор плана
   budget:      { turn, maxTurns, remaining }
 }
 
@@ -67,7 +67,8 @@ PathNode = {
   alternatives?: { chosen?, items: Alt[] }     // собственный контейнер узла
 }
 
-Item = { id, kind: "goal" | "action", label, state, why? }
+Item = { id, kind: "goal" | "action", label, state, why?,
+         alternatives?: { chosen?, items: Alt[] } }   // история ревизий пункта
 Alt  = { id, label, state, chosen: boolean, why? }
 
 ResultView = {                 // вид, а не узел
@@ -94,13 +95,18 @@ Call = {                       // агрегат, а не событие
 - У `goal` может быть `plan`, `alternatives` или ничего.
 - Пункт `plan`/`alternatives` несёт `why?`: для `refuted`/`abandoned` это провалившаяся
   гипотеза, чтобы следующая попытка её не повторяла.
-- `applicable` перечисляет имена операторов; `checkReady` говорит, ожидается ли сейчас
-  **check** (`run {target: path[last]}`) — это объективная цель с выполненным планом.
-  `apply` может быть в списке при `checkReady: false`: тогда доступен голый
-  исследовательский `run`, а не проверка фокуса; проверка возможна только по
+- `applicable` перечисляет действительно допустимые имена операторов из **общего с
+  гейтами фронтьера** (`create_goal`, `apply`, `stop`). `checkReady` говорит, ожидается
+  ли сейчас **check** (`run {target: path[last]}`) — это объективная цель с выполненным
+  планом. `apply` в списке для любой открытой цели: голый исследовательский `run`
+  доступен всегда, не только проверка фокуса; проверка возможна только по
   **объективной** цели (арбитрная цель закрывается только внешней приёмкой, а не `run`).
-- `nextAction`, если есть, — action-пункт, на который указывает курсор плана: применяй
-  его дословно.
+  `stop` в списке только когда запрос `addressed`.
+- `nextAction`, если есть, — информационно: action-пункт, на который указывает курсор
+  плана. Доксе отдают **руку целиком** (с курсором на текущем узле), и она выбирает
+  следующий ход — continue, alternative или stop.
+- `plan.items[].alternatives` показывает историю ревизий пункта на месте, чтобы
+  «не сработавшие» сиблинги обойдённого или разложенного шага оставались видны (`TR-9`).
 - `lastResult.output` — полный (не обрезается проекцией); лимиты задаёт сам
   инструмент и **объявляет** их в результате (см. `docs/tools_ru.md`).
 
@@ -155,6 +161,7 @@ Call = {                       // агрегат, а не событие
 | `create_goal` | `path` (фокус, его `done_when`), `alternatives` фокуса (для `revises`), `constraints`, `calls` (не повторять провал) |
 | `apply` (read/grep/edit/run) | `path` (текущая цель), `lastResult` (решение), `calls` (что уже пробовал), `constraints` |
 | проверка (`apply run { target }`) | `path` + объективный `done_when` цели |
+| `stop` | запрос `addressed` (выбранная интерпретация `achieved`/`achieved_under`) |
 | `query` | адресация: достаёт любой узел/ребро по id/kind/predicate |
 
 **Арбитрная** цель не имеет команды: она закрывается только внешней приёмкой

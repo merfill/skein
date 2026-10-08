@@ -211,6 +211,19 @@ export function classify(
 ): Classification {
   const action = proposal.action;
 
+  if (action.operator === "stop") {
+    // The doxa's terminal move: accepted only when the focus is the request and it is
+    // already addressed (its chosen interpretation is achieved/achieved_under).
+    const current = currentGoalId(state);
+    const node = current !== undefined ? state.nodes.get(current) : undefined;
+    if (node?.kind === "request" && predicateOf(state, current as string) === "addressed") {
+      return accept;
+    }
+    return reject(
+      "not_addressed: the request is not addressed yet — settle the focus first (an objective goal by its own check), then propose stop",
+    );
+  }
+
   if (action.operator === "query") {
     if (action.id !== undefined) {
       // Refuse a query of a body already shown (`held`), and a spin on a non-result node
@@ -235,6 +248,12 @@ export function classify(
     if (action.step.command.trim() === "") return reject("empty_step");
     const current = currentGoalId(state);
     if (current === undefined) return reject("no_current_goal");
+    const focusNode = state.nodes.get(current);
+    if (focusNode?.kind === "request" && predicateOf(state, current) === "addressed") {
+      return reject(
+        "addressed: the request is already addressed; propose stop instead of a new interpretation",
+      );
+    }
     const required = revisionContext(state, current);
     const revises = [...new Set(action.revises ?? [])];
     if (required !== null) {
@@ -276,6 +295,15 @@ export function classify(
 
   // action.operator === "apply"
   const apply = action.action;
+  // At an addressed request only `stop` applies: everything else is refused so the doxa
+  // cannot wander after the work is done (docs/ir_semantics.md §2.6).
+  {
+    const focus = currentGoalId(state);
+    const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
+    if (focusNode?.kind === "request" && predicateOf(state, focus as string) === "addressed") {
+      return reject("addressed: the request is already addressed; propose stop instead");
+    }
+  }
   // A poll of a background job carries only the job id, and reads new state each time,
   // so it is never a repeat: accept it outright (docs/tools.md §4.7).
   if (apply.tool === "run" && apply.job !== undefined) {

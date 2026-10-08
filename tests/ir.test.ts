@@ -37,13 +37,13 @@ function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: 
 
 const llm: Provenance = { kind: "llm" };
 const objective = (command: string): DoneWhen => ({ kind: "objective", command });
-const subjective = (text: string): DoneWhen => ({ kind: "arbiter", text });
+const arbiter = (text: string): DoneWhen => ({ kind: "arbiter", text });
 
 function goal(
   id: string,
   what: string,
   seq: number,
-  done_when: DoneWhen = subjective(what),
+  done_when: DoneWhen = arbiter(what),
   why?: string,
   plan?: string,
 ): Event {
@@ -242,12 +242,12 @@ describe("projection", () => {
     const state = fold([
       goal("g1", "green", 0, objective("node --test")),
       { type: "add_node", node: workNode("a1", "action", "run build", 1) },
-      goal("g2", "locate", 2),
-      ...plan("p1", "g1", ["a1", "g2"], 3),
+      { type: "add_node", node: workNode("a2", "action", "locate", 2) },
+      ...plan("p1", "g1", ["a1", "a2"], 3),
     ]);
     const context = project(state, { budget: { turn: 2, maxTurns: 10 } });
     expect(context.path.map((node) => node.id)).toEqual(["g1"]);
-    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1", "g2"]);
+    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1", "a2"]);
     expect(context.path[0]?.plan?.cursor).toBe(0);
     expect(context.budget).toEqual({ turn: 2, maxTurns: 10, remaining: 8 });
   });
@@ -316,7 +316,8 @@ describe("projection", () => {
     const context = project(state);
     expect(context.constraints).toEqual([{ id: "k1", forbid: ["\\.test\\.mjs$"] }]);
     expect(context.applicable).toContain("apply");
-    expect(context.applicable).toContain("create_goal");
+    // The plan is done: the objective goal must be checked, not grown (no create_goal).
+    expect(context.applicable).not.toContain("create_goal");
     expect(context.checkReady).toBe(true);
   });
 
@@ -331,16 +332,22 @@ describe("projection", () => {
     expect(context.nextAction).toBe("a1");
   });
 
-  it("exposes a plan item's hypothesis (why) so a refuted attempt is not repeated", () => {
+  it("exposes a step alternative's hypothesis (why) so a refuted attempt is not repeated", () => {
     const state = fold([
       goal("g1", "green", 0, objective("node --test")),
-      goal("g2", "fix the loop bound", 1, objective("node --test"), "the loop excludes n"),
-      ...plan("p1", "g1", ["g2"], 2),
+      { type: "add_node", node: workNode("a1", "action", "fix", 1) },
+      ...plan("p1", "g1", ["a1"], 2),
+      { type: "add_node", node: workNode("alt", "alternatives", "opts", 3) },
+      { type: "add_edge", edge: edge("ha", "a1", "alt", "has_alternatives", llm) },
+      goal("g2", "fix the loop bound", 4, objective("node --test"), "the loop excludes n"),
+      { type: "add_edge", edge: edge("ei", "alt", "g2", "item", llm) },
+      { type: "add_edge", edge: edge("ec", "alt", "g2", "chosen", llm) },
     ]);
     const context = project(state);
-    const item = context.path[0]?.plan?.items.find((entry) => entry.id === "g2");
-    expect(item?.state).toBe("open");
-    expect(item?.why).toBe("the loop excludes n");
+    const item = context.path[0]?.plan?.items.find((entry) => entry.id === "a1");
+    const option = item?.alternatives?.items.find((entry) => entry.id === "g2");
+    expect(option?.state).toBe("open");
+    expect(option?.why).toBe("the loop excludes n");
   });
 
   it("keeps the full latest result and has no context budget", () => {
@@ -366,7 +373,9 @@ describe("projection", () => {
       ...plan("p1", "g1", ["a1"], 3),
     ]);
     const app = applicable(state, "g1");
-    expect(app.createGoal).toBe(true);
+    // The only plan item is executed: there is no current step to decompose, so
+    // create_goal is not applicable; the objective goal must be checked.
+    expect(app.createGoal).toBe(false);
     expect(app.checkReady).toBe(true);
     expect(app.apply).toBe(true);
   });
@@ -587,12 +596,19 @@ describe("call summary", () => {
       { type: "add_edge", edge: edge("ec", "alt", "g1", "chosen", { kind: "llm" }) },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
       { type: "add_edge", edge: edge("ep", "g1", "p1", "has_plan", { kind: "llm" }) },
-      goal("g2", "stage one", 4),
-      { type: "add_edge", edge: edge("e2", "p1", "g2", "item", { kind: "llm" }) },
+      { type: "add_node", node: workNode("a1", "action", "run", 4, { command: "run" }) },
+      { type: "add_edge", edge: edge("e2", "p1", "a1", "item", { kind: "llm" }) },
+      { type: "add_node", node: { id: "alt2", space: "work", kind: "alternatives", label: "opts", seq: 5 } },
+      { type: "add_edge", edge: edge("e3", "a1", "alt2", "has_alternatives", { kind: "llm" }) },
+      goal("g2", "stage one", 6),
+      { type: "add_edge", edge: edge("e4", "alt2", "g2", "item", { kind: "llm" }) },
+      { type: "add_edge", edge: edge("e5", "alt2", "g2", "chosen", { kind: "llm" }) },
+      { type: "descend", node: "g1" },
       { type: "descend", node: "g2" },
-      { type: "add_node", node: workNode("a1", "action", "read a", 5, { command: "read a" }) },
-      { type: "add_node", node: workNode("o1", "observation", "read a", 6, { ref: "file:a", version: "v1" }) },
-      { type: "add_edge", edge: edge("e3", "a1", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
+      { type: "add_node", node: workNode("a2", "action", "read a", 7, { command: "read a" }) },
+      { type: "add_node", node: workNode("o1", "observation", "read a", 8, { ref: "file:a", version: "v1" }) },
+      { type: "add_edge", edge: edge("e6", "a2", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
+      { type: "return" },
       { type: "return" },
     ]);
     // Focus is back on the interpretation, off the stage g2 — but the stage is part of
@@ -668,8 +684,13 @@ describe("traversal focus", () => {
     { type: "add_edge", edge: edge("ea", "r1", "alt", "has_alternatives", llm) },
     { type: "add_edge", edge: edge("ei", "alt", "g1", "item", llm) },
     { type: "add_edge", edge: edge("ec", "alt", "g1", "chosen", llm) },
-    ...plan("p1", "g1", ["g2"], 3),
-    goal("g2", "stage", 4),
+    ...plan("p1", "g1", ["a1"], 3),
+    { type: "add_node", node: workNode("a1", "action", "run", 4, { command: "run" }) },
+    { type: "add_node", node: workNode("alt2", "alternatives", "opts", 5) },
+    { type: "add_edge", edge: edge("ha", "a1", "alt2", "has_alternatives", llm) },
+    goal("g2", "stage", 6, objective("make test")),
+    { type: "add_edge", edge: edge("i2", "alt2", "g2", "item", llm) },
+    { type: "add_edge", edge: edge("c2", "alt2", "g2", "chosen", llm) },
     { type: "descend", node: "g1" },
     { type: "descend", node: "g2" },
     ...(check ?? []),

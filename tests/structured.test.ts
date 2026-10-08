@@ -20,9 +20,9 @@ import { fsWorkspace } from "../src/tools/workspace";
 
 const schema = z.object({
   thought: z.string(),
-  action: z.object({ operator: z.literal("complete") }),
+  action: z.object({ operator: z.literal("noop") }),
 });
-const valid = { thought: "t", action: { operator: "complete" } };
+const valid = { thought: "t", action: { operator: "noop" } };
 
 interface FakeModel {
   maxTokens?: number;
@@ -76,7 +76,7 @@ const content = (value: unknown) => ({ content: JSON.stringify(value) });
 const lengthLimit = () =>
   Promise.reject(new Error("Could not parse response content as the length limit was reached"));
 // A response cut off at the completion cap: valid JSON prefix, no closing brace.
-const truncated = '{"thought":"t","action":{"operator":"complete"';
+const truncated = '{"thought":"t","action":{"operator":"noop"';
 
 describe("invokeStructured", () => {
   it("returns a valid JSON object and asks for json_object", async () => {
