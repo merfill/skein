@@ -38,9 +38,9 @@ SKEIN_LIVE=false npx vitest run
 ### Операции над IR
 
 Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
-`OP-AP`, `OP-QR`, `TR`, `DER`, `REF`). Их офлайн-тесты сгруппированы по
-оператору в `tests/ops/` (`create_goal`, `apply`, `query`, `traversal`,
-`derivation`); инварианты проверяются на 400 случайных легальных деревьях
+`OP-AP`, `OP-QR`, `OP-ST`, `OP-CP`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
+сгруппированы по оператору в `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
+`applicable`, `traversal`, `derivation`); инварианты проверяются на 400 случайных легальных деревьях
 (`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
 нет теста или тест ссылается на ID вне реестра.
 
@@ -232,15 +232,14 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | `GREP_COUNT_DEFAULT` | 100 | совпадений `grep` в окне по умолчанию |
 | `MAX_GREP_MATCHES` | 200 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
 | `MAX_LIST_FILES` | 500 | максимум файлов в окне `list` |
-| `OUTPUT_LIMIT` | 8000 | байтовый предел JSON-результата `grep`/`list`; лишние результаты отбрасываются целиком |
-| `MAX_RUN_OUTPUT` | 8000 | вывод `run`; дальше head+tail и `outputRef`/`errorRef` (stdout/stderr раздельно) |
+| `OUTPUT_LIMIT` | 8000 | байтовый предел JSON-результата `grep`/`list` и вывода `run`; лишние `grep`/`list`-результаты отбрасываются целиком, вывод `run` — head+tail и `outputRef`/`errorRef` (stdout/stderr раздельно) |
 | `SKEIN_CTX_ITEMS` | 20 | элементов в `plan`/`alternatives` проекции |
 
 ### 8.1 Устойчивый structured output
 
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
 плоскому function-инструменту на операцию (`create_goal`, `query`, `read`,
-`grep`, `list`, `edit`, `write`, `run`), а `invokeTools` в `src/llm/structured.ts`
+`grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`), а `invokeTools` в `src/llm/structured.ts`
 биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
 плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял

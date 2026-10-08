@@ -12,12 +12,11 @@ Related documents:
   we are reworking).
 - `docs/logos_ir.md` — foundation: doxa and logos, goals, gap analysis.
 - `docs/benches/fix_ocaml_gc_ideal.md` — the reference trajectory (acceptance criterion).
-- `docs/plans/implementation_plan.md`, `docs/plans/logos_roadmap_plan.md` — the
+- `docs/plans/implementation_plan.md`, `docs/plans/archive/logos_roadmap_plan.md` — the
   overall plan and the earlier roadmap; this document refines them.
 
-Status: **plan agreed; work not started.** We do not change the semantics — it is
-already fixed; we bring the code to it. Working invariant: semantics first (already
-there), then code, then a test for the preserved invariant.
+Status: **done** — steps 1–8 are implemented (§10); the current as-built is
+`docs/ir.md`. The document is kept as history.
 
 ---
 
@@ -209,7 +208,7 @@ change.
 
 **Files:** `tests/invariants.ts`, `tests/ir.test.ts`, `tests/loop.test.ts`,
 `tests/gate.test.ts`, `tests/observe.test.ts`; `docs/ir.md`,
-`docs/plans/implementation_plan.md`, `docs/plans/logos_roadmap_plan.md` (+ ru
+`docs/plans/implementation_plan.md`, `docs/plans/archive/logos_roadmap_plan.md` (+ ru
 mirrors).
 
 **What changes:**

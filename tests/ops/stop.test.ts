@@ -71,6 +71,28 @@ describe("stop", () => {
     expect(verdict.reason).toContain("not_addressed");
   });
 
+  it("REF-ADDRESSED refuses create_goal and apply at an addressed request", () => {
+    const events = addressedRequest();
+    const created = classification(
+      {
+        operator: "create_goal",
+        what: "another approach",
+        done_when: { kind: "arbiter", text: "x" },
+        plan: "another: a sketch",
+        step: { command: "true" },
+      },
+      events,
+    );
+    expect(created.accept).toBe(false);
+    expect(created.reason).toContain("addressed");
+    const applied = classification(
+      { operator: "apply", action: { tool: "run", command: "true" } },
+      events,
+    );
+    expect(applied.accept).toBe(false);
+    expect(applied.reason).toContain("addressed");
+  });
+
   it("OP-ST-1 the loop ends on the doxa's stop, not on a derived auto-stop", async () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let index = 0;

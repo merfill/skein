@@ -41,11 +41,16 @@ original and a Russian mirror named with the `_ru` suffix.
   — the traversal stack (the spine and the arms).
 - [plans/step_reduction_plan.md](plans/step_reduction_plan.md) · [RU](plans/step_reduction_plan_ru.md)
   — context format and LLM-turn reduction (current work).
+- [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
+  — observation of changes outside the engine (a/b done, c open).
 
 ## Plans
 
 - `plans/` — active plans.
 - `plans/archive/` — completed or superseded plans, kept for the record.
+- [plans/archive/logos_roadmap_plan.md](plans/archive/logos_roadmap_plan.md) · [RU](plans/archive/logos_roadmap_plan_ru.md)
+  — the earlier logos roadmap (modes, `cited`, `Revision`); superseded by the IR
+  semantics, kept as history.
 
 ## Benchmarks and reports
 

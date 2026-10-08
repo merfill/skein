@@ -127,9 +127,9 @@ path: [
 ]
 ```
 
-Relation to the current code: `planView`/`alternativesView` (`src/ir/project.ts`) already
-provide part of this; **the rendering of alternatives inside plan items is missing** — it
-is what makes the revision history explicit.
+Relation to the current code: `planView`/`alternativesView` (`src/ir/project.ts`) provide
+this, including the rendering of alternatives inside plan items (the item's revision
+history) — `TR-9`.
 
 ## 8. History and addressing
 

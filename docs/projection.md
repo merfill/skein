@@ -30,13 +30,14 @@ operator cannot decide:
 
 1. **`path`** — the stack: `request → chosen interpretation → … → current node`;
 2. **the containers of the path's nodes** — their `plan` (items + states) and
-   `alternatives` (interpretations/options + `chosen`) — what `create_goal`,
-   `revises`, `apply`, check rest on;
+   `alternatives` (interpretations/options + `chosen`) — what `create_goal` (and its
+   `revises`), `apply`, and a check rest on;
 3. **`constraints`** — global, not to be violated;
 4. **`lastResult`** — the **full** result of the latest call (within the tool's
    honestly declared limits), to decide the next move;
-5. **`shown`** — the **working set**, engine-owned: the branch levels' results in full,
-   plus bodies pulled back via `query {id}`, with a TTL (§8 of `docs/context_design.md`);
+5. **`shown`** — the **working set**, engine-owned: the branch levels' results held
+   structurally (no TTL), plus bodies pulled back via `query {id}` with a TTL (§8 of
+   `docs/context_design.md`);
 6. **`calls`** — a deduplicated **summary of previous calls without results**: what
    was called, the status (`ok`/`fail`/`refused`) and the reason. It gives memory of
    what was already done without inflating the context (invariant 21, §2.8 of the
@@ -64,6 +65,7 @@ PathNode = {
   state,
   text?,                    // request
   what?, why?, done_when?,  // goal
+  note?,                    // goal: an arbiter goal's closing invariant (surfaced in calls when trimmed)
   planHint?,                 // goal: the initial plan as a string sketch (I3)
   plan?:         { cursor?, items: Item[] },   // the node's own plan (action items)
   alternatives?: { chosen?, items: Alt[] }     // the node's own container
@@ -74,13 +76,15 @@ Item = { id, kind: "goal" | "action", label, state, why?,
 Alt  = { id, label, state, chosen: boolean, why? }
 
 ResultView = {                 // a view, not a node
-  id, kind: "observation" | "check" | "action",
+  id?,                         // absent when the call produced no result node (e.g. query)
+  kind: "observation" | "check" | "action",
   command?,                    // run / check
   ref?,                        // read / edit — the touched file
   verdict?,                    // check
   label?,                      // action
   output?,                     // stdout of the latest call (not merged with stderr)
-  error?                       // stderr, kept separate; the primary signal of a failure
+  error?,                      // stderr, kept separate; the primary signal of a failure
+  signal?, core?, corePattern?, backtrace?   // crash diagnostics of a signal-killed run
 }
 
 Call = {                       // an aggregate, not an event
@@ -147,13 +151,13 @@ Call = {                       // an aggregate, not an event
   body (the failure signal), else of stdout: the last line that names a crash
   (`segmentation`, `panic`, `traceback`, `assertion`, `fatal`, …), else the last line
   that names an error (`error`, `failed`, `cannot`, `no such file`, …), else the last
-  non-empty line; up to ~120 chars.
+  non-empty line; up to `NOTE_LIMIT` (512) chars.
 
 ## 4. Limits
 
 - **There is no global context budget.** `SKEIN_CTX_TOTAL`/`SKEIN_CTX_EXCERPT` are not
   applied: a tool honestly returns its result within its declared limits
-  (`MAX_READ_LINES`, `MAX_GREP_MATCHES`, `MAX_RUN_OUTPUT`), and the projection does
+  (`MAX_READ_LINES`, `MAX_GREP_MATCHES`, `OUTPUT_LIMIT`), and the projection does
   not cut it.
 - `SKEIN_CTX_ITEMS` bounds the number of items in `plan`/`alternatives` (20).
 - The same journal and parameters give the same projection (§9‑4).
@@ -182,30 +186,30 @@ Request: "make `node --test` pass; do not edit tests". Constraint `k1`.
 { "path": [ { "id": "r1", "kind": "request", "state": "open",
               "text": "make node --test pass; do not edit tests" } ],
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
+  "shown": [],
   "calls": [],
   "applicable": ["create_goal"],
+  "checkReady": false,
   "budget": { "turn": 0, "maxTurns": 24, "remaining": 24 } }
 ```
 
-**Turn 1 — `create_goal` the interpretation `g1` with a plan; the focus descended into `g2`.**
+**Turn 1 — `create_goal` the interpretation `g1`; only the first plan step is materialized, as an action.**
 ```json
 { "path": [
     { "id": "r1", "kind": "request", "state": "open",
-      "text": "make node --test pass; do not edit tests" },
-    { "id": "g1", "kind": "goal", "state": "open",
-      "what": "make the suite pass",
-      "done_when": { "kind": "objective", "command": "node --test" },
-      "plan": { "cursor": 0, "items": [
-        { "id": "g2", "kind": "goal",   "label": "reproduce",  "state": "open" },
-        { "id": "g3", "kind": "goal",   "label": "locate+fix", "state": "open" },
-        { "id": "g4", "kind": "goal",   "label": "verify",     "state": "open" } ] },
+      "text": "make node --test pass; do not edit tests",
       "alternatives": { "chosen": "g1", "items": [
         { "id": "g1", "label": "make the suite pass", "state": "open", "chosen": true } ] } },
-    { "id": "g2", "kind": "goal", "state": "open",
-      "what": "reproduce", "done_when": { "kind": "arbiter", "text": "see it fail" } } ],
+    { "id": "g1", "kind": "goal", "state": "open",
+      "what": "make the suite pass", "why": "the suite is failing",
+      "done_when": { "kind": "objective", "command": "node --test" },
+      "planHint": "reproduce, locate+fix, verify",
+      "plan": { "cursor": 0, "items": [
+        { "id": "a2", "kind": "action", "label": "reproduce", "state": "open" } ] } } ],
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
   "calls": [ { "action": "run make test", "status": "ok", "count": 1 } ],
   "applicable": ["apply", "create_goal"],
+  "checkReady": false,
   "budget": { "turn": 1, "maxTurns": 24, "remaining": 23 } }
 ```
 

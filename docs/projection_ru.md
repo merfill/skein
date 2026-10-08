@@ -29,13 +29,14 @@
 
 1. **`path`** — стек: `request → выбранная интерпретация → … → текущий узел`;
 2. **контейнеры узлов пути** — их `plan` (пункты + состояния) и `alternatives`
-   (интерпретации/варианты + `chosen`) — это то, на что опираются `create_goal`,
-   `revises`, `apply`, проверка;
+   (интерпретации/варианты + `chosen`) — это то, на что опираются `create_goal` (и его
+   `revises`), `apply`, проверка;
 3. **`constraints`** — глобальны, нарушать нельзя;
 4. **`lastResult`** — **полный** результат последнего вызова (в пределах честно
    объявленных лимитов инструмента), чтобы принять следующее решение;
 5. **`shown`** — **рабочее множество**, которым владеет движок: результаты уровней ветки
-   полностью плюс тела, возвращённые по `query {id}`, с TTL (§8 `docs/context_design_ru.md`);
+   держатся структурно (без TTL), плюс тела, возвращённые по `query {id}`, с TTL
+   (§8 `docs/context_design_ru.md`);
 6. **`calls`** — дедуплицированная **сводка предыдущих вызовов без результатов**:
    что вызвано, статус (`ok`/`fail`/`refused`) и причина. Даёт память о том, что уже
    делалось, не раздувая контекст (инвариант 21, §2.8 семантики).
@@ -62,6 +63,7 @@ PathNode = {
   state,
   text?,                    // request
   what?, why?, done_when?,  // goal
+  note?,                    // goal: инвариант закрытия арбитрной цели (всплывает в calls при обрезке)
   planHint?,                 // goal: исходный план наброском-строкой (I3)
   plan?:         { cursor?, items: Item[] },   // собственный план узла (пункты-действия)
   alternatives?: { chosen?, items: Alt[] }     // собственный контейнер узла
@@ -72,13 +74,15 @@ Item = { id, kind: "goal" | "action", label, state, why?,
 Alt  = { id, label, state, chosen: boolean, why? }
 
 ResultView = {                 // вид, а не узел
-  id, kind: "observation" | "check" | "action",
+  id?,                         // нет, когда вызов не породил узел-результат (например, query)
+  kind: "observation" | "check" | "action",
   command?,                    // run / check
   ref?,                        // read / edit — тронутый файл
   verdict?,                    // check
   label?,                      // action
   output?,                     // stdout последнего вызова (не склеен со stderr)
-  error?                       // stderr, отдельно; главный сигнал сбоя
+  error?,                      // stderr, отдельно; главный сигнал сбоя
+  signal?, core?, corePattern?, backtrace?   // диагностика краха при run, убитом сигналом
 }
 
 Call = {                       // агрегат, а не событие
@@ -143,13 +147,13 @@ Call = {                       // агрегат, а не событие
   **stderr** (сигнал сбоя), иначе stdout: последняя строка, называющая крах
   (`segmentation`, `panic`, `traceback`, `assertion`, `fatal`, …), иначе последняя
   строка, называющая ошибку (`error`, `failed`, `cannot`, `no such file`, …), иначе
-  последняя непустая строка; до ~120 символов.
+  последняя непустая строка; до `NOTE_LIMIT` (512) символов.
 
 ## 4. Пределы
 
 - **Общего бюджета контекста нет.** `SKEIN_CTX_TOTAL`/`SKEIN_CTX_EXCERPT` не
   применяются: инструмент честно возвращает результат в своих объявленных лимитах
-  (`MAX_READ_LINES`, `MAX_GREP_MATCHES`, `MAX_RUN_OUTPUT`), а проекция его не режет.
+  (`MAX_READ_LINES`, `MAX_GREP_MATCHES`, `OUTPUT_LIMIT`), а проекция его не режет.
 - `SKEIN_CTX_ITEMS` ограничивает число элементов в `plan`/`alternatives` (20).
 - Один и тот же журнал и параметры дают одну и ту же проекцию (§9‑4).
 - Бюджет **ходов** (`budget.turn/maxTurns/remaining`) — не про символы; остаётся.
@@ -177,30 +181,30 @@ Call = {                       // агрегат, а не событие
 { "path": [ { "id": "r1", "kind": "request", "state": "open",
               "text": "make node --test pass; do not edit tests" } ],
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
+  "shown": [],
   "calls": [],
   "applicable": ["create_goal"],
+  "checkReady": false,
   "budget": { "turn": 0, "maxTurns": 24, "remaining": 24 } }
 ```
 
-**Ход 1 — `create_goal` интерпретация `g1` с планом; фокус спустился в `g2`.**
+**Ход 1 — `create_goal` интерпретация `g1`; материализуется только первый шаг плана, как действие.**
 ```json
 { "path": [
     { "id": "r1", "kind": "request", "state": "open",
-      "text": "make node --test pass; do not edit tests" },
-    { "id": "g1", "kind": "goal", "state": "open",
-      "what": "make the suite pass",
-      "done_when": { "kind": "objective", "command": "node --test" },
-      "plan": { "cursor": 0, "items": [
-        { "id": "g2", "kind": "goal",   "label": "reproduce",  "state": "open" },
-        { "id": "g3", "kind": "goal",   "label": "locate+fix", "state": "open" },
-        { "id": "g4", "kind": "goal",   "label": "verify",     "state": "open" } ] },
+      "text": "make node --test pass; do not edit tests",
       "alternatives": { "chosen": "g1", "items": [
         { "id": "g1", "label": "make the suite pass", "state": "open", "chosen": true } ] } },
-    { "id": "g2", "kind": "goal", "state": "open",
-      "what": "reproduce", "done_when": { "kind": "arbiter", "text": "see it fail" } } ],
+    { "id": "g1", "kind": "goal", "state": "open",
+      "what": "make the suite pass", "why": "the suite is failing",
+      "done_when": { "kind": "objective", "command": "node --test" },
+      "planHint": "reproduce, locate+fix, verify",
+      "plan": { "cursor": 0, "items": [
+        { "id": "a2", "kind": "action", "label": "reproduce", "state": "open" } ] } } ],
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
   "calls": [ { "action": "run make test", "status": "ok", "count": 1 } ],
   "applicable": ["apply", "create_goal"],
+  "checkReady": false,
   "budget": { "turn": 1, "maxTurns": 24, "remaining": 23 } }
 ```
 

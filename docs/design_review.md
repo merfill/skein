@@ -4,9 +4,13 @@
 
 Status: working note and record of outcomes. Source: an external model's critique
 of `docs/ir.md` / `docs/concepts.md`, reviewed against the code after commit
-`4bb8a32` (verified frontier, structured query, output spill). Most points are now
-applied; a consolidated summary is in `docs/concepts.md` §"Outcomes of the design
-review", and each point below carries its verdict and the plan that implements it.
+`4bb8a32` (verified frontier, structured query, output spill). Each point below carries
+its verdict and the plan that implements it.
+
+> **Note.** This note predates the current IR semantics: it refers to APIs since removed
+> or renamed (`finish`, `frontier.verified`/`frontier.refusals`, `index { counts, recent }`,
+> query `status`/`verdictOf`). The current as-built is `docs/ir.md`; read those terms here
+> as historical.
 
 This document records, point by point, which of the critique's risks and
 recommendations we **accept**, **reframe**, or **reject**, and why. It is not a

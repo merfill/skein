@@ -1,12 +1,15 @@
 # Skein — implementation plan for the logos roadmap (management, stopping, honesty)
 
-> Russian mirror — `docs/plans/logos_roadmap_plan_ru.md`.
+> Russian mirror — `docs/plans/archive/logos_roadmap_plan_ru.md`.
 
 Related: `docs/logos_ir.md` (§7–§9), `docs/plans/implementation_plan.md` (Tier 2),
 `docs/plans/archive/staleness_scope_plan.md`, `docs/plans/archive/tier1_plan.md`. Overall plan —
 `docs/plans/implementation_plan.md`.
 
-Status: plan; work not started.
+Status: **superseded** by bringing the code to the IR semantics — see
+`docs/plans/archive/ir_semantics_migration_plan.md`. The steps below (modes, `cited`,
+`Revision`) are replaced by the operator model and derived state; the document is
+kept as history (§9.6 of `docs/logos_ir.md`).
 
 ## 1. Problem
 

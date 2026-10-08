@@ -11,12 +11,11 @@
 - `docs/ir_ru.md` — **as-built**: как IR устроен в текущем коде (что переделываем).
 - `docs/logos_ir_ru.md` — основание: докса и логос, цели, разрыв-анализ.
 - `docs/benches/fix_ocaml_gc_ideal_ru.md` — эталонная траектория (критерий приёмки).
-- `docs/plans/implementation_plan_ru.md`, `docs/plans/logos_roadmap_plan_ru.md` —
+- `docs/plans/implementation_plan_ru.md`, `docs/plans/archive/logos_roadmap_plan_ru.md` —
   общий план и прежний роадмап; этот документ их уточняет.
 
-Статус: **план согласован; код не начат.** Семантику не правим — она уже
-зафиксирована; приводим к ней код. Инвариант работы: сначала семантика (уже есть),
-затем код, затем тест на сохранённый инвариант.
+Статус: **выполнен** — шаги 1–8 реализованы (§10); текущий as-built — `docs/ir_ru.md`.
+Документ оставлен как история.
 
 ---
 
@@ -205,7 +204,7 @@
 
 **Файлы:** `tests/invariants.ts`, `tests/ir.test.ts`, `tests/loop.test.ts`,
 `tests/gate.test.ts`, `tests/observe.test.ts`; `docs/ir_ru.md`,
-`docs/plans/implementation_plan_ru.md`, `docs/plans/logos_roadmap_plan_ru.md`
+`docs/plans/implementation_plan_ru.md`, `docs/plans/archive/logos_roadmap_plan_ru.md`
 (+ en-зеркала).
 
 **Что меняется:**

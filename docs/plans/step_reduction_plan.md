@@ -12,9 +12,10 @@ Doxa turns and logos operations must not be conflated:
 - **IR operation** (close a goal, add `verifies`, advance the plan cursor, return focus,
   mark `addressed`) is deterministic and **free**.
 
-Counting IR operations as "steps" is a methodological error. In the current code
-`create_goal`/`complete`/`query`/`run target` are implemented as doxa turns, so they
-*currently* cost; logically they are logos work the engine must do itself.
+Counting IR operations as "steps" is a methodological error. In the historical code
+`create_goal`/`complete`/`query`/`run target` were implemented as doxa turns, so they
+cost; logically they are logos work the engine must do itself. (`complete` has since been
+removed — see A2; `query` and `run target` remain doxa turns.)
 
 **Metrics:** LLM turns; input/output tokens; cache%; `reasoning_tokens` per turn
 (a signal of extra deliberation); wall-time. Reward is the control invariant.
@@ -77,7 +78,9 @@ check. Live — existing scenarios + `achievedWithoutCheck`.
 **3.6 Effect.** −1 turn per bug fix (the duplicate final check); fewer command runs and
 full workspace hashes. Reward unchanged.
 
-**Status:** implemented (engine + offline tests). Confirmed by a `ref-localize-on` run
+**Status: retired** — the code was removed together with step 2
+(`docs/plans/archive/plan_stepwise_redesign.md` §2.5); the note below is historical.
+Confirmed by a `ref-localize-on` run
 (2026-10-07): `checks=1` instead of 2, `steps=10`, reward 1; closure edge
 `chk:55→w:goal:2`, root `achieved`, request `addressed`. The §4.5 A/B re-run is pending.
 
@@ -108,7 +111,7 @@ remain.
 ### A3 — working set: keep the evidence
 
 **Problem.** The diff body (479 chars) is evicted **not by size** but by scope:
-`levelIds = current.branch` (`src/loop/graph.ts:130`) — a closed stage leaves the branch
+`levelIds = current.branch` (`src/loop/graph.ts`) — a closed stage leaves the branch
 and its body is dropped; the `calls` index keeps only a note clipped to **120** chars.
 
 **Implementation.** Working-set scope = bodies under open goals on the path **plus bodies

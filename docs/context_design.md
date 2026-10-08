@@ -19,8 +19,8 @@ know. So the projection has four functions, each covering a class of problems:
    call. It is the direct input to the next decision, hence full, not truncated.
 3. **Memory and guards** — what I have done, what is forbidden, what is decided:
    `calls` (a signature summary + status, append-only), `constraints`, `alternatives`
-   (only when a node is being revised, see §4).
-4. **Bookkeeping** — `budget` (turns). Open question (§6).
+   (interpretations/options + `chosen`, §4).
+4. **Bookkeeping** — `budget` (turns).
 
 Principle: show **derived, deduplicated knowledge**, not a raw dump. But the latest
 result is shown in full: it is the decision's input. "Memory" — yes, a "turn tape" — no.
@@ -36,8 +36,8 @@ IR (`docs/plans/traversal_stack_spec.md`).
 | Evidence | `lastResult` (full) | choose the next operator from the result |
 | Memory | `calls` (signature + `ok/fail/refused` + `note`, dedup+count) | do not repeat a done/failed move |
 | Guards | `constraints` | do not violate a prohibition |
-| Decided | `alternatives` chosen/failed — **only in a revision node** | a new hypothesis from the "did not work" list |
-| Bookkeeping | `budget` | (open, §6) |
+| Decided | `alternatives` (interpretations/options + `chosen`) | a new hypothesis from the "did not work" list |
+| Bookkeeping | `budget` | turns remaining |
 
 ## 3. The plan: short horizon, append-only, a checklist
 
@@ -69,19 +69,19 @@ near step and a list of intentions that grows as we go, not a forecast. Hence:
 
 ## 4. Alternatives: one mechanism for everything
 
-`alternatives` is the way to "revise" without edits: approaches to a node. Currently
-attached to `request`/`goal`; we extend it to **any plan item** (including an action).
-The chosen one is the target of the latest `chosen` edge; the rest are derived
-`abandoned`.
+`alternatives` is the way to "revise" without edits: approaches to a node. Attached to
+`request`/`goal` and to **any plan item** (including an action). The chosen one is the
+target of the latest `chosen` edge; the rest are derived `abandoned`.
 
 - **The logos branches, not the doxa.** When the model executes an action **different**
   from the current unfulfilled item, the engine itself adds that action as an
   **alternative** to the item (the previous attempt → `abandoned`); the item is
   resolved once the chosen alternative is executed. The doxa only proposes hypotheses —
   it needs no new discipline.
-- **Alternatives are shown only during revision.** The path shows the chosen
-  interpretation; the list of options is shown only when the current node is refuted and
-  `revises` is needed. Otherwise we risk showing the whole tree.
+- **Alternatives are shown as the context of the path's nodes.** The path shows the
+  chosen interpretation and each node's own container (`alternatives`/`plan`), so a
+  bypassed or decomposed step's "did not work" siblings stay visible; a request's single
+  interpretation is shown from the start (`docs/projection.md`, `TR-9`).
 - **A failure is a record, not a deletion.** A failed option stays `refuted`/`abandoned`
   and serves as the "did not work" list for the next hypothesis or an honest "I don't
   know".
@@ -100,32 +100,32 @@ rollback without losing history.
 | # | Problem | What covers it | Status |
 |---|---|---|---|
 | 1 | Does not know where it is and why | `path` + the goal (`what/why/done_when`) | present |
-| 2 | Does not know what is next | a short plan (checklist) | plan — to finish |
+| 2 | Does not know what is next | a short plan (checklist) | present |
 | 3 | Loses what it just learned | `lastResult` full | present |
 | 4 | Repeats what was done | `calls`: signatures + `count` | present |
 | 5 | Repeats a failure/refusal | `calls`: `status fail/refused` + `note`; cleared by mutation | present |
 | 6 | Does not know prohibitions | `constraints` | present |
-| 7 | Forgets the chosen/failed option | `alternatives` in a revision node | present (extend to items) |
-| 8 | Does not know the turn budget | `budget` | open (§7) |
-| 9 | **Does not retain a working set of code** | `shown` with TTL + cap (§8) | **decided §8** |
-| 10 | **Stuck on a stale plan item** | checklist + alternatives | **to fix via §3–4** |
-| 11 | Builds a long brittle plan | horizon 1–3, instruction | **to fix** |
+| 7 | Forgets the chosen/failed option | `alternatives` (path nodes + plan items) | present |
+| 8 | Does not know the turn budget | `budget` | present (§7) |
+| 9 | **Does not retain a working set of code** | `shown` + cap (§8) | present |
+| 10 | **Stuck on a stale plan item** | checklist + alternatives | present |
+| 11 | Builds a long brittle plan | plan sketch + first step (§3) | present |
 | 12 | Context explodes (witness/dumps) | do not inline raw payloads | present |
 | 13 | A tool lies (silently cuts) | declared limits + report | present |
 | 14 | Search is blind (`.c`) | search by content | present |
 | 15 | Cannot see the error cause | `lastResult` full | present |
 | 16 | `calls` grows | dedup/cap | later |
-| 17 | Cannot "tick" an item done differently | plan-as-checklist + alternatives | fix with §3–4 |
+| 17 | Cannot "tick" an item done differently | plan-as-checklist + alternatives | present |
 | 18 | Confuses branch context | scope `calls`/`lastResult` by `path` | present |
 
 ## 7. Open questions
 
-- **A working set of code (#9).** Decided — see §8.
-- **Turn budget (#8).** Whether the model needs the remainder, or a stall signal is
-  more useful, is undecided; not doing it for now.
+- **A working set of code (#9).** Implemented — see §8.
+- **Turn budget (#8).** Implemented: `budget.turn/maxTurns/remaining` is in the
+  projection.
 - **`calls` (#16).** How to bound growth without losing the "did not work".
-- **The form of an item's alternative.** Whether an action item needs a criterion
-  ("grep found N") to be "resolved" is a detail of §3–4.
+- **The form of an item's alternative.** Resolved: an action item is resolved when its
+  chosen alternative is `executed`; no separate criterion.
 
 ## 8. Evidence and the working set
 

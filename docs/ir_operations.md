@@ -6,9 +6,9 @@ Related: `docs/ir_semantics.md` (the formal semantics — this document is the
 operational reference and the coverage contract, not a second formalism),
 `docs/projection.md`, `docs/tools.md`, `docs/ir.md`, `docs/testing.md`.
 
-Status: **Phase 1 — skeleton (agreed 2026-10-06).** §1–§4 specify the model and
-every operator. §5 is the coverage matrix, filled as tests land (Phases 2–3). An ID
-is **stable**: a spec point may gain tests, but its meaning does not change.
+Status: **Implemented.** §1–§4 specify the model and every operator; §5 is the
+coverage matrix (filled). An ID is **stable**: a spec point may gain tests, but its
+meaning does not change.
 
 ---
 
@@ -24,7 +24,7 @@ Every operator is specified as:
 - **Projection** — how the result is seen in the next context (§ projection).
 - **ID** — a stable identifier; a test cites it as the `ID` token in its title.
 
-ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH` apply
+ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|WRITE|RUN|FETCH|PATCH` apply
 sub-tools, `OP-AP-CONT|ALT` how an `apply` lands in the tree, `OP-ST` stop, `OP-QR`
 query, `TR` traversal/containers, `DER` derived
 predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced).
@@ -88,8 +88,8 @@ predicates, `REF` refusals (the catalogue), `PRJ` projection points (referenced)
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| at the request (interpretation) | focus is `request:open` | add `goal`; ensure `alternatives` on the request; `item` + `chosen` to it; `descend` into it | request stays `open`; goal `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis` | `OP-CG-1` |
-| decompose an open goal | focus is `goal:open`, not refuted, with a current action step | add `goal`; ensure `alternatives` on the current step; `item` + `chosen`; `descend` | the sub-goal is the step's chosen option; the step is superseded | as above; `all_plan_fulfilled` (must check, not grow) | `OP-CG-2` |
+| at the request (interpretation) | focus is `request:open` | add `goal`; ensure `alternatives` on the request; `item` + `chosen` to it; `descend` into it | request stays `open`; goal `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis`, `addressed` | `OP-CG-1` |
+| decompose an open goal | focus is `goal:open`, not refuted, with a current action step | add `goal`; ensure `alternatives` on the current step; `item` + `chosen`; `descend` | the sub-goal is the step's chosen option; the step is superseded | as above; `all plan items are fulfilled` (must check, not grow) | `OP-CG-2` |
 | revision (`revises`) | focus is `request` with failed options, or a `refuted` goal | add `goal`; `item` + `chosen` into the failed options' container; `descend` | failed options → `abandoned`; new goal `open` | `missing_revision` (not all failed options listed), `unknown_revision` (`revises` at a non-refuted point) | `OP-CG-3` |
 | plan + first step | any of the above, `plan` (string) and `step` present | store `plan` on the goal; add exactly one action item (`step`) under a new `plan` container | the step item `open` | `empty_plan` (blank sketch), `empty_step` (blank command) | `OP-CG-4` |
 
@@ -109,7 +109,9 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 (`docs/ir_semantics.md` §2.6): reuse an unexecuted action item with the same command
 (`OP-AP-CONT-1`); else attach the new action as the `chosen` alternative of the first
 unfulfilled item (`OP-AP-ALT-1`); else create the action and append it as a new plan
-`item` (`OP-AP-CONT-2`). The engine never moves into the action.
+`item` (`OP-AP-CONT-2`). The engine never moves into the action. At an already-
+`addressed` request every `apply` is refused with `addressed` (only `stop` is
+accepted).
 
 #### 2.2.1 `read` (`OP-AP-READ`)
 
@@ -275,7 +277,7 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | `missing_revision` | `revises` omits a failed option | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` at a non-refuted point | create_goal | `REF-REV-UNKNOWN` |
 | `repeat_hypothesis` | `what` repeats a failed option | create_goal | `REF-REPEAT-HYP` |
-| `all_plan_fulfilled` | growing an objective goal whose plan is done | create_goal | `REF-PLAN-DONE` |
+| `all plan items are fulfilled` | growing an objective goal whose plan is done | create_goal | `REF-PLAN-DONE` |
 | `not_current_goal` | a check targets a non-focus | run | `REF-NOT-FOCUS` |
 | `arbiter_goal_needs_acceptance` | check of an arbiter goal (no command) | run | `REF-RUN-ARB` |
 | `invalid_target` | check of a non-goal | run | `REF-RUN-TARGET` |
@@ -290,6 +292,7 @@ The `classify` gate (`src/loop/classify.ts`). A refusal emits `record_rejection`
 | `stale_base` | write over a file changed after the read | write | `REF-WRITE-STALE` |
 | `constraint_violation:<pattern>` | write a forbidden path | write | `REF-WRITE-CONSTRAINT` |
 | `not_addressed` | `stop` on a request that is not `addressed` (or the focus is not the request) | stop | `REF-ST-STATE` |
+| `addressed` | any operator except `stop` at an already-`addressed` request | create_goal/apply | `REF-ADDRESSED` |
 
 Tool **failures** (a `fail` observation, not a refusal): missing file (`read`),
 bad scope (`grep`/`list`), `find` not present (`edit`), non-zero/timeout/signal
@@ -339,6 +342,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; scenario `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; scenario `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |
+| `REF-WRITE-STALE`, `REF-WRITE-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-ST-1`, `REF-ST-STATE` | `tests/ops/stop.test.ts` | step `stop-addressed` |
 | `OP-AP-CONT/ALT` | `tests/ops/apply.test.ts`, `tests/ops/create_goal.test.ts` | steps `apply-next-action` |
 | `TR-8` | `tests/ops/applicable.test.ts` | steps `check-ready-objective`, `stop-addressed` |

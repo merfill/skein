@@ -106,8 +106,8 @@ L2 is under the gate, L3 is acceptance.
 
 1. no contradictions between blocks (checked by review and L1 phrasings);
 2. every registry tool is named callably (L1, Phase 2);
-3. the prompt's character budget is declared and not exceeded (L1; the threshold is an
-   open question, §6).
+3. the prompt's character budget is an **open question** (§6): no target is fixed and no
+   test enforces one.
 
 ## 4. What changed
 

@@ -67,7 +67,7 @@ Three consequences used throughout:
 The frame comes from the doxa/logos distinction (Ankyra, `doxa_and_logos.tex`):
 
 - **Doxa** is the LLM. It only *proposes*: exactly one operator per turn
-  (`create_goal` or `apply`; `query` is read-only addressing). Its thought is
+  (`create_goal`, `apply`, `stop`; `query` is read-only addressing). Its thought is
   narrative and stays out of the IR. A proposed goal enters `open`; it is never at
   once achieved.
 - **Logos** is the deterministic side: the gate (`classify`), verdicts
@@ -85,7 +85,7 @@ arbiter goal only by external acceptance.
 A single graph, two namespaces (`docs/ir.md` is the as-built reference):
 
 - **work** — `request`, `goal`, `plan`, `alternatives`, `action`, `observation`,
-  `check`, `constraint`.
+  `check`, `stop`, `constraint`.
 - **artifact** — `file` (canonical id `file:src/foo.ts`).
 
 **done_when** has two kinds: `objective` (a literal command whose exit code settles
@@ -106,7 +106,8 @@ node-event, not an edit.
 the request, or decomposes the current step into a sub-goal (an alternative); `plan` is a
 string sketch and `step` the first action. `apply { action }` runs/reads/edits the world.
 A `run` with an explicit `target` (an objective goal) is a **check**; a bare `run` is an
-observation.
+observation. `stop { why? }` is the terminal move — accepted only when the request is
+`addressed`.
 
 ## The cycle
 

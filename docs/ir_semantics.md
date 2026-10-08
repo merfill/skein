@@ -135,12 +135,13 @@ never enters as a plan item** (I6): it enters only as an **alternative** to an e
 (action) step, when the doxa decomposes that step — and then replaces it (becomes its
 `chosen` option).
 
-**Alternatives** — a container of options: an `alternatives` node, linked to a
-**request** (interpretations of the request) or to a **goal** (approach options), holds
-`goal` items. For a goal it appears **lazily** — when the current approach has failed and
-a new candidate is proposed; for a request it is created **at once** with the first
-interpretation (a single interpretation is an option too). The chosen (current) option is
-the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
+**Alternatives** — a container of options: an `alternatives` node, linked by
+`has_alternatives` to a **request** (interpretations of the request), a **goal**
+(approach options), or a **plan item** (a step's revision history), and it holds `goal`
+or `action` items. It appears **lazily** for a goal/step — when the current approach has
+failed and a new candidate is proposed; for a request it is created **at once** with the
+first interpretation (a single interpretation is an option too). The chosen (current)
+option is the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
 (derived). The options are proposed by the doxa, not by the Arbiter.
 
 ### 2.3 Edges
@@ -149,8 +150,8 @@ the one the **latest** `chosen` edge points to (§2.6); the rest are `abandoned`
 |---|---|---|
 | `has_plan` | `goal` → `plan` | the goal's plan (mandatory, ≥1 action item) |
 | `item` | `plan` / `alternatives` → `goal` / `action` | an item/option (order = position) |
-| `has_alternatives` | `request` / `goal` → `alternatives` | a container of interpretations/approach options |
-| `chosen` | `alternatives` → `goal` | the chosen (current) approach option |
+| `has_alternatives` | `request` / `goal` / plan item → `alternatives` | a container of interpretations/approach options/revisions |
+| `chosen` | `alternatives` → `goal` / `action` | the chosen (current) option |
 | `under` | `check` → `goal` | an assumption a closure rests on |
 | `produces` | `action` → `observation` / `check` | a command result |
 | `verifies` | `check` → `goal` | the check's verdict about the goal |
@@ -174,6 +175,8 @@ the projection from incident event nodes:
 
 - an action is `executed` ⇔ it has a produced child (`produces`/`mutates`); otherwise
   the item is merely planned;
+- an action is `abandoned` ⇔ its `alternatives` container chose a sibling (a bypassed
+  step);
 - a goal is `achieved` ⇔ it is closed by a `check` with verdict `pass` and **without**
   `under` edges;
 - a goal is `achieved_under` ⇔ it is closed by a `check` (`pass`, with `under`);
@@ -202,8 +205,9 @@ doxa's (§7).
 The **stack** `S = [G₀ … G_k]` is the path from the root to the current goal; `G₀` is
 the root request (`request`). The **cursor** `cursor(G)` is a **derived** number: the index of the first
 **unperformed** plan item of `G`, left to right. An item is performed if it is an
-`action` with a produced child (`observation`/`check`/`mutate`) or a `goal` in the
-state `achieved`/`achieved_under`/`refuted`/`abandoned`. No plan — no items. The
+`action` with a produced child (`observation`/`check`/`mutate`), or a `goal` in the
+state `achieved`/`achieved_under`/`refuted`/`abandoned`, or an item whose `alternatives`
+container has a performed `chosen` option (`itemFulfilled`). No plan — no items. The
 **current node** = `G_k`.
 
 Neither the stack nor the cursor is stored as a field: the stack is the fold of the
@@ -649,12 +653,13 @@ exists (two equally consistent hypotheses).
 ## 8. Projection
 
 `project(state) → Context` is a pure deterministic function: it is the context for the
-**next operator**, not a state dump. It shows the **traversal branch** plus the
-containers of its nodes (`plan`/`alternatives`), the global constraints, the branch's
-**call summary** (`calls`, §2.8), and the full result of the latest call; everything
-else is reached via `query`, and the **body of any past result by its `id`**
-(`query { id, start?, end? }`). The composition, exact shape, limits and examples are in
-the separate specification `docs/projection.md`.
+**next operator**, not a state dump. It shows the **traversal branch** (`path`) plus the
+containers of its nodes (`plan`/`alternatives`), the global `constraints`, the branch's
+**call summary** (`calls`, §2.8), the full result of the latest call (`lastResult`), the
+working set (`shown`), the `applicable` operators with `checkReady`/`nextAction`, and the
+turn `budget`; everything else is reached via `query`, and the **body of any past result
+by its `id`** (`query { id, start?, end? }`). The composition, exact shape, limits and
+examples are in the separate specification `docs/projection.md`.
 
 ---
 

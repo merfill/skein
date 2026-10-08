@@ -14,7 +14,7 @@ The engine learns about a file change only from events it produced itself (an
 `edit` → `mutate`). Two gaps remain:
 
 - `run` may write a non-forbidden file, and no `mutate` is recorded
-  (`constraint_guard_plan.md` §6);
+  (`docs/plans/archive/constraint_guard_plan.md` §6);
 - a file changed by an external writer (a user, another program) is not observed
   at all until it is re-read.
 
@@ -96,5 +96,5 @@ Implemented (a) and (b); (c) remains open.
   guarantee, the watcher only adds promptness, and it can be added later without
   touching the correctness path.
 
-`npm run typecheck` is clean and `npm test` passes (35 tests). Docs updated:
+`npm run typecheck` is clean and `npm test` passes. Docs updated:
 `docs/ir.md` §1, §2, §5.

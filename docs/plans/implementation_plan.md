@@ -38,14 +38,19 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
   (C2).
   Details and order of work — `docs/plans/archive/tier1_plan.md`.
 
-**Tier 2 — non-monotonic knowledge.**
-- Statuses `superseded`/`refuted`, specificity, `Revision` as a record.
-- Staleness precision (R3b): scope the witness to a dependency closure, via each
-  ecosystem's tooling; deferred from Tier 1 (`docs/plans/archive/tier1_plan.md` §7).
+**Tier 2 — non-monotonic knowledge (reframed by the IR semantics; mostly delivered).**
+- Non-monotonicity is **derived**, not stored: `refuted`/`abandoned` predicates and
+  `alternatives`+`chosen` are computed by `fold`, and a step's revision history is
+  shown in the projection (`docs/ir.md` §4, §7). This replaced the old
+  statuses/`Revision`-record frame.
+- The earlier roadmap (modes, `W` gate, `cited`, `frontier.revisions`) was superseded
+  by the semantics migration — `docs/plans/archive/logos_roadmap_plan.md` is kept as history.
+- Still deferred: staleness precision (R3b) — narrow the witness to a dependency
+  closure; today it is the whole workspace (`SKIP_DIRS`).
 
 **Tier 3 — doxastic operators.**
 - `analogy`, `intuition` — asking the LLM for the non-derivable, as explicit
-  operators.
+  operators. Not started.
 
 **Immediate next steps.**
 1. Tighten classification: a constraint must forbid a `run` (shell) workaround,
@@ -60,6 +65,12 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
    gain, and the per-call context saving is offset by more calls and a worse cache.
 
 ## 4. Current status
+
+> **Brought to the IR semantics.** The code follows `docs/ir_semantics.md`: the old
+> model (`claim`/`decision`/`subgoal`, status fields, `mode`) is replaced by the
+> operator model (`create_goal`/`apply`/`stop`, plus read-only `query`) and derived
+> state. Plan and status — `docs/plans/archive/ir_semantics_migration_plan.md`; the
+> as-built — `docs/ir.md`. The Tier 0/Tier 1 line below is history.
 
 Tier 0 is implemented (steps 1–5 of `docs/plans/archive/tier0_plan.md` §11): `src/ir`,
 `src/config`, `src/llm`, `src/tools`, `src/loop`, three fixtures, offline and live
@@ -159,6 +170,7 @@ CSP/arithmetic, UI, multilinguality, multiple LLM providers.
 
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`).
-- `payload` shape for `finish`/`run`: free text vs a typed predicate.
-- Cache: only the header (goal + constraints) is stable; the frontier changes
-  every turn.
+- Stopping: whether the engine may run `done_when.command` itself once a plan is
+  done, without a doxa turn (A5 in `docs/plans/step_reduction_plan.md` §5).
+- Cache: only the stable prefix (request + constraints) is cacheable; the
+  projection's focus changes every turn (`docs/plans/step_reduction_plan.md` §4).

@@ -1,6 +1,6 @@
 # Skein — план реализации по роадмапу логоса (управление, остановка, честность)
 
-> Английское зеркало — `docs/plans/logos_roadmap_plan.md`.
+> Английское зеркало — `docs/plans/archive/logos_roadmap_plan.md`.
 
 Связанные: `docs/logos_ir_ru.md` (§7–§9), `docs/plans/implementation_plan_ru.md`
 (Tier 2), `docs/plans/archive/staleness_scope_plan_ru.md`,

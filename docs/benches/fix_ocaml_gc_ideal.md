@@ -3,7 +3,7 @@
 > Russian mirror — `docs/benches/fix_ocaml_gc_ideal_ru.md`.
 
 Related: `docs/ir_semantics.md` (the source of truth for the semantics),
-`docs/logos_ir.md`, `docs/plans/logos_roadmap_plan.md`, `docs/benches/bench_report.md`.
+`docs/logos_ir.md`, `docs/plans/archive/logos_roadmap_plan.md`, `docs/benches/bench_report.md`.
 Reference run to compare against: `~/.skein-bench/harbor/2026-10-02__09-47-57`.
 
 Status: reference. This is not an engine spec but a sample of the **shape** of a run in

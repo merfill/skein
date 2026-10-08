@@ -3,7 +3,7 @@
 > Английское зеркало — `docs/benches/fix_ocaml_gc_ideal.md`.
 
 Связанные: `docs/ir_semantics_ru.md` (источник истины по семантике),
-`docs/logos_ir_ru.md`, `docs/plans/logos_roadmap_plan_ru.md`,
+`docs/logos_ir_ru.md`, `docs/plans/archive/logos_roadmap_plan_ru.md`,
 `docs/benches/bench_report_ru.md`. Эталонный прогон для сравнения:
 `~/.skein-bench/harbor/2026-10-02__09-47-57`.
 

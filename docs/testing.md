@@ -38,9 +38,9 @@ overwrite an already-set variable. Live tests are marked `describe.skipIf(!setti
 ### IR operations
 
 The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
-`OP-AP`, `OP-QR`, `TR`, `DER`, `REF` IDs). Their offline tests are grouped by
-operator under `tests/ops/` (`create_goal`, `apply`, `query`, `traversal`,
-`derivation`); the invariants are exercised on 400 random legal trees
+`OP-AP`, `OP-QR`, `OP-ST`, `OP-CP`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
+are grouped by operator under `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
+`applicable`, `traversal`, `derivation`); the invariants are exercised on 400 random legal trees
 (`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
 ID has no test or a test cites an ID outside the registry.
 
@@ -232,15 +232,14 @@ limits, and the projection does not cut it (`docs/tools.md`).
 | `GREP_COUNT_DEFAULT` | 100 | `grep` matches in a window by default |
 | `MAX_GREP_MATCHES` | 200 | maximum `grep` matches per window; continuation via `next`/`from` |
 | `MAX_LIST_FILES` | 500 | maximum files per `list` window |
-| `OUTPUT_LIMIT` | 8000 | byte cap for a `grep`/`list` JSON result; excess results are dropped whole |
-| `MAX_RUN_OUTPUT` | 8000 | `run` output; beyond that head+tail and `outputRef`/`errorRef` (stdout/stderr separate) |
+| `OUTPUT_LIMIT` | 8000 | byte cap for a `grep`/`list` JSON result and for `run` output; excess `grep`/`list` results are dropped whole, run output becomes head+tail with `outputRef`/`errorRef` (stdout/stderr separate) |
 | `SKEIN_CTX_ITEMS` | 20 | items in the projection's `plan`/`alternatives` |
 
 ### 8.1 Robust structured output
 
 The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
 function tool per operation (`create_goal`, `query`, `read`, `grep`, `list`,
-`edit`, `write`, `run`) and `src/llm/structured.ts` `invokeTools` binds them with
+`edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`) and `src/llm/structured.ts` `invokeTools` binds them with
 `tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
 per-operation schemas matter: one deeply nested discriminated union came back flat
 (`operator` at the top level instead of nested under `action`), and JSON mode made the

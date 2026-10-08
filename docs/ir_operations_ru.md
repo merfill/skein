@@ -6,10 +6,9 @@
 операционный справочник и контракт покрытия, а не вторая формализация),
 `docs/projection_ru.md`, `docs/tools_ru.md`, `docs/ir_ru.md`, `docs/testing_ru.md`.
 
-Статус: **Фаза 1 — скелет (согласован 2026-10-06).** §1–§4 специфицируют модель и
-каждую операцию. §5 — матрица покрытия, заполняется по мере появления тестов
-(фазы 2–3). Идентификатор **стабилен**: у пункта могут появиться тесты, но его
-смысл не меняется.
+Статус: **Реализовано.** §1–§4 специфицируют модель и каждую операцию; §5 —
+матрица покрытия (заполнена). Идентификатор **стабилен**: у пункта могут появиться
+тесты, но его смысл не меняется.
 
 ---
 
@@ -24,7 +23,7 @@
 - **Projection** — как результат виден в следующем контексте.
 - **ID** — стабильный идентификатор; тест ссылается на него как на токен `ID` в заголовке.
 
-Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|RUN|FETCH|PATCH`
+Семейства ID: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|WRITE|RUN|FETCH|PATCH`
 инструменты `apply`, `OP-AP-CONT|ALT` как `apply` ложится в дерево, `OP-ST` stop,
 `OP-QR` query, `TR` обход/контейнеры, `DER`
 производные предикаты, `REF` отказы (каталог), `PRJ` проекция (ссылки).
@@ -87,8 +86,8 @@
 
 | Случай | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| на запросе (интерпретация) | фокус `request:open` | add `goal`; обеспечить `alternatives` у запроса; `item` + `chosen` к цели; `descend` в неё | запрос остаётся `open`; цель `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis` | `OP-CG-1` |
-| разложить открытую цель | фокус `goal:open`, не refuted, есть текущий шаг-действие | add `goal`; обеспечить `alternatives` у текущего шага; `item` + `chosen`; `descend` | подцель — выбранный вариант шага; шаг вытеснён | то же; `all_plan_fulfilled` (нужно чекать, не растить) | `OP-CG-2` |
+| на запросе (интерпретация) | фокус `request:open` | add `goal`; обеспечить `alternatives` у запроса; `item` + `chosen` к цели; `descend` в неё | запрос остаётся `open`; цель `open` | `empty_what`, `empty_done_when`, `empty_plan`, `empty_step`, `repeat_hypothesis`, `addressed` | `OP-CG-1` |
+| разложить открытую цель | фокус `goal:open`, не refuted, есть текущий шаг-действие | add `goal`; обеспечить `alternatives` у текущего шага; `item` + `chosen`; `descend` | подцель — выбранный вариант шага; шаг вытеснён | то же; `all plan items are fulfilled` (нужно чекать, не растить) | `OP-CG-2` |
 | ревизия (`revises`) | фокус `request` с провалившимися вариантами, или `refuted` цель | add `goal`; `item` + `chosen` в контейнер провалившихся; `descend` | провалившиеся → `abandoned`; новая `open` | `missing_revision` (перечислены не все), `unknown_revision` (`revises` в не-refuted точке) | `OP-CG-3` |
 | план + первый шаг | любой из выше, есть `plan` (строка) и `step` | сохранить `plan` в цели; добавить ровно один item-действие (`step`) под новый контейнер `plan` | item-шаг `open` | `empty_plan` (пустой набросок), `empty_step` (пустая команда) | `OP-CG-4` |
 
@@ -108,7 +107,9 @@
 (`docs/ir_semantics_ru.md` §2.6): переиспользовать невыполненный action-item с той же
 командой (`OP-AP-CONT-1`); иначе приделать новое действие `chosen`-альтернативой первого
 невыполненного item (`OP-AP-ALT-1`); иначе создать действие и добавить его новым
-`item` плана (`OP-AP-CONT-2`). В само действие движок **не** переходит.
+`item` плана (`OP-AP-CONT-2`). В само действие движок **не** переходит. На уже
+`addressed` запросе любой `apply` отклоняется с `addressed` (принимается только
+`stop`).
 
 #### 2.2.1 `read` (`OP-AP-READ`)
 
@@ -273,7 +274,7 @@ constraint проверяется только для явного `path`.
 | `missing_revision` | `revises` не перечисляет провалившийся вариант | create_goal | `REF-REV-MISSING` |
 | `unknown_revision` | `revises` в не-refuted точке | create_goal | `REF-REV-UNKNOWN` |
 | `repeat_hypothesis` | `what` повторяет провалившийся вариант | create_goal | `REF-REPEAT-HYP` |
-| `all_plan_fulfilled` | рост объективной цели с выполненным планом | create_goal | `REF-PLAN-DONE` |
+| `all plan items are fulfilled` | рост объективной цели с выполненным планом | create_goal | `REF-PLAN-DONE` |
 | `not_current_goal` | check целится не в фокус | run | `REF-NOT-FOCUS` |
 | `arbiter_goal_needs_acceptance` | check арбитр-цели (без команды) | run | `REF-RUN-ARB` |
 | `invalid_target` | check не-цели | run | `REF-RUN-TARGET` |
@@ -288,6 +289,7 @@ constraint проверяется только для явного `path`.
 | `stale_base` | write поверх файла, изменённого после чтения | write | `REF-WRITE-STALE` |
 | `constraint_violation:<pattern>` | write запрещённого пути | write | `REF-WRITE-CONSTRAINT` |
 | `not_addressed` | `stop` на запросе, который не `addressed` (или фокус не запрос) | stop | `REF-ST-STATE` |
+| `addressed` | любой оператор кроме `stop` на уже `addressed` запросе | create_goal/apply | `REF-ADDRESSED` |
 
 **Провалы** инструментов (это `fail`-observation, не отказ): нет файла (`read`),
 плохой scope (`grep`/`list`), `find` не найден (`edit`), ненулевой код/таймаут/
@@ -336,6 +338,7 @@ constraint проверяется только для явного `path`.
 | `REF-CG/REV/NO-FOCUS` | `tests/ops/create_goal.test.ts` | step `follow-focus-hint`; сценарий `revise-hypothesis` |
 | `REF-RUN/REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/query.test.ts` | step `poll-background-job`; сценарий `two-outputs` |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |
+| `REF-WRITE-STALE`, `REF-WRITE-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-ST-1`, `REF-ST-STATE` | `tests/ops/stop.test.ts` | step `stop-addressed` |
 | `OP-AP-CONT/ALT` | `tests/ops/apply.test.ts`, `tests/ops/create_goal.test.ts` | step `apply-next-action` |
 | `TR-8` | `tests/ops/applicable.test.ts` | steps `check-ready-objective`, `stop-addressed` |

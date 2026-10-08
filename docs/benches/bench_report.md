@@ -82,7 +82,7 @@ route and the gap analysis — `docs/benches/fix_ocaml_gc_ideal.md`.
 
 ### 4.3 Non-degradation gate (baseline)
 
-So that the roadmap steps (`docs/plans/logos_roadmap_plan.md`) do not worsen short
+So that the roadmap steps (`docs/plans/archive/logos_roadmap_plan.md`) do not worsen short
 tasks, a deterministic offline gate was introduced:
 
 - `bench/baseline.json` — a frozen reference for the simple set (synthetic) with

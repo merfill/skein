@@ -43,7 +43,7 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 | Operator | Purpose |
 |---|---|
 | `create_goal` | introduce a goal (an interpretation of the request or a subgoal) with a plan |
-| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `run` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `run` / `fetch` / `apply_patch` |
 | `stop` | the terminal proposal that the request is done (accepted only if `addressed`) |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
@@ -69,7 +69,7 @@ first step. List failures fully in `revises`, otherwise a refusal.
 |---|---|---|
 | `read` | `{ path, start?, end? }` | read a file, or a window of its lines |
 | `grep` | `{ pattern, path?, include?, exclude?, before?, after?, from?, count? }` | search the workspace: scope, windows over matches, JSON (see §4.2) |
-| `list` | `{ path?, include?, exclude?, from?, limit? }` | list files by mask, JSON (see §4.6) |
+| `list` | `{ path?, include?, from? }` | list files by mask, JSON (see §4.6); the engine also accepts `exclude`/`limit`, which the model tool does not expose |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
 | `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
 | `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`) to read and diff (B9); refused on a path outside the workspace / already existing / forbidden / download failure |
@@ -123,13 +123,12 @@ content. The model asks for 120 lines — it sees ~8.
   tool returns the maximum and **explicitly reports**: "showing lines 1–400 of 3000;
   continue from 401".
 - The result is shown **fully** (this is `lastResult`, not cut to 400 chars).
-- Consequence: the window content lives in `lastResult` for **one turn**; previous
-  reads are **not** kept in the context. To use a fragment later the model
-  **re-reads** the window. **Re-reading is allowed** (reading is idempotent and does
-  not change the world): `read` is **not** refused as `repeated_action`; throttling
-  is on `calls`/`no_progress`. If the needed part is at a window boundary (read 1–100
-  and 101–200, but the code is at 80–120), the model re-reads a window with margin
-  (say 60–160).
+- Consequence: the window content lives in `lastResult` for **one turn**; a previous
+  read on the current branch is kept in `shown` (and can be pulled back via
+  `query {id}`). An **identical** re-read (the same window, with an unchanged world) is
+  refused as `repeated_action`; a **different** window is a new read. If the needed part
+  is at a window boundary (read 1–100 and 101–200, but the code is at 80–120), read a
+  window with margin (say 60–160).
 
 ### 4.2 `grep`: scope, windows over matches, JSON (decided)
 
@@ -159,7 +158,7 @@ content. The model asks for 120 lines — it sees ~8.
 ### 4.3 `run`: the full output, stdout and stderr separate (decided)
 
 - Show the command's full output (not 400 chars from the start); when
-  **`MAX_RUN_OUTPUT = 8000`** is exceeded — head+tail with an explicit note +
+  **`OUTPUT_LIMIT = 8000`** is exceeded — head+tail with an explicit note +
   `outputRef`/`errorRef`.
 - **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
   The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
@@ -188,7 +187,7 @@ content. The model asks for 120 lines — it sees ~8.
 
 - `lastResult` — the **full** result of the latest call (§4.1–4.3).
 - `calls` — a **summary of previous calls without results**: per entry
-  `{ action, status: ok|fail|refused, note, count }`, deduplicated by signature.
+  `{ id?, action, status: ok|fail|refused, note, count }`, deduplicated by signature.
   `action` includes the parameters: for `read` — the **range** (`read f [1-100]`),
   for `grep` — the **pattern and context** (`grep sweep 5/5`), for `run` — the
   command, for `edit` — the **short diff** (`-find +replace`). This gives the model
@@ -230,11 +229,12 @@ content. The model asks for 120 lines — it sees ~8.
 
 ### 4.6 `list`: file listing (decided)
 
-- `list { path?, include?, exclude?, from?, limit? }`:
-  - scope and filters (`path`/`include`/`exclude`) — as for `grep`; the same default
+- `list { path?, include?, from? }` (the model tool; the engine schema also accepts
+  `exclude`/`limit`, not exposed):
+  - scope and filters (`path`/`include`) — as for `grep`; the same default
     skips (`SKIP_DIRS` + dot files/directories);
-  - `from`/`limit` — a window **over files** (1-based); `limit` defaults to and is
-    capped at the declared `MAX_LIST_FILES`;
+  - `from`/`limit` — a window **over files** (1-based); the engine defaults `limit` to
+    `LIST_LIMIT_DEFAULT` (200), capped at `MAX_LIST_FILES` (500);
 - the result is JSON: `{ root, total, from, returned, next?, files: [] }`;
 - read-only and idempotent (a repeat is not a refusal); it gives the model visibility
   of extensions so it can set `include` for `grep` meaningfully.
