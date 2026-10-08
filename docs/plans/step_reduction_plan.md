@@ -183,6 +183,24 @@ cached, the projection is not.
 Renderers are pure functions of events (determinism preserved), the window K is bounded
 (the context does not grow like a tape).
 
+**4.2a Telemetry + A+ (stable prefix) — measured; A+ rejected.** Reasoning tokens were
+not measured: `UsageLike` (`bench/metrics.ts`) read only input/output/cache. It now
+captures `output_token_details.reasoning` (fallback
+`response_metadata.usage.completion_tokens_details.reasoning_tokens`);
+`TurnMeter`/`TurnRecord` carry `reasoningTokens`, the `bench/run.ts` and
+`langgraph/graph.ts` `SKEIN_TURN`/`SKEIN_METRICS` lines include it, and
+`bench/agents_compare.ts` prints `reason`.
+
+A key-reordering "A+" was tried (stable fields before `state`/`cursor`/`chosen`, volatile
+layers trailing, `calls` oldest-first) on `ref-localize-on`, n=3 each. It did **not** widen
+the cacheable prefix: the average common serialization prefix between turns was ~30–40%
+both ways. The live runs were worse — A: steps 7/7/7, `reason` 210/372/505, cache
+84/83/73%; A+: steps 9/8/7, `reason` 712/752/429, cache 64/71/70%. Cause: `path` is first
+and carries the volatile `state`/plan, so within-node key order cannot extend the prefix
+(moving `lastResult` away from the top also seems to cost a turn). A+ was reverted;
+**telemetry kept**. A genuine prefix needs a stable/volatile split (an immutable brief
+before the focus) — folded into options B/C below.
+
 **4.3 A/B experiment.** Cases: `ref-localize-on` + one live scenario. Compare A/B(/C) by
 LLM turns, input/output, cache%, `reasoning_tokens`/turn, reward. Hypothesis: B lowers
 reasoning/turn and raises cache% at equal reward.
@@ -191,7 +209,8 @@ reasoning/turn and raises cache% at equal reward.
 ids; relation to the "stable projection prefix" backlog item
 (`docs/plans/implementation_plan.md` §4).
 
-**Status:** not started (a separate experiment, after Part A).
+**Status:** telemetry implemented and used; A+ measured and rejected (reverted). B/C
+(transcript/hybrid, incl. a stable/volatile brief split) remain.
 
 ## 5. Open questions
 

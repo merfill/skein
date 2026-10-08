@@ -127,7 +127,7 @@ function summary(metrics: Record<string, unknown>): string {
     `steps=${metrics.steps}`,
     `llmCalls=${metrics.llmCalls}`,
     `ctx ${context.first}->${context.last} peak=${context.peak} growth=${context.growth}`,
-    `tok in=${metrics.inputTokens} out=${metrics.outputTokens}`,
+    `tok in=${metrics.inputTokens} out=${metrics.outputTokens} reason=${metrics.reasoningTokens}`,
     `cache=${metrics.cacheRead} (${(((metrics.cacheHitRatio as number | null) ?? 0) * 100).toFixed(0)}%)`,
     `cost=${(metrics.costRub as number).toFixed(2)}₽`,
     `graph goals${graph.goals}/plans${graph.plans}/alt${graph.alternatives}/checks${graph.checks}`,
@@ -212,6 +212,7 @@ async function main(): Promise<void> {
       contextChars,
       inputTokens: meter.inputTokens,
       outputTokens: meter.outputTokens,
+      reasoningTokens: meter.reasoningTokens,
       cacheRead: meter.cacheRead,
       cacheWrite: meter.cacheWrite,
       cacheHitRatio: meter.inputTokens === 0 ? null : meter.cacheRead / meter.inputTokens,
@@ -272,6 +273,7 @@ async function main(): Promise<void> {
   const loops = detectLoops(proposals.map(toLoopEvent));
   const inputTokens = sum(turnRecords.map((turn) => turn.inputTokens));
   const outputTokens = sum(turnRecords.map((turn) => turn.outputTokens));
+  const reasoningTokens = sum(turnRecords.map((turn) => turn.reasoningTokens));
   const cacheRead = sum(turnRecords.map((turn) => turn.cacheRead));
   const cacheWrite = sum(turnRecords.map((turn) => turn.cacheWrite));
   const llmCalls = sum(turnRecords.map((turn) => turn.llmCalls));
@@ -291,6 +293,7 @@ async function main(): Promise<void> {
     llmCalls,
     inputTokens,
     outputTokens,
+    reasoningTokens,
     cacheRead,
     cacheWrite,
     cacheHitRatio: inputTokens === 0 ? null : cacheRead / inputTokens,

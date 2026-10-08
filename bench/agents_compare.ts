@@ -24,6 +24,8 @@ interface Trial {
   cacheRead: number;
   inputTotal: number;
   outputTotal: number;
+  // Hidden reasoning tokens within outputTotal (0 when not reported).
+  reasoningTotal: number;
   cost: number;
   costUnit: string;
   exception: string | null;
@@ -63,11 +65,15 @@ function parseSkein(trialDir: string): Omit<Trial, "agent" | "task" | "reward" |
   let llmCalls = 0;
   let cacheRead = 0;
   let inputTotal = 0;
+  let outputTotal = 0;
+  let reasoningTotal = 0;
   let cost = 0;
   for (const line of log.split("\n")) {
     if (!line.startsWith("SKEIN_TURN ")) continue;
     const turn = JSON.parse(line.slice("SKEIN_TURN ".length)) as {
       inputTokens?: number;
+      outputTokens?: number;
+      reasoningTokens?: number;
       cacheRead?: number;
       llmCalls?: number;
       cost?: number | null;
@@ -76,20 +82,23 @@ function parseSkein(trialDir: string): Omit<Trial, "agent" | "task" | "reward" |
       promptTokens.push(turn.inputTokens);
       inputTotal += turn.inputTokens;
     }
+    if (typeof turn.outputTokens === "number") outputTotal += turn.outputTokens;
+    if (typeof turn.reasoningTokens === "number") reasoningTotal += turn.reasoningTokens;
     if (typeof turn.cacheRead === "number") cacheRead += turn.cacheRead;
     if (typeof turn.llmCalls === "number") llmCalls += turn.llmCalls;
     if (typeof turn.cost === "number") cost += turn.cost;
   }
   const metricsLine = log.split("\n").find((line) => line.startsWith("SKEIN_METRICS "));
   let toolCalls = 0;
-  let outputTotal = 0;
   if (metricsLine !== undefined) {
     const metrics = JSON.parse(metricsLine.slice("SKEIN_METRICS ".length)) as {
       toolCalls?: number;
       outputTokens?: number;
+      reasoningTokens?: number;
     };
     toolCalls = metrics.toolCalls ?? 0;
-    outputTotal = metrics.outputTokens ?? 0;
+    if (typeof metrics.outputTokens === "number") outputTotal = metrics.outputTokens;
+    if (typeof metrics.reasoningTokens === "number") reasoningTotal = metrics.reasoningTokens;
   }
   return {
     promptTokens,
@@ -98,6 +107,7 @@ function parseSkein(trialDir: string): Omit<Trial, "agent" | "task" | "reward" |
     cacheRead,
     inputTotal,
     outputTotal,
+    reasoningTotal,
     cost,
     costUnit: "₽",
   };
@@ -111,9 +121,11 @@ function parseOpencode(trialDir: string): Omit<Trial, "agent" | "task" | "reward
   const promptTokens: number[] = [];
   let llmCalls = 0;
   let toolCalls = 0;
+  let reasoningTotal = 0;
   for (const step of agentSteps) {
-    const metrics = step.metrics as { prompt_tokens?: number } | undefined;
+    const metrics = step.metrics as { prompt_tokens?: number; reasoning_tokens?: number } | undefined;
     if (typeof metrics?.prompt_tokens === "number") promptTokens.push(metrics.prompt_tokens);
+    if (typeof metrics?.reasoning_tokens === "number") reasoningTotal += metrics.reasoning_tokens;
     const count = step.llm_call_count;
     llmCalls += typeof count === "number" ? count : 1;
     const calls = step.tool_calls as unknown[] | undefined;
@@ -129,6 +141,7 @@ function parseOpencode(trialDir: string): Omit<Trial, "agent" | "task" | "reward
     cacheRead,
     inputTotal,
     outputTotal: final.total_completion_tokens ?? 0,
+    reasoningTotal: reasoningTotal > 0 ? reasoningTotal : (final.total_reasoning_tokens ?? final.reasoning_tokens ?? 0),
     cost: final.total_cost_usd ?? 0,
     costUnit: "$",
   };
@@ -203,6 +216,7 @@ function summarize(label: string, trials: Trial[]): void {
       `llm ${mean(trials.map((t) => t.llmCalls)).toFixed(0)}`,
       `tools ${mean(trials.map((t) => t.toolCalls)).toFixed(0)}`,
       `tok in/out ${k(mean(trials.map((t) => t.inputTotal)))}/${k(mean(trials.map((t) => t.outputTotal)))}`,
+      `reason ${k(mean(trials.map((t) => t.reasoningTotal)))}`,
       `ctx ${ctxStat}`,
       `cache ${cacheShare.toFixed(0)}%`,
       `cost ${mean(trials.map((t) => t.cost)).toFixed(2)}${costUnit}`,

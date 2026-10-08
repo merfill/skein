@@ -12,6 +12,9 @@ export interface UsageLike {
   input_tokens?: number;
   output_tokens?: number;
   input_token_details?: { cache_read?: number; cache_creation?: number };
+  // Reasoning (hidden "thinking") tokens: LangChain's OpenAI-compatible shape. The
+  // provider may instead report them under response_metadata (see extractUsage).
+  output_token_details?: { reasoning?: number };
 }
 
 export interface TurnRecord {
@@ -21,6 +24,8 @@ export interface TurnRecord {
   contextChars: number;
   inputTokens: number;
   outputTokens: number;
+  // Hidden reasoning tokens within outputTokens (0 when the provider does not report them).
+  reasoningTokens: number;
   cacheRead: number;
   cacheWrite: number;
   cacheHitRatio: number | null;
@@ -34,9 +39,17 @@ export function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
+// Provider usage blob under response_metadata, when it carries a raw completion
+// breakdown (OpenAI-compatible providers name reasoning tokens there).
+interface ProviderUsage {
+  cost?: unknown;
+  completion_tokens_details?: { reasoning_tokens?: unknown };
+}
+
 export function extractUsage(output: LLMResult): {
   inputTokens: number;
   outputTokens: number;
+  reasoningTokens: number;
   cacheRead: number;
   cacheWrite: number;
   cost: number | null;
@@ -48,10 +61,21 @@ export function extractUsage(output: LLMResult): {
     | undefined;
   const usage = message?.usage_metadata;
   const details = usage?.input_token_details;
-  const providerUsage = message?.response_metadata?.usage as { cost?: unknown } | undefined;
+  const providerUsage = message?.response_metadata?.usage as ProviderUsage | undefined;
+  // LangChain (output_token_details.reasoning) first; the provider's raw
+  // completion_tokens_details.reasoning_tokens is the fallback shape.
+  const fromMetadata = usage?.output_token_details?.reasoning;
+  const fromProvider = providerUsage?.completion_tokens_details?.reasoning_tokens;
+  const reasoningTokens =
+    typeof fromMetadata === "number"
+      ? fromMetadata
+      : typeof fromProvider === "number"
+        ? fromProvider
+        : 0;
   return {
     inputTokens: usage?.input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
+    reasoningTokens,
     cacheRead: details?.cache_read ?? 0,
     cacheWrite: details?.cache_creation ?? 0,
     cost: typeof providerUsage?.cost === "number" ? providerUsage.cost : null,
@@ -68,6 +92,7 @@ export class TurnMeter extends BaseCallbackHandler {
   calls = 0;
   inputTokens = 0;
   outputTokens = 0;
+  reasoningTokens = 0;
   cacheRead = 0;
   cacheWrite = 0;
   costRub = 0;
@@ -79,6 +104,7 @@ export class TurnMeter extends BaseCallbackHandler {
     const usage = extractUsage(output);
     this.inputTokens += usage.inputTokens;
     this.outputTokens += usage.outputTokens;
+    this.reasoningTokens += usage.reasoningTokens;
     this.cacheRead += usage.cacheRead;
     this.cacheWrite += usage.cacheWrite;
     if (usage.cost !== null) {

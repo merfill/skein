@@ -232,6 +232,7 @@ export const skein = {
         contextChars,
         inputTokens: meter.inputTokens,
         outputTokens: meter.outputTokens,
+        reasoningTokens: meter.reasoningTokens,
         cacheRead: meter.cacheRead,
         cacheWrite: meter.cacheWrite,
         cacheHitRatio: meter.inputTokens === 0 ? null : meter.cacheRead / meter.inputTokens,
@@ -266,6 +267,7 @@ export const skein = {
 
     const inputTokens = sum(turnRecords.map((turn) => turn.inputTokens));
     const outputTokens = sum(turnRecords.map((turn) => turn.outputTokens));
+    const reasoningTokens = sum(turnRecords.map((turn) => turn.reasoningTokens));
     const cacheRead = sum(turnRecords.map((turn) => turn.cacheRead));
     const metrics = {
       instructionChars: instruction.length,
@@ -274,6 +276,7 @@ export const skein = {
       llmCalls: sum(turnRecords.map((turn) => turn.llmCalls)),
       inputTokens,
       outputTokens,
+      reasoningTokens,
       cacheRead,
       cacheHitRatio: inputTokens === 0 ? null : cacheRead / inputTokens,
       context: contextStats(turnRecords),
