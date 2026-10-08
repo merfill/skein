@@ -27,7 +27,7 @@ import { createChatModel } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
-import { buildMessages, renderContext } from "../src/loop/propose";
+import { buildMessages, promptText } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
 import {
   actionName,
@@ -196,8 +196,7 @@ async function main(): Promise<void> {
   const chat = createChatModel({ ...settings, model });
 
   const propose = async (context: Context): Promise<Proposal> => {
-    const rendered = renderContext(context);
-    const contextChars = rendered.length;
+    const contextChars = promptText(context).length;
     contexts.push({ turn: turns.length, chars: contextChars, context });
     const meter = new TurnMeter();
     const started = Date.now();

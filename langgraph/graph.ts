@@ -24,7 +24,7 @@ import { createChatModel } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
-import { buildMessages, renderContext } from "../src/loop/propose";
+import { buildMessages, promptText } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
 
 interface HarborInvokeConfig {
@@ -190,8 +190,7 @@ export const skein = {
     const proposals: Action[] = [];
     const turns: Omit<TurnRecord, "accepted">[] = [];
     const propose = async (context: Context): Promise<Proposal> => {
-      const rendered = renderContext(context);
-      const contextChars = rendered.length;
+      const contextChars = promptText(context).length;
       console.log(
         `SKEIN_CONTEXT ${JSON.stringify({ turn: turns.length, chars: contextChars, context })}`,
       );

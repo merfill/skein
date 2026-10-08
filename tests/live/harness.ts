@@ -12,7 +12,7 @@ import { createChatModel } from "../../src/llm/client";
 import type { Action, Proposal } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
-import { buildMessages, renderContext } from "../../src/loop/propose";
+import { buildMessages, promptText } from "../../src/loop/propose";
 import { fsWorkspace } from "../../src/tools/workspace";
 import { workingSetStats } from "../workset";
 
@@ -160,7 +160,7 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
   const model = createChatModel(settings);
   const turns: CapturedTurn[] = [];
   const propose = async (context: Context): Promise<Proposal> => {
-    const contextChars = renderContext(context).length;
+    const contextChars = promptText(context).length;
     const proposal = await invokeTools(model, buildMessages(context));
     turns.push({
       turn: turns.length,
