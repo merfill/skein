@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { alternativesOf, childrenOf, fold, latestChosen, planOf, predicateOf } from "../../src/ir/graph";
+import { alternativesOf, childrenOf, criterionFailed, fold, goalOf, lastChild, planOf, stateOf } from "../../src/ir/graph";
 import { currentGoalId } from "../../src/ir/traversal";
 import {
   DEFAULT_FILES,
@@ -17,15 +17,13 @@ import {
 afterEach(cleanupWorkspaces);
 
 describe("create_goal", () => {
-  it("OP-CG-1 at the request makes an interpretation: alternatives + chosen + descend", () => {
+  it("OP-CG-1 at the request makes an interpretation: has_goal + descend", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { events, state } = exec(interpretation("fix the bug"), [request()], ws);
 
-    const alt = alternativesOf(state, "r1");
-    expect(alt).toBeDefined();
-    const goal = childrenOf(state, alt!)[0]!;
-    expect(latestChosen(state, alt!)).toBe(goal);
-    expect(predicateOf(state, goal)).toBe("open");
+    const goal = goalOf(state, "r1");
+    expect(goal).toBeDefined();
+    expect(stateOf(state, goal as string)).toBe("open");
     expect(currentGoalId(state)).toBe(goal);
     expect(events.some((e) => e.type === "descend" && e.node === goal)).toBe(true);
   });
@@ -42,25 +40,25 @@ describe("create_goal", () => {
     const items = childrenOf(staged.state, alt!);
     expect(items).toHaveLength(1);
     const sub = items[0]!;
-    expect(latestChosen(staged.state, alt!)).toBe(sub);
+    expect(lastChild(staged.state, alt!)).toBe(sub);
     expect(currentGoalId(staged.state)).toBe(sub);
   });
 
-  it("OP-CG-3 revises a refuted option: the new goal becomes the chosen sibling", () => {
+  it("OP-CG-3 revises a failed goal: the new goal becomes its chosen variant", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("first try", "make test"), [request()], ws);
     const first = currentGoalId(opened.state)!;
     const refuted: Event[] = [
       ...opened.events,
-      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
+      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "make test", payload: { command: "make test", target: first, exitCode: 1, }, seq: 99 } },
     ];
-    expect(predicateOf(fold(refuted), first)).toBe("refuted");
+    expect(criterionFailed(fold(refuted), first)).toBe(true);
 
     const revised = exec(
       {
         operator: "create_goal",
         what: "second try",
-        done_when: { kind: "arbiter", text: "done" },
+        done_when: "done",
         plan: "second try: a sketch",
         step: { command: "true" },
         revises: [first],
@@ -68,11 +66,14 @@ describe("create_goal", () => {
       refuted,
       ws,
     );
-    const alt = alternativesOf(revised.state, "r1")!;
-    const siblings = childrenOf(revised.state, alt);
-    expect(siblings).toHaveLength(2);
-    expect(latestChosen(revised.state, alt)).toBe(siblings[1]);
-    expect(predicateOf(revised.state, siblings[1]!)).toBe("open");
+    // A failed goal is revised through its own alternatives: the new goal is the chosen
+    // variant (the request's interpretation stays fixed).
+    const alt = alternativesOf(revised.state, first)!;
+    const variants = childrenOf(revised.state, alt);
+    expect(variants).toHaveLength(1);
+    expect(lastChild(revised.state, alt)).toBe(variants[0]);
+    expect(stateOf(revised.state, variants[0]!)).toBe("open");
+    expect(currentGoalId(revised.state)).toBe(variants[0]);
   });
 
   it("OP-CG-4 materializes exactly one plan item: the first step (an action)", () => {
@@ -90,10 +91,10 @@ describe("create_goal", () => {
 
   it("REF-CG-EMPTY rejects malformed fields", () => {
     const seeded = [request()];
-    expect(classification({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_what");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "" }, plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_done_when");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: "", step: { command: "true" } }, seeded).reason).toBe("empty_plan");
-    expect(classification({ operator: "create_goal", what: "g", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "" } }, seeded).reason).toBe("empty_step");
+    expect(classification({ operator: "create_goal", what: "", done_when: "x", plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_what");
+    expect(classification({ operator: "create_goal", what: "g", done_when: "", plan: "p", step: { command: "true" } }, seeded).reason).toBe("empty_done_when");
+    expect(classification({ operator: "create_goal", what: "g", done_when: "x", plan: "", step: { command: "true" } }, seeded).reason).toBe("empty_plan");
+    expect(classification({ operator: "create_goal", what: "g", done_when: "x", plan: "p", step: { command: "" } }, seeded).reason).toBe("empty_step");
   });
 
   it("REF-NO-FOCUS rejects create_goal without a root", () => {
@@ -106,13 +107,13 @@ describe("create_goal", () => {
     const first = currentGoalId(opened.state)!;
     const refuted: Event[] = [
       ...opened.events,
-      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
+      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "make test", payload: { command: "make test", target: first, exitCode: 1, }, seq: 99 } },
     ];
     const reason = classification(
       {
         operator: "create_goal",
         what: "second try",
-        done_when: { kind: "arbiter", text: "done" },
+        done_when: "done",
         plan: "second try: a sketch",
         step: { command: "true" },
       },
@@ -129,7 +130,7 @@ describe("create_goal", () => {
       {
         operator: "create_goal",
         what: "another",
-        done_when: { kind: "arbiter", text: "x" },
+        done_when: "x",
         plan: "another: a sketch",
         step: { command: "true" },
         revises: [goal],
@@ -145,13 +146,13 @@ describe("create_goal", () => {
     const first = currentGoalId(opened.state)!;
     const refuted: Event[] = [
       ...opened.events,
-      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: [first] },
+      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "make test", payload: { command: "make test", target: first, exitCode: 1, }, seq: 99 } },
     ];
     const reason = classification(
       {
         operator: "create_goal",
         what: "locate",
-        done_when: { kind: "arbiter", text: "x" },
+        done_when: "x",
         plan: "locate: a sketch",
         step: { command: "true" },
         revises: [first],
@@ -168,7 +169,7 @@ describe("create_goal", () => {
     const opened = exec(interpretation("fix", "make check", { command: "make test" }), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const ran = exec(run("make test"), opened.events, ws);
-    expect(predicateOf(ran.state, goal)).toBe("open");
+    expect(stateOf(ran.state, goal)).toBe("open");
     const reason = classification(interpretation("grow it"), ran.events).reason;
     expect(reason).toMatch(/all plan items are fulfilled/);
   });

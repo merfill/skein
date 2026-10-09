@@ -1,12 +1,5 @@
 import { z } from "zod";
 
-import type { DoneWhen } from "../ir/types";
-
-export const doneWhenSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("objective"), command: z.string() }),
-  z.object({ kind: z.literal("arbiter"), text: z.string() }),
-]);
-
 // The first concrete step materialized in a goal's plan container (I2): a plan item is
 // always an action, never a sub-goal.
 export interface ActionStep {
@@ -60,7 +53,6 @@ export const applySchema = z.discriminatedUnion("tool", [
     tool: z.literal("run"),
     command: z.string().optional(),
     target: z.string().optional(),
-    under: z.array(z.string()).optional(),
     // Start the command in the background and return at once; poll it with `job`.
     background: z.boolean().optional(),
     // Poll a background job started earlier (its id came back as `job-N`).
@@ -89,18 +81,21 @@ export const actionSchema = z.discriminatedUnion("operator", [
     operator: z.literal("create_goal"),
     what: z.string(),
     why: z.string().optional(),
-    done_when: doneWhenSchema,
+    // The criterion: a literal command the engine runs; pass ⇔ exit 0.
+    done_when: z.string(),
     plan: z.string(),
     step: stepSchema,
     revises: z.array(z.string()).optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),
+  // Decline to formulate a goal: the request's intent is not actionable. Creates an
+  // `unactionable` node under the request and ends the run (docs/plans/request_goal_plan.md).
+  z.object({ operator: z.literal("decline"), why: z.string().optional() }),
   z.object({
     operator: z.literal("query"),
     id: z.string().optional(),
     kind: z.string().optional(),
-    predicate: z.string().optional(),
     edgesOf: z.string().optional(),
     start: z.number().int().positive().optional(),
     end: z.number().int().positive().optional(),

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { childrenOf, currentVersion, fold, predicateOf, type State } from "../src/ir/graph";
+import { childrenOf, criterionFailed, criterionPass, currentVersion, fold, requestSettled, type State } from "../src/ir/graph";
 import { cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
@@ -78,7 +78,7 @@ describe("reasoning budget", () => {
 describe("classify", () => {
   const goal = {
     type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: { kind: "arbiter" as const, text: "done" } } },
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: "done" } },
   };
 
   it("rejects an edit forbidden by a constraint", () => {
@@ -128,7 +128,7 @@ describe("classify", () => {
     const state = fold([
       goal,
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build", signature: "run build\u0000" }, seq: 1 } },
-      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", seq: 2 } },
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", payload: { command: "run build", exitCode: 0 }, seq: 2 } },
       { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "grep", pattern: "x" } } },
     ]);
     const verdict = classify(
@@ -265,7 +265,7 @@ describe("classify", () => {
         proposal({
           operator: "create_goal",
           what: "locate",
-          done_when: { kind: "arbiter", text: "found it" },
+          done_when: "found it",
           plan: "locate: a sketch",
           step: { command: "node --test" },
         }),
@@ -274,19 +274,19 @@ describe("classify", () => {
     ).toEqual({ accept: true });
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "", done_when: { kind: "arbiter", text: "x" }, plan: "p", step: { command: "true" } }),
+        proposal({ operator: "create_goal", what: "", done_when: "x", plan: "p", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_what");
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "x", done_when: { kind: "objective", command: "" }, plan: "p", step: { command: "true" } }),
+        proposal({ operator: "create_goal", what: "x", done_when: "", plan: "p", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_done_when");
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "x", done_when: { kind: "arbiter", text: "y" }, plan: "", step: { command: "true" } }),
+        proposal({ operator: "create_goal", what: "x", done_when: "y", plan: "", step: { command: "true" } }),
         state,
       ).reason,
     ).toBe("empty_plan");
@@ -295,7 +295,7 @@ describe("classify", () => {
         proposal({
           operator: "create_goal",
           what: "x",
-          done_when: { kind: "arbiter", text: "y" },
+          done_when: "y",
           plan: "p",
           step: { command: "" },
         }),
@@ -307,7 +307,7 @@ describe("classify", () => {
         proposal({
           operator: "create_goal",
           what: "x",
-          done_when: { kind: "arbiter", text: "y" },
+          done_when: "y",
           plan: "p",
           step: { command: "node --test" },
         }),
@@ -318,7 +318,7 @@ describe("classify", () => {
       proposal({
         operator: "create_goal",
         what: "x",
-        done_when: { kind: "arbiter", text: "y" },
+        done_when: "y",
         plan: "p",
         step: { command: "true" },
         revises: ["g1"],
@@ -338,7 +338,7 @@ describe("classify", () => {
           space: "work",
           kind: "goal",
           label: "crit",
-          payload: { what: "crit", done_when: { kind: "objective", command: "npm test" } },
+          payload: { what: "crit", done_when: "npm test" },
           seq: 1,
         },
       },
@@ -379,20 +379,16 @@ describe("classify", () => {
   it("refuses a check that targets a non-current goal", () => {
     const state = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "interp", payload: { what: "interp", done_when: { kind: "objective", command: "node --test" } }, seq: 1 } },
-      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "alt", seq: 2 } },
-      { type: "add_edge", edge: { id: "ea", from: "r1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "ei", from: "alt", to: "g1", kind: "item", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "ec", from: "alt", to: "g1", kind: "chosen", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "interp", payload: { what: "interp", done_when: "node --test" }, seq: 1 } },
+      { type: "add_edge", edge: { id: "ea", from: "r1", to: "g1", kind: "has_goal", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
       { type: "add_edge", edge: { id: "ep", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run", payload: { command: "run" }, seq: 4 } },
       { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "alt2", space: "work", kind: "alternatives", label: "opts", seq: 5 } },
       { type: "add_edge", edge: { id: "e3", from: "a1", to: "alt2", kind: "has_alternatives", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 6 } },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: "node --test" }, seq: 6 } },
       { type: "add_edge", edge: { id: "e4", from: "alt2", to: "g2", kind: "item", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e5", from: "alt2", to: "g2", kind: "chosen", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
       { type: "descend", node: "g2" },
     ]);
@@ -407,12 +403,12 @@ describe("classify", () => {
     expect(check.reason).toContain('apply run {target: "g2"}');
   });
 
-  it("allows an identical re-check after an inconclusive verdict", () => {
+  it("allows an identical re-check after a timeout (no exit code)", () => {
     const checked = (verdict: "inconclusive" | "fail"): Event[] => [
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: { kind: "objective", command: "true" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: "true" }, seq: 0 } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "true", payload: { signature: "true\u0000g1", command: "true" }, seq: 1 } },
-      { type: "record_check", id: "chk:1", command: "true", verdict, output: "", targets: ["g1"] },
-      { type: "add_edge", edge: { id: "ep", from: "a1", to: "chk:1", kind: "produces", provenance: { kind: "check", command: "true", verdict } } },
+      { type: "add_node", node: { id: "obs:1", space: "work", kind: "observation", label: "true", payload: { command: "true", target: "g1", ...(verdict === "fail" ? { exitCode: 1 } : {}) }, seq: 2 } },
+      { type: "add_edge", edge: { id: "ep", from: "a1", to: "obs:1", kind: "produces", provenance: { kind: "llm" } } },
     ];
     const retry = proposal({ operator: "apply", action: { tool: "run", target: "g1" } });
     expect(classify(retry, fold(checked("inconclusive")))).toEqual({ accept: true });
@@ -465,7 +461,7 @@ describe("classify", () => {
     const state = fold([
       {
         type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: { kind: "objective", command: "node --test" } }, seq: 0 },
+        node: { id: "g1", space: "work", kind: "goal", label: "root", payload: { what: "root", done_when: "node --test" }, seq: 0 },
       },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
       { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
@@ -473,18 +469,17 @@ describe("classify", () => {
       { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "opts", seq: 3 } },
       { type: "add_edge", edge: { id: "e3", from: "a1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: { kind: "objective", command: "node --test" } }, seq: 4 } },
+      { type: "add_node", node: { id: "g2", space: "work", kind: "goal", label: "stage", payload: { what: "stage", done_when: "node --test" }, seq: 4 } },
       { type: "add_edge", edge: { id: "e4", from: "alt", to: "g2", kind: "item", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e5", from: "alt", to: "g2", kind: "chosen", provenance: { kind: "llm" } } },
-      { type: "record_check", command: "node --test", verdict: "fail", output: "no", targets: ["g2"] },
+      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "node --test", payload: { command: "node --test", target: "g2", exitCode: 1, }, seq: 99 } },
     ]);
-    expect(predicateOf(state, "g2")).toBe("refuted");
+    expect(criterionFailed(state, "g2")).toBe(true);
     expect(
       classify(
         proposal({
           operator: "create_goal",
           what: "add a stage the refuted one did not cover",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "add a stage",
           step: { command: "node --test" },
         }),
@@ -498,7 +493,7 @@ describe("executeAction", () => {
   it("create_goal builds a goal, its plan and descends into it", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan for g1", seq: 1 } },
       { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 2 } },
@@ -509,7 +504,7 @@ describe("executeAction", () => {
       {
         operator: "create_goal",
         what: "locate",
-        done_when: { kind: "arbiter", text: "found" },
+        done_when: "found",
         plan: "locate: a sketch",
         step: { command: "node --test" },
       },
@@ -534,7 +529,7 @@ describe("executeAction", () => {
     const root = setup("off-by-one");
     const workspace = fsWorkspace(root);
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
@@ -550,7 +545,7 @@ describe("executeAction", () => {
   it("refuses to create a file with edit (it only rewrites existing files)", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "package.json", find: "", replace: "{}" } },
@@ -562,7 +557,7 @@ describe("executeAction", () => {
     const failure = outcome.events.find(
       (event) =>
         event.type === "add_node" &&
-        (event.node.payload as { verdict?: string } | undefined)?.verdict === "fail",
+        (event.node.payload as { failed?: boolean } | undefined)?.failed === true,
     );
     expect(failure).toBeDefined();
   });
@@ -570,7 +565,7 @@ describe("executeAction", () => {
   it("runs a command in the background and materializes its result on a poll", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const start = executeAction(
       { operator: "apply", action: { tool: "run", command: "echo bg-ok", background: true } },
@@ -598,7 +593,7 @@ describe("executeAction", () => {
       const payload = node.payload as { job?: string; state?: string } | undefined;
       return payload?.job === handle && payload?.state === "done";
     });
-    expect((poll?.payload as { verdict?: string } | undefined)?.verdict).toBe("pass");
+    expect((poll?.payload as { exitCode?: number } | undefined)?.exitCode).toBe(0);
   });
 
   it("records the crash signal of a run and surfaces it in the projection", () => {
@@ -664,7 +659,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "big.txt"), lines);
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "read", path: "big.txt" } },
@@ -688,7 +683,7 @@ describe("executeAction", () => {
   it("branches the current plan item when the action differs, so the plan never blocks", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
       { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "cat HACKING.adoc", payload: { command: "cat HACKING.adoc" }, seq: 2 } },
@@ -712,7 +707,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
@@ -742,7 +737,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\nMATCH three\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH", count: 2 } },
@@ -782,7 +777,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, ".depend"), "hidden\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "arbiter", text: "done" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "done" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "list", include: "**/*.c" } },
@@ -798,7 +793,7 @@ describe("executeAction", () => {
   it("run with a target records a check that achieves the goal", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "true" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "true" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "run", command: "true", target: "g1" } },
@@ -807,7 +802,7 @@ describe("executeAction", () => {
       0,
     );
     const state = fold(outcome.events, root);
-    expect(predicateOf(state, "g1")).toBe("achieved");
+    expect(criterionPass(state, "g1")).toBe(true);
   });
 
   it("run that violates a constraint is reverted and records no check", () => {
@@ -815,7 +810,7 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(root);
     const original = workspace.read("test/sum.test.mjs");
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "node --test" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "node --test" }, seq: 0 } },
       {
         type: "add_node",
         node: { id: "k1", space: "work", kind: "constraint", label: "no tests", payload: { forbid: ["\\.test\\.mjs$"] }, seq: 1 },
@@ -832,7 +827,6 @@ describe("executeAction", () => {
     );
     const state = fold(outcome.events, before);
     expect(workspace.read("test/sum.test.mjs")).toBe(original);
-    expect([...state.nodes.values()].some((node) => node.kind === "check")).toBe(false);
     expect(
       [...state.nodes.values()].some(
         (node) => node.kind === "observation" && node.label.startsWith("constraint violation"),
@@ -844,7 +838,7 @@ describe("executeAction", () => {
 describe("query by id (history index)", () => {
   const goal = {
     type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: { kind: "arbiter" as const, text: "done" } } },
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", done_when: "done" } },
   };
 
   it("returns a stored body by id and windows a large one", () => {
@@ -894,7 +888,7 @@ describe("query by id (history index)", () => {
     expect(classify(proposal({ operator: "query", id: "obs:31" }), state, held)).toEqual({
       accept: true,
     });
-    expect(classify(proposal({ operator: "query", predicate: "refuted" }), state, held)).toEqual({
+    expect(classify(proposal({ operator: "query", kind: "goal" }), state, held)).toEqual({
       accept: true,
     });
   });
@@ -1082,7 +1076,7 @@ describe("runAgent", () => {
           operator: "create_goal",
           what: "fix the off-by-one",
           why: "the loop stops one short",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "fix the off-by-one: a sketch",
           step: { command: "echo start" },
         });
@@ -1114,7 +1108,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "make the suite pass",
-          done_when: { kind: "objective", command: "true" },
+          done_when: "true",
           plan: "make the suite pass",
           step: { command: "true" },
         });
@@ -1130,7 +1124,7 @@ describe("runAgent", () => {
     expect(result.stopReason).toBe("request_addressed");
   });
 
-  it("an arbiter goal is settled only by the external arbiter (I5)", async () => {
+  it("an external actor may record a criterion run before a turn", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
     const propose = async (): Promise<Proposal> => {
@@ -1139,28 +1133,30 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          done_when: { kind: "arbiter", text: "accepted externally" },
+          done_when: "accepted externally",
           plan: "do the work",
           step: { command: "echo hi" },
         });
       }
       return proposal({ operator: "apply", action: { tool: "run", command: `echo step-${index}` } });
     };
-    // The external arbiter (a program) supplies the reaction; it is the only closer.
+    // An external actor (a program) supplies the criterion run; it is the only closer.
     const arbiter = (state: State): Event[] => {
       const goalId = [...state.nodes.values()].find(
-        (node) => node.kind === "goal" && predicateOf(state, node.id) === "open",
+        (node) => node.kind === "goal" && !criterionPass(state, node.id) && !criterionFailed(state, node.id),
       )?.id;
       if (goalId === undefined) return [];
       return [
         {
-          type: "record_check",
-          id: `chk:u:${state.seq + 1}`,
-          command: "user acceptance",
-          verdict: "pass",
-          output: "",
-          actor: "user",
-          targets: [goalId],
+          type: "add_node",
+          node: {
+            id: `obs:u:${state.seq + 1}`,
+            space: "work",
+            kind: "observation",
+            label: "user acceptance",
+            payload: { command: "user acceptance", target: goalId, exitCode: 0 },
+            seq: state.seq + 1,
+          },
         },
       ];
     };
@@ -1178,7 +1174,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          done_when: { kind: "arbiter", text: "accepted externally" },
+          done_when: "accepted externally",
           plan: "do the work",
           step: { command: "echo hi" },
         });
@@ -1210,7 +1206,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "interpret the request",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "interpret the request",
           step: { command: "echo hi" },
         });
@@ -1252,7 +1248,7 @@ describe("runAgent", () => {
 
   it("reports the focus plan and applicable operators in the projection", () => {
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "node --test" } }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "node --test" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
       { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", seq: 2 } },
@@ -1335,7 +1331,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          done_when: { kind: "arbiter", text: "done" },
+          done_when: "done",
           plan: "green: a sketch",
           step: { command: "echo hi" },
         });
@@ -1359,7 +1355,7 @@ describe("runAgent", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
       {
         type: "add_node",
-        node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: { kind: "objective", command: "node --test" } }, seq: 1 },
+        node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", done_when: "node --test" }, seq: 1 },
       },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
       { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
@@ -1373,7 +1369,7 @@ describe("runAgent", () => {
       proposal({
         operator: "create_goal",
         what: "add another stage",
-        done_when: { kind: "objective", command: "node --test" },
+        done_when: "node --test",
         plan: "add another stage",
         step: { command: "node --test" },
       }),
@@ -1389,7 +1385,7 @@ describe("request, revisions and check soundness", () => {
     type: "add_node" as const,
     node: { id: "r1", space: "work" as const, kind: "request" as const, label: "task", payload: { text: "do it" }, seq: 0 },
   };
-  const base = [
+  const base: Event[] = [
     request,
     {
       type: "add_node" as const,
@@ -1398,25 +1394,23 @@ describe("request, revisions and check soundness", () => {
         space: "work" as const,
         kind: "goal" as const,
         label: "approach one",
-        payload: { what: "approach one", done_when: { kind: "arbiter" as const, text: "ok" } },
+        payload: { what: "approach one", done_when: "ok" },
         seq: 1,
       },
     },
-    { type: "add_node" as const, node: { id: "a1", space: "work" as const, kind: "alternatives" as const, label: "alt", seq: 2 } },
-    { type: "add_edge" as const, edge: { id: "e1", from: "r1", to: "a1", kind: "has_alternatives" as const, provenance: { kind: "llm" as const } } },
-    { type: "add_edge" as const, edge: { id: "e2", from: "a1", to: "g1", kind: "item" as const, provenance: { kind: "llm" as const } } },
-    { type: "add_edge" as const, edge: { id: "e3", from: "a1", to: "g1", kind: "chosen" as const, provenance: { kind: "llm" as const } } },
-    { type: "record_check" as const, command: "node --test", verdict: "fail" as const, output: "no", targets: ["g1"] },
+    { type: "add_edge" as const, edge: { id: "e1", from: "r1", to: "g1", kind: "has_goal" as const, provenance: { kind: "llm" as const } } },
+    { type: "descend" as const, node: "g1" },
+    { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "node --test", payload: { command: "node --test", target: "g1", exitCode: 1 }, seq: 99 } },
   ];
 
   it("requires revises to list the failed interpretation", () => {
     const state = fold(base);
-    expect(predicateOf(state, "g1")).toBe("refuted");
+    expect(criterionFailed(state, "g1")).toBe(true);
     const missing = classify(
       proposal({
         operator: "create_goal",
         what: "approach two",
-        done_when: { kind: "arbiter", text: "ok" },
+        done_when: "ok",
         plan: "approach two",
         step: { command: "true" },
       }),
@@ -1430,7 +1424,7 @@ describe("request, revisions and check soundness", () => {
         proposal({
           operator: "create_goal",
           what: "approach two",
-          done_when: { kind: "arbiter", text: "ok" },
+          done_when: "ok",
           plan: "approach two",
           step: { command: "true" },
           revises: ["g1"],
@@ -1443,7 +1437,7 @@ describe("request, revisions and check soundness", () => {
         proposal({
           operator: "create_goal",
           what: "approach one",
-          done_when: { kind: "arbiter", text: "ok" },
+          done_when: "ok",
           plan: "approach one",
           step: { command: "true" },
           revises: ["g1"],
@@ -1453,30 +1447,13 @@ describe("request, revisions and check soundness", () => {
     ).toEqual({ accept: false, reason: "repeat_hypothesis" });
   });
 
-  it("refuses to check an arbiter goal", () => {
-    const state = fold([
-      request,
-      {
-        type: "add_node",
-        node: { id: "g2", space: "work", kind: "goal", label: "sub", payload: { what: "sub", done_when: { kind: "arbiter", text: "ok" } }, seq: 1 },
-      },
-    ]);
-    const verdict = classify(
-      proposal({ operator: "apply", action: { tool: "run", command: "x", target: "g2" } }),
-      state,
-    );
-    expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("arbiter_goal_needs_acceptance");
-    expect(verdict.reason).toContain("g2");
-  });
-
   it("runs the goal's own done_when command for a target-only check", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
       request,
       {
         type: "add_node",
-        node: { id: "g2", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: { kind: "objective", command: "true" } }, seq: 1 },
+        node: { id: "g2", space: "work", kind: "goal", label: "crit", payload: { what: "crit", done_when: "true" }, seq: 1 },
       },
     ]);
     // A check omits the command; the engine runs the goal's own.
@@ -1487,9 +1464,13 @@ describe("request, revisions and check soundness", () => {
       0,
     );
     const after = fold(outcome.events, state);
-    expect(predicateOf(after, "g2")).toBe("achieved");
-    const check = [...after.nodes.values()].find((node) => node.kind === "check");
-    expect((check?.payload as { command?: string } | undefined)?.command).toBe("true");
+    expect(criterionPass(after, "g2")).toBe(true);
+    const obs = [...after.nodes.values()].find(
+      (node) =>
+        node.kind === "observation" &&
+        (node.payload as { target?: string } | undefined)?.target === "g2",
+    );
+    expect((obs?.payload as { command?: string } | undefined)?.command).toBe("true");
   });
 });
 
@@ -1506,7 +1487,7 @@ describe("revise after a refuted fix", () => {
         return proposal({
           operator: "create_goal",
           what: "make the suite pass",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "make the suite pass: reproduce, fix",
           step: { command: "node --test" },
         });
@@ -1527,7 +1508,7 @@ describe("revise after a refuted fix", () => {
         return proposal({
           operator: "create_goal",
           what: "fix the cause, second attempt",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "second attempt: fix",
           step: { command: "node --test" },
           revises: [rootId!],
@@ -1548,10 +1529,11 @@ describe("revise after a refuted fix", () => {
         return proposal({
           operator: "create_goal",
           what: "fix the cause, third attempt",
-          done_when: { kind: "objective", command: "node --test" },
+          done_when: "node --test",
           plan: "third attempt: fix",
           step: { command: "node --test" },
-          revises: [rootId!, second!],
+          // The current goal is a variant of the first; its failed container holds it.
+          revises: [second!],
         });
       }
       if (index === 8) {
@@ -1563,7 +1545,7 @@ describe("revise after a refuted fix", () => {
       if (index === 9) {
         return proposal({ operator: "apply", action: { tool: "run", command: "node --test", target: focus } });
       }
-      return proposal({ operator: "query", predicate: "refuted" });
+      return proposal({ operator: "query", kind: "goal" });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 16, noProgress: 10 },
@@ -1571,17 +1553,19 @@ describe("revise after a refuted fix", () => {
     );
 
     const state = fold(result.events);
-    const checks = result.events.filter(
-      (event): event is Extract<typeof event, { type: "record_check" }> =>
-        event.type === "record_check",
-    );
-    expect(checks.filter((check) => check.verdict === "fail")).toHaveLength(2);
+    const runs: { target?: unknown; exitCode?: unknown }[] = [];
+    for (const event of result.events) {
+      if (event.type !== "add_node" || event.node.kind !== "observation") continue;
+      const payload = event.node.payload as { target?: unknown; exitCode?: unknown } | undefined;
+      if (typeof payload?.target === "string") runs.push(payload);
+    }
+    expect(runs.filter((payload) => payload.exitCode !== 0)).toHaveLength(2);
     // Each goal is closed only by its own check: the final revision passes once; the two
     // refuted goals stay refuted and are replaced by alternatives.
-    expect(checks.filter((check) => check.verdict === "pass")).toHaveLength(1);
+    expect(runs.filter((payload) => payload.exitCode === 0)).toHaveLength(1);
     const goals = [...state.nodes.values()].filter((node) => node.kind === "goal");
-    expect(goals.filter((node) => predicateOf(state, node.id) === "refuted").length).toBe(2);
-    expect(predicateOf(state, "r1")).toBe("addressed");
+    expect(goals.filter((node) => criterionFailed(state, node.id)).length).toBe(2);
+    expect(requestSettled(state, "r1")).toBe(true);
   });
 });
 
@@ -1597,7 +1581,7 @@ describe("failed edit materializes the file content", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          done_when: { kind: "arbiter", text: "done" },
+          done_when: "done",
           plan: "green: a sketch",
           step: { command: "echo done" },
         });

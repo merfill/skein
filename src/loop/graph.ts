@@ -1,7 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
-import { childrenOf, currentVersion, fold, planOf, predicateOf, type State } from "../ir/graph";
+import { actionExecuted, childrenOf, criterionPass, currentVersion, fold, goalOf, hasStopped, planOf, requestSettled, type State } from "../ir/graph";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
@@ -86,13 +86,16 @@ function describeTarget(action: Action): string {
   let target: string;
   switch (action.operator) {
     case "query":
-      target = action.id ?? action.kind ?? action.predicate ?? action.edgesOf ?? "query";
+      target = action.id ?? action.kind ?? action.edgesOf ?? "query";
       break;
     case "create_goal":
       target = `goal:${action.what}`;
       break;
     case "stop":
       target = "stop";
+      break;
+    case "decline":
+      target = "decline";
       break;
     case "apply":
       target =
@@ -111,9 +114,8 @@ export interface AgentDeps {
   noProgress?: number;
   // Working-set limits (docs §9); overridable so tests can force eviction/expiry.
   held?: { turns?: number; max?: number };
-  // An external arbiter (a human or a program): before each turn it may emit events, e.g.
-  // a `record_check` with `actor: "user"` accepting an open arbiter goal (I5). Absent by
-  // default — an autonomous run has no arbiter, so an arbiter goal waits forever.
+  // An external actor (a human or a program) may emit events before each turn — the seam
+  // for future user intervention. Absent by default.
   arbiter?: (state: State, turn: number) => Event[];
 }
 
@@ -136,8 +138,8 @@ export function compileGraph(deps: AgentDeps) {
   const maxHeld = deps.held?.max ?? MAX_HELD;
 
   const projectNode = (state: LoopStateType) => {
-    // The external arbiter may react before the turn (e.g. accept an open arbiter goal).
-    // Its events join the journal like any other, with the same provenance discipline.
+    // The external actor (if any) may react before the turn; its events join the journal
+    // like any other, with the same provenance discipline.
     const external = deps.arbiter ? deps.arbiter(fold(state.events), state.turn) : [];
     const seed = external.length > 0 ? [...state.events, ...external] : state.events;
     const base = fold(seed);
@@ -171,7 +173,7 @@ export function compileGraph(deps: AgentDeps) {
         if (node.kind !== "action") continue;
         const focus = current.focusOf.get(node.id);
         if (focus === undefined || !levelIds.has(focus)) continue;
-        if (predicateOf(current, node.id) !== "executed") continue;
+        if (!actionExecuted(current, node.id)) continue;
         const childId = producedResultId(current, node.id);
         if (childId !== undefined) {
           level.push({ id: childId, expiresAt: Number.MAX_SAFE_INTEGER, pinnedAt: node.seq });
@@ -228,6 +230,7 @@ export function compileGraph(deps: AgentDeps) {
       // the run: stop gracefully with `llm_error` so the partial work is kept.
       return {
         context,
+        proposal: null,
         done: true,
         stopReason: "llm_error",
         recent: [
@@ -326,16 +329,20 @@ export function compileGraph(deps: AgentDeps) {
     const current = fold(state.events);
     const rootId = current.rootId;
     if (rootId !== undefined) {
-      const predicate = predicateOf(current, rootId);
       const root = current.nodes.get(rootId);
       if (root?.kind === "request") {
-        // An addressed request normally ends with the doxa's `stop` (which sets done in
-        // execute). If the budget runs out first, closure still wins over `max_turns`.
-        if (predicate === "addressed" && state.turn >= deps.maxTurns) {
+        // The request ends when its goal is stopped (there is no `stop` on the request).
+        const goal = goalOf(current, rootId);
+        if (goal !== undefined && hasStopped(current, goal)) {
+          return {
+            done: true,
+            stopReason: criterionPass(current, goal) ? "request_addressed" : "request_stopped",
+          };
+        }
+        // If the budget runs out while the request's goal is settled, closure wins.
+        if (requestSettled(current, rootId) && state.turn >= deps.maxTurns) {
           return { done: true, stopReason: "request_addressed" };
         }
-      } else if (predicate === "achieved" || predicate === "achieved_under") {
-        return { done: true, stopReason: "root_closed" };
       }
     }
     // Closure wins over the budget: if the last allowed turn closed the request, that is

@@ -3,15 +3,17 @@ import { createHash } from "node:crypto";
 import { forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
 import {
+  actionExecuted,
   alternativesOf,
   childrenOf,
+  criterionFailed,
+  criterionPass,
   currentVersion,
   planOf,
-  predicateOf,
   type State,
 } from "../ir/graph";
-import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
-import type { DoneWhen, EdgeKind, GoalPayload, Node, Provenance, Verdict, WitnessEntry } from "../ir/types";
+import { currentGoalId, firstUnfulfilledItem, stateOf } from "../ir/traversal";
+import type { EdgeKind, GoalPayload, Node, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, ActionStep, Apply } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, Workspace } from "./workspace";
@@ -160,7 +162,7 @@ function runQuery(
     id: node.id,
     kind: node.kind,
     label: node.label,
-    predicate: predicateOf(state, node.id),
+    state: stateOf(state, node.id),
     ...(node.payload !== undefined ? { payload: node.payload } : {}),
   });
   const nodes: ReturnType<typeof nodeRow>[] = [];
@@ -203,16 +205,13 @@ function runQuery(
         edges.push({ id: edge.id, kind: edge.kind, from: edge.from, to: edge.to });
       }
     }
-  } else if (action.kind !== undefined || action.predicate !== undefined) {
+  } else if (action.kind !== undefined) {
     for (const node of state.nodes.values()) {
       if (action.kind !== undefined && node.kind !== action.kind) continue;
-      if (action.predicate !== undefined && predicateOf(state, node.id) !== action.predicate) {
-        continue;
-      }
       nodes.push(nodeRow(node));
     }
   } else {
-    return "(no selector: pass id, kind, predicate, or edgesOf)";
+    return "(no selector: pass id, kind, or edgesOf)";
   }
 
   if (nodes.length === 0 && edges.length === 0) return "(nothing matches)";
@@ -471,9 +470,8 @@ export function executeAction(
     ...(error !== undefined && error !== "" ? { error } : {}),
   });
   const fail = (text: string): ExecOutcome => {
-    // A failure is knowledge too: materialize it as an observation with
-    // verdict=fail so it enters the negative history (§2.8) and is never shadowed
-    // by an accepted-looking turn.
+    // A failure is knowledge too: materialize it as an observation flagged `failed`, so it
+    // enters the negative history (§2.8) and is never shadowed by an accepted-looking turn.
     const seq = next();
     const id = `obs:${seq}`;
     events.push({
@@ -483,7 +481,7 @@ export function executeAction(
         space: "work",
         kind: "observation",
         label: text,
-        payload: { verdict: "fail", output: text },
+        payload: { failed: true, output: text },
         seq,
       },
     });
@@ -579,7 +577,7 @@ export function executeAction(
   const buildGoal = (spec: {
     what: string;
     why?: string;
-    done_when: DoneWhen;
+    done_when: string;
     plan?: string;
     step?: ActionStep;
   }): string => {
@@ -651,7 +649,7 @@ export function executeAction(
         for (const itemId of childrenOf(state, plan)) {
           const node = state.nodes.get(itemId);
           if (node?.kind !== "action") continue;
-          if (predicateOf(state, itemId) === "executed") continue;
+          if (actionExecuted(state, itemId)) continue;
           const itemCommand = (node.payload as { command?: unknown } | undefined)?.command;
           if (itemCommand === command) return itemId;
         }
@@ -664,7 +662,6 @@ export function executeAction(
       if (first !== undefined && firstNode?.kind === "action") {
         const alt = ensureAlternatives(first);
         addEdge({ kind: "llm" }, alt, id, "item");
-        addEdge({ kind: "llm" }, alt, id, "chosen");
         return id;
       }
       const plan = ensurePlan(goalId);
@@ -694,7 +691,7 @@ export function executeAction(
       if (current === undefined) return fail("create goal failed: no current goal");
       const currentNode = state.nodes.get(current);
       const atRequest = currentNode?.kind === "request";
-      const refuted = predicateOf(state, current) === "refuted";
+      const refuted = criterionFailed(state, current);
       // Decomposing an open goal (I6): the sub-goal replaces the current step as its
       // chosen alternative, so there must be a concrete step to decompose.
       let step: string | undefined;
@@ -702,14 +699,8 @@ export function executeAction(
         step = firstUnfulfilledItem(state, current);
         const stepNode = step !== undefined ? state.nodes.get(step) : undefined;
         if (step === undefined || stepNode?.kind !== "action") {
-          const doneWhen = (currentNode?.payload as { done_when?: { kind?: string } } | undefined)
-            ?.done_when;
-          const hint =
-            doneWhen?.kind === "arbiter"
-              ? `${current} is an arbiter goal: it is settled only by the arbiter's acceptance — it cannot be checked or grown`
-              : `if ${current} is objective and its plan is done, check it (run {target: "${current}"}); to add a step, apply an action`;
           return fail(
-            `create goal failed: no current step to decompose — a sub-goal can only replace an existing step, and ${hint}`,
+            `create goal failed: no current step to decompose — a sub-goal can only replace an existing step; if ${current}'s plan is done, check it (run {target: "${current}"}) or apply an action`,
           );
         }
       }
@@ -721,27 +712,56 @@ export function executeAction(
         step: action.step,
       });
       if (atRequest) {
-        const alt = ensureAlternatives(current);
-        addEdge({ kind: "llm" }, alt, id, "item");
-        addEdge({ kind: "llm" }, alt, id, "chosen");
+        // The request is interpreted as this goal (`has_goal`); the interpretation is fixed.
+        addEdge({ kind: "llm" }, current, id, "has_goal");
       } else if (refuted) {
         const container = variantContainer(current);
         addEdge({ kind: "llm" }, container, id, "item");
-        addEdge({ kind: "llm" }, container, id, "chosen");
       } else {
         const alt = ensureAlternatives(step as string);
         addEdge({ kind: "llm" }, alt, id, "item");
-        addEdge({ kind: "llm" }, alt, id, "chosen");
       }
       events.push(...descendTo(state, current, id));
       return { events, turn: proposalTurn(`created goal: ${action.what}`), done: false, stopReason: null };
     }
 
+    case "decline": {
+      // Decline to formulate a goal: the request's intent is not actionable. Records an
+      // `unactionable` node under the request (edge `no_goal`) and ends the run — no goal,
+      // no fake criterion (docs/plans/request_goal_plan.md).
+      const seq = next();
+      const id = `w:unactionable:${seq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id,
+          space: "work",
+          kind: "unactionable",
+          label: action.why ?? "not actionable",
+          ...(action.why !== undefined ? { payload: { why: action.why } } : {}),
+          seq,
+        },
+      });
+      const focus = currentGoalId(state);
+      if (focus !== undefined) addEdge({ kind: "llm" }, focus, id, "no_goal");
+      return {
+        events,
+        turn: proposalTurn(`declined: ${action.why ?? "not actionable"}`, id),
+        done: true,
+        stopReason: "request_unactionable",
+      };
+    }
+
     case "stop": {
-      // The doxa's terminal move. On a goal it finishes the frame (the engine returns to
-      // the parent on the next projection and continues); on the request it ends the run.
-      // It never settles a criterion: `achieved` still requires a check, and an arbiter
-      // goal's external acceptance stays post-hoc.
+      // The doxa's terminal move, on a goal: the `stop` node becomes the LAST plan item
+      // and an outgoing `has_stopped` edge records the closure and its reason. The engine
+      // returns to the request on the next projection and the run ends there. There is no
+      // `stop` on the request (docs/plans/request_goal_plan.md).
+      const focus = currentGoalId(state);
+      const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
+      if (focusNode?.kind !== "goal" || focus === undefined) {
+        return fail("stop applies to a goal; the request ends when its goal is stopped");
+      }
       const seq = next();
       const stopId = `w:stop:${seq}`;
       events.push({
@@ -755,28 +775,14 @@ export function executeAction(
           seq,
         },
       });
-      const focus = currentGoalId(state);
-      const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
-      if (focusNode?.kind === "goal" && focus !== undefined) {
-        // The goal has stopped: an outgoing `has_stopped` edge (goal → stop). The engine
-        // returns to the parent on the next projection; the goal is not `achieved`.
-        addEdge({ kind: "llm" }, focus, stopId, "has_stopped");
-        return {
-          events,
-          turn: proposalTurn(`stopped goal: ${focus}`, stopId),
-          done: false,
-          stopReason: null,
-        };
-      }
-      const addressed = focus !== undefined && predicateOf(state, focus) === "addressed";
+      const planId = planOf(state, focus) ?? ensurePlan(focus);
+      addEdge({ kind: "llm" }, planId, stopId, "item");
+      addEdge({ kind: "llm" }, focus, stopId, "has_stopped");
       return {
         events,
-        turn: proposalTurn(
-          addressed ? "stopped: the request is addressed" : "stopped: handing over to the arbiter",
-          stopId,
-        ),
-        done: true,
-        stopReason: addressed ? "request_addressed" : "request_stopped",
+        turn: proposalTurn(`stopped goal: ${focus}`, stopId),
+        done: false,
+        stopReason: null,
       };
     }
 
@@ -1025,7 +1031,7 @@ export function executeAction(
               space: "work",
               kind: "observation",
               label,
-              payload: { verdict: "fail", ...storeOutput(observationId, full) },
+              payload: { failed: true, ...storeOutput(observationId, full) },
               seq: observationSeq,
             },
           });
@@ -1173,24 +1179,21 @@ export function executeAction(
       }
 
       // apply.tool === "run"
-      // A run produces a goal verdict only when it explicitly names that goal as its
-      // target. A bare run (no target) is an observation even when its command equals a
-      // goal's `done_when.command`: a reproduce step must never be read as a check, or it
-      // would refute the goal before the fix (docs/plans/traversal_stack_spec.md §9).
+      // A run is the criterion of a goal only when it explicitly names that goal as its
+      // target (the observation carries `target`). A bare run (no target) is not read as a
+      // criterion even when its command equals a goal's `done_when`: a reproduce step must
+      // not settle the goal before the fix (docs/plans/traversal_stack_spec.md §9).
       const target = apply.target;
       const targetNode = target !== undefined ? state.nodes.get(target) : undefined;
       if (target !== undefined && (targetNode === undefined || targetNode.kind !== "goal")) {
         return fail(`check failed: no goal ${target}`);
       }
-      // An objective goal is checked by its own done_when command from the IR; the
-      // doxa only initiates the check and cannot substitute the command.
+      // A goal is checked by its own done_when command from the IR; the doxa only
+      // initiates the check and cannot substitute the command.
       let runCommand = apply.command;
       if (target !== undefined && targetNode?.kind === "goal") {
         const payload = targetNode.payload as GoalPayload | undefined;
-        if (payload?.done_when.kind !== "objective") {
-          return fail(`check failed: goal ${target} is arbiter; it is settled by external acceptance, not by a run`);
-        }
-        runCommand = payload.done_when.command;
+        runCommand = payload?.done_when;
       }
       // A poll of a background job: it has no shell of its own, is never a check, and is
       // never a repeat — each poll reads new state (docs/tools.md §4.7).
@@ -1204,7 +1207,6 @@ export function executeAction(
         const observationSeq = next();
         const observationId = `obs:${observationSeq}`;
         const done = job.state === "done";
-        const verdict: Verdict | undefined = done ? (job.exitCode === 0 ? "pass" : "fail") : undefined;
         // A job killed by a signal crashed: read the core and a backtrace, as for a
         // foreground run (docs/tools.md §4.3).
         const crash =
@@ -1234,8 +1236,7 @@ export function executeAction(
               command: actionCommand,
               job: job.id,
               state: job.state,
-              ...(verdict !== undefined ? { verdict } : {}),
-              ...(job.exitCode !== null ? { exitCode: job.exitCode } : {}),
+              ...(done && job.exitCode !== null ? { exitCode: job.exitCode } : {}),
               ...(job.signal !== null ? { signal: job.signal } : {}),
               ...(crash?.core !== undefined ? { core: crash.core } : {}),
               ...(crash?.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
@@ -1254,14 +1255,7 @@ export function executeAction(
             seq: observationSeq,
           },
         });
-        addEdge(
-          verdict !== undefined
-            ? { kind: "check", command: actionCommand, verdict }
-            : { kind: "llm" },
-          actionId,
-          observationId,
-          "produces",
-        );
+        addEdge({ kind: "llm" }, actionId, observationId, "produces");
         return {
           events,
           turn: proposalTurn(text, observationId, errorShown),
@@ -1385,71 +1379,24 @@ export function executeAction(
         return { events, turn: proposalTurn(label, observationId), done: false, stopReason: null };
       }
 
-      const verdict =
-        result.timedOut === true ? "inconclusive" : result.code === 0 ? "pass" : "fail";
-      const isCheck = target !== undefined && targetNode?.kind === "goal";
+      // A run is an observation: `command` + `exitCode` (0 = pass, non-zero = fail, absent
+      // on a timeout), plus the output. A run with `target` is the criterion of that goal
+      // (docs/plans/stop_closure_plan.md §5 step 3); the exit code replaces the old check.
       const resultSeq = next();
-      const resultId = isCheck ? `chk:${resultSeq}` : `obs:${resultSeq}`;
+      const resultId = `obs:${resultSeq}`;
       // stdout and stderr are stored separately and never concatenated: a failed run's
       // error is the primary signal, and a merged log hides which stream carried it.
       const outputBody = storeStream(resultId, "output", result.stdout);
       const errorBody = storeStream(resultId, "error", result.stderr);
       const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
       const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
-      const crashSummary =
-        crash === undefined ? `exit ${result.code}` : crashLine(crash);
+      const crashSummary = crash === undefined ? `exit ${result.code}` : crashLine(crash);
       const header = `$ ${runCommand}\n${crashSummary}`;
       const diagnostic =
         crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
       const text = `${result.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
-
-      if (isCheck) {
-        events.push({
-          type: "record_check",
-          id: resultId,
-          command: runCommand,
-          verdict,
-          output: outputShown,
-          ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
-          ...(errorShown !== "" ? { error: errorShown } : {}),
-          ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
-          ...(crash !== undefined
-              ? {
-                  signal: crash.signal,
-                  ...(crash.core !== undefined ? { core: crash.core } : {}),
-                  ...(crash.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
-                  ...(crash.backtrace !== undefined
-                    ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
-                    : {}),
-                  ...(crash.backtraceError !== undefined
-                    ? { backtraceError: bounded(crash.backtraceError, 2000) }
-                    : {}),
-                }
-              : {}),
-          actor: "arbiter",
-          witness: witnessOfWorkspace(workspace),
-          targets: [target as string],
-          ...(apply.under !== undefined ? { under: apply.under } : {}),
-        });
-        addEdge(
-          {
-            kind: "check",
-            command: runCommand,
-            verdict,
-            ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
-          },
-          actionId,
-          resultId,
-          "produces",
-        );
-        return {
-          events,
-          turn: proposalTurn(text, resultId, errorShown),
-          done: false,
-          stopReason: null,
-        };
-      }
-
+      const exitCode =
+        result.timedOut === true || typeof result.code !== "number" ? undefined : result.code;
       events.push({
         type: "add_node",
         node: {
@@ -1459,7 +1406,9 @@ export function executeAction(
           label: command,
           payload: {
             command: runCommand,
-            verdict,
+            ...(target !== undefined ? { target } : {}),
+            ...(exitCode !== undefined ? { exitCode } : {}),
+            ...(target !== undefined ? { witness: witnessOfWorkspace(workspace) } : {}),
             ...(result.stdout !== "" ? { output: outputShown } : {}),
             ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
             ...(errorShown !== "" ? { error: errorShown } : {}),
@@ -1481,17 +1430,7 @@ export function executeAction(
           seq: resultSeq,
         },
       });
-      addEdge(
-        {
-          kind: "check",
-          command: runCommand,
-          verdict,
-          ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
-        },
-        actionId,
-        resultId,
-        "produces",
-      );
+      addEdge({ kind: "llm" }, actionId, resultId, "produces");
       return { events, turn: proposalTurn(text, resultId, errorShown), done: false, stopReason: null };
     }
   }

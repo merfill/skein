@@ -20,7 +20,8 @@ level). This is needed so that:
    deleted or rewritten.
 2. **Determinism.** `same events → same Context`: the projection (including the stack) is
    a pure function of the journal.
-3. **`verified` only with check provenance.** The model does not declare success.
+3. **Closure only by `stop`.** A criterion run's `exitCode` is the only pass/fail fact;
+   the model does not declare success.
 4. **Stack = fold(journal).** The traversal stack is not independent state but a
    derivation; it must equal a rebuild from the journal.
 
@@ -63,9 +64,9 @@ Rebuilding the stack from the journal (this is also session load):
    - `descend node` → push a frame for `node`;
    - `return` → pop.
 3. **Normalize the focus to a fixpoint** (deterministic, needs no doxa events):
-   - if the top is a request with a chosen, unclosed interpretation — push it;
+   - if the top is a request with a chosen, unfinished interpretation — push it;
    - if the top is a goal with a first unfulfilled subgoal — push it;
-   - if the top is closed and not the root, or under a closed ancestor — pop.
+   - if the top is finished and not the root, or under a finished ancestor — pop.
 4. Result — the frame stack; arms are derived from containers (§5).
 
 Maintaining the stack incrementally within a session (push/pop instead of rebuilding each
@@ -81,9 +82,9 @@ is no separate storage for the arm.
   item's chosen alternative (§6).
 - **chosen** (for alternatives) = the last-chosen option (a sequence of `chosen` edges;
   the latest wins).
-- **Arm history** — every sibling with its state
-  (`open` / `executed` / `achieved` / `achieved_under` / `refuted` / `abandoned`).
-  Executed siblings are never dropped: they stay in the arm.
+- **Arm history** — every sibling with its state (`open` / `executed` / `stopped`; the
+  criterion facts and supersession are derived reads, not states). Executed siblings are
+  never dropped: they stay in the arm.
 
 ## 6. Plan revisions (alternatives) — append-only
 
@@ -92,16 +93,16 @@ A "plan revision" is **adding a node**, not editing:
 - a new item — a new `item` edge into the plan;
 - replacing/bypassing an item — an `alternatives` container is created on the item and
   the new option is placed there as `item` + `chosen`; the original item stays a sibling;
-- a new interpretation of a refuted goal — a sibling in the owner's alternatives
-  container (the request or the goal).
+- a new interpretation of a goal whose criterion failed — a sibling in the owner's
+  alternatives container (the request or the goal).
 
 The plan sketch given at goal creation is **frozen as nodes**; all later revisions are
 additions. Hence the "effective plan" and the "next item" are **derived**: the first
 unfulfilled item, honoring the chosen alternative.
 
 A goal's criterion (`done_when`) is **immutable**: if the criterion turned out wrong, that
-is a refuted interpretation, not an edit of the goal's body; a new attempt is a new
-variant.
+is a failed criterion — a case for a new variant, not an edit of the goal's body; a new
+attempt is a new variant.
 
 ## 7. Projection
 
@@ -140,10 +141,11 @@ history) — `TR-9`.
 
 ## 9. Verification
 
-- A goal's verdict is produced **only by an explicit check on the goal** (`run { target }`),
-  never by a command match.
-- Running a command that equals `done_when` as a **plan step** (reproduce) is an
-  observation, not a verdict.
+- The criterion fact is produced **only by an explicit run targeted at the goal**
+  (`run { target }`): an observation with `target` and `exitCode`. Matching a command's
+  text is never enough.
+- Running a command that equals `done_when` as a **plan step** (reproduce) is an ordinary
+  observation, not a criterion (it carries no `target`).
 - The engine does **not** auto-run the plan (A4 was retired): each step is executed by the
   doxa on its own turn, one at a time.
 

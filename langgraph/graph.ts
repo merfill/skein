@@ -18,7 +18,7 @@ import {
 } from "../bench/metrics";
 import { loadSettings, type Settings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { checkHasUnder, childrenOf, fold, predicateOf } from "../src/ir/graph";
+import { childrenOf, fold, stateOf } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposal } from "../src/llm/schemas";
@@ -109,28 +109,25 @@ function diagnostics(events: readonly Event[]): unknown {
       .map((node) => ({
         id: node.id,
         label: node.label,
-        predicate: predicateOf(state, node.id),
+        state: stateOf(state, node.id),
         payload: node.payload,
       })),
     actions: nodes
       .filter((node) => node.kind === "action")
       .map((node) => ({
         id: node.id,
-        predicate: predicateOf(state, node.id),
+        state: stateOf(state, node.id),
         command: payloadOf(node.id)?.command ?? null,
       })),
-    checks: nodes
-      .filter((node) => node.kind === "check")
-      .map((node) => {
-        const payload = payloadOf(node.id) ?? {};
-        return {
-          id: node.id,
-          command: payload.command,
-          verdict: payload.verdict,
-          actor: payload.actor,
-          under: checkHasUnder(state, node.id),
-        };
-      }),
+    // Criterion runs: an observation carrying a `target` and an exit code (the verdict).
+    criteria: nodes
+      .filter((node) => node.kind === "observation" && typeof payloadOf(node.id)?.target === "string")
+      .map((node) => ({
+        id: node.id,
+        target: payloadOf(node.id)?.target,
+        command: payloadOf(node.id)?.command,
+        exitCode: payloadOf(node.id)?.exitCode ?? null,
+      })),
     observations: nodes
       .filter((node) => node.kind === "observation")
       .map((node) => {
@@ -140,12 +137,9 @@ function diagnostics(events: readonly Event[]): unknown {
           label: node.label,
           command: payload.command ?? null,
           ref: payload.ref ?? null,
-          verdict: payload.verdict ?? null,
+          exitCode: payload.exitCode ?? null,
         };
       }),
-    completes: nodes
-      .filter((node) => node.kind === "complete")
-      .map((node) => ({ id: node.id, label: node.label })),
     plans: nodes
       .filter((node) => node.kind === "plan")
       .map((node) => ({
@@ -156,12 +150,6 @@ function diagnostics(events: readonly Event[]): unknown {
     alternatives: nodes
       .filter((node) => node.kind === "alternatives")
       .map((node) => ({ id: node.id, items: childrenOf(state, node.id) })),
-    verifies: edges
-      .filter((edge) => edge.kind === "verifies")
-      .map((edge) => ({ from: edge.from, to: edge.to })),
-    closes: edges
-      .filter((edge) => edge.kind === "closes")
-      .map((edge) => ({ from: edge.from, to: edge.to })),
     mutateEdges: edges
       .filter((edge) => edge.kind === "mutates")
       .map((edge) => ({ from: edge.from, to: edge.to })),

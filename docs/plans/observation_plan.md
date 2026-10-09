@@ -48,8 +48,8 @@ pure function of state.
 - (b) a new pure step (e.g. `src/loop/observe.ts`): given `State` and the
   `Workspace`, compute the active `ref` set, compare recorded and current
   versions, return `mutate` events. Wire it before `project` in
-  `src/loop/graph.ts`. Scope: `ref`s in the witness of non-stale `verifies`
-  edges and `ref`s with live read facts.
+  `src/loop/graph.ts`. Scope: `ref`s in the witness of a criterion `observation`, and
+  `ref`s with live read facts.
 - (c) watcher: `fs.watch` / chokidar over the workspace (`.skein` excluded),
   debounced, emitting `mutate` with the new version. It runs as an input to the
   loop; an optional phase.
@@ -59,7 +59,7 @@ pure function of state.
 - `npm run typecheck`; `npm test`.
 - Tests: a `run` that writes a non-forbidden file emits `mutate`; a reconciled
   external edit (write the file behind the engine, then run the observe step)
-  emits `mutate` and invalidates a check; `project` is unchanged for the same
+  emits `mutate` and makes a prior criterion fact stale; `project` is unchanged for the same
   events.
 
 ## 5. Invariants

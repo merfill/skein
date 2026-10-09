@@ -1,10 +1,6 @@
 import { z } from "zod";
 
-import { EDGE_KINDS, NODE_KINDS, SPACES, type Verdict } from "./types";
-
-const verdictSchema = z.enum(["pass", "fail", "inconclusive"]);
-
-const witnessEntrySchema = z.object({ ref: z.string(), version: z.string() });
+import { EDGE_KINDS, NODE_KINDS, SPACES } from "./types";
 
 const nodeSchema = z.object({
   id: z.string(),
@@ -33,12 +29,6 @@ const provenanceSchema = z.discriminatedUnion("kind", [
     path: z.string().optional(),
     include: z.string().optional(),
     exclude: z.string().optional(),
-  }),
-  z.object({
-    kind: z.literal("check"),
-    command: z.string(),
-    verdict: verdictSchema,
-    outputRef: z.string().optional(),
   }),
 ]);
 
@@ -69,29 +59,7 @@ export const eventSchema = z.discriminatedUnion("type", [
     constraintId: z.string().optional(),
     turn: z.number().int().nonnegative(),
   }),
-  z.object({
-    type: z.literal("record_check"),
-    id: z.string().optional(),
-    command: z.string(),
-    verdict: verdictSchema,
-    output: z.string(),
-    outputRef: z.string().optional(),
-    // stderr, kept separate from stdout: the primary signal of a failed run.
-    error: z.string().optional(),
-    errorRef: z.string().optional(),
-    // A crash (a signal): the core file and, best effort, a backtrace (docs/tools.md §4.3).
-    signal: z.string().optional(),
-    core: z.string().optional(),
-    backtrace: z.string().optional(),
-    backtraceError: z.string().optional(),
-    actor: z.enum(["arbiter", "user"]).optional(),
-    witness: z.array(witnessEntrySchema).optional(),
-    targets: z.array(z.string()),
-    under: z.array(z.string()).optional(),
-  }),
 ]);
 
 export type Event = z.infer<typeof eventSchema>;
 export type EventInput = z.input<typeof eventSchema>;
-
-export type { Verdict };

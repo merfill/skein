@@ -11,6 +11,9 @@ import type { SandboxTask } from "../task";
 export const fixOcamlGcTask: SandboxTask = {
   id: "fix-ocaml-gc",
   image: "alexgshaw/fix-ocaml-gc:20251031",
+  // The criterion rebuilds the whole compiler, and each background poll costs a turn; the
+  // Harbor acceptance ran at 60.
+  maxTurns: 60,
   checkIn: "host",
   checkSetup:
     "cd /app/ocaml && make clean && ./configure && make -j4 && rm -f tests.txt && (make -C testsuite one DIR=tests/basic | tee tests.txt || true)",

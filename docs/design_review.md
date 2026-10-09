@@ -9,8 +9,11 @@ its verdict and the plan that implements it.
 
 > **Note.** This note predates the current IR semantics: it refers to APIs since removed
 > or renamed (`finish`, `frontier.verified`/`frontier.refusals`, `index { counts, recent }`,
-> query `status`/`verdictOf`). The current as-built is `docs/ir.md`; read those terms here
-> as historical.
+> query `status`/`verdictOf`). It also predates the stop-closure refactor: the
+> `arbiter`/`check`/`record_check`/`verifies`/`under`/`achieved` machinery it discusses has
+> since been **removed** — a frame closes only by the doxa's `stop`, and a criterion run is
+> an ordinary `observation` whose `exitCode` is the only pass/fail fact. The current
+> as-built is `docs/ir.md`; read those terms here as historical.
 
 This document records, point by point, which of the critique's risks and
 recommendations we **accept**, **reframe**, or **reject**, and why. It is not a

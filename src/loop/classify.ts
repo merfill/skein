@@ -1,22 +1,25 @@
 import { forbiddenConstraints, matchesPath } from "../ir/constraints";
 import {
-  alternativesOf,
+  actionExecuted,
   childrenOf,
+  criterionFailed,
+  criterionPass,
   currentVersion,
+  goalOf,
   hasStopped,
   planOf,
-  predicateOf,
+  requestSettled,
+  unactionableOf,
+  unselectedVariant,
   type State,
 } from "../ir/graph";
 import {
-  chosenInterpretation,
   currentGoalId,
   cursorOf,
   firstUnfulfilledItem,
   goalPayload,
-  itemSucceeded,
+  itemFulfilled,
 } from "../ir/traversal";
-import type { DoneWhen } from "../ir/types";
 import type { Proposal } from "../llm/schemas";
 import { commandOf } from "../tools";
 
@@ -36,10 +39,27 @@ function reject(reason: string, constraintId?: string): Classification {
 
 const accept: Classification = { accept: true };
 
-function doneWhenOk(done: DoneWhen): boolean {
-  return done.kind === "objective"
-    ? done.command.trim() !== ""
-    : done.text.trim() !== "";
+function doneWhenOk(done: string): boolean {
+  return done.trim() !== "";
+}
+
+// How many times one unchanged file may be read before further reads are refused: a file
+// read over and over with no edit in between is a thrash — its body is already addressable,
+// so the doxa should act on it (a live run re-read one file's windows for 17 turns without
+// editing). Any edit changes the version and resets the count, so a legitimate re-read
+// after a change is unaffected.
+const MAX_FILE_READS = 2;
+
+function readsOf(state: State, ref: string): number {
+  const version = currentVersion(state, ref);
+  if (version === undefined) return 0;
+  let count = 0;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "observation") continue;
+    const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
+    if (payload?.ref === ref && payload.version === version) count += 1;
+  }
+  return count;
 }
 
 function latestReadVersion(state: State, ref: string): string | undefined {
@@ -64,7 +84,7 @@ function actionCommand(payload: unknown): string | undefined {
 function latestAction(state: State, command: string): { seq: number; id: string } | undefined {
   let best: { seq: number; id: string } | undefined;
   for (const node of state.nodes.values()) {
-    if (node.kind !== "action" || predicateOf(state, node.id) !== "executed") continue;
+    if (node.kind !== "action" || !actionExecuted(state, node.id)) continue;
     if (actionCommand(node.payload) !== command) continue;
     if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: node.id };
   }
@@ -106,8 +126,9 @@ function patchTargets(patch: string): string[] {
 }
 
 function isFailed(state: State, id: string): boolean {
-  const predicate = predicateOf(state, id);
-  return predicate === "refuted" || predicate === "abandoned";
+  const node = state.nodes.get(id);
+  if (node?.kind !== "goal") return false;
+  return criterionFailed(state, id) || unselectedVariant(state, id);
 }
 
 function containerOf(state: State, goalId: string): string | undefined {
@@ -122,12 +143,10 @@ function containerOf(state: State, goalId: string): string | undefined {
 // Returns the required set, or null when the proposal is not a revision.
 function revisionContext(state: State, current: string): string[] | null {
   const node = state.nodes.get(current);
-  if (node?.kind === "request") {
-    const alt = alternativesOf(state, current);
-    const failed = alt === undefined ? [] : childrenOf(state, alt).filter((id) => isFailed(state, id));
-    return failed;
-  }
-  if (node?.kind === "goal" && predicateOf(state, current) === "refuted") {
+  // A request is never a revision point now: its interpretation is fixed. It becomes one
+  // when re-interpretation is added (docs/plans/request_goal_plan.md).
+  if (node?.kind === "request") return null;
+  if (node?.kind === "goal" && criterionFailed(state, current)) {
     const failed = new Set<string>();
     const container = containerOf(state, current);
     if (container !== undefined) {
@@ -161,7 +180,7 @@ function repeatOfFailed(state: State, failed: string[], what: string): boolean {
 function hasBody(state: State, id: string): boolean {
   const node = state.nodes.get(id);
   if (node === undefined) return false;
-  if (node.kind === "observation" || node.kind === "check") return true;
+  if (node.kind === "observation") return true;
   const payload = node.payload as
     | { output?: unknown; outputRef?: unknown; error?: unknown; errorRef?: unknown }
     | undefined;
@@ -173,14 +192,13 @@ function hasBody(state: State, id: string): boolean {
   );
 }
 
-// A plan "carries a check" when it has at least one checkable step: an action, or an
-// objective sub-goal. A plan of only arbiter stages has no runnable criterion yet, so
-// growing it must stay legal.
+// A plan "carries a check" when it has at least one checkable step: an action, or a
+// sub-goal (every goal now has a command criterion).
 function planCarriesCheck(state: State, items: readonly string[]): boolean {
   return items.some((id) => {
     const node = state.nodes.get(id);
     if (node?.kind === "action") return true;
-    return node?.kind === "goal" && goalPayload(state, id)?.done_when.kind === "objective";
+    return node?.kind === "goal";
   });
 }
 
@@ -207,7 +225,9 @@ function focusHint(state: State): string | undefined {
       ? `apply the next plan item: ${firstNode.label}`
       : `descend into the next plan item: ${first}`;
   }
-  if (payload?.done_when.kind === "objective") return `check it: apply run {target: "${focus}"}`;
+  if (payload?.done_when !== undefined && payload.done_when !== "") {
+    return `check it: apply run {target: "${focus}"}`;
+  }
   return undefined;
 }
 
@@ -222,33 +242,38 @@ export function classify(
   if (action.operator === "stop") {
     // The doxa's terminal move. On a goal it finishes the frame (the engine then returns
     // to the parent and continues); on the request it ends the run. It does not settle a
-    // criterion: an objective goal must pass its own check first, and external acceptance
-    // of an arbiter goal stays post-hoc.
+    // criterion: a goal must pass its own check first.
     const current = currentGoalId(state);
     const node = current !== undefined ? state.nodes.get(current) : undefined;
-    if (node?.kind === "request") {
-      const chosen = chosenInterpretation(state, current as string);
-      // Settled (achieved/achieved_under) or finished by stop (`has_stopped`): the
-      // request may end. External acceptance (arbiter) stays post-hoc.
-      if (
-        predicateOf(state, current as string) === "addressed" ||
-        (chosen !== undefined && hasStopped(state, chosen))
-      ) {
-        return accept;
-      }
+    // Only goals: the request has no `stop` (it ends when its goal is stopped). For now
+    // only positive stops are accepted — the goal's criterion must have passed; the
+    // give-up cases are a later step (docs/plans/request_goal_plan.md).
+    if (node?.kind !== "goal") {
+      return reject("not_addressed: stop applies to a goal; the request ends when its goal is stopped");
+    }
+    if (criterionPass(state, current as string)) return accept;
+    return reject(
+      `check_not_run: goal ${current} has not passed its criterion — run its check (run {target: "${current}"}) before stop`,
+    );
+  }
+
+  if (action.operator === "decline") {
+    // Decline to formulate a goal: only at the request, and only while it has no
+    // interpretation yet (docs/plans/request_goal_plan.md).
+    const current = currentGoalId(state);
+    const node = current !== undefined ? state.nodes.get(current) : undefined;
+    if (node?.kind !== "request") {
+      return reject("not_request: decline formulates no goal, so it applies only at the request");
+    }
+    if (goalOf(state, current as string) !== undefined) {
       return reject(
-        "not_addressed: the request is not addressed yet — settle the chosen interpretation (an objective goal by its own check; an arbiter goal by finishing it with stop)",
+        "interpreted: the request already has an interpretation; work it or stop instead of declining",
       );
     }
-    if (node?.kind === "goal") {
-      const payload = goalPayload(state, current as string);
-      // An arbiter goal has no in-loop criterion: the doxa finishes it and hands over.
-      if (payload?.done_when.kind === "arbiter") return accept;
-      return reject(
-        `check_not_run: goal ${current} is objective — settle it by its own check (run {target: "${current}"}) before stop`,
-      );
+    if (unactionableOf(state, current as string) !== undefined) {
+      return reject("repeated_action: the request is already declined");
     }
-    return reject("not_addressed: no request or goal in focus to stop");
+    return accept;
   }
 
   if (action.operator === "query") {
@@ -276,9 +301,15 @@ export function classify(
     const current = currentGoalId(state);
     if (current === undefined) return reject("no_current_goal");
     const focusNode = state.nodes.get(current);
-    if (focusNode?.kind === "request" && predicateOf(state, current) === "addressed") {
+    if (focusNode?.kind === "request" && requestSettled(state, current)) {
       return reject(
         "addressed: the request is already addressed; propose stop instead of a new interpretation",
+      );
+    }
+    // The interpretation is fixed: a request accepts one goal, created once.
+    if (focusNode?.kind === "request" && goalOf(state, current) !== undefined) {
+      return reject(
+        "interpreted: the request already has an interpretation; work it or stop instead of interpreting it again",
       );
     }
     const required = revisionContext(state, current);
@@ -291,27 +322,27 @@ export function classify(
       }
     } else if (revises.length > 0) {
       return reject(
-        `unknown_revision: the focus goal ${current} is open, not refuted — revises does not apply here. To settle it: if it is objective, run its check (run {target: "${current}"}); if it is arbiter, it is settled only by the arbiter's acceptance — wait for it. To add a step, apply an action instead.`,
+        `unknown_revision: the focus goal ${current} is open, not refuted — revises does not apply here. To settle it, run its check (run {target: "${current}"}). To add a step, apply an action instead.`,
       );
     }
     if (repeatOfFailed(state, required ?? [], action.what)) {
       return reject("repeat_hypothesis");
     }
-    // An objective goal whose plan already carries a fulfilled check step must be
-    // checked, not grown. A plan of only epistemic stages (no action, no objective
-    // sub-goal) may still grow — otherwise the fix stage could never be added after
-    // reproduce/locate are done (docs/ir_semantics_ru.md §4.2).
+    // A goal whose plan already carries a fulfilled check step must be checked, not grown.
+    // A plan of only epistemic stages (no action) may still grow — otherwise the fix stage
+    // could never be added after reproduce/locate are done (docs/ir_semantics_ru.md §4.2).
     const currentNode = state.nodes.get(current);
     const payload = goalPayload(state, current);
     const plan = planOf(state, current);
     if (
       currentNode?.kind === "goal" &&
-      predicateOf(state, current) === "open" &&
-      payload?.done_when.kind === "objective" &&
+      !hasStopped(state, current) &&
+      !criterionFailed(state, current) &&
+      payload?.done_when !== undefined &&
       plan !== undefined
     ) {
       const items = childrenOf(state, plan);
-      if (items.length > 0 && items.every((id) => itemSucceeded(state, id)) && planCarriesCheck(state, items)) {
+      if (items.length > 0 && items.every((id) => itemFulfilled(state, id)) && planCarriesCheck(state, items)) {
         return reject(
           `all plan items are fulfilled; check this goal (apply run with target "${current}"), do not grow the plan`,
         );
@@ -327,7 +358,7 @@ export function classify(
   {
     const focus = currentGoalId(state);
     const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
-    if (focusNode?.kind === "request" && predicateOf(state, focus as string) === "addressed") {
+    if (focusNode?.kind === "request" && requestSettled(state, focus as string)) {
       return reject("addressed: the request is already addressed; propose stop instead");
     }
   }
@@ -361,14 +392,12 @@ export function classify(
     const target = state.nodes.get(apply.target);
     if (target === undefined || target.kind !== "goal") return reject("invalid_target");
     const payload = goalPayload(state, apply.target);
-    if (payload === undefined || payload.done_when.kind !== "objective") {
-      return reject(
-        `arbiter_goal_needs_acceptance: goal ${apply.target} has no command criterion; it is settled by external acceptance, not by a run`,
-      );
+    if (payload === undefined || payload.done_when === undefined) {
+      return reject(`invalid_target: goal ${apply.target} has no criterion command`);
     }
-    if (apply.command !== undefined && apply.command !== payload.done_when.command) {
+    if (apply.command !== undefined && apply.command !== payload.done_when) {
       return reject(
-        `target ${apply.target} is an objective goal; its check runs its own command "${payload.done_when.command}" — drop "command" (it is ignored) or pass exactly that`,
+        `target ${apply.target} is a goal; its check runs its own command "${payload.done_when}" — drop "command" (it is ignored) or pass exactly that`,
       );
     }
     const current = currentGoalId(state);
@@ -389,21 +418,29 @@ export function classify(
       return reject(repeatReason(resultId(state, found.id), held));
     }
   }
+  // A file already read MAX_FILE_READS times with no change has nothing new to show: refuse
+  // a further read and point at the edit. (A different window is still a new action below
+  // the cap — the guard stops a thrash, it does not forbid windowing.)
+  if (apply.tool === "read" && readsOf(state, `file:${apply.path}`) >= MAX_FILE_READS) {
+    return reject(
+      `repeated_action: ${apply.path} has already been read ${MAX_FILE_READS} times with no change — if you can name the cause, edit it instead of reading it again`,
+    );
+  }
 
   if (apply.tool === "run") {
     let runCommand = apply.command ?? "";
     if (apply.target !== undefined) {
       const payload = goalPayload(state, apply.target);
-      if (payload?.done_when.kind === "objective") runCommand = payload.done_when.command;
+      if (payload?.done_when !== undefined) runCommand = payload.done_when;
     }
     const signature = `${runCommand}\u0000${apply.target ?? ""}`;
     const found = latestAction(state, signature);
     if (found !== undefined && state.lastMutationSeq < found.seq) {
       const prior = state.nodes.get(resultId(state, found.id));
-      const verdict = (prior?.payload as { verdict?: unknown } | undefined)?.verdict;
-      // A timeout brought no knowledge: an identical re-check after `inconclusive` is not
-      // a repeat, so the model may retry the same check at the same node (§4.2, invariant 23).
-      if (verdict !== "inconclusive") {
+      const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
+      // A timeout brought no knowledge: an identical re-check after a timeout (no exit
+      // code) is not a repeat, so the model may retry the same check (§4.2, invariant 23).
+      if (typeof exit === "number") {
         return reject(repeatReason(resultId(state, found.id), held));
       }
     }

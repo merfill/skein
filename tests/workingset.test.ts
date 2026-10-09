@@ -122,7 +122,7 @@ describe("working set under a long synthetic horizon", () => {
     const workspace = workspaceWithFiles(3);
     const shownAt: string[][] = [];
     let f0: string | undefined;
-    let goalA: string | undefined;
+    let goalG: string | undefined;
     let call = 0;
 
     const propose = async (context: Context): Promise<Proposal> => {
@@ -130,56 +130,58 @@ describe("working set under a long synthetic horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        // An objective interpretation; the traversal descends to it.
+        // The interpretation A; the traversal descends to it.
         return {
           thought: "",
           action: {
             operator: "create_goal",
             what: "A",
-            done_when: { kind: "objective", command: "false" },
+            done_when: "true",
             plan: "A: a sketch",
-            step: { command: "false" },
+            step: { command: "true" },
           },
         };
       }
       if (n === 2) {
-        goalA = context.path.at(-1)?.id;
-        return { thought: "", action: { operator: "apply", action: { tool: "read", path: "f0.txt" } } };
-      }
-      if (n === 3) {
-        f0 = context.lastResult?.id;
-        // Refute A: its own criterion fails, so focus returns to the request.
-        return { thought: "", action: { operator: "apply", action: { tool: "run", target: goalA } } };
-      }
-      if (n === 4) {
-        // Choose a new interpretation; A (and its read) is now off the chosen subtree,
-        // so only a `query` (with its TTL) can bring the body back.
+        // Decompose A's current step into a sub-goal G and descend into it.
         return {
           thought: "",
           action: {
             operator: "create_goal",
-            what: "B",
-            done_when: { kind: "arbiter", text: "B is accepted externally" },
-            plan: "B: a sketch",
+            what: "G",
+            done_when: "true",
+            plan: "G: a sketch",
             step: { command: "true" },
-            revises: [goalA!],
           },
         };
       }
+      if (n === 3) {
+        goalG = context.path.at(-1)?.id;
+        return { thought: "", action: { operator: "apply", action: { tool: "read", path: "f0.txt" } } };
+      }
+      if (n === 4) {
+        f0 = context.lastResult?.id;
+        return { thought: "", action: { operator: "apply", action: { tool: "run", target: goalG } } };
+      }
       if (n === 5) {
+        // Stop G (its criterion passed): focus returns to A, so G's read is off A's
+        // subtree and only a `query` (with its TTL) can bring the body back.
+        return { thought: "", action: { operator: "stop", why: "G is done" } };
+      }
+      if (n === 6) {
         return { thought: "", action: { operator: "query", id: f0 ?? "missing" } };
       }
       return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo step-${n}` } } };
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 10, noProgress: 30, held: { turns: 2, max: 100 } },
+      { propose, workspace, maxTurns: 12, noProgress: 30, held: { turns: 2, max: 100 } },
       { request: { id: "r1", text: "ttl" } },
     );
 
     expect(f0).toBeDefined();
-    // Off-subtree: not shown before the query.
-    expect(shownAt[3]).not.toContain(f0);
+    // Off-subtree after G is stopped: not shown in the context of the query call.
+    expect(shownAt[5]).not.toContain(f0);
     // Pinned by the query, then expired after the TTL.
     const first = shownAt.findIndex((ids_) => f0 !== undefined && ids_.includes(f0));
     expect(first).toBeGreaterThan(0);

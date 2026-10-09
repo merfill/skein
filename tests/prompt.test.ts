@@ -47,7 +47,7 @@ describe("system prompt: tool contract", () => {
 
   it("keeps the stop condition in its own block (B15)", () => {
     const b15 = PROMPT_BLOCKS.find((block) => block.id === "B15");
-    expect(b15?.text).toMatch(/once the request is addressed/i);
+    expect(b15?.text).toMatch(/only once its criterion has passed/i);
   });
 
   // A refuted option (a goal, or a request's interpretation) must not be re-proposed with
@@ -88,6 +88,24 @@ describe("system prompt: stream discipline", () => {
     expect(SYSTEM_PROMPT).toMatch(/WRONG WORKING DIRECTORY/);
     expect(SYSTEM_PROMPT).toContain("No such file or directory");
   });
+
+  // A missing build output is a DIFFERENT cause from a wrong directory: the tree is not
+  // configured/built — setup, not the defect (a live run read `No rule to make target
+  // '../Makefile.build_config'` as a directory error and never ran `./configure && make`).
+  it("separates an unbuilt tree (setup) from a wrong directory", () => {
+    expect(SYSTEM_PROMPT).toMatch(/SETUP, not the defect/);
+    expect(SYSTEM_PROMPT).toMatch(/configure && make/);
+    expect(SYSTEM_PROMPT).toMatch(/Makefile\.build_config|Makefile\.config/);
+  });
+
+  // The named-suspect trigger: a live run kept re-reading one unchanged file for 17 turns
+  // after a (noisy) reference diff already isolated the defect. The prompt must say edit
+  // is the next action once the suspect is named, and that a reference diff is a lead.
+  it("tells the model to edit once the suspect is named (localize -> edit)", () => {
+    expect(SYSTEM_PROMPT).toMatch(/NEXT action is edit/);
+    expect(SYSTEM_PROMPT).toMatch(/LOCALIZED once you can point at the exact expression/);
+    expect(SYSTEM_PROMPT).toMatch(/LEAD, not a checklist/);
+  });
 });
 
 // The transcript packaging (SKEIN_CONTEXT_FORMAT=transcript) renders the projection as a
@@ -102,7 +120,7 @@ describe("context format: transcript", () => {
         kind: "goal",
         state: "open",
         what: "green",
-        done_when: { kind: "objective", command: "node --test" },
+        done_when: "node --test",
       },
     ],
     constraints: [{ id: "k1", forbid: ["secret"] }],
@@ -116,7 +134,7 @@ describe("context format: transcript", () => {
       id: "obs:1",
       kind: "observation",
       command: "node --test",
-      verdict: "fail",
+      exitCode: 1,
       output: "",
       error: "boom",
     },

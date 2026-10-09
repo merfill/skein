@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { fold, predicateOf } from "../../src/ir/graph";
+import { fold, stateOf } from "../../src/ir/graph";
 import { project } from "../../src/ir/project";
 import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
 
@@ -35,13 +35,13 @@ function generate(seed: number): Event[] {
   const addEdge = (from: string, to: string, kind: string): void => {
     events.push({ type: "add_edge", edge: { id: `e${next()}`, from, to, kind: kind as never, provenance: { kind: "llm" } } });
   };
-  const close = (id: string, objective: boolean): void => {
-    if (objective) {
-      events.push({ type: "record_check", command: "make test", verdict: pick(["pass", "fail", "inconclusive"] as const), output: "", targets: [id] });
-    } else {
-      // An arbiter goal is settled only by external acceptance (actor "user").
-      events.push({ type: "record_check", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: [id] });
-    }
+  const close = (id: string): void => {
+    const verdict = pick(["pass", "fail", "inconclusive"] as const);
+    addNode(`o${next()}`, "observation", {
+      command: "make test",
+      target: id,
+      ...(verdict === "inconclusive" ? {} : { exitCode: verdict === "pass" ? 0 : 1 }),
+    });
   };
 
   let goals = 0;
@@ -49,8 +49,8 @@ function generate(seed: number): Event[] {
     const id = `g${goals++}`;
     const objective = chance(0.5);
     const payload = objective
-      ? { what: id, done_when: { kind: "objective", command: "make test" } }
-      : { what: id, why: "hypothesis", done_when: { kind: "arbiter", text: "done" } };
+      ? { what: id, done_when: "make test" }
+      : { what: id, why: "hypothesis", done_when: "done" };
     addNode(id, "goal", payload);
 
     // A plan of 1..3 ACTION items; sometimes a step carries an alternative sub-goal.
@@ -69,35 +69,24 @@ function generate(seed: number): Event[] {
           addNode(alt, "alternatives");
           addEdge(action, alt, "has_alternatives");
           addEdge(alt, sub, "item");
-          addEdge(alt, sub, "chosen");
         }
       }
     }
 
     // Close it (at most once) so the predicates vary across seeds.
     if (chance(0.5)) {
-      close(id, objective);
+      close(id);
     } else if (chance(0.2)) {
       // An observation produced by an exploratory action under this goal.
       const obs = `o${clock}`;
-      addNode(obs, "observation", { verdict: "fail" });
+      addNode(obs, "observation", { failed: true });
     }
     return id;
   };
 
   addNode("r1", "request", { text: "solve it" });
-  const alt = "altr1";
-  addNode(alt, "alternatives");
-  addEdge("r1", alt, "has_alternatives");
-
-  const interpretations: string[] = [];
-  const count = 1 + Math.floor(rng() * 3);
-  for (let i = 0; i < count; i += 1) {
-    const g = buildGoal(2);
-    addEdge(alt, g, "item");
-    interpretations.push(g);
-  }
-  addEdge(alt, pick(interpretations), "chosen");
+  // The interpretation is fixed: the request has one goal via `has_goal`.
+  addEdge("r1", buildGoal(2), "has_goal");
 
   if (chance(0.3)) {
     events.push({ type: "add_node", node: { id: "constraint", space: "work", kind: "constraint", label: "no src", payload: { forbid: ["src/"] }, seq: next() } });
@@ -131,8 +120,8 @@ describe("IR properties (random legal trees)", () => {
       const events = generate(seed);
       const a = fold(events);
       const b = fold(events);
-      const predicatesA = [...a.nodes.keys()].map((id) => `${id}:${predicateOf(a, id)}`).sort();
-      const predicatesB = [...b.nodes.keys()].map((id) => `${id}:${predicateOf(b, id)}`).sort();
+      const predicatesA = [...a.nodes.keys()].map((id) => `${id}:${stateOf(a, id)}`).sort();
+      const predicatesB = [...b.nodes.keys()].map((id) => `${id}:${stateOf(b, id)}`).sort();
       expect(predicatesA, `seed ${seed}`).toEqual(predicatesB);
 
       const ctxA = project(a);

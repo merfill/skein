@@ -292,7 +292,6 @@ export async function invokeTools(
 ): Promise<Proposal> {
   const settings = options.settings ?? loadSettings();
   const ceiling = options.ceiling ?? settings.maxTokensCeiling;
-  const bumps = options.bumps ?? settings.maxTokensBumps;
   const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
 
   let maxTokens: number | undefined;
@@ -333,18 +332,21 @@ export async function invokeTools(
         continue;
       }
     }
-    // No tool call. A response cut at the completion cap surfaces exactly as
-    // `finish_reason: "length"` and carries no call: retry with a larger budget, as the
-    // JSON path does, instead of treating a truncation as a bare no-call. Any other
-    // no-call gets one repair round.
-    if (finishReason(response) === "length" && raised < bumps) {
-      const current = maxTokens ?? settings.maxTokens;
-      const next = nextMaxTokens(current, settings.maxTokens, ceiling);
-      if (next !== undefined) {
-        maxTokens = next;
-        raised += 1;
+    // No tool call. A response cut at the completion cap means the model burned the
+    // completion budget on hidden reasoning. Retry ONCE, at the ceiling, with an explicit
+    // brevity instruction — do NOT keep doubling the cap, which only invites more
+    // reasoning (a live fix-ocaml-gc run turned one `read` into 4 calls / 60.9k completion
+    // tokens before giving up). Any other no-call gets one repair round.
+    if (finishReason(response) === "length") {
+      if (raised === 0) {
+        raised = 1;
+        maxTokens = Math.max(maxTokens ?? settings.maxTokens, ceiling);
+        repair = new HumanMessage(
+          "Your last reply was cut off by the length limit — that is excessive reasoning. Call exactly one tool now, with minimal reasoning; do not restate analysis.",
+        );
         continue;
       }
+      throw new Error("model returned no tool call");
     }
     if (repair !== undefined) throw new Error("model returned no tool call");
     repair = new HumanMessage(

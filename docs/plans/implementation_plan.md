@@ -8,9 +8,10 @@ decisions, roadmap, and status.
 ## 1. Essence
 
 Skein is a coding agent whose context is a **projection of the IR**, not a message
-tape. The LLM is doxa: it only proposes (`status=open`). The deterministic engine
-and the arbiter are logos: they decide. The event journal and the projection
-function are the protocol.
+tape. The LLM is doxa: it only proposes (a goal enters `open`). The deterministic
+engine (logos) decides; the arbiter is a boundary authority (the first request, the
+final acceptance of the request), not a per-goal actor. The event journal and the
+projection function are the protocol.
 
 ## 2. Fixed decisions
 
@@ -19,10 +20,11 @@ function are the protocol.
 | Language | TypeScript (Node 22, ESM), package manager npm |
 | State model | hybrid graph `work` + `artifact`, append-only journal + deterministic projection |
 | Code non-monotonicity | staleness by version (file hash), no manual retraction |
-| First slice | bugfix by a failing test; arbiter is the test runner |
+| First slice | bugfix by a failing test; the criterion is the test command |
 | Orchestration | LangGraph.js (`@langchain/langgraph`) |
 | LLM | as in Ankyra: OpenAI-compatible endpoint, reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
-| Arbiter | objective (test runner) plus `arbiter` (user/acceptance) |
+| Criterion | a goal's `done_when` is a literal command; its `exitCode` (0 = pass) is the only pass/fail fact |
+| Closure | a frame closes only by the doxa's `stop` (for now accepted only once the criterion passed); a request ends when its goal is stopped |
 
 ## 3. Roadmap
 
@@ -67,8 +69,8 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
    (to match Harbor), k = 3, and compare per task: turns, LLM calls, tool calls and their
    breakdown, tokens (`in`/`out`/cache/reasoning) and cost — against opencode. A matched
    opencode sandbox backend is the prerequisite (opencode runs only through Harbor today).
-   Also fix the premature `stop` on `fix-ocaml-gc`/`custom-memory-heap-crash` (a goal stopped
-   without a mutation) before trusting their accuracy numbers.
+   The premature `stop` on `fix-ocaml-gc`/`custom-memory-heap-crash` was fixed by the
+   stop-closure refactor (§4); re-check their accuracy numbers after the next run.
 
 ## 4. Current status
 
@@ -146,6 +148,29 @@ Beyond Tier 0, the current line adds:
   pulls. Blocker fixed first: `invokeTools` now raises the completion cap on a truncated
   response (`finish_reason: "length"`) instead of ending the run with `llm_error`
   (`docs/benches/bench_report.md` §4.7).
+- **Stop closure (2026-10-09, done)** — a frame (goal or request) closes **only** by the
+  doxa's `stop`; a criterion run is an ordinary `observation` carrying `target`+`exitCode`;
+  the `check`/`verdict`/`under`/`arbiter` machinery is removed. The `stop` gate: on a goal,
+  accepted iff its criterion passed or its plan is exhausted (a give-up); on the request,
+  iff its chosen interpretation is settled or stopped. This removes the premature-stop
+  defect on `fix-ocaml-gc`. Spec and example — `docs/ir_semantics.md` §4.3,
+  `docs/walkthrough.md`; plan — `docs/plans/archive/stop_closure_plan.md`.
+- **Request→goal refactor (2026-10-09, done)** — a `request` is interpreted exactly once
+  as a `goal` via `has_goal` (the interpretation is fixed) or declined (`no_goal` →
+  `unactionable`); the `chosen` edge is gone. `stop` operates only on a goal: it appends a
+  `stop` node as the goal's **last plan item** plus a `has_stopped` edge, and (for now) is
+  accepted only once the criterion passed (positive stops only; a give-up is deferred). A
+  request has no `stop`; it ends when its goal is stopped; `decline` is available only at a
+  fresh request. Plan — `docs/plans/archive/request_goal_plan.md`.
+- **Long-task fixes and the first clean close (2026-10-09).** Prompt: the repair routine
+  builds first (B7) and B10 separates a wrong working directory from an unbuilt/unconfigured
+  tree; the named-suspect trigger (B7/B16) and "a reference diff is a lead, not a checklist"
+  (B9) cut the read loop. Engine: `invokeTools` bounds a completion truncation to one brevity
+  retry (no cap doubling); a read thrash-guard refuses a third read of an unchanged file
+  (`OP-AP-READ-6`). A build-heavy task declares its own `maxTurns` (`fix-ocaml-gc`: 60,
+  `tests/sandbox/task.ts`). Live re-run — `reward=1`, `stop=request_addressed` (the first
+  positive close in the sandbox; it used all 60 turns). The transcript A/B was run and
+  rejected. Details — `docs/benches/bench_report.md` §4.8; prompt — `docs/system_prompt.md`.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.
@@ -169,18 +194,31 @@ live gate only when `SKEIN_LIVE=true`.
   `goal`/`constraints`, immediately followed by the volatile `frontier`.
   Optimization (volatile to the tail, settled facts and the file index append-only
   at the front, bounded growth) is deferred as premature; it needs a separate study.
-- **Reducing LLM turns.** Logos closure (a passing objective check verifies ancestors
-  with the same criterion) and a separate context-format A/B (JSON projection vs a
-  transcript with assistant/tool roles) — `docs/plans/step_reduction_plan.md`.
-- **Terminate arbiter goals / stop the refused-`stop` loop.** Every §4.7 root goal is an
-  `arbiter` goal (the requests name no literal check command), and an arbiter goal is
-  settled only by external acceptance — which an autonomous Harbor run never provides. So
-  once the work is done the doxa proposes `stop`, `classify` refuses `not_addressed` with a
-  move an arbiter goal cannot make, and the model retries `stop` until `maxTurns`
-  (28/60 turns on `fix-git`, `bench_report.md` §4.4.2). Options: play the arbiter in the
-  harness, let `stop` settle a carried-out arbiter goal when no arbiter is wired, or make
-  tasks with explicit success criteria classify as `objective`. Also cut the `invokeTools`
-  repair resends and allow batching — the other call-count drivers (§4.4.2).
+- **Reducing LLM turns.** The context-format A/B (JSON projection vs a role-tagged
+  transcript) was run and the transcript was **rejected**: on `fix-ocaml-gc` it roughly
+  doubled reasoning/cost (60.9k-token turns, ended `llm_error`), though it lifted the cache
+  hit (90% vs ~55%) on short fixtures. The storm is now bounded (`invokeTools` retries once
+  at the ceiling, no cap doubling), a named-suspect prompt trigger pushes the edit, and a
+  read thrash-guard refuses a third read of an unchanged file. Still open: logos closure (a
+  passing objective check verifies ancestors with the same criterion) —
+  `docs/plans/step_reduction_plan.md`.
+- **Long builds vs the turn budget (next study).** A build-heavy criterion (`fix-ocaml-gc`
+  rebuilds the whole OCaml compiler) costs turns even when the fix is right: after the edit
+  the agent starts a background `run {background: true}` and each `poll` is a separate doxa
+  turn (a live run polled 8× while the build still ran, then ran the criterion early →
+  `exitCode 2`). Declaring `maxTurns: 60` on the task (`tests/sandbox/task.ts`) made the run
+  close positively (`reward=1`, `stop=request_addressed`) — but it used all 60 turns (edit
+  t25, green criterion t58), so that is a ceiling, not headroom. Study: (a) a command
+  `timeout` / a wired `runTimeoutMs` for a long **foreground** build (the setting exists but
+  is never passed to the workspace — `docs/tools.md` §4.7 is inaccurate), and/or (b) cheaper
+  polling (do not spend a doxa turn on a still-running job); measure turns and cost. Evidence
+  — `docs/benches/bench_report.md` §4.8, `docs/testing.md` §3.6.
+- **~~Terminate arbiter goals / stop the refused-`stop` loop.~~ Resolved (2026-10-09)** by
+  the stop-closure refactor: there are no `arbiter` goals; every goal carries a command
+  criterion, and a request ends by its own `stop` gated by the criterion fact (or a
+  stopped interpretation), so an autonomous run no longer retries `stop` until `maxTurns`.
+  Still open from that item: cut the `invokeTools` repair resends and allow batching — the
+  other call-count drivers (`bench_report.md` §4.4.2).
 
 ## 5. Boundaries
 

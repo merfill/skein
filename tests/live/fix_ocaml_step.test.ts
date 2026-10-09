@@ -82,13 +82,12 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
 
       if (
         step.cwdReaction === true &&
-        proposal.action.operator === "create_goal" &&
-        proposal.action.done_when.kind === "objective"
+        proposal.action.operator === "create_goal"
       ) {
-        const command = proposal.action.done_when.command;
+        const command = proposal.action.done_when;
         expect(
           command.trim(),
-          "a revised objective command must not repeat the bare workspace-root command",
+          "a revised command must not repeat the bare workspace-root command",
         ).not.toBe("make -C testsuite one DIR=tests/basic");
         expect(command, "it must resolve the project directory (ocaml/)").toMatch(/ocaml/);
       }

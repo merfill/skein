@@ -22,8 +22,8 @@ the current state (as-built), then the proposed changes.
 2. **The context is all of the model's memory.** So it must receive:
    - the **full result of the latest call** (within the tool's honestly declared
      limits);
-   - a **summary of previous calls without their results** (what was called, verdict,
-     size).
+   - a **summary of previous calls without their results** (what was called, its
+     status, size).
 3. **A failure is a result too.** A failed command, a gate refusal, "no such file" is
    knowledge; it is shown and/or lands in the summary/`negative`, never dropped.
 4. **No context budget for now.** We remove `SKEIN_CTX_TOTAL`: first let the tools
@@ -42,26 +42,28 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 
 | Operator | Purpose |
 |---|---|
-| `create_goal` | introduce a goal (an interpretation of the request or a subgoal) with a plan |
+| `create_goal` | introduce a goal (the request's interpretation — exactly once — or a subgoal) with a plan |
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `run` / `fetch` / `apply_patch` |
-| `stop` | the terminal proposal that the request is done (accepted only if `addressed`) |
+| `stop` | the sole closure: finish the focused goal (gate: its criterion passed) |
+| `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
 ### 2.1 `create_goal { what, why?, done_when, plan, step, revises? }`
 
 - `what` — what to achieve; non-empty.
 - `why?` — a rationale (text); the hypothesis for a fix.
-- `done_when` — **objective** (`{kind:"objective", command}` — a command whose exit
-  code settles it) or **arbiter** (`{kind:"arbiter", text}` — external acceptance; doxa
-  never closes it).
+- `done_when` — the **criterion command** (a literal string): the engine runs exactly it
+  and reads the exit code (0 = pass, non-zero = fail).
 - `plan` — a non-empty **string sketch** of the plan (a note to oneself), not a list.
 - `step` — the **first concrete action** `{ command, label? }`, run verbatim; it is the
   only plan item materialized at creation (an action).
 - `revises?` — ids of **all** failed options of the container when switching approach.
 
-Instruction: at a request node it creates an interpretation; at an open goal it decomposes
-the current step into a sub-goal (an alternative to that step). Give a plan sketch and the
-first step. List failures fully in `revises`, otherwise a refusal.
+Instruction: at a request node it creates the interpretation — **exactly once**: the
+request's interpretation is FIXED (a `has_goal` edge), so the `what` must be chosen
+deliberately and can never be re-proposed or the request re-interpreted. At an open goal it
+decomposes the current step into a sub-goal (an alternative to that step). Give a plan
+sketch and the first step. List failures fully in `revises`, otherwise a refusal.
 
 ### 2.2 `apply { action }`
 
@@ -74,22 +76,31 @@ first step. List failures fully in `revises`, otherwise a refusal.
 | `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
 | `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`) to read and diff (B9); refused on a path outside the workspace / already existing / forbidden / download failure |
 | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
-| `run` | `{ command?, target?, background?, job?, under? }` | shell command; with `target` — a goal check (the command comes from the goal, `command` is omitted); with `background` — start a long command and poll it by `job` (see §4.7) |
+| `run` | `{ command?, target?, background?, job? }` | shell command; with `target` — a criterion run of that goal: an **observation** carrying `target` and `exitCode` (the command comes from its `done_when`, `command` is omitted); without `target` — a plain **observation**; with `background` — start a long command and poll it by `job` (see §4.7) |
 
-### 2.3 `query { id | kind | predicate | edgesOf, start?, end? }`
+### 2.3 `query { id | kind | edgesOf, start?, end? }`
 
 Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id` — the
 **body of a stored result** (a small one from the payload, a large one behind
 `outputRef`), optionally a line window (`start`/`end`). Does not change state. The
-model-facing tool exposes `{ id, start?, end? }`; the tree selectors (`kind`/`predicate`/
-`edgesOf`) remain an engine capability but are not offered to the model.
+model-facing tool exposes `{ id, start?, end? }`; the tree selectors (`kind`/`edgesOf`)
+remain an engine capability but are not offered to the model.
 
 ### 2.4 `stop { why? }`
 
-The doxa's terminal move: it proposes that the request is done. Accepted only when the
-request is already `addressed` (the chosen interpretation is `achieved`/`achieved_under`);
-otherwise refused (`not_addressed`). It adds a `stop` node and stops the run; it never
-closes the request (acceptance stays external).
+The doxa's terminal move and the sole closure: it finishes the focused **goal**. The engine
+appends a `stop` node as the goal's **last plan item** and records a `has_stopped` edge
+goal→stop (the closure and its reason sit in the plan); it then returns to the request and
+the run ends. For now `stop` is accepted only once the goal's criterion has passed
+(otherwise refused `check_not_run`). There is **no** `stop` on the request: the request/run
+ends when its goal is stopped, never by a `stop` of its own.
+
+### 2.5 `decline { why? }`
+
+Declines to formulate a goal: the request's intent is genuinely not actionable (chit-chat,
+no task). It records an `unactionable` node under the request (a `no_goal` edge) and ends
+the run. Available only while the request has no interpretation yet (before `create_goal`);
+give `why`. Never invent a goal with a fake criterion just to close such a request.
 
 ---
 
@@ -99,7 +110,7 @@ closes the request (acceptance stays external).
 |---|---|---|---|
 | `read {path,start?,end?}` | a window of lines | the window content → **transient** text, clipped at 8000, then by the projection — **400 chars from the start**; the observation stores only `{ref,version,bytes}` | content is **not stored**; different windows of one file used to count as a repeat (fixed: the range is in the signature) |
 | `grep {pattern}` | a search | matches `path:line:text` → transient text, then 400 chars; the observation stores only `{count}` | matches are **not stored**; it used to not see `.c` at all (fixed: text by content) |
-| `run {command}` | run a command | output → transient text; the observation stores `{command,verdict,output}` (up to 8000, head+tail) | the projection still shows 400 chars from the start |
+| `run {command}` | run a command | output → transient text; the observation stores `{command, target?, exitCode, output}` (up to 8000, head+tail) | the projection still shows 400 chars from the start |
 | `edit {path,find,replace}` | replacement | the fact of the edit | — |
 | `query {...}` | a tree read | up to 50 rows per selector | cannot reach `read`/`grep` content (it is not there) |
 
@@ -128,7 +139,9 @@ content. The model asks for 120 lines — it sees ~8.
   `query {id}`). An **identical** re-read (the same window, with an unchanged world) is
   refused as `repeated_action`; a **different** window is a new read. If the needed part
   is at a window boundary (read 1–100 and 101–200, but the code is at 80–120), read a
-  window with margin (say 60–160).
+  window with margin (say 60–160). A **thrash** is also refused: once an unchanged file has
+  been read twice with no edit in between, a further read is `repeated_action` — the body is
+  already addressable, so name the cause and edit; an edit resets the count (`OP-AP-READ-6`).
 
 ### 4.2 `grep`: scope, windows over matches, JSON (decided)
 
@@ -171,9 +184,9 @@ content. The model asks for 120 lines — it sees ~8.
 - A failed `edit` (`find` not found) materializes the file's **current content** in the
   failure observation and keeps it in `shown`, so the model copies `find` verbatim from
   there instead of re-reading a file it already read (which the repeat guard refuses).
-- A re-check after an **`inconclusive`** verdict (a timeout) is **not** a repeat: the
+- A criterion run that produced **no `exitCode`** (a timeout) is **not** a repeat: the
   timeout brought no knowledge, so the same `run {target}` may be repeated. A run of
-  inconclusive checks does not count as progress and leaves the goal `open`.
+  non-decisive runs does not count as progress and leaves the goal `open`.
 - A run killed by a **signal** (a crash, not a controlled exit) carries `signal` (e.g.
   `SIGSEGV`) — never a bare nonzero exit. The wrapper raises `ulimit -c unlimited`, so
   when the platform writes a core the engine finds the newest `core*` in the workspace
@@ -212,7 +225,7 @@ content. The model asks for 120 lines — it sees ~8.
   dropped a body larger than the cap (the source window being edited), trapping the model
   in a `query` loop (docs/benches/bench_report.md §4.4). A read observation whose file has
   changed since is dropped (stale content is
-  never shown as active); `run`/`check` bodies are historical and never go stale. There is
+  never shown as active); `run`/criterion bodies are historical and never go stale. There is
   **no** model-side declaration of what to show: `query {id}` is the single retrieval
   entrance.
 - `SKEIN_CTX_TOTAL` is not applied; `SKEIN_CTX_EXCERPT` is no longer needed.
@@ -229,7 +242,7 @@ content. The model asks for 120 lines — it sees ~8.
   refused; a body evicted by the cap leaves `held`, so re-querying it is **allowed**. For
   **non-results** (`action`/`goal`) a separate set of recently queried ids with the same
   TTL is kept, so a repeated `query` of such a node is refused too (spin). A state query
-  (`kind`/`predicate`/`edgesOf`) is not pinned: its answer changes as the graph grows.
+  (`kind`/`edgesOf`) is not pinned: its answer changes as the graph grows.
 
 ### 4.6 `list`: file listing (decided)
 
@@ -245,16 +258,17 @@ content. The model asks for 120 lines — it sees ~8.
 
 ### 4.7 `run`: long commands in the background (decided)
 
-- A foreground `run` is capped by `SKEIN_RUN_TIMEOUT_MS` (default 120 s); a timeout is
-  `inconclusive`. That cap is too short for a full build or a whole test suite.
+- A foreground `run` is capped by `SKEIN_RUN_TIMEOUT_MS` (default 120 s); a timeout
+  yields no `exitCode` (no pass/fail fact). That cap is too short for a full build or a
+  test suite.
 - `run { command, background: true }` starts the command detached and returns **at once**
   with a job id (`job-N`); the turn is not blocked.
 - `run { job: "job-N" }` polls that job: it returns `running` (retry) or `done` with the
   job's exit code and the **tail** of stdout/stderr (the full log stays at
   `.skein/jobs/<id>.{out,err}`). A poll carries only `job` — never `command`/`target`.
 - The CLI runs stdout and stderr into **separate** logs (the §4.3 rule holds: the streams
-  are never merged); a poll that is not `done` leaves no verdict.
-- A background job is never a check (`target` is refused); a poll is never a repeat (each
+  are never merged); a poll that is not `done` leaves no `exitCode`.
+- A background job is never a criterion run (`target` is refused); a poll is never a repeat (each
   poll reads new state). A background command is refused while a constraint forbids a
   file, because its mutations land after the turn and cannot be reverted.
 
@@ -303,7 +317,7 @@ agent's default reflex ("look at the diff").
    `create_goal`: formulate an interpretation (`what`), a rationale (`why`) and
    `done_when`.
 2. If the request names a **criterion/verification command** — take it verbatim as the
-   objective `done_when` — but the arbiter runs it from the **workspace root**, not a
+   `done_when` — but the engine runs it from the **workspace root**, not a
    project subdirectory. A named command is authoritative; its working directory is
    resolved from the tree. If the project lives in a subdirectory, the literal command
    must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
@@ -316,11 +330,11 @@ agent's default reflex ("look at the diff").
 5. **Example (matching).** Request: "I broke the GC build, the compiler crashes during
    bootstrap; verify with `make -C testsuite one DIR=tests/basic`". Correct:
    - goal: `what: "fix the GC regression so the basic testsuite passes"`,
-     `done_when: { kind: "objective", command: "make -C testsuite one DIR=tests/basic" }`;
+     `done_when: "make -C testsuite one DIR=tests/basic"`;
    - a plan of **steps**: `reproduce` and `locate` are **actions** (run the command,
-     read/grep/diff); `fix` IS the hypothesis — `why` + an `objective done_when` = the
-     command that shows the failure, so its own `check` settles it (there is no separate
-     `verify`, no `complete`), not a list of bare commands.
+     read/grep/diff); `fix` IS the hypothesis — `why` + the `done_when` command = the
+     command that shows the failure, so its own criterion run (`run {target}`) settles it
+     (there is no separate `verify`, no `complete`), not a list of bare commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a
    VCS; do not do it. A `git` failure in `calls` is a signal to change the approach,
    not the command.

@@ -40,7 +40,7 @@ overwrite an already-set variable. Live tests are marked `describe.skipIf(!setti
 ### IR operations
 
 The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
-`OP-AP`, `OP-QR`, `OP-ST`, `OP-CP`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
+`OP-AP`, `OP-QR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
 are grouped by operator under `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
 `applicable`, `traversal`, `derivation`); the invariants are exercised on 400 random legal trees
 (`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
@@ -81,14 +81,13 @@ Harbor's `n_concurrent_trials: 5`. Each test removes its own temp root, so there
 shared `afterEach` cleanup (it would race the still-running scenarios). The whole set is
 ~3 minutes.
 
-The scenario harness plays a **program arbiter** (mirrors `bench/run.ts`): while an open
-arbiter interpretation is in focus, it runs the fixture's acceptance check and, on
-success, records a user acceptance (`record_check` with `actor: "user"`) — the only way
-an arbiter goal closes. Without it, a request that names no literal command can never
-become `addressed`.
+The scenario harness drives `runAgent` alone (mirrors `bench/run.ts`): there is no
+program arbiter. A request ends at the doxa's own `stop`, gated by its chosen
+interpretation's criterion (a pass, or a stopped interpretation) — so a request that
+names no literal command still closes once the model runs and stops its interpretation.
 
-Hard checks (fail the test): whether `check` passed, whether the request was closed
-(`stopReason=request_addressed` when the scenario sets `expect.addressed`), the
+Hard checks (fail the test): whether the criterion passed, whether the request was
+settled (`stopReason=request_addressed` when the scenario sets `expect.addressed`), the
 invariants (`tests/invariants.ts`), that `test/` (and explicit paths) is unchanged, the
 number of **distinct** already-known results re-accessed (`maxRepeats`; one target,
 however many refusals, counts once), no mutation where forbidden, and the shape of
@@ -112,9 +111,9 @@ visible, not just the final reward.
 
 `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` builds each
 operation family's projection **offline** (exactly what the engine would show) and
-asserts the **shape** of the live model's next move: interpret the request, check a ready
-objective goal, accept an arbiter one externally, poll a background job, retry an inconclusive
-check, apply the next plan action, follow a focus hint. `SKEIN_STEP_REPEATS=N` (default 3)
+asserts the **shape** of the live model's next move: interpret the request, run a ready
+criterion, poll a background job, retry a non-decisive (timeout) criterion, apply the
+next plan action, follow a focus hint. `SKEIN_STEP_REPEATS=N` (default 3)
 retries a step, so a stochastic miss is not a failure. The specification and the coverage
 map are `docs/ir_operations.md` (EN + RU).
 
@@ -238,6 +237,10 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
 ```
 
+A run uses the task's own `maxTurns` when set (a build-heavy task like `fix-ocaml-gc`
+sets 60 — its criterion rebuilds the whole compiler and each background poll costs a
+turn), else 24; an explicit `--turns N` overrides both.
+
 Output — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (the projection per
 turn), `result.json` (`stopReason`, `reward`, the verifier result, the IR journal),
 `metrics.json` (the same totals/splits as §3.5), `reward.txt` (the verifier's score).
@@ -254,7 +257,7 @@ container on teardown. bwrap tasks share the host `/usr`, so they need the tool 
 A background `run {background: true}` and `fetch` still use the host implementation.
 
 **Adding a task.** Write `tests/sandbox/tasks/<id>.ts` with `{ id, image?, files?, setup?,
-check?, workdir?, checkIn?, checkSetup?, network? }` — `request` defaults to the cached
+check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` defaults to the cached
 `instruction.md`, `check` to the cached `tests/test_outputs.py`; `files` mirror a Docker
 `COPY`, `setup` a Dockerfile/`setup.sh` step. Register it in `tasks/registry.ts`. Verify it
 offline first (a no-op proposer → `reward=0`, the task's `solution/solve.sh` → `reward=1`),
@@ -277,7 +280,7 @@ Output — `bench/runs/<ts>-<case>-skein>/`:
 | `trajectory.json` | proposed actions per turn |
 | `turns.ndjson` | per turn: tokens/cache/`contextChars`/time |
 | `contexts.ndjson` | **the full projection** per turn (`turn`, `chars`, `context`) |
-| `events.ndjson` | the IR journal: nodes, edges, `record_check`, `record_rejection` |
+| `events.ndjson` | the IR journal: nodes, edges, `mutate`, `record_rejection` |
 | `metrics.json` | summary: reward, context `first/last/peak/growth`, graph, loops |
 | `reward.txt`, `check.out.txt`, `summary.txt` | the `check.sh` verdict and output |
 
@@ -368,9 +371,11 @@ per-operation schemas matter: one deeply nested discriminated union came back fl
 (`operator` at the top level instead of nested under `action`), and JSON mode made the
 model reason far more on hard turns (and hit the completion cap, whose retries re-sent
 the whole projection). When a response is cut at the cap (`finish_reason: "length"`) and
-carries no call, `invokeTools` raises the cap and retries, as the JSON path does; a bare
-no-call gets one repair round; if that fails the loop stops with `stopReason: "llm_error"`
-instead of crashing.
+carries no call, `invokeTools` retries ONCE at the ceiling with an explicit brevity
+instruction (call the tool now, do not restate analysis) — it does **not** keep doubling
+the cap, which only invites more reasoning (a live `fix-ocaml-gc` run turned one `read`
+into 4 calls / 60.9k completion tokens); a bare no-call gets one repair round; if that
+fails the loop stops with `stopReason: "llm_error"` instead of crashing.
 
 `invokeStructured` remains the generic JSON path (schema spelled out in the prompt,
 `response_format: json_object`, manual parse, raised cap on a completion cut, one repair

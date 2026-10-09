@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, Node, Predicate, WitnessEntry } from "./types";
+import type { Edge, Node, NodeState, WitnessEntry } from "./types";
 
 export interface RejectionRecord {
   seq: number;
@@ -18,8 +18,6 @@ export interface State {
   edges: Map<string, Edge>;
   // Ordered children of plan/alternatives containers, from `item` event order.
   children: Map<string, string[]>;
-  // Derived predicates (§2.5); never a stored field.
-  predicates: Map<string, Predicate>;
   rejections: RejectionRecord[];
   // The node in focus when each node was added, keyed by node id; derived during
   // fold. Scopes negative records to the traversal branch (§2.8).
@@ -39,7 +37,6 @@ export function emptyState(): State {
     nodes: new Map(),
     edges: new Map(),
     children: new Map(),
-    predicates: new Map(),
     rejections: [],
     focusOf: new Map(),
     branch: [],
@@ -58,13 +55,18 @@ export function currentVersion(state: State, ref: string): string | undefined {
   return state.mutated.get(ref) ?? state.observed.get(ref);
 }
 
-export function predicateOf(state: State, id: string): Predicate {
-  return state.predicates.get(id) ?? "open";
-}
-
 export function planOf(state: State, goalId: string): string | undefined {
   for (const edge of state.edges.values()) {
     if (edge.kind === "has_plan" && edge.from === goalId) return edge.to;
+  }
+  return undefined;
+}
+
+// The goal a request is interpreted as (`has_goal` edge). The interpretation is fixed for
+// now (one goal), so there is at most one (docs/plans/request_goal_plan.md).
+export function goalOf(state: State, requestId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "has_goal" && edge.from === requestId) return edge.to;
   }
   return undefined;
 }
@@ -80,33 +82,42 @@ export function childrenOf(state: State, containerId: string): string[] {
   return state.children.get(containerId) ?? [];
 }
 
-export function checkHasUnder(state: State, checkId: string): boolean {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "under" && edge.from === checkId) return true;
-  }
-  return false;
-}
-
-export function witnessOf(state: State, checkId: string): WitnessEntry[] | undefined {
-  const payload = state.nodes.get(checkId)?.payload as { witness?: WitnessEntry[] } | undefined;
+export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefined {
+  const payload = state.nodes.get(nodeId)?.payload as { witness?: WitnessEntry[] } | undefined;
   return payload?.witness;
 }
 
-export function checkIsStale(state: State, checkId: string): boolean {
-  const witness = witnessOf(state, checkId);
-  if (witness === undefined) return false;
-  return witness.some((entry) => currentVersion(state, entry.ref) !== entry.version);
-}
-
-export function latestClosingCheck(state: State, goalId: string): Node | undefined {
+// The latest observation that is a goal's criterion result: a run whose `target` is the
+// goal. Its `exitCode` is the verdict: 0 = pass, non-zero = fail, absent (a timeout) = no
+// verdict. This replaces the old `check`/`verifies` machinery
+// (docs/plans/stop_closure_plan.md §5 step 3).
+export function criterionResult(state: State, goalId: string): Node | undefined {
   let latest: Node | undefined;
-  for (const edge of state.edges.values()) {
-    if (edge.kind !== "verifies" || edge.to !== goalId) continue;
-    const check = state.nodes.get(edge.from);
-    if (check === undefined || check.kind !== "check") continue;
-    if (latest === undefined || check.seq > latest.seq) latest = check;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "observation") continue;
+    const payload = node.payload as { target?: unknown } | undefined;
+    if (payload?.target !== goalId) continue;
+    if (latest === undefined || node.seq > latest.seq) latest = node;
   }
   return latest;
+}
+
+export function criterionExit(state: State, goalId: string): number | undefined {
+  const payload = criterionResult(state, goalId)?.payload as { exitCode?: unknown } | undefined;
+  return typeof payload?.exitCode === "number" ? payload.exitCode : undefined;
+}
+
+// Whether the goal's criterion has passed: its latest criterion run exited 0. The `stop`
+// gate accepts a goal that passed, or one whose plan is exhausted (a give-up).
+export function criterionPass(state: State, goalId: string): boolean {
+  return criterionExit(state, goalId) === 0;
+}
+
+// Whether the goal's criterion failed: its latest criterion run exited non-zero. Read by
+// the revision logic (a `revises` replacement), not a node status.
+export function criterionFailed(state: State, goalId: string): boolean {
+  const exit = criterionExit(state, goalId);
+  return exit !== undefined && exit !== 0;
 }
 
 // A goal the doxa has finished: it has an outgoing `has_stopped` edge to a stop node.
@@ -120,56 +131,44 @@ export function hasStopped(state: State, goalId: string): boolean {
   return false;
 }
 
-// The current chosen option of a container is the target of the latest `chosen`
-// edge (Map iteration follows insertion order, i.e. journal order).
-export function latestChosen(state: State, containerId: string): string | undefined {
-  let chosen: string | undefined;
+// The request's `unactionable` node, if the doxa declined to formulate a goal for it
+// (`no_goal` edge). A declined request is terminal (docs/plans/request_goal_plan.md).
+export function unactionableOf(state: State, requestId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "chosen" && edge.from === containerId) chosen = edge.to;
+    if (edge.kind === "no_goal" && edge.from === requestId) return edge.to;
   }
-  return chosen;
+  return undefined;
 }
 
-function isUnselectedVariant(state: State, goalId: string): boolean {
+// An action bypassed by a newer alternative of its own container (a revised step).
+export function actionSuperseded(state: State, actionId: string): boolean {
+  const alt = alternativesOf(state, actionId);
+  if (alt === undefined) return false;
+  const current = lastChild(state, alt);
+  return current !== undefined && current !== actionId;
+}
+
+// The current option of a container: the LAST child (order = append order). There is no
+// `chosen` edge — the last item added is the current one (docs/plans/request_goal_plan.md).
+export function lastChild(state: State, containerId: string): string | undefined {
+  const ids = state.children.get(containerId);
+  return ids !== undefined && ids.length > 0 ? ids[ids.length - 1] : undefined;
+}
+
+// An option that is not the current one of its alternatives container (a bypassed
+// interpretation/step). Used by `revises`/`repeat_hypothesis`, not as a node state.
+export function unselectedVariant(state: State, goalId: string): boolean {
   for (const [containerId, ids] of state.children) {
     if (!ids.includes(goalId)) continue;
     const container = state.nodes.get(containerId);
     if (container === undefined || container.kind !== "alternatives") continue;
-    const chosen = latestChosen(state, containerId);
-    if (chosen !== undefined) return chosen !== goalId;
+    const current = lastChild(state, containerId);
+    if (current !== undefined) return current !== goalId;
   }
   return false;
 }
 
-function requestPredicate(state: State, requestId: string): Predicate {
-  const alt = alternativesOf(state, requestId);
-  if (alt === undefined) return "open";
-  const chosen = latestChosen(state, alt);
-  if (chosen === undefined) return "open";
-  const predicate = goalPredicate(state, chosen);
-  return predicate === "achieved" || predicate === "achieved_under" ? "addressed" : "open";
-}
-
-function goalPredicate(state: State, goalId: string): Predicate {
-  const check = latestClosingCheck(state, goalId);
-  let closure: Predicate = "open";
-  if (check !== undefined) {
-    const payload = check.payload as { verdict?: unknown } | undefined;
-    const verdict = payload?.verdict;
-    if (verdict === "pass") {
-      closure = checkHasUnder(state, check.id) ? "achieved_under" : "achieved";
-    } else if (verdict === "fail") {
-      closure = "refuted";
-    } else {
-      closure = "open";
-    }
-  }
-  if (closure === "refuted") return "refuted";
-  if (isUnselectedVariant(state, goalId)) return "abandoned";
-  return closure;
-}
-
-function actionExecuted(state: State, actionId: string): boolean {
+export function actionExecuted(state: State, actionId: string): boolean {
   for (const edge of state.edges.values()) {
     if (edge.from !== actionId) continue;
     if (edge.kind === "produces" || edge.kind === "mutates") return true;
@@ -177,23 +176,33 @@ function actionExecuted(state: State, actionId: string): boolean {
   return false;
 }
 
-function actionSuperseded(state: State, actionId: string): boolean {
-  const alt = alternativesOf(state, actionId);
-  if (alt === undefined) return false;
-  const chosen = latestChosen(state, alt);
-  return chosen !== undefined && chosen !== actionId;
+// The node's displayed state: `stopped` when the doxa finished a goal/request (a
+// `has_stopped` edge), `executed` for an action that produced a result, else `open`.
+export function stateOf(state: State, id: string): NodeState {
+  if (hasStopped(state, id)) return "stopped";
+  const node = state.nodes.get(id);
+  if (node?.kind === "action" && actionExecuted(state, id)) return "executed";
+  return "open";
 }
 
-function derivePredicates(state: State): void {
-  state.predicates = new Map();
-  for (const node of state.nodes.values()) {
-    let predicate: Predicate = "open";
-    if (node.kind === "request") predicate = requestPredicate(state, node.id);
-    else if (node.kind === "goal") predicate = goalPredicate(state, node.id);
-    else if (node.kind === "action" && actionExecuted(state, node.id)) predicate = "executed";
-    else if (node.kind === "action" && actionSuperseded(state, node.id)) predicate = "abandoned";
-    state.predicates.set(node.id, predicate);
+// A goal's effective variant: follow the last option of its own alternatives container
+// while it is another goal. A revised goal is judged by its current variant.
+function effectiveGoal(state: State, goalId: string): string {
+  let current = goalId;
+  for (;;) {
+    const alt = alternativesOf(state, current);
+    if (alt === undefined) return current;
+    const next = lastChild(state, alt);
+    if (next === undefined || next === current) return current;
+    current = next;
   }
+}
+
+// Whether the request's goal (through its current variant) has passed its criterion — the
+// request may then be stopped. A read of the criterion fact, not a stored status.
+export function requestSettled(state: State, requestId: string): boolean {
+  const goal = goalOf(state, requestId);
+  return goal !== undefined && criterionPass(state, effectiveGoal(state, goal));
 }
 
 export function fold(events: readonly Event[], base: State = emptyState()): State {
@@ -201,7 +210,6 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     nodes: new Map(base.nodes),
     edges: new Map(base.edges),
     children: new Map([...base.children].map(([key, value]) => [key, [...value]])),
-    predicates: new Map(base.predicates),
     rejections: [...base.rejections],
     focusOf: new Map(base.focusOf),
     branch: [...base.branch],
@@ -213,8 +221,6 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
   };
 
   for (const event of events) applyEvent(state, event);
-
-  derivePredicates(state);
 
   return state;
 }
@@ -277,64 +283,6 @@ function applyEvent(state: State, event: Event): void {
         reason: event.reason,
         constraintId: event.constraintId,
         focus: currentFocus(state) ?? "",
-      });
-      break;
-    }
-    case "record_check": {
-      const checkId = event.id ?? `chk:${state.seq}`;
-      if (!state.nodes.has(checkId)) {
-        state.nodes.set(checkId, {
-          id: checkId,
-          space: "work",
-          kind: "check",
-          label: event.command,
-          payload: {
-            command: event.command,
-            verdict: event.verdict,
-            output: event.output,
-            actor: event.actor ?? "arbiter",
-            ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
-            ...(event.error !== undefined ? { error: event.error } : {}),
-            ...(event.errorRef !== undefined ? { errorRef: event.errorRef } : {}),
-            ...(event.signal !== undefined ? { signal: event.signal } : {}),
-            ...(event.core !== undefined ? { core: event.core } : {}),
-            ...(event.backtrace !== undefined ? { backtrace: event.backtrace } : {}),
-            ...(event.backtraceError !== undefined
-              ? { backtraceError: event.backtraceError }
-              : {}),
-            ...(event.witness !== undefined ? { witness: event.witness } : {}),
-          },
-          seq: state.seq,
-        });
-        const focus = currentFocus(state);
-        if (focus !== undefined) state.focusOf.set(checkId, focus);
-      }
-      event.targets.forEach((target, index) => {
-        const edgeId = `${checkId}:v:${index}`;
-        if (state.edges.has(edgeId)) return;
-        state.edges.set(edgeId, {
-          id: edgeId,
-          from: checkId,
-          to: target,
-          kind: "verifies",
-          provenance: {
-            kind: "check",
-            command: event.command,
-            verdict: event.verdict,
-            ...(event.outputRef !== undefined ? { outputRef: event.outputRef } : {}),
-          },
-        });
-      });
-      (event.under ?? []).forEach((assumption, index) => {
-        const edgeId = `${checkId}:u:${index}`;
-        if (state.edges.has(edgeId)) return;
-        state.edges.set(edgeId, {
-          id: edgeId,
-          from: checkId,
-          to: assumption,
-          kind: "under",
-          provenance: { kind: "llm" },
-        });
       });
       break;
     }

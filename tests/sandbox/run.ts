@@ -12,9 +12,6 @@ import { sandboxWorkspace, type SandboxSpec } from "./workspace";
 
 export interface SandboxRunOptions {
   maxTurns?: number;
-  // External arbiter (I5). Omit to mirror an autonomous Harbor run: an arbiter goal then
-  // never becomes addressed.
-  arbiter?: (state: State, turn: number) => Event[];
   constraints?: { id: string; label: string; forbid?: string[] }[];
   // Test-only: stage the task's `solution/solve.sh` (and an apt shim) under `.skein/` so
   // the offline harness test can replay it. Never set on a live run (it would leak the
@@ -41,7 +38,6 @@ export async function runSandbox(
       propose,
       workspace,
       maxTurns: options.maxTurns ?? 24,
-      ...(options.arbiter !== undefined ? { arbiter: options.arbiter } : {}),
     },
     {
       request: { id: "r1", text: request },

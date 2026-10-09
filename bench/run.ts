@@ -20,7 +20,7 @@ import { pathToFileURL } from "node:url";
 
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { predicateOf, type State } from "../src/ir/graph";
+import { type State } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { currentGoalId, goalPayload } from "../src/ir/traversal";
 import { createChatModel } from "../src/llm/client";
@@ -223,34 +223,8 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  // The program arbiter: while an open arbiter interpretation is in focus, run the case's
-  // acceptance check; on success, accept it (a `record_check` with `actor: "user"`) — the
-  // only way an arbiter goal closes (I5). An objective interpretation is settled by its own
-  // check, so this is a no-op for it.
-  const checkPath = join(caseDir, "check.sh");
-  const arbiter = (state: State): Event[] => {
-    const goalId = currentGoalId(state);
-    if (goalId === undefined) return [];
-    const payload = goalPayload(state, goalId);
-    if (payload?.done_when.kind !== "arbiter") return [];
-    if (predicateOf(state, goalId) !== "open") return [];
-    const acceptance = spawnSync("bash", [checkPath], { cwd: work, encoding: "utf8", timeout: 120_000 });
-    if (acceptance.status !== 0) return [];
-    return [
-      {
-        type: "record_check",
-        id: `chk:arbiter:${state.seq + 1}`,
-        command: "user acceptance",
-        verdict: "pass",
-        output: "",
-        actor: "user",
-        targets: [goalId],
-      },
-    ];
-  };
-
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(work), maxTurns: args.maxTurns ?? settings.maxTurns, arbiter },
+    { propose, workspace: fsWorkspace(work), maxTurns: args.maxTurns ?? settings.maxTurns },
     { request: { id: "r1", text: prompt } },
   );
 

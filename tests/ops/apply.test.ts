@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { currentVersion, predicateOf } from "../../src/ir/graph";
-import { chosenInterpretation, currentGoalId } from "../../src/ir/traversal";
+import { criterionPass, currentVersion, goalOf, requestSettled, stateOf } from "../../src/ir/graph";
+import { currentGoalId } from "../../src/ir/traversal";
 import {
   DEFAULT_FILES,
   applyTool,
@@ -44,11 +44,19 @@ describe("apply: read", () => {
     expect(second.events.filter((e) => e.type === "add_node" && e.node.kind === "observation")).toHaveLength(2);
   });
 
+  it("OP-AP-READ-6 refuses a third read of an unchanged file (thrash guard)", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const first = exec(read("src/sum.mjs"), [request()], ws);
+    const second = exec(read("src/sum.mjs", 1, 2), first.events, ws);
+    // A different window is still new below the cap; the third read is the thrash.
+    expect(classification(read("src/sum.mjs", 2, 3), second.events).reason).toMatch(/repeated_action/);
+  });
+
   it("OP-AP-READ-3 a missing file is a fail observation, not a crash", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(read("src/nope.mjs"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
   });
 
   it("OP-AP-READ-4 / REF-REPEAT refuses an identical read with an unchanged world", () => {
@@ -61,7 +69,7 @@ describe("apply: read", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(read("../outside.mjs"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(outcome.turn.text).toMatch(/escapes workspace/);
   });
 });
@@ -85,7 +93,7 @@ describe("apply: grep", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(grep("sum", "nope"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
   });
 
   it("OP-AP-GREP-4 / REF-REPEAT refuses an identical grep", () => {
@@ -126,7 +134,7 @@ describe("apply: edit", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { events, outcome, state } = exec(edit("src/sum.mjs", "NOT PRESENT", "x"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     const action = [...state.nodes.values()].find((n) => n.kind === "action");
     expect((action?.payload as { find?: string } | undefined)?.find).toBe("NOT PRESENT");
     expect(events.some((e) => e.type === "add_node" && e.node.kind === "observation")).toBe(true);
@@ -153,7 +161,7 @@ describe("apply: edit", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(edit("../outside.mjs", "a", "b"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(outcome.turn.text).toMatch(/escapes workspace/);
   });
 });
@@ -198,7 +206,7 @@ describe("apply: write", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(write("src/sum.mjs", "x"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(ws.read("src/sum.mjs")).toContain("a - b");
   });
 
@@ -206,7 +214,7 @@ describe("apply: write", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(write("../outside.mjs", "x"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(outcome.turn.text).toMatch(/escapes workspace/);
   });
 });
@@ -238,7 +246,7 @@ describe("apply: fetch", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(fetchUrl("file:///nonexistent/does-not-exist.mjs"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(outcome.turn.text).toMatch(/fetch failed/);
   });
 
@@ -246,7 +254,7 @@ describe("apply: fetch", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome, state } = exec(fetchUrl("http://127.0.0.1:1/x", "../outside.mjs"), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(outcome.turn.text).toMatch(/escapes workspace/);
   });
 
@@ -289,7 +297,7 @@ describe("apply: apply_patch", () => {
     const bad = ["--- a/src/sum.mjs", "+++ b/src/sum.mjs", "@@ -1 +1 @@", "-NOT PRESENT", "+x", ""].join("\n");
     const { outcome, state } = exec(patch(bad), [request()], ws);
     const obs = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
-    expect((obs?.payload as { verdict?: string } | undefined)?.verdict).toBe("fail");
+    expect((obs?.payload as { failed?: boolean } | undefined)?.failed).toBe(true);
     expect(ws.read("src/sum.mjs")).toContain("a - b");
   });
 
@@ -325,30 +333,32 @@ describe("apply: run", () => {
     const { goal, events } = objectiveAtFocus(ws, "true");
     expect(classification(check(goal), events).accept).toBe(true);
     const { events: after, state } = exec(check(goal), events, ws);
-    expect(after.some((e) => e.type === "record_check" && e.verdict === "pass")).toBe(true);
-    expect(predicateOf(state, goal)).toBe("achieved");
-  });
-
-  it("OP-AP-RUN-3 a check with under links assumptions and reaches achieved_under", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { goal, events } = objectiveAtFocus(ws, "true");
-    const withUnder = applyTool({ tool: "run", target: goal, under: [goal] });
-    const { state } = exec(withUnder, events, ws);
-    expect(predicateOf(state, goal)).toBe("achieved_under");
-    expect([...state.edges.values()].some((e) => e.kind === "under")).toBe(true);
+    expect(
+      after.some(
+        (e) =>
+          e.type === "add_node" &&
+          e.node.kind === "observation" &&
+          (e.node.payload as { target?: string; exitCode?: number } | undefined)?.target === goal &&
+          (e.node.payload as { exitCode?: number } | undefined)?.exitCode === 0,
+      ),
+    ).toBe(true);
+    expect(criterionPass(state, goal)).toBe(true);
   });
 
   it("OP-AP-RUN-7 a goal is closed only by its own check (no implicit ancestor closure)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const seeded = exec(interpretation("fix the bug", "true"), [request()], ws);
-    const root = chosenInterpretation(seeded.state, "r1")!;
+    const root = goalOf(seeded.state, "r1")!;
     const { state } = exec(check(root), seeded.events, ws);
-    expect(predicateOf(state, root)).toBe("achieved");
-    expect(predicateOf(state, "r1")).toBe("addressed");
-    // Exactly the goal's own check verifies it; nothing is synthesized above it.
-    const verifies = [...state.edges.values()].filter((e) => e.kind === "verifies");
-    expect(verifies).toHaveLength(1);
-    expect(verifies[0]!.to).toBe(root);
+    expect(criterionPass(state, root)).toBe(true);
+    expect(requestSettled(state, "r1")).toBe(true);
+    // Exactly one criterion run targets the goal; nothing is synthesized above it.
+    const criteria = [...state.nodes.values()].filter(
+      (node) =>
+        node.kind === "observation" &&
+        (node.payload as { target?: string } | undefined)?.target === root,
+    );
+    expect(criteria).toHaveLength(1);
   });
 
   it("OP-AP-RUN-4 an inconclusive check stays open and may be retried", () => {
@@ -356,7 +366,7 @@ describe("apply: run", () => {
     const opened = exec(interpretation("fix", "sleep 5"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const first = exec(check(goal), opened.events, ws);
-    expect(predicateOf(first.state, goal)).toBe("open");
+    expect(stateOf(first.state, goal)).toBe("open");
     expect(classification(check(goal), first.events).accept).toBe(true);
   });
 
@@ -386,13 +396,6 @@ describe("apply: run", () => {
 
   it("REF-RUN-EMPTY rejects a run with neither command nor target", () => {
     expect(classification(applyTool({ tool: "run" }), [request()]).reason).toMatch(/needs a command/);
-  });
-
-  it("REF-RUN-ARB rejects a check of an arbiter goal", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("do it"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    expect(classification(check(goal), opened.events).reason).toMatch(/arbiter_goal_needs_acceptance/);
   });
 
   it("REF-RUN-TARGET rejects a check of a non-goal", () => {

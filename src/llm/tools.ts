@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import {
   actionSchema,
-  doneWhenSchema,
   stepSchema,
   type Action,
   type Proposal,
@@ -28,7 +27,7 @@ export interface OpenAITool {
 const createGoalParams = z.object({
   what: z.string(),
   why: z.string().optional(),
-  done_when: doneWhenSchema,
+  done_when: z.string(),
   plan: z.string(),
   step: stepSchema,
   revises: z.array(z.string()).optional(),
@@ -62,7 +61,6 @@ const editParams = z.object({ path: z.string(), find: z.string(), replace: z.str
 const runParams = z.object({
   command: z.string().optional(),
   target: z.string().optional(),
-  under: z.array(z.string()).optional(),
   background: z.boolean().optional(),
   job: z.string().optional(),
 });
@@ -73,6 +71,7 @@ const patchParams = z.object({
   strip: z.number().int().nonnegative().optional(),
 });
 const stopParams = z.object({ why: z.string().optional() });
+const declineParams = z.object({ why: z.string().optional() });
 
 // The descriptions carry the operation, its required fields and the refusals to avoid;
 // the strategy lives in SYSTEM_PROMPT (single source of truth).
@@ -80,7 +79,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "create_goal",
     description:
-      "Propose a goal: an interpretation of the request (when the focus is the request) or a stage sub-goal / hypothesis (when the focus is an open goal). If the request mentions a command that verifies the work, done_when MUST be objective with that literal command — arbiter only when the request names no command at all (an arbiter goal is never checked; it waits for the arbiter's acceptance). Always give plan (a short free-form string sketch of the steps) and step: the FIRST concrete action to run now ({command, label?}). A plan item is always an action; steps are executed one at a time — after each, decide the next from its result. A sub-goal is added only as an alternative to the current step. When you change the approach, revises MUST list ALL refuted/abandoned options of the container by id — but the new option must differ from every refuted one: a what equal to a refuted option's label is refused (repeat_hypothesis) even when revises names it. Refused if: what is empty; done_when is empty; plan is empty; step.command is empty; a failed option is omitted from revises (missing_revision); a refuted hypothesis is repeated (repeat_hypothesis); or the plan of an objective goal is already fully carried out (check that goal instead).",
+      "Interpret the request (when the focus is the request; exactly once — the interpretation is FIXED) or add a sub-goal that branches the current step (when the focus is an open goal). done_when is the literal command that verifies the goal (its criterion) — the engine runs it and reads the exit code (0 = pass, non-zero = fail); pick a command that really checks the work. Always give plan (a short free-form string sketch of the steps) and step: the FIRST concrete action to run now ({command, label?}). A plan item is always an action, appended in order; steps run one at a time — after each, decide the next from its result. A sub-goal replaces the current step (its newest alternative); the focus descends into it. When you replace a failed attempt, revises MUST list ALL failed options of the container by id, and the new what must differ from every failed one. Refused if: what/done_when/plan/step.command is empty; a failed option is omitted from revises (missing_revision); a failed hypothesis is repeated (repeat_hypothesis); the request already has an interpretation (interpreted); or the goal's plan is already fully carried out.",
     schema: createGoalParams,
   },
   {
@@ -116,7 +115,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "run",
     description:
-      "Run a shell command, or check a goal. With target (an objective goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 verifies, non-zero refutes, a timeout is inconclusive and leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. An arbiter target (closed only by external acceptance) is refused — it has no command to run. An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). An objective goal whose plan is fully carried out is settled by its own check (run {target}); a stage's check settles only that stage. background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check. under lists assumption goal ids the check relies on.",
+      "Run a shell command, or check a goal. With target (a goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 is a pass, non-zero a fail, a timeout leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check.",
     schema: runParams,
   },
   {
@@ -140,8 +139,14 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      "Stop: the terminal move. On a goal it finishes the arm (records a has_stopped edge) and the engine returns to the parent to continue. An objective goal is refused (check_not_run) until its own check has passed — run {target} first. An arbiter goal is finished by stop (it has no command to check; its acceptance stays external). On the request it ends the run, once the chosen interpretation is settled (addressed) or already stopped. Do not use it to abandon unfinished work.",
+      "Stop: finish the focused goal. The engine appends a stop node as the goal's LAST plan item and records a has_stopped edge (the closure and its reason sit in the plan); it then returns to the request and the run ends. Accepted only once the goal's criterion has passed; otherwise refused (check_not_run) — run the check {target}, add a step, or revise. There is no stop on the request.",
     schema: stopParams,
+  },
+  {
+    name: "decline",
+    description:
+      "Decline to formulate a goal: the request's intent is not actionable (e.g. chit-chat, no task). Use it INSTEAD of inventing a goal with a fake criterion. Available only while the request has no interpretation yet; records an unactionable node under the request and ends the run. Give why.",
+    schema: declineParams,
   },
 ];
 
@@ -181,6 +186,9 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "stop":
       action = { operator: "stop", ...a };
+      break;
+    case "decline":
+      action = { operator: "decline", ...a };
       break;
     case "read":
     case "grep":

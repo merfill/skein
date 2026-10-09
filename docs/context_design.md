@@ -51,16 +51,16 @@ near step and a list of intentions that grows as we go, not a forecast. Hence:
 2. **A plan item is an action** — a command run **right now, verbatim** — executed one
    per turn; the engine never auto-runs the plan. A goal is **not** a plan item: it
    enters only as an **alternative** to a step, when the doxa decomposes that step.
-   For a bugfix, `fix` IS the hypothesis: `why` + an `objective done_when` = the command
-   that shows the failure, so its own `check` settles it — there is no separate
+   For a bugfix, `fix` IS the hypothesis: `why` + the `done_when` command = the command
+   that shows the failure, so its own criterion run settles it — there is no separate
    `verify`.
 3. **A hypothesis is a node, not a thought.** An explanatory guess becomes a goal with
-   `why`, and a `check` settles it — not the reasoning text.
+   `why`, and a criterion run settles it — not the reasoning text.
 4. **Branching on any item.** An item that did not work gets an **alternative**; the
    old one stays as "did not work" (append-only, §5).
 5. **The plan is a checklist, not a rigid cursor.** An item may be taken in any order;
-   an item is resolved if it is `achieved`/`refuted`/`abandoned` or has a **chosen
-   resolved alternative**. Resolved items do not block. This removes the trap where a
+   an item is resolved if it is executed or `stopped`, or has a **chosen resolved
+   alternative**. Resolved items do not block. This removes the trap where a
    stale item ("`cat HACKING.adoc`", never actually run) holds the cursor and the model
    repeats forever.
 6. **Rollback / revision = an alternative at a higher level.** Returned (`return`) to
@@ -71,23 +71,23 @@ near step and a list of intentions that grows as we go, not a forecast. Hence:
 
 `alternatives` is the way to "revise" without edits: approaches to a node. Attached to
 `request`/`goal` and to **any plan item** (including an action). The chosen one is the
-target of the latest `chosen` edge; the rest are derived `abandoned`.
+target of the latest `chosen` edge; the rest are unselected.
 
 - **The logos branches, not the doxa.** When the model executes an action **different**
   from the current unfulfilled item, the engine itself adds that action as an
-  **alternative** to the item (the previous attempt → `abandoned`); the item is
+  **alternative** to the item (the previous attempt → unselected); the item is
   resolved once the chosen alternative is executed. The doxa only proposes hypotheses —
   it needs no new discipline.
 - **Alternatives are shown as the context of the path's nodes.** The path shows the
   chosen interpretation and each node's own container (`alternatives`/`plan`), so a
   bypassed or decomposed step's "did not work" siblings stay visible; a request's single
   interpretation is shown from the start (`docs/projection.md`, `TR-9`).
-- **A failure is a record, not a deletion.** A failed option stays `refuted`/`abandoned`
-  and serves as the "did not work" list for the next hypothesis or an honest "I don't
-  know".
-- **The "I don't know" region.** If there are no options left, the node stays
-  `refuted`; the model returns upward and takes a new interpretation rather than
-  presenting a guess as knowledge.
+- **A failure is a record, not a deletion.** A failed option stays as a failed/unselected
+  attempt and serves as the "did not work" list for the next hypothesis or an honest "I
+  don't know".
+- **The "I don't know" region.** If there are no options left, the node's criterion stays
+  failed; the model returns upward and takes a new interpretation rather than presenting a
+  guess as knowledge.
 
 ## 5. Append-only (we do not change — we only add)
 
@@ -151,7 +151,7 @@ one context.
    refused the whole proposal.)
 4. **Storing the bodies.** The logos stores a result's body: **a small one directly in
    the node's payload**; **a large one in a temp file**, with a reference
-   (`outputRef`/`errorRef`) in the node. For a run/check, stdout (`output`) and stderr
+    (`outputRef`/`errorRef`) in the node. For a run, stdout (`output`) and stderr
    (`error`) are stored as separate streams (never concatenated). The projection
    assembles the level results and the queried bodies (from the payload or, for a
    reference, at the loop level — `project` stays pure) and shows them next to
@@ -168,7 +168,7 @@ one context.
 7. **Staleness.** `shown` carries only current content: if the file a read was taken
    from has changed since (a different version), the entry is dropped from the working
    set, so the "a `stale` fact is never shown as active content" invariant holds.
-   `run`/`check` bodies are historical and never go stale.
+    `run`/criterion bodies are historical and never go stale.
 
 **Consequence for the "no file content in the IR" invariant.** Small tool results may
 now live in a node's payload, large ones behind a temp-file reference. Secrets still do
@@ -184,7 +184,7 @@ demand.
 
 The index's scope is the **whole subtree of the current chosen interpretation**, not
 just the current path: evidence from `reproduce` stays addressable on `locate`/`fix`.
-Entries of abandoned interpretations are not shown.
+Entries of unselected interpretations are not shown.
 
 Consequences:
 

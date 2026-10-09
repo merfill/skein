@@ -580,6 +580,49 @@ reads), so its fresh input is only ~47.7k.
 Caveat: the sandbox runs at reasoning `low` while the Harbor runs used `high`, so the
 sandbox numbers are not yet matched; the sandbox can be re-run at `high` (plan §3).
 
+**Premature-stop fix (2026-10-09).** The two misses above ("stops without editing") were
+traced to the imported `arbiter`/`check` machinery, not to the limit: an `arbiter` goal
+could be `stop`ped immediately and the run ended with zero mutations (§4.4.2, Bug 1). The
+stop-closure refactor removes that path — a frame closes only by `stop`, and `stop` on a
+goal is accepted only when its criterion passed or its plan is exhausted; there are no
+`arbiter` goals and no external acceptance. Spec — `docs/ir_semantics.md` §4.3; example —
+`docs/walkthrough.md`; the request→goal model (`has_goal`, `unactionable`, `stop` inside the
+plan) is `docs/plans/archive/request_goal_plan.md`. A live virtual-sandbox run of `fix-ocaml-gc`
+(`npx tsx tests/sandbox/live-trace.ts`, 2026-10-09) confirms the fix: the run terminated on
+the budget (`stop=max_turns`, 16 turns, `fixed=false`), **not** via a premature `stop`, and
+with **no** `not_addressed`/refused-`stop` loop — the old defect is gone. It did not edit
+cleanly to a pass (the miniature world's `make` cannot be satisfied by the model's edit; the
+target criterion never passes), so the positive-stop path was not reached; the criterion run
+is recorded as an ordinary `observation`. The run also exposed that the frontier after a
+failed criterion had offered only `create_goal`; it now offers `apply` as well (a step) plus
+`create_goal` (a branch/revise). Full Docker Harbor re-runs remain the accuracy baseline.
+
+**Long-task close and the prompt/engine fixes (2026-10-09).** A live Docker run of
+`fix-ocaml-gc` (json projection, 24 turns) applied the correct edit but never built: it read
+`No rule to make target '../Makefile.build_config'` as a wrong-directory error and never ran
+`./configure && make`, so its own criterion never passed — `reward=1` came only from the
+verifier's clean rebuild (`stop=max_turns`, edit t22). Fixes:
+
+- **Build-first in the repair routine** (B7) and the "not found" rule split (B10) into *wrong
+  working directory* (missing source path) vs *unbuilt/unconfigured tree* (missing build
+  output → run the project's build; setup, not the defect). A live re-run then ran
+  `./configure` + a background `make`, and the edit landed at t28.
+- **Named-suspect → edit** (B7/B16) and **a reference diff is a lead, not a checklist** (B9),
+  after a transcript run re-read one file's windows for 17 turns without editing.
+- **The transcript format was rejected** (the pending A/B, `docs/plans/step_reduction_plan.md`
+  §4): on `fix-ocaml-gc` it roughly doubled reasoning/cost — one turn summed **4 calls /
+  60.9k completion tokens** — and ended `llm_error`; it did lift the cache hit on short
+  fixtures (`ref-localize-on`: 90–92% vs 47–59%). The JSON projection stays the default.
+- **Engine:** `invokeTools` bounds a completion truncation to **one** retry at the ceiling
+  with a brevity instruction (no cap doubling), and a **read thrash-guard** refuses a third
+  read of an unchanged file (`OP-AP-READ-6`).
+
+A build-heavy task now declares its own `maxTurns` (`fix-ocaml-gc`: 60, `tests/sandbox/task.ts`).
+The re-run closed **positively**: `reward=1`, `stop=request_addressed`, 60 turns, edit t25,
+the criterion ended `exitCode 0` at t58, 24.5₽ — the first sandbox run to reach the
+positive-stop path. It used the whole budget, so the turn cost of a long background build +
+polling is the next study (`docs/plans/implementation_plan.md`, backlog).
+
 ## 5. Problems (what broke or hurts)
 
 These are from the early baseline runs (`2026-09-26`, `2026-10-02`); some are fixed

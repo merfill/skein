@@ -113,7 +113,17 @@ function buildSteps(): Step[] {
     const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
     const done = exec(run("true"), opened.events, ws);
-    const timedOut: Event = { type: "record_check", command: "make check", verdict: "inconclusive", output: "", targets: [goal] };
+    const timedOut: Event = {
+      type: "add_node",
+      node: {
+        id: "obs:timeout",
+        space: "work",
+        kind: "observation",
+        label: "make check",
+        payload: { command: "make check", target: goal },
+        seq: 99,
+      },
+    };
     steps.push({
       name: "retry-inconclusive",
       context: projectAt([...done.events, timedOut]),
@@ -176,7 +186,7 @@ function buildSteps(): Step[] {
   }
 
   {
-    // OP-ST-1: an addressed request accepts only stop.
+    // OP-ST-2: a goal whose criterion passed offers stop.
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("fix the build", "true", "true"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
@@ -190,15 +200,15 @@ function buildSteps(): Step[] {
   }
 
   {
-    // TR-8 (F2): an arbiter goal whose one step is done continues with an action
-    // (apply), never the create_goal funnel.
+    // TR-8 (F2): an open goal whose one step is done continues with an action
+    // (apply), not a create_goal funnel.
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("investigate the failure", undefined, "true"), [request()], ws);
     const ran = exec(run("true"), opened.events, ws);
     steps.push({
       name: "continue-open-goal",
       context: projectAt(ran.events),
-      expectMove: (a) => expect(a.operator, "an arbiter goal continues with an action").toBe("apply"),
+      expectMove: (a) => expect(a.operator, "an open goal continues with an action").toBe("apply"),
     });
   }
 

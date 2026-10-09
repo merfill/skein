@@ -15,55 +15,44 @@ const objective: Action[] = [
   {
     operator: "create_goal",
     what: "fix the RLE sweep regression so the compiler bootstraps",
-    done_when: { kind: "objective", command: "make -C testsuite one DIR=tests/basic" },
+    done_when: "make -C testsuite one DIR=tests/basic",
     plan: "read the sweep code, fix it, then run the basic testsuite",
     step: { command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
   },
   FIX_EDIT,
   { operator: "apply", action: { tool: "run", target: "w:goal:2" } },
-  { operator: "stop", why: "the testsuite passes" },
-];
-
-const arbiter: Action[] = [
-  {
-    operator: "create_goal",
-    what: "fix the RLE sweep regression so the compiler bootstraps",
-    done_when: { kind: "arbiter", text: "the OCaml fix is complete and accepted" },
-    plan: "read the sweep code, fix it, then verify",
-    step: { command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
-  },
-  FIX_EDIT,
+  { operator: "stop", why: "the goal is done" },
 ];
 
 describe("fix-ocaml-gc sandbox (engine, scripted proposer)", () => {
-  it("settles an objective goal by its own check, then stops", async () => {
+  it("settles an objective goal by its own check, then stops the goal", async () => {
     const { result } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, scripted(objective), { maxTurns: 8 });
+    // The goal's criterion passes on the check turn; `stop` then appends the goal's last
+    // plan item and the run ends because the request's goal is stopped.
     expect(result.stopReason).toBe("request_addressed");
     expect(result.turns).toBe(4);
-    expect(result.events.filter((event) => event.type === "record_check")).toHaveLength(1);
+    expect(
+      result.events.filter(
+        (event) =>
+          event.type === "add_node" &&
+          event.node.kind === "observation" &&
+          (event.node.payload as { target?: string } | undefined)?.target !== undefined,
+      ),
+    ).toHaveLength(1);
     expect(result.events.filter((event) => event.type === "record_rejection")).toHaveLength(0);
   });
 
-  // The doxa`s `stop` finishes the goal frame (a `has_stopped` edge, not `achieved`);
-  // the engine returns to the request, which then stops too. No arbiter is wired — the
-  // external acceptance is post-hoc (the Harbor verifier). Before the fix this burned the
-  // budget on 10 refused `stop`s and ended at `max_turns` (bench_report.md §4.4.2).
-  it("finishes an arbiter goal by stop and hands over, without an arbiter", async () => {
-    const { result } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, scripted(arbiter, { operator: "stop" }), {
-      maxTurns: 12,
-    });
-    expect(result.stopReason).toBe("request_stopped");
-    expect(result.turns).toBe(4);
-    expect(result.events.filter((event) => event.type === "record_rejection")).toHaveLength(0);
-  });
-
-  // The invariant is untouched for objective goals: `stop` cannot settle them, the check
-  // must run first (`check_not_run`).
-  it("refuses stop on an objective goal whose check has not run", async () => {
+  // For now only positive stops are accepted: `stop` on a goal whose criterion has not
+  // passed is refused (`check_not_run`), and the run ends on the budget, not on a premature
+  // stop (this is the `fix-ocaml-gc` defect from bench_report.md §4.4.2: it must be gone).
+  it("refuses stop on a goal whose check has not run (check_not_run)", async () => {
     const { result } = await runSandbox(
       fixOcamlGc,
       FIX_OCAML_REQUEST,
-      scripted([objective[0] as Action, { operator: "stop" }], { operator: "stop" }),
+      scripted([objective[0] as Action, { operator: "stop", why: "premature" }], {
+        operator: "stop",
+        why: "premature",
+      }),
       { maxTurns: 4 },
     );
     const reasons = result.events

@@ -18,14 +18,13 @@ function activeRefs(state: State): Map<string, Set<string>> {
   };
 
   for (const node of state.nodes.values()) {
-    if (node.kind === "observation") {
-      const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
-      if (typeof payload?.ref === "string" && typeof payload.version === "string") {
-        add(payload.ref, payload.version);
-      }
-    } else if (node.kind === "check") {
-      for (const entry of witnessOf(state, node.id) ?? []) add(entry.ref, entry.version);
+    if (node.kind !== "observation") continue;
+    const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
+    if (typeof payload?.ref === "string" && typeof payload.version === "string") {
+      add(payload.ref, payload.version);
     }
+    // A run's witness: the files it rested on, so a later change stales it.
+    for (const entry of witnessOf(state, node.id) ?? []) add(entry.ref, entry.version);
   }
 
   return refs;

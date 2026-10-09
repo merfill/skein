@@ -51,8 +51,9 @@ async function main(): Promise<void> {
   const { flags, positional } = parseArgs(process.argv.slice(2));
   const ids = positional.length > 0 ? positional : Object.keys(TASKS);
   const concurrency = Number(arg(flags, "--concurrency", "5"));
-  const maxTurns = Number(arg(flags, "--turns", "24"));
-  console.info(`smoke: ${ids.length} tasks, concurrency ${concurrency}, maxTurns ${maxTurns}`);
+  const turnsFlag = arg(flags, "--turns", "");
+  const maxTurns = turnsFlag === "" ? undefined : Number(turnsFlag);
+  console.info(`smoke: ${ids.length} tasks, concurrency ${concurrency}, maxTurns ${maxTurns ?? "per-task"}`);
   const started = Date.now();
 
   const results = await pool(ids, concurrency, async (id) => {
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
       return errorResult(id, "unknown task", 0);
     }
     try {
-      const result = await runLiveTask(task, { maxTurns, quiet: true });
+      const result = await runLiveTask(task, { maxTurns: maxTurns ?? task.maxTurns ?? 24, quiet: true });
       console.info(`[${id}] done reward=${result.reward} stop=${result.stopReason} turns=${result.turns} ${(result.elapsedMs / 1000).toFixed(0)}s`);
       return result;
     } catch (error) {

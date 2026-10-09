@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { alternativesOf, childrenOf, currentFocus, fold, latestChosen, planOf, predicateOf } from "../../src/ir/graph";
-import { currentGoalId, cursorOf, focusEvents, itemFulfilled, itemSucceeded } from "../../src/ir/traversal";
+import { actionSuperseded, alternativesOf, childrenOf, criterionFailed, currentFocus, fold, goalOf, lastChild, planOf, unselectedVariant } from "../../src/ir/graph";
+import { currentGoalId, cursorOf, focusEvents, itemFulfilled } from "../../src/ir/traversal";
 import { project } from "../../src/ir/project";
-import type { DoneWhen } from "../../src/ir/types";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
@@ -17,10 +16,10 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-const ARBITER: DoneWhen = { kind: "arbiter", text: "done" };
-const OBJECTIVE: DoneWhen = { kind: "objective", command: "make test" };
+const ARBITER = "done";
+const OBJECTIVE = "make test";
 
-function goalNode(id: string, what: string, done_when: DoneWhen, seq: number): Event {
+function goalNode(id: string, what: string, done_when: string, seq: number): Event {
   return { type: "add_node", node: { id, space: "work", kind: "goal", label: what, payload: { what, done_when }, seq } };
 }
 
@@ -34,51 +33,46 @@ describe("traversal and containers", () => {
     expect(currentGoalId(opened.state)).not.toBe("r1");
   });
 
-  it("TR-2 focusEvents descends into the chosen interpretation", () => {
+  it("TR-2 focusEvents descends into the request's goal", () => {
     const events: Event[] = [
       request(),
-      { type: "add_node", node: { id: "alt", space: "work", kind: "alternatives", label: "opts", seq: 1 } },
       goalNode("g1", "try", ARBITER, 2),
-      { type: "add_edge", edge: { id: "e1", from: "r1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e2", from: "alt", to: "g1", kind: "item", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e3", from: "alt", to: "g1", kind: "chosen", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e1", from: "r1", to: "g1", kind: "has_goal", provenance: { kind: "llm" } } },
     ];
     const drift = focusEvents(fold(events));
     expect(drift).toEqual([{ type: "descend", node: "g1" }]);
   });
 
-  it("TR-3 focusEvents returns out of a closed top", () => {
+  it("TR-3 focusEvents returns out of a stopped top", () => {
     const events: Event[] = [
       request(),
-      goalNode("g1", "done", ARBITER, 1),
-      { type: "record_check", id: "chk:2", command: "user acceptance", verdict: "pass", output: "", actor: "user", targets: ["g1"] },
+      goalNode("g1", "done", OBJECTIVE, 1),
+      { type: "add_node", node: { id: "s1", space: "work", kind: "stop", label: "done", seq: 2 } },
+      { type: "add_edge", edge: { id: "es", from: "g1", to: "s1", kind: "has_stopped", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
     ];
-    expect(predicateOf(fold(events), "g1")).toBe("achieved");
     expect(focusEvents(fold(events))).toEqual([{ type: "return" }]);
   });
 
-  it("TR-4 trims the branch under a closed ancestor, not only at a closed top", () => {
+  it("TR-4 trims the branch under a stopped ancestor, not only at a stopped top", () => {
     const events: Event[] = [
       request(),
-      goalNode("g1", "refuted", OBJECTIVE, 1),
-      goalNode("g2", "open child", ARBITER, 3),
-      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: ["g1"] },
+      goalNode("g1", "stopped ancestor", OBJECTIVE, 1),
+      goalNode("g2", "open child", OBJECTIVE, 3),
+      { type: "add_node", node: { id: "s1", space: "work", kind: "stop", label: "done", seq: 2 } },
+      { type: "add_edge", edge: { id: "es", from: "g1", to: "s1", kind: "has_stopped", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
       { type: "descend", node: "g2" },
     ];
-    const state = fold(events);
-    expect(predicateOf(state, "g1")).toBe("refuted");
-    expect(predicateOf(state, "g2")).toBe("open");
-    // Both the open child (under the refuted ancestor) and the refuted ancestor return.
-    expect(focusEvents(state)).toEqual([{ type: "return" }, { type: "return" }]);
+    // Both the open child (under the stopped ancestor) and the stopped ancestor return.
+    expect(focusEvents(fold(events))).toEqual([{ type: "return" }, { type: "return" }]);
   });
 
-  it("TR-5 chooses the container by node: goal -> plan, request/refuted -> alternatives", () => {
+  it("TR-5 chooses the container by node: request -> has_goal, goal -> plan", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("do it"), [request()], ws);
     const goal = currentGoalId(opened.state)!;
-    expect(alternativesOf(opened.state, "r1")).toBeDefined();
+    expect(goalOf(opened.state, "r1")).toBe(goal);
 
     const staged = exec(interpretation("stage"), opened.events, ws);
     expect(planOf(staged.state, goal)).toBeDefined();
@@ -107,13 +101,13 @@ describe("traversal and containers", () => {
       { type: "add_edge", edge: { id: "e4", from: "a1", to: "o1", kind: "produces", provenance: { kind: "llm" } } },
     ]);
     expect(itemFulfilled(executed, "a1")).toBe(true);
-    expect(itemSucceeded(executed, "a1")).toBe(true);
     expect(cursorOf(executed, "g")).toBe(1);
   });
 
-  it("TR-6 a step whose chosen alternative is refuted is fulfilled but not succeeded", () => {
-    // A plan item is an action (I2); a sub-goal enters as an alternative to the step. A
-    // refuted option resolves the cursor yet is not a success, so the plan may still grow.
+  it("TR-6 a step whose chosen subgoal alternative is stopped is fulfilled", () => {
+    // A plan item is an action (I2); a sub-goal enters as an alternative to the step.
+    // The step is fulfilled only once that sub-goal is stopped (its criterion alone does
+    // not close it — docs/plans/stop_closure_plan.md §2).
     const events: Event[] = [
       request(),
       goalNode("g", "parent", OBJECTIVE, 1),
@@ -125,14 +119,25 @@ describe("traversal and containers", () => {
       { type: "add_edge", edge: { id: "e2", from: "p", to: "a1", kind: "item", provenance: { kind: "llm" } } },
       { type: "add_edge", edge: { id: "e3", from: "a1", to: "alt", kind: "has_alternatives", provenance: { kind: "llm" } } },
       { type: "add_edge", edge: { id: "e4", from: "alt", to: "sub", kind: "item", provenance: { kind: "llm" } } },
-      { type: "add_edge", edge: { id: "e5", from: "alt", to: "sub", kind: "chosen", provenance: { kind: "llm" } } },
-      { type: "record_check", command: "make test", verdict: "fail", output: "", targets: ["sub"] },
+
     ];
-    const state = fold(events);
-    expect(predicateOf(state, "sub")).toBe("refuted");
-    expect(itemFulfilled(state, "a1")).toBe(true);
-    expect(itemSucceeded(state, "a1")).toBe(false);
-    expect(cursorOf(state, "g")).toBe(1);
+    // A failed criterion leaves the sub-goal open, so the step is not fulfilled.
+    const failed = fold([
+      ...events,
+      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "make test", payload: { command: "make test", target: "sub", exitCode: 1 }, seq: 99 } },
+    ]);
+    expect(criterionFailed(failed, "sub")).toBe(true);
+    expect(itemFulfilled(failed, "a1")).toBe(false);
+    expect(cursorOf(failed, "g")).toBe(0);
+
+    // Closing the sub-goal with stop fulfills the step.
+    const stopped = fold([
+      ...events,
+      { type: "add_node", node: { id: "s1", space: "work", kind: "stop", label: "done", seq: 98 } },
+      { type: "add_edge", edge: { id: "es", from: "sub", to: "s1", kind: "has_stopped", provenance: { kind: "llm" } } },
+    ]);
+    expect(itemFulfilled(stopped, "a1")).toBe(true);
+    expect(cursorOf(stopped, "g")).toBe(1);
   });
 
   // A planned action item is executed on the model's own turn (no auto-run). These two
@@ -164,9 +169,9 @@ describe("traversal and containers", () => {
     const ran = exec(run("echo other"), goalWithActionItem("echo hi"), ws);
     const alt = alternativesOf(ran.state, "a1")!;
     expect(alt).toBeDefined();
-    const chosen = latestChosen(ran.state, alt)!;
-    expect(chosen).not.toBe("a1");
-    expect(predicateOf(ran.state, "a1")).toBe("abandoned");
+    const current = lastChild(ran.state, alt)!;
+    expect(current).not.toBe("a1");
+    expect(actionSuperseded(ran.state, "a1")).toBe(true);
     expect(itemFulfilled(ran.state, "a1")).toBe(true);
     expect(cursorOf(ran.state, "g1")).toBe(1);
   });

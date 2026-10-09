@@ -43,7 +43,7 @@ function proposerFor(regex: string) {
   const goal: Action = {
     operator: "create_goal",
     what: "write a regex matching the last date on lines with an IPv4 address",
-    done_when: { kind: "arbiter", text: "the regex passes the task's tests" },
+    done_when: "the regex passes the task's tests",
     plan: "write the regex to /app/regex.txt, then let the verifier run",
     step: { command: "pwd" },
   };

@@ -1,20 +1,20 @@
 import {
+  actionExecuted,
   alternativesOf,
   childrenOf,
-  latestChosen,
+  goalOf,
+  lastChild,
   planOf,
-  predicateOf,
   type State,
 } from "./graph";
 import {
   applicable,
-  chosenInterpretation,
   currentGoalId,
   cursorOf,
   stateOf,
   type Applicable,
 } from "./traversal";
-import type { DoneWhen, Node, NodeState, Verdict } from "./types";
+import type { Node, NodeState } from "./types";
 
 // The projection is the context for the next operator, not a state dump: the
 // traversal branch plus its containers, the global constraints, the full latest
@@ -64,10 +64,10 @@ export interface PathNode {
   text?: string;
   what?: string;
   why?: string;
-  done_when?: DoneWhen;
-  // An arbiter goal's closing note: the invariant it was accepted under. A closed root
-  // goal stays on the path; a nested completed goal leaves the branch (trimmed under a
-  // closed ancestor), so its note is surfaced in `calls` (docs §4.4).
+  done_when?: string;
+  // A closed root goal's note. A closed root goal stays on the path; a nested completed
+  // goal leaves the branch (trimmed under a closed ancestor), so its note is surfaced in
+  // `calls` (docs §4.4).
   note?: string;
   plan?: ProjectionPlan;
   // The goal's initial plan as a string sketch (I3), shown as a hint while the goal is in
@@ -80,10 +80,12 @@ export interface ResultView {
   // Absent when the call produced no result node (query/complete): then the body is
   // shown but is not retrievable by id.
   id?: string;
-  kind: "observation" | "check" | "action";
+  kind: "observation" | "action";
   command?: string;
   ref?: string;
-  verdict?: Verdict;
+  // A run's exit code: 0 = pass, non-zero = fail, absent on a timeout. The criterion of a
+  // goal is read from the latest run whose `target` is that goal.
+  exitCode?: number;
   label?: string;
   output?: string;
   // stderr, separate from stdout: a failed run's error is the primary signal.
@@ -194,7 +196,7 @@ function alternativesView(
 ): { chosen?: string; items: ProjectionAlternative[] } | undefined {
   const altId = alternativesOf(state, ownerId);
   if (altId === undefined) return undefined;
-  const chosen = latestChosen(state, altId);
+  const chosen = lastChild(state, altId);
   const items = childrenOf(state, altId)
     .flatMap((id) => {
       const node = state.nodes.get(id);
@@ -220,19 +222,17 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
   const state_ = stateOf(state, id);
   if (node.kind === "request") {
     const payload = node.payload as { text?: unknown } | undefined;
+    // The request's goal is the next node on the path (via `has_goal`), so the request
+    // node itself carries no container now.
     return {
       id,
       kind: "request",
       state: state_,
       ...(typeof payload?.text === "string" ? { text: payload.text } : {}),
-      ...((): { alternatives?: PathNode["alternatives"] } => {
-        const alternatives = alternativesView(state, id, maxItems);
-        return alternatives !== undefined ? { alternatives } : {};
-      })(),
     };
   }
   if (node.kind === "goal") {
-    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: DoneWhen; plan?: unknown } | undefined;
+    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: unknown; plan?: unknown } | undefined;
     const plan = planView(state, id, maxItems);
     const alternatives = alternativesView(state, id, maxItems);
     return {
@@ -241,7 +241,7 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
       state: state_,
       ...(typeof payload?.what === "string" ? { what: payload.what } : {}),
       ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
-      ...(payload?.done_when !== undefined ? { done_when: payload.done_when } : {}),
+      ...(typeof payload?.done_when === "string" ? { done_when: payload.done_when } : {}),
       ...(typeof payload?.plan === "string" ? { planHint: payload.plan } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(alternatives !== undefined ? { alternatives } : {}),
@@ -272,17 +272,6 @@ function buildView(
   if (typeof payload?.core === "string") diagnostic.core = payload.core;
   if (typeof payload?.corePattern === "string") diagnostic.corePattern = payload.corePattern;
   if (typeof payload?.backtrace === "string") diagnostic.backtrace = payload.backtrace;
-  if (node.kind === "check") {
-    return {
-      id: node.id,
-      kind: "check",
-      ...(typeof payload?.command === "string" ? { command: payload.command } : {}),
-      ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
-      ...(output !== undefined ? { output } : {}),
-      ...errorField,
-      ...diagnostic,
-    };
-  }
   if (node.kind === "observation") {
     const ref = typeof payload?.ref === "string" ? stripRef(payload.ref) : undefined;
     return {
@@ -293,7 +282,7 @@ function buildView(
         : typeof payload?.command === "string"
           ? { command: payload.command }
           : {}),
-      ...(typeof payload?.verdict === "string" ? { verdict: payload.verdict as Verdict } : {}),
+      ...(typeof payload?.exitCode === "number" ? { exitCode: payload.exitCode } : {}),
       ...(output !== undefined ? { output } : {}),
       ...errorField,
       ...diagnostic,
@@ -334,10 +323,7 @@ function resultView(
   }
   const node = [...state.nodes.values()]
     .filter(
-      (candidate) =>
-        candidate.kind === "observation" ||
-        candidate.kind === "check" ||
-        candidate.kind === "action",
+      (candidate) => candidate.kind === "observation" || candidate.kind === "action",
     )
     .sort(bySeqDesc)[0];
   if (node === undefined) return undefined;
@@ -356,7 +342,7 @@ function viewOfNode(
 ): ResultView | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
-  if (node.kind !== "observation" && node.kind !== "check" && node.kind !== "action") {
+  if (node.kind !== "observation" && node.kind !== "action") {
     return undefined;
   }
   return buildView(state, node, output, error);
@@ -367,6 +353,7 @@ function applicableNames(value: Applicable): string[] {
   if (value.createGoal) names.push("create_goal");
   if (value.apply) names.push("apply");
   if (value.stop) names.push("stop");
+  if (value.decline) names.push("decline");
   return names;
 }
 
@@ -423,13 +410,14 @@ function callNote(child: Node | undefined, status: Call["status"]): string | und
     const output = typeof payload?.output === "string" ? payload.output : "";
     return clip(failureLine(error) || failureLine(output) || "(no output)", NOTE_LIMIT);
   }
-  if (typeof payload?.verdict === "string") {
-    // A piped build (`make … | tail`) exits 0, so its verdict is "pass" while the output
-    // still carries the crash; surface the error line, not just the last line.
+  if (typeof payload?.exitCode === "number") {
+    // A piped build (`make … | tail`) exits 0 while the output still carries the crash;
+    // surface the error line, not just the last line.
     const error = typeof payload.error === "string" ? payload.error : "";
     const output = typeof payload.output === "string" ? payload.output : "";
     const detail = failureLine(error) || failureLine(output) || lastLine(output);
-    return clip(detail === "" ? payload.verdict : `${payload.verdict}; ${detail}`, NOTE_LIMIT);
+    const head = payload.exitCode === 0 ? "ok" : `exit ${payload.exitCode}`;
+    return clip(detail === "" ? head : `${head}; ${detail}`, NOTE_LIMIT);
   }
   if (typeof payload?.ref === "string" && typeof payload.total === "number") {
     const start = typeof payload.start === "number" ? payload.start : 1;
@@ -458,8 +446,7 @@ function editNote(
   return clip(`${diff}${suffix}`, NOTE_LIMIT);
 }
 
-function producedChild(state: State, actionId: string): Node | undefined {
-  let best: Node | undefined;
+function producedChild(state: State, actionId: string): Node | undefined {  let best: Node | undefined;
   for (const edge of state.edges.values()) {
     if (edge.kind !== "produces" || edge.from !== actionId) continue;
     const node = state.nodes.get(edge.to);
@@ -482,7 +469,7 @@ function producedBy(state: State, observationId: string): boolean {
 function interpretationScope(state: State, fallback: readonly string[]): Set<string> {
   const scope = new Set<string>();
   const root = state.rootId;
-  const start = root === undefined ? undefined : chosenInterpretation(state, root);
+  const start = root === undefined ? undefined : goalOf(state, root);
   if (start === undefined) return new Set(fallback);
   const stack = [start];
   while (stack.length > 0) {
@@ -496,6 +483,13 @@ function interpretationScope(state: State, fallback: readonly string[]): Set<str
     for (const child of childrenOf(state, id)) stack.push(child);
   }
   return scope;
+}
+
+// A result is a failure when its payload is flagged `failed` (a tool error) or its run
+// exited non-zero.
+function observationFailed(payload: Record<string, unknown> | undefined): boolean {
+  if (payload?.failed === true) return true;
+  return typeof payload?.exitCode === "number" && payload.exitCode !== 0;
 }
 
 // Summarize previous calls (§2.8): refusals (logos decisions) and executed actions
@@ -536,14 +530,17 @@ function callsView(state: State, branch: ReadonlySet<string>): Call[] {
   }
 
   for (const node of state.nodes.values()) {
-    if (node.kind !== "action" || predicateOf(state, node.id) !== "executed") continue;
+    if (node.kind !== "action" || !actionExecuted(state, node.id)) continue;
     const focus = state.focusOf.get(node.id);
     if (focus !== undefined && !branch.has(focus)) continue;
     const payload = node.payload as { command?: unknown; find?: unknown; replace?: unknown } | undefined;
     const action = typeof payload?.command === "string" ? payload.command : node.label;
     const child = producedChild(state, node.id);
-    const verdict = (child?.payload as { verdict?: unknown } | undefined)?.verdict;
-    const status: Call["status"] = verdict === "fail" ? "fail" : "ok";
+    const status: Call["status"] = observationFailed(
+      child?.payload as Record<string, unknown> | undefined,
+    )
+      ? "fail"
+      : "ok";
     let note = callNote(child, status);
     if (action.startsWith("edit ")) note = editNote(payload, status, note);
     // The address of the result is the produced child when there is one, else the
@@ -554,7 +551,7 @@ function callsView(state: State, branch: ReadonlySet<string>): Call[] {
   for (const node of state.nodes.values()) {
     if (node.kind !== "observation" || producedBy(state, node.id)) continue;
     const payload = node.payload as Record<string, unknown> | undefined;
-    if (payload?.verdict !== "fail") continue;
+    if (payload?.failed !== true) continue;
     const focus = state.focusOf.get(node.id);
     if (focus !== undefined && !branch.has(focus)) continue;
     const output = typeof payload.output === "string" ? payload.output : node.label;

@@ -28,10 +28,10 @@ siblings). The stack is `fold(journal)` over the **append-only** IR. Full spec:
 **Principle:** show the **traversal branch** plus exactly six things without which the
 operator cannot decide:
 
-1. **`path`** — the stack: `request → chosen interpretation → … → current node`;
+1. **`path`** — the stack: `request → goal → … → current node`;
 2. **the containers of the path's nodes** — their `plan` (items + states) and
-   `alternatives` (interpretations/options + `chosen`) — what `create_goal` (and its
-   `revises`), `apply`, and a check rest on;
+   `alternatives` (options, the last/current one marked `chosen`) — what `create_goal`
+   (and its `revises`), `apply`, and a criterion run rest on;
 3. **`constraints`** — global, not to be violated;
 4. **`lastResult`** — the **full** result of the latest call (within the tool's
    honestly declared limits), to decide the next move;
@@ -54,33 +54,32 @@ Projection = {
   lastResult?: ResultView,        // the full result of the latest call
   shown:       ResultView[],      // the working set (branch levels + queried bodies)
   calls:       Call[],            // a summary of previous ones (may be empty)
-  applicable:  string[],          // names of applicable operators (create_goal/apply/stop)
-  checkReady:  boolean,           // a run {target: focus} check is the expected move now
+  applicable:  string[],          // names of applicable operators (create_goal/apply/stop/decline)
+  checkReady:  boolean,           // a run {target: focus} criterion is the expected move now
   nextAction?: string,            // informational: the action item the plan cursor points at
   budget:      { turn, maxTurns, remaining }
 }
 
 PathNode = {
   id, kind: "request" | "goal",
-  state,
+  state,                    // open | executed | stopped
   text?,                    // request
-  what?, why?, done_when?,  // goal
-  note?,                    // goal: an arbiter goal's closing invariant (surfaced in calls when trimmed)
+  what?, why?, done_when?,  // goal: done_when is the criterion command (a string)
   planHint?,                 // goal: the initial plan as a string sketch (I3)
   plan?:         { cursor?, items: Item[] },   // the node's own plan (action items)
-  alternatives?: { chosen?, items: Alt[] }     // the node's own container
+  alternatives?: { chosen?, items: Alt[] }     // the node's own container; `chosen` = the last/current option (a label, not an edge)
 }
 
 Item = { id, kind: "goal" | "action", label, state, why?,
          alternatives?: { chosen?, items: Alt[] } }   // the item's revision history
-Alt  = { id, label, state, chosen: boolean, why? }
+Alt  = { id, label, state, chosen: boolean, why? }   // chosen = the last/current option (a label)
 
 ResultView = {                 // a view, not a node
   id?,                         // absent when the call produced no result node (e.g. query)
-  kind: "observation" | "check" | "action",
-  command?,                    // run / check
+  kind: "observation" | "action",
+  command?,                    // run
   ref?,                        // read / edit — the touched file
-  verdict?,                    // check
+  exitCode?,                   // run: 0 = pass, non-zero = fail, absent on a timeout
   label?,                      // action
   output?,                     // stdout of the latest call (not merged with stderr)
   error?,                      // stderr, kept separate; the primary signal of a failure
@@ -97,17 +96,20 @@ Call = {                       // an aggregate, not an event
 ```
 
 - `path[last]` is the focus; there is no separate `focus`.
-- A `request` has no `plan`/`done_when`; its interpretations live in `alternatives`.
+- A `request` has only `text`; its goal is the next node on the path (the `has_goal`
+  edge). A non-actionable request is declined (`no_goal` → `unactionable`).
 - A `goal` may have a `plan`, `alternatives`, or neither.
-- A plan/alternatives item carries `why?`: for a `refuted`/`abandoned` item it is the
-  failed hypothesis, so the next attempt does not repeat it.
+- A plan/alternatives item carries `why?`: for a failed or unselected item it is the
+  hypothesis that did not work, so the next attempt does not repeat it.
 - `applicable` lists the operator names truly admissible at the focus, from the **same
-  frontier** the gates use (`create_goal`, `apply`, `stop`). `checkReady` says whether a
-  `run {target: path[last]}` **check** is the expected move now (an objective goal whose
-  plan is done). `apply` is listed for any open goal — a bare exploratory `run` is always
-  available, not only a check of the focus; a check requires an **objective** goal (an
-  arbiter goal is settled only by external acceptance, not by a `run`). `stop` is listed
-  only when the request is `addressed`.
+  frontier** the gates use (`create_goal`, `apply`, `stop`, `decline`). `checkReady` says
+  whether a `run {target: path[last]}` criterion run is the expected move now (the goal's
+  plan is done). At a fresh request it is `[create_goal, decline]`: the request is
+  interpreted once or declined. `apply` is listed for any open goal — a bare exploratory
+  `run` is always available, not only a criterion of the focus. `stop` is listed only at a
+  goal whose criterion passed (for now a `stop` is accepted only then); the request has no
+  `stop` — the run ends when its goal is stopped. After a failed criterion the frontier
+  offers `create_goal` (a revision) only.
 - `nextAction`, when present, is informational: the action item the plan cursor points
   at. The doxa is handed the whole **arm** (with the cursor on the current node) and
   chooses the next move — continue, alternative, or stop.
@@ -125,7 +127,7 @@ Call = {                       // an aggregate, not an event
 - **Per-kind node counts** — no.
 - **A turn tape** — no. But **`calls`** is not a tape: it is a deduplicated aggregate of
   signatures, not a history of every turn.
-- **Raw event payloads whole** — no: neither a check's `witness`, nor full file
+- **Raw event payloads whole** — no: neither a criterion run's `witness`, nor full file
   content; a result is shown only if a tool returned it (`lastResult`), and `calls`
   keeps only signatures.
 - **Branches outside the stack** — no; reachable via `query`.
@@ -133,16 +135,16 @@ Call = {                       // an aggregate, not an event
 ### 3.1 Rules of `calls`
 
 - **Sources.** `refused` — from `record_rejection`; `ok`/`fail` — executed actions (an
-  `action` with a produced `observation`/`check`), plus materialized failures without
-  an `action` node.
+  `action` with a produced `observation`), plus materialized failures without an
+  `action` node. `fail` is an observation flagged `failed: true` or a run with a
+  non-zero `exitCode`.
 - **Dedup and count.** Records with an equal `(status, action)` collapse; `count`
   grows. A repeated failure creates **no** knowledge.
 - **Focus.** A record is shown when its focus (the node at the moment of appearance)
-  lies in the **subtree of the current chosen interpretation**, **or on the current
-  `path`**. The path is included because the request root is the parent of that subtree:
-  a refusal recorded while the focus is the request (e.g. a rejected new
-  interpretation) must be visible, otherwise the projection does not change after the
-  refusal (invariant 21).
+  lies in the **subtree of the request's goal**, **or on the current `path`**. The path is
+  included because the request root is the parent of that subtree: a refusal recorded
+  while the focus is the request (e.g. a declined request) must be visible, otherwise the
+  projection does not change after the refusal (invariant 21).
 - **Invalidation.** A mutation after the record clears `fail`/`refused` (in another
   world state the same might work). `ok` is kept as history. The exception is
   constraint refusals (`constraintId`).
@@ -169,13 +171,14 @@ Call = {                       // an aggregate, not an event
 |---|---|
 | `create_goal` | `path` (the focus and its `done_when`), the focus's `alternatives` (for `revises`), `constraints`, `calls` (do not repeat a failure) |
 | `apply` (read/grep/edit/run) | `path` (the current goal), `lastResult` (to decide), `calls` (what was already tried), `constraints` |
-| a check (`apply run { target }`) | `path` + the goal's objective `done_when` |
-| `stop` | the request is `addressed` (the chosen interpretation is `achieved`/`achieved_under`) |
-| `query` | addressing: reaches any node/edge by id/kind/predicate |
+| a criterion run (`apply run { target }`) | `path` + the goal's `done_when` command |
+| `stop` | a goal whose criterion passed (for now a `stop` is accepted only then): it appends a `stop` node as the goal's last plan item and a `has_stopped` edge |
+| `decline` | a fresh request whose intent is not actionable: records `unactionable` (`no_goal`) and ends the run |
+| `query` | addressing: reaches any node/edge by id/kind |
 
-An **arbiter** goal has no command: it is settled only by external acceptance (a
-`record_check` with `actor: "user"`), never by a `run`. A bare `run` (no target) is an
-observation, never a verdict.
+A bare `run` (no target) is an **observation**, never a criterion. There is no per-goal
+acceptance: a goal is closed only by `stop`, once its criterion command has passed, and the
+run ends when the request's goal is stopped.
 
 ## 6. Example: off-by-one, turn by turn
 
@@ -188,7 +191,7 @@ Request: "make `node --test` pass; do not edit tests". Constraint `k1`.
   "constraints": [ { "id": "k1", "forbid": ["\\.test\\.mjs$"] } ],
   "shown": [],
   "calls": [],
-  "applicable": ["create_goal"],
+  "applicable": ["create_goal", "decline"],
   "checkReady": false,
   "budget": { "turn": 0, "maxTurns": 24, "remaining": 24 } }
 ```
@@ -197,12 +200,10 @@ Request: "make `node --test` pass; do not edit tests". Constraint `k1`.
 ```json
 { "path": [
     { "id": "r1", "kind": "request", "state": "open",
-      "text": "make node --test pass; do not edit tests",
-      "alternatives": { "chosen": "g1", "items": [
-        { "id": "g1", "label": "make the suite pass", "state": "open", "chosen": true } ] } },
+      "text": "make node --test pass; do not edit tests" },
     { "id": "g1", "kind": "goal", "state": "open",
       "what": "make the suite pass", "why": "the suite is failing",
-      "done_when": { "kind": "objective", "command": "node --test" },
+      "done_when": "node --test",
       "planHint": "reproduce, locate+fix, verify",
       "plan": { "cursor": 0, "items": [
         { "id": "a2", "kind": "action", "label": "reproduce", "state": "open" } ] } } ],
@@ -216,7 +217,7 @@ Request: "make `node --test` pass; do not edit tests". Constraint `k1`.
 **Turn 2 — `apply run node --test`; the result is shown in full; the previous call moved to `calls`.**
 ```json
 "lastResult": { "id": "obs:12", "kind": "observation", "command": "node --test",
-                "verdict": "fail", "output": "not ok 1 - sumTo(5) is 15\n…" },
+                "exitCode": 1, "output": "not ok 1 - sumTo(5) is 15\n…" },
 "calls": [ { "action": "run make test", "status": "ok", "count": 1 } ]
 ```
 Note: the full output, without versions or `witness`.
@@ -236,12 +237,15 @@ Note: the full output, without versions or `witness`.
                 "label": "edit src/sum.mjs" }
 ```
 
-**Turn 5 — a check of goal `g1`; the witness is not shown.**
+**Turn 5 — the criterion of goal `g1`: `run {target: g1}`; the witness is not shown.**
 ```json
-"lastResult": { "id": "chk:18", "kind": "check", "command": "node --test", "verdict": "pass" }
+"lastResult": { "id": "obs:18", "kind": "observation", "command": "node --test",
+                "exitCode": 0 }
 ```
-After this `g1` is `achieved`, the request is `addressed`, and the loop stops
-(`request_addressed`).
+`g1` is **not** closed by this pass: `exitCode 0` is the criterion fact. The doxa then
+`stop`s `g1` — appending a `stop` node as the goal's last plan item and a `has_stopped`
+edge — so the loop ends (`request_addressed`). The request has no `stop`; the run ends
+when its goal is stopped.
 
 Note: in no turn is there a file list, versions, an `index`, or a tape; a file appears
 as the `ref`/`output` of the action that touched it, or as a signature in `calls`.
@@ -249,15 +253,15 @@ as the `ref`/`output` of the action that touched it, or as a signature in `calls
 ## 7. Counterexample: fix-ocaml-gc
 
 In the run `~/.skein-bench/harbor/2026-10-03__11-00-06` the context jumped
-`37k → 802k → 35k` and again `803k`. The cause: `lastResult` returned a
-`check` node **whole**, and its payload held a `witness` — a version for **every file
+`37k → 802k → 35k` and again `803k`. The cause: `lastResult` returned a criterion
+`observation` **whole**, and its payload held a `witness` — a version for **every file
 in the workspace** (~7000 entries ≈ 767k chars). As soon as a fresher result
 appeared (`read`), the spike vanished.
 
 The correct projection on that turn:
 ```json
-"lastResult": { "id": "chk:536", "kind": "check",
-                "command": "cd /app/ocaml && make", "verdict": "pass" }
+"lastResult": { "id": "obs:536", "kind": "observation", "command": "cd /app/ocaml && make",
+                "exitCode": 0 }
 ```
 The whole witness only via `query`, if the doxa explicitly asks.
 

@@ -18,7 +18,12 @@ async function main(): Promise<void> {
   const task = TASKS[id];
   if (task === undefined) throw new Error(`unknown task ${id}; known: ${Object.keys(TASKS).join(", ")}`);
 
-  const result = await runLiveTask(task, { maxTurns: Number(arg("--turns", "24")) });
+  const turns = arg("--turns", "");
+  // An explicit `--turns` wins; otherwise the task's own budget (a build-heavy task may
+  // need more than the 24-turn default), else 24.
+  const result = await runLiveTask(task, {
+    maxTurns: turns === "" ? (task.maxTurns ?? 24) : Number(turns),
+  });
   const t = result.summary?.totals;
   if (t === undefined) throw new Error(`no metrics for ${task.id}`);
   console.info(

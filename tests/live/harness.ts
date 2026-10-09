@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
-import { predicateOf, type State } from "../../src/ir/graph";
+import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
 import { currentGoalId, goalPayload } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
@@ -171,38 +171,10 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
     return proposal;
   };
 
-  // The program arbiter (mirrors bench/run.ts): while an open arbiter interpretation is
-  // in focus, run the fixture's acceptance check; on success accept it with a
-  // `record_check` actor "user" — the only way an arbiter goal closes (I5). Without it,
-  // a request that names no literal command can never become `addressed`.
   const checkCommand = resolveCheck(fixture, options.check);
-  const arbiter = (state: State): Event[] => {
-    const goalId = currentGoalId(state);
-    if (goalId === undefined) return [];
-    const payload = goalPayload(state, goalId);
-    if (payload?.done_when.kind !== "arbiter") return [];
-    if (predicateOf(state, goalId) !== "open") return [];
-    const acceptance = spawnSync("bash", ["-c", checkCommand], {
-      cwd: root,
-      encoding: "utf8",
-      timeout: 120_000,
-    });
-    if (acceptance.status !== 0) return [];
-    return [
-      {
-        type: "record_check",
-        id: `chk:arbiter:${state.seq + 1}`,
-        command: "user acceptance",
-        verdict: "pass",
-        output: "",
-        actor: "user",
-        targets: [goalId],
-      },
-    ];
-  };
 
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns, arbiter },
+    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns },
     {
       request: { id: "r1", text: request },
       ...(constraints.length > 0 ? { constraints } : {}),
@@ -280,12 +252,19 @@ export function mutationsOf(events: readonly Event[]): string[] {
   return events.filter((event) => event.type === "mutate").map((event) => (event.type === "mutate" ? event.ref : ""));
 }
 
-// Goal checks that a verdict settled: a run with a `target`. Used to tell whether a run
-// recovered from a refuted fix (a real programmer keeps trying; docs/testing_ru.md §3).
+// Goal criterion runs: an observation with a `target` and an exit code. Used to tell
+// whether a run recovered from a refuted fix (a real programmer keeps trying;
+// docs/testing_ru.md §3).
 export function checksOf(events: readonly Event[]): { command: string; verdict: string }[] {
   const out: { command: string; verdict: string }[] = [];
   for (const event of events) {
-    if (event.type === "record_check") out.push({ command: event.command, verdict: event.verdict });
+    if (event.type !== "add_node" || event.node.kind !== "observation") continue;
+    const payload = event.node.payload as
+      | { command?: unknown; target?: unknown; exitCode?: unknown }
+      | undefined;
+    if (typeof payload?.target !== "string" || typeof payload?.command !== "string") continue;
+    if (typeof payload.exitCode !== "number") continue;
+    out.push({ command: payload.command, verdict: payload.exitCode === 0 ? "pass" : "fail" });
   }
   return out;
 }

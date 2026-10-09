@@ -40,7 +40,7 @@ SKEIN_LIVE=false npx vitest run
 ### Операции над IR
 
 Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
-`OP-AP`, `OP-QR`, `OP-ST`, `OP-CP`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
+`OP-AP`, `OP-QR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
 сгруппированы по оператору в `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
 `applicable`, `traversal`, `derivation`); инварианты проверяются на 400 случайных легальных деревьях
 (`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
@@ -81,13 +81,13 @@ SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vit
 `n_concurrent_trials: 5` в Harbor. Каждый тест чистит свой temp-корень, поэтому общего
 `afterEach`-cleanup нет (он гонялся бы за ещё бегущие сценарии). Весь набор — ~3 минуты.
 
-Харнесс сценариев играет **программного арбитра** (зеркалит `bench/run.ts`): пока в
-фокусе открытая arbiter-интерпретация, он запускает приёмочный `check` фикстуры и на
-успехе пишет пользовательскую приёмку (`record_check` с `actor: "user"`) — единственный
-способ закрыть arbiter-цель. Без него запрос, не называющий литеральной команды, не
-может стать `addressed`.
+Харнесс сценариев гоняет только `runAgent` (зеркалит `bench/run.ts`): программного
+арбитра нет. Запрос завершается на собственном `stop` доксы, с вратами по критерию
+выбранной интерпретации (проход или остановленная интерпретация) — поэтому запрос,
+не называющий литеральной команды, всё равно закрывается, как только модель исполняет
+и останавливает свою интерпретацию.
 
-Жёсткие проверки (падение теста): решён ли `check`, закрыт ли запрос
+Жёсткие проверки (падение теста): прошёл ли критерий, закрыт ли запрос
 (`stopReason=request_addressed`, если у сценария `expect.addressed`), целостность
 инвариантов (`tests/invariants.ts`), неизменность `test/` (и явных путей), число
 **различимых** повторно запрошенных результатов (`maxRepeats`; одна и та же цель,
@@ -112,11 +112,11 @@ N раз и собирает все провалы, так что флаки п�
 
 `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` строит проекцию
 каждой семьи операций **офлайн** (ровно то, что показал бы движок) и проверяет **форму**
-следующего хода живой модели: интерпретировать запрос, чекнуть готовую объективную цель,
-принять арбитрную извне, опросить фоновый job, повторить inconclusive-проверку, применить
+следующего хода живой модели: интерпретировать запрос, запустить готовый критерий,
+опросить фоновый job, повторить нерешающую (timeout) проверку, применить
 следующий пункт плана, последовать подсказке фокуса. `SKEIN_STEP_REPEATS=N` (по умолчанию
 3) повторяет шаг, поэтому стохастический промах — не провал. Спецификация и карта
-покрытия — `docs/ir_operations_ru.md`.
+покрытия — `docs/ir_operations_ru.md` (EN + RU).
 
 ### Реплей трассы (без Harbor)
 
@@ -240,6 +240,10 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
 ```
 
+Прогон использует собственный `maxTurns` задачи, если он задан (build-heavy задача вроде
+`fix-ocaml-gc` ставит 60 — её критерий пересобирает весь компилятор, а каждый фоновый опрос
+стоит хода), иначе 24; явный `--turns N` переопределяет и то, и другое.
+
 Вывод — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (проекция по ходам),
 `result.json` (`stopReason`, `reward`, результат верификатора, IR-журнал), `metrics.json`
 (те же итоги/разрезы, что в §3.5), `reward.txt` (оценка верификатора).
@@ -257,7 +261,7 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
 реализацию.
 
 **Как добавить задачу.** Напиши `tests/sandbox/tasks/<id>.ts` с `{ id, image?, files?,
-setup?, check?, workdir?, checkIn?, checkSetup?, network? }` — `request` по умолчанию из
+setup?, check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` по умолчанию из
 кэшированного `instruction.md`, `check` — из кэшированного `tests/test_outputs.py`;
 `files` повторяют Docker `COPY`, `setup` — шаг Dockerfile/`setup.sh`. Зарегистрируй в
 `tasks/registry.ts`. Сначала проверь офлайн (no-op → `reward=0`, родной `solution/solve.sh`
@@ -280,7 +284,7 @@ npm run bench -- <case> [--model provider/model] [--max-turns N] [--compare]
 | `trajectory.json` | предложенные действия по ходам |
 | `turns.ndjson` | на ход: токены/кэш/`contextChars`/время |
 | `contexts.ndjson` | **полная проекция** на ход (`turn`, `chars`, `context`) |
-| `events.ndjson` | журнал IR: узлы, рёбра, `record_check`, `record_rejection` |
+| `events.ndjson` | журнал IR: узлы, рёбра, `mutate`, `record_rejection` |
 | `metrics.json` | сводка: reward, context `first/last/peak/growth`, граф, циклы |
 | `reward.txt`, `check.out.txt`, `summary.txt` | вердикт и вывод `check.sh` |
 
@@ -370,8 +374,11 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял
 модель думать сильно больше на тяжёлых ходах (и упираться в cap, чьи ретраи
 перепосылали всю проекцию). Если ответ обрезан по cap (`finish_reason: "length"`) и вызова
-нет, `invokeTools` поднимает cap и повторяет вызов, как JSON-путь; для голого отсутствия
-вызова — один repair-раунд; иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
+нет, `invokeTools` делает **один** повтор на потолке с явной краткостной инструкцией
+(«вызови инструмент сейчас, не пересказывай анализ») — он **не** удваивает cap дальше,
+что лишь провоцирует ещё больший reasoning (живой прогон `fix-ocaml-gc` превратил одно
+`read` в 4 вызова / 60.9k токенов); для голого отсутствия вызова — один repair-раунд;
+иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
 
 `invokeStructured` остаётся общим JSON-путём (схема в промпте, `response_format:
 json_object`, ручной разбор, поднятый cap при обрыве, один repair-раунд); он покрыт

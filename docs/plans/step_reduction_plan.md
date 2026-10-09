@@ -3,6 +3,15 @@
 > English mirror of `docs/plans/step_reduction_plan_ru.md`.
 > Basis — the `ref-localize` run analysis (`docs/benches/bench_report.md` §4.5) and the
 > doxa/logos principle discussion. Touches `docs/ir.md`, `docs/system_prompt.md`.
+>
+> **Superseded in part (2026-10-09).** This plan predates the stop-closure refactor
+> (`docs/plans/archive/stop_closure_plan.md`). The `check`/`verdict`/`verifies`/`achieved`
+> machinery and the *ancestor-closure / A1* proposal below are **removed**: a frame closes
+> **only** by the doxa's `stop`, and a criterion run is an ordinary `observation` carrying
+> `target`+`exitCode`. Read the A-items about `verifies`/ancestor closure and the
+> "no verified without check" invariant as historical. The turn-reduction *motivation*
+> (fewer doxa calls) still stands; the current model — `docs/ir_semantics.md`; example —
+> `docs/walkthrough.md`.
 
 ## 1. Cost methodology
 
@@ -234,8 +243,13 @@ ids; relation to the "stable projection prefix" backlog item
 (`docs/plans/implementation_plan.md` §4).
 
 **Status:** telemetry implemented and used; A+ measured and rejected (reverted). B
-(transcript) implemented behind `SKEIN_CONTEXT_FORMAT`; the live A/B (json vs transcript)
-is pending. C remains.
+(transcript) implemented behind `SKEIN_CONTEXT_FORMAT`; the **live A/B was run (2026-10-09)
+and the transcript was rejected** — on `fix-ocaml-gc` it roughly doubled reasoning/cost (a
+turn summed 4 calls / 60.9k completion tokens) and ended `llm_error`, while it lifted the
+cache on short fixtures (`ref-localize-on`: 90–92% vs 47–59%). The JSON projection stays the
+default; turn count is instead cut by the named-suspect prompt trigger, the read thrash-guard
+(`OP-AP-READ-6`) and the truncation bound in `invokeTools` (`docs/benches/bench_report.md`
+§4.8). C remains.
 
 ## 5. Open questions
 

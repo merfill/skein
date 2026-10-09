@@ -9,8 +9,8 @@ export const WORK_KINDS = [
   "plan",
   "alternatives",
   "observation",
-  "check",
   "stop",
+  "unactionable",
   "constraint",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
@@ -31,8 +31,6 @@ export interface Node {
   seq: number;
 }
 
-export type Verdict = "pass" | "fail" | "inconclusive";
-
 export interface WitnessEntry {
   ref: string;
   version: string;
@@ -51,42 +49,20 @@ export type Provenance =
       from?: number;
       count?: number;
     }
-  | { kind: "list"; path?: string; include?: string; exclude?: string }
-  | {
-      kind: "check";
-      command: string;
-      verdict: Verdict;
-      outputRef?: string;
-    };
+  | { kind: "list"; path?: string; include?: string; exclude?: string };
 
-// State is derived, never stored: these predicates are computed from the
-// incident event nodes (§2.5).
-export const PREDICATES = [
-  "open",
-  "executed",
-  "achieved",
-  "achieved_under",
-  "refuted",
-  "abandoned",
-  "addressed",
-] as const;
-export type Predicate = (typeof PREDICATES)[number];
-
-// The state shown for a node: its truth predicate, or "stopped" for a goal the doxa has
-// finished (an outgoing `has_stopped` edge). "stopped" is a control fact, not truth: it
-// is derived from the edge and kept out of `Predicate`, which stays about the criterion.
-export type NodeState = Predicate | "stopped";
-
-// A goal's criterion. `objective` is a literal command the arbiter runs; `arbiter` is an
-// external acceptance (a person or a test runner) — doxa cannot settle either one.
-export type DoneWhen =
-  | { kind: "objective"; command: string }
-  | { kind: "arbiter"; text: string };
+// The displayed state of a node: a goal/request is `open` until the doxa stops it
+// (`stopped`, a control fact — a `has_stopped` edge); an action is `executed` once it has
+// produced a result. There are no truth predicates on nodes: the criterion verdict is the
+// `exitCode` of the run observation, read where a decision needs it
+// (docs/plans/stop_closure_plan.md §2).
+export type NodeState = "open" | "executed" | "stopped";
 
 export interface GoalPayload {
   what: string;
   why?: string;
-  done_when: DoneWhen;
+  // The goal's criterion: a literal command the engine runs and reads by exit code.
+  done_when: string;
   // The initial plan as a free-form string hint (I3). Only the first concrete step is
   // materialized in the plan container; later steps are appended one at a time.
   plan?: string;
@@ -95,12 +71,11 @@ export interface GoalPayload {
 export const EDGE_KINDS = [
   "has_plan",
   "item",
+  "has_goal",
   "has_alternatives",
-  "chosen",
-  "under",
   "produces",
-  "verifies",
   "has_stopped",
+  "no_goal",
   "mutates",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];

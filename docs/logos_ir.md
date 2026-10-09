@@ -8,6 +8,14 @@
 > `query`), `no_progress` and the traversal stack have been implemented. The current
 > as-built is `docs/ir.md`; the superseded roadmap is
 > `docs/plans/archive/logos_roadmap_plan.md`.
+>
+> **Stop closure (later).** The `achieved`/`achieved_under`/`refuted`/`under` machinery
+> described below (a per-goal arbiter acceptance via `record_check`) has since been
+> **removed**. A frame closes **only** by the doxa's `stop`; every goal carries a command
+> criterion, and a criterion run is an ordinary `observation` whose `exitCode` is the only
+> pass/fail fact. The `Arbiter` remains only as a boundary authority (the first request,
+> the final acceptance of the request), not a per-goal actor. Current model —
+> `docs/ir_semantics.md`; example — `docs/walkthrough.md`.
 
 We are building a coding agent whose computation is reliable and checkable, and whose
 model context contains only what is necessary. To design such a device rather than

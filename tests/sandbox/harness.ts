@@ -90,8 +90,7 @@ export async function runTask(
     {
       propose,
       workspace,
-      maxTurns: options.maxTurns ?? 24,
-      ...(options.arbiter !== undefined ? { arbiter: options.arbiter } : {}),
+      maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
     },
     {
       request: { id: "r1", text: request },

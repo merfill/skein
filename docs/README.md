@@ -17,6 +17,9 @@ original and a Russian mirror named with the `_ru` suffix.
 - [ir.md](ir.md) · [RU](ir_ru.md) — the IR as built: operations, state, control.
 - [ir_semantics.md](ir_semantics.md) · [RU](ir_semantics_ru.md) — the semantics of the tree
   and the doxa's operators (spine/arms, state, invariants).
+- [walkthrough.md](walkthrough.md) · [RU](walkthrough_ru.md) — the end-to-end example: the
+  tree and the context across execution contexts (a fix, a revision, a give-up, a
+  decomposed step, a non-decisive run, the world).
 - [ir_operations.md](ir_operations.md) · [RU](ir_operations_ru.md) — the operator registry
   (`OP-CG`, `OP-AP`, `TR`, `DER`, `REF`, ...). The coverage gate reads this file; keep the
   ids in sync with the tests.
@@ -48,6 +51,11 @@ original and a Russian mirror named with the `_ru` suffix.
 
 - `plans/` — active plans.
 - `plans/archive/` — completed or superseded plans, kept for the record.
+- [plans/archive/stop_closure_plan.md](plans/archive/stop_closure_plan.md) · [RU](plans/archive/stop_closure_plan_ru.md)
+  — one closure (`stop`), checks as observations, no arbiter (done).
+- [plans/archive/request_goal_plan.md](plans/archive/request_goal_plan.md) · [RU](plans/archive/request_goal_plan_ru.md)
+  — `has_goal` (one goal per request), `unactionable`, `stop` inside the plan, no `chosen`
+  (done).
 - [plans/archive/logos_roadmap_plan.md](plans/archive/logos_roadmap_plan.md) · [RU](plans/archive/logos_roadmap_plan_ru.md)
   — the earlier logos roadmap (modes, `cited`, `Revision`); superseded by the IR
   semantics, kept as history.

@@ -259,6 +259,22 @@ describe("tool calling", () => {
     expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
+  it("invokeTools bounds a truncation storm: one brevity retry, then throws", async () => {
+    let calls = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          return { content: "", tool_calls: [], response_metadata: { finish_reason: "length" } };
+        },
+      }),
+    } as unknown as BaseChatModel;
+    // A model that only ever truncates must not loop: one retry at the ceiling with a
+    // brevity hint, then give up (a live run turned one `read` into 4 calls / 60.9k tokens).
+    await expect(invokeTools(model, [new HumanMessage("go")])).rejects.toThrow();
+    expect(calls).toBe(2);
+  });
+
   it("invokeTools repairs once when the tool call is malformed", async () => {
     let calls = 0;
     const model = {

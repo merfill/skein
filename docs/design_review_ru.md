@@ -9,7 +9,11 @@
 
 > **Замечание.** Заметка предшествует текущей семантике IR: она ссылается на API,
 > с тех пор удалённые или переименованные (`finish`, `frontier.verified`/`frontier.refusals`,
-> `index { counts, recent }`, query `status`/`verdictOf`). Текущий as-built — `docs/ir_ru.md`;
+> `index { counts, recent }`, query `status`/`verdictOf`). Она также предшествует
+> рефактору закрытия через `stop`: обсуждаемая в ней механика
+> `arbiter`/`check`/`record_check`/`verifies`/`under`/`achieved` с тех пор **удалена** —
+> кадр закрывается только `stop` доксы, а запуск-критерий — обычный `observation`, чей
+> `exitCode` есть единственный факт прохода/провала. Текущий as-built — `docs/ir_ru.md`;
 > эти термины здесь историчны.
 
 Документ фиксирует по пунктам, какие риски и рекомендации мы **принимаем**,

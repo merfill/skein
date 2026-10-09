@@ -1,42 +1,31 @@
 import type { Event } from "../src/ir/events";
-import { checkHasUnder, fold, predicateOf } from "../src/ir/graph";
+import { criterionPass, fold } from "../src/ir/graph";
 
-/** Invariant: `achieved` needs a passing check without assumptions;
- * `achieved_under` needs a passing check with `under` or a `complete`. */
+/** Invariant: `achieved` needs a criterion run that exited 0. */
 export function achievedWithoutCheck(events: readonly Event[]): string[] {
   const state = fold(events);
   const violations: string[] = [];
   for (const node of state.nodes.values()) {
     if (node.kind !== "goal") continue;
-    const predicate = predicateOf(state, node.id);
-    if (predicate !== "achieved" && predicate !== "achieved_under") continue;
-
+    if (!criterionPass(state, node.id)) continue;
     let pass = false;
-    let under = false;
-    for (const edge of state.edges.values()) {
-      if (edge.kind === "verifies" && edge.to === node.id) {
-        const check = state.nodes.get(edge.from);
-        const payload = check?.payload as { verdict?: unknown } | undefined;
-        if (payload?.verdict === "pass") {
-          pass = true;
-          if (checkHasUnder(state, edge.from)) under = true;
-        }
-      }
+    for (const obs of state.nodes.values()) {
+      if (obs.kind !== "observation") continue;
+      const payload = obs.payload as { target?: unknown; exitCode?: unknown } | undefined;
+      if (payload?.target === node.id && payload.exitCode === 0) pass = true;
     }
-    if (predicate === "achieved" && !pass) violations.push(node.id);
-    if (predicate === "achieved_under" && !(pass && under)) {
-      violations.push(node.id);
-    }
+    if (!pass) violations.push(node.id);
   }
   return violations;
 }
 
-/** Invariant: every non-root goal is an item of a plan or alternatives. */
+/** Invariant: every non-root goal is bound by a `has_goal` (the request's interpretation)
+ * or an `item` edge of a plan/alternatives. */
 export function unboundGoals(events: readonly Event[]): string[] {
   const state = fold(events);
   const bound = new Set<string>();
   for (const edge of state.edges.values()) {
-    if (edge.kind === "item" && state.nodes.get(edge.to)?.kind === "goal") {
+    if ((edge.kind === "item" || edge.kind === "has_goal") && state.nodes.get(edge.to)?.kind === "goal") {
       bound.add(edge.to);
     }
   }
@@ -49,11 +38,11 @@ export function unboundGoals(events: readonly Event[]): string[] {
   return violations;
 }
 
-/** Invariant: structural edges (`has_plan`, `item`, `has_alternatives`,
- * `chosen`) form a forest — no cycles. */
+/** Invariant: structural edges (`has_plan`, `has_goal`, `item`, `has_alternatives`,
+ * `no_goal`) form a DAG — no cycles. */
 export function structuralCycle(events: readonly Event[]): boolean {
   const state = fold(events);
-  const kinds = new Set(["has_plan", "item", "has_alternatives", "chosen"]);
+  const kinds = new Set(["has_plan", "has_goal", "item", "has_alternatives", "no_goal"]);
   const adjacency = new Map<string, string[]>();
   for (const edge of state.edges.values()) {
     if (!kinds.has(edge.kind)) continue;
