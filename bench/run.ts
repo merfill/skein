@@ -111,7 +111,7 @@ function toLoopEvent(action: Action): LoopEvent {
     case "edit":
       return { tool: "edit", input: { filePath: apply.path } };
     case "run":
-      return { tool: "bash", input: { command: apply.command ?? `check ${apply.target ?? ""}` } };
+      return { tool: "bash", input: { command: apply.command ?? "" } };
     default:
       return { tool: apply.tool, input: {} };
   }

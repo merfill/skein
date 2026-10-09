@@ -14,6 +14,8 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { parseOpenCodeStream } from "../tests/sandbox/opencode-metrics";
+
 interface Trial {
   agent: string;
   task: string;
@@ -118,37 +120,17 @@ function parseSkein(trialDir: string): Omit<Trial, "agent" | "task" | "reward" |
 // reasoning and cache) and one `tool_use` per tool call. `trajectory.json` final_metrics
 // only carries input/output/cached totals, no reasoning — so parse the stream.
 function parseOpencodeStream(text: string): Omit<Trial, "agent" | "task" | "reward" | "solves" | "exception"> {
-  const promptTokens: number[] = [];
-  let inputTotal = 0;
-  let outputVisible = 0;
-  let reasoningTotal = 0;
-  let cacheRead = 0;
-  let llmCalls = 0;
-  const step =
-    /"type":"step-finish","tokens":\{"total":\d+,"input":(\d+),"output":(\d+),"reasoning":(\d+),"cache":\{"write":\d+,"read":(\d+)\}\}/g;
-  for (const m of text.matchAll(step)) {
-    const input = Number(m[1]);
-    const output = Number(m[2]);
-    const reasoning = Number(m[3]);
-    const cache = Number(m[4]);
-    inputTotal += input + cache;
-    outputVisible += output;
-    reasoningTotal += reasoning;
-    cacheRead += cache;
-    promptTokens.push(input + cache);
-    llmCalls += 1;
-  }
-  const toolCalls = (text.match(/"type":"tool_use"/g) ?? []).length;
+  const metric = parseOpenCodeStream(text);
   return {
-    promptTokens,
-    llmCalls,
-    toolCalls,
-    cacheRead,
-    inputTotal,
+    promptTokens: metric.perCall,
+    llmCalls: metric.steps,
+    toolCalls: metric.toolCalls,
+    cacheRead: metric.cacheRead,
+    inputTotal: metric.inputTokens,
     // Total completion = visible output + hidden reasoning, so `out` is comparable with
     // Skein's `outputTokens` (which bundles reasoning in the old runs).
-    outputTotal: outputVisible + reasoningTotal,
-    reasoningTotal,
+    outputTotal: metric.outputTokens,
+    reasoningTotal: metric.reasoningTokens,
     cost: 0,
     costUnit: "$",
   };

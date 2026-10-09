@@ -11,20 +11,6 @@ export type Proposer = (context: Context) => Promise<Proposal>;
 
 export { SYSTEM_PROMPT };
 
-export function renderContext(context: Context): string {
-  return JSON.stringify(context, null, 2);
-}
-
-// The two context packagings under A/B (docs/plans/step_reduction_plan_ru.md §4):
-// - json: one message with the whole projection (the original).
-// - transcript: the projection laid out as a role-tagged history, so a turn appends to a
-//   stable prefix instead of re-serializing one changing blob.
-export type ContextFormat = "json" | "transcript";
-
-export function contextFormat(): ContextFormat {
-  return process.env.SKEIN_CONTEXT_FORMAT === "transcript" ? "transcript" : "json";
-}
-
 const messageText = (message: BaseMessage): string =>
   typeof message.content === "string" ? message.content : JSON.stringify(message.content);
 
@@ -60,8 +46,6 @@ function board(context: Context): string {
       constraints: context.constraints,
       calls: context.calls,
       applicable: context.applicable,
-      checkReady: context.checkReady,
-      ...(context.nextAction !== undefined ? { nextAction: context.nextAction } : {}),
       budget: context.budget,
     },
     null,
@@ -69,10 +53,12 @@ function board(context: Context): string {
   );
 }
 
-// Render the projection as a role-tagged history. History is the current branch's call
-// index (already scoped to the chosen interpretation, so a failed alternative's steps are
-// not expanded — only its marker in `path` shows). The request/constraints lead and the
-// volatile board trails, so a new step appends after a stable prefix.
+// The projection laid out as a role-tagged history: a turn appends to a stable prefix
+// instead of re-serializing one changing blob (docs/plans/step_reduction_plan_ru.md §4).
+// History is the current branch's call index (already scoped to the chosen interpretation,
+// so a failed alternative's steps are not expanded — only its marker in `path` shows). The
+// request/constraints lead and the volatile board trails, so a new step appends after a
+// stable prefix.
 export function renderTranscript(context: Context): BaseMessage[] {
   const bodies = new Map<string, ResultView>();
   for (const view of context.shown) {
@@ -95,9 +81,7 @@ export function renderTranscript(context: Context): BaseMessage[] {
 }
 
 export function buildMessages(context: Context): BaseMessage[] {
-  return contextFormat() === "transcript"
-    ? renderTranscript(context)
-    : [new SystemMessage(SYSTEM_PROMPT), new HumanMessage(renderContext(context))];
+  return renderTranscript(context);
 }
 
 // The actual prompt payload sent for a turn (both packagings), so the bench can report the

@@ -51,21 +51,12 @@ export type Provenance =
     }
   | { kind: "list"; path?: string; include?: string; exclude?: string };
 
-// The displayed state of a node: a goal/request is `open` until the doxa stops it
-// (`stopped`, a control fact — a `has_stopped` edge); an action is `executed` once it has
-// produced a result. There are no truth predicates on nodes: the criterion verdict is the
-// `exitCode` of the run observation, read where a decision needs it
-// (docs/plans/stop_closure_plan.md §2).
-export type NodeState = "open" | "executed" | "stopped";
-
 export interface GoalPayload {
   what: string;
   why?: string;
-  // The goal's criterion: a literal command the engine runs and reads by exit code.
-  done_when: string;
-  // The initial plan as a free-form string hint (I3). Only the first concrete step is
-  // materialized in the plan container; later steps are appended one at a time.
-  plan?: string;
+  // A short free-form string note so the model does not lose the thread (I3); the first
+  // concrete plan item is materialized in the plan container, later ones are appended.
+  sketch?: string;
 }
 
 export const EDGE_KINDS = [

@@ -24,11 +24,19 @@ export interface TaskRun {
   request: string;
 }
 
-export async function runTask(
+// The on-disk task root and its verifier: the environment's files, the task's own verifier
+// (under `.skein/`, hidden from the agent's file tools) and the pytest-free runner. Shared
+// by the engine harness (`runTask`) and the opencode adapter (`opencode.ts`).
+export interface MaterializedTask {
+  root: string;
+  request: string;
+  check: string;
+}
+
+export function materializeTask(
   task: SandboxTask,
-  propose: Proposer,
-  options: SandboxRunOptions = {},
-): Promise<TaskRun> {
+  options: { stageSolution?: boolean } = {},
+): MaterializedTask {
   const taskDir = harborTaskDir(task.id);
   const root = newSandboxRoot(`skein-task-${task.id}-`);
 
@@ -64,6 +72,15 @@ export async function runTask(
 
   const request = task.request ?? readFileSync(join(taskDir, "instruction.md"), "utf8");
   const check = task.check ?? DEFAULT_TASK_CHECK;
+  return { root, request, check };
+}
+
+export async function runTask(
+  task: SandboxTask,
+  propose: Proposer,
+  options: SandboxRunOptions = {},
+): Promise<TaskRun> {
+  const { root, request, check } = materializeTask(task, { stageSolution: options.stageSolution });
   const workspace =
     task.image !== undefined
       ? dockerWorkspace(root, {

@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, Node, NodeState, WitnessEntry } from "./types";
+import type { Edge, Node, WitnessEntry } from "./types";
 
 export interface RejectionRecord {
   seq: number;
@@ -87,41 +87,8 @@ export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefi
   return payload?.witness;
 }
 
-// The latest observation that is a goal's criterion result: a run whose `target` is the
-// goal. Its `exitCode` is the verdict: 0 = pass, non-zero = fail, absent (a timeout) = no
-// verdict. This replaces the old `check`/`verifies` machinery
-// (docs/plans/stop_closure_plan.md §5 step 3).
-export function criterionResult(state: State, goalId: string): Node | undefined {
-  let latest: Node | undefined;
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "observation") continue;
-    const payload = node.payload as { target?: unknown } | undefined;
-    if (payload?.target !== goalId) continue;
-    if (latest === undefined || node.seq > latest.seq) latest = node;
-  }
-  return latest;
-}
-
-export function criterionExit(state: State, goalId: string): number | undefined {
-  const payload = criterionResult(state, goalId)?.payload as { exitCode?: unknown } | undefined;
-  return typeof payload?.exitCode === "number" ? payload.exitCode : undefined;
-}
-
-// Whether the goal's criterion has passed: its latest criterion run exited 0. The `stop`
-// gate accepts a goal that passed, or one whose plan is exhausted (a give-up).
-export function criterionPass(state: State, goalId: string): boolean {
-  return criterionExit(state, goalId) === 0;
-}
-
-// Whether the goal's criterion failed: its latest criterion run exited non-zero. Read by
-// the revision logic (a `revises` replacement), not a node status.
-export function criterionFailed(state: State, goalId: string): boolean {
-  const exit = criterionExit(state, goalId);
-  return exit !== undefined && exit !== 0;
-}
-
 // A goal the doxa has finished: it has an outgoing `has_stopped` edge to a stop node.
-// This is a control fact (the arm is done), not truth — `achieved` still needs a check.
+// This is a control fact (the arm is done), not truth.
 // The edge points goal → stop (like `has_plan`), so from a goal one can always tell it is
 // finished and follow the edge to the stop node (and its why / arm history).
 export function hasStopped(state: State, goalId: string): boolean {
@@ -155,54 +122,12 @@ export function lastChild(state: State, containerId: string): string | undefined
   return ids !== undefined && ids.length > 0 ? ids[ids.length - 1] : undefined;
 }
 
-// An option that is not the current one of its alternatives container (a bypassed
-// interpretation/step). Used by `revises`/`repeat_hypothesis`, not as a node state.
-export function unselectedVariant(state: State, goalId: string): boolean {
-  for (const [containerId, ids] of state.children) {
-    if (!ids.includes(goalId)) continue;
-    const container = state.nodes.get(containerId);
-    if (container === undefined || container.kind !== "alternatives") continue;
-    const current = lastChild(state, containerId);
-    if (current !== undefined) return current !== goalId;
-  }
-  return false;
-}
-
 export function actionExecuted(state: State, actionId: string): boolean {
   for (const edge of state.edges.values()) {
     if (edge.from !== actionId) continue;
     if (edge.kind === "produces" || edge.kind === "mutates") return true;
   }
   return false;
-}
-
-// The node's displayed state: `stopped` when the doxa finished a goal/request (a
-// `has_stopped` edge), `executed` for an action that produced a result, else `open`.
-export function stateOf(state: State, id: string): NodeState {
-  if (hasStopped(state, id)) return "stopped";
-  const node = state.nodes.get(id);
-  if (node?.kind === "action" && actionExecuted(state, id)) return "executed";
-  return "open";
-}
-
-// A goal's effective variant: follow the last option of its own alternatives container
-// while it is another goal. A revised goal is judged by its current variant.
-function effectiveGoal(state: State, goalId: string): string {
-  let current = goalId;
-  for (;;) {
-    const alt = alternativesOf(state, current);
-    if (alt === undefined) return current;
-    const next = lastChild(state, alt);
-    if (next === undefined || next === current) return current;
-    current = next;
-  }
-}
-
-// Whether the request's goal (through its current variant) has passed its criterion — the
-// request may then be stopped. A read of the criterion fact, not a stored status.
-export function requestSettled(state: State, requestId: string): boolean {
-  const goal = goalOf(state, requestId);
-  return goal !== undefined && criterionPass(state, effectiveGoal(state, goal));
 }
 
 export function fold(events: readonly Event[], base: State = emptyState()): State {

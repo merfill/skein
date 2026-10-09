@@ -221,9 +221,10 @@ existing working-set/storage rule is unchanged. History is scoped to the chosen
 interpretation, so a failed alternative's steps are not expanded — only its marker
 (`refuted`/`abandoned` with `why`) shows in `path`; on a rollback the prefix before the
 divergence node is unchanged and only the suffix is re-rendered. `assistant` carries the
-tool call only (no `thought`, B.3). Selected with `SKEIN_CONTEXT_FORMAT=transcript`
-(default `json`); the bench and live harness now measure the real prompt payload
-(`promptText`). Guarded by `tests/prompt.test.ts` ("context format: transcript").
+tool call only (no `thought`, B.3). **Now the only packaging** (`buildMessages` renders the
+transcript; the `SKEIN_CONTEXT_FORMAT` toggle and the JSON blob were removed); the bench and
+live harness measure the real prompt payload (`promptText`). Guarded by
+`tests/prompt.test.ts` ("context format: transcript").
 
 **4.3 A/B experiment.** Cases: `ref-localize-on` + one live scenario. Compare A/B(/C) by
 LLM turns, input/output, cache%, `reasoning_tokens`/turn, reward. Hypothesis: B lowers
@@ -243,13 +244,20 @@ ids; relation to the "stable projection prefix" backlog item
 (`docs/plans/implementation_plan.md` §4).
 
 **Status:** telemetry implemented and used; A+ measured and rejected (reverted). B
-(transcript) implemented behind `SKEIN_CONTEXT_FORMAT`; the **live A/B was run (2026-10-09)
-and the transcript was rejected** — on `fix-ocaml-gc` it roughly doubled reasoning/cost (a
-turn summed 4 calls / 60.9k completion tokens) and ended `llm_error`, while it lifted the
-cache on short fixtures (`ref-localize-on`: 90–92% vs 47–59%). The JSON projection stays the
-default; turn count is instead cut by the named-suspect prompt trigger, the read thrash-guard
-(`OP-AP-READ-6`) and the truncation bound in `invokeTools` (`docs/benches/bench_report.md`
-§4.8). C remains.
+(transcript) is **the only packaging** (the toggle was removed). The **live A/B (2026-10-09)** makes
+the transcript a decisive **cache win** on short fixtures — `ref-localize-on`, n=3 each:
+cache **54% → 91%**, cost **0.63₽ → 0.17₽** (≈3.7×) at reward 1.0 (runs
+`bench/runs/2026-10-09T12-4{0,1,2}-*-ref-localize-on-skein/`). The rejection came from one
+long run, `bench/runs/sandbox-tasks/2026-10-09T12-42-29-270Z-fix-ocaml-gc` (reward 0,
+`llm_error`, 40.70₽): its cache was **also higher** (63% vs 42–58% for JSON that day), but
+two `read` turns hit a **completion truncation storm** (t21 3 calls / 34.2k, t29 4 calls /
+60.9k tokens — 36% of the cost) because `invokeTools` doubled the cap on `finish_reason:
+"length"`. That storm is now bounded (one brevity retry at the ceiling, no cap doubling), so
+**the rejection is provisional and the format should be re-run** — the cache gap is the
+largest single structural cost vs opencode (56% vs 96%, `docs/benches/bench_report.md` §4.4,
+§4.8). The JSON projection stays the default meanwhile; turn count is cut by the named-suspect
+prompt trigger, the read thrash-guard (`OP-AP-READ-6`) and the `invokeTools` truncation bound.
+C remains.
 
 ## 5. Open questions
 

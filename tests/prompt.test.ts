@@ -45,18 +45,31 @@ describe("system prompt: tool contract", () => {
     expect(b14?.text).toMatch(/NEVER merge/);
   });
 
-  it("keeps the stop condition in its own block (B15)", () => {
+  it("keeps the stop condition in its own block (B15): a goal closes by stop, no criterion", () => {
     const b15 = PROMPT_BLOCKS.find((block) => block.id === "B15");
-    expect(b15?.text).toMatch(/only once its criterion has passed/i);
+    expect(b15?.text).toMatch(/a goal is finished by stop/i);
+    expect(b15?.text).toMatch(/no criterion/i);
   });
 
-  // A refuted option (a goal, or a request's interpretation) must not be re-proposed with
-  // the same `what`; the guard is `repeat_hypothesis` and the model must be told, in the
-  // prompt and in the create_goal description (Phase 5, docs/system_prompt_ru.md §4).
-  it("warns against re-proposing a refuted option (repeat_hypothesis)", () => {
-    expect(SYSTEM_PROMPT).toContain("repeat_hypothesis");
+  // A live run backgrounded every build and then spent turns polling it; a foreground run
+  // blocks and finishes in one turn. The prompt must say to run builds in the foreground.
+  it("tells the model to run builds in the foreground", () => {
+    const run = PROPOSAL_TOOLS.find((tool) => tool.function.name === "run");
+    expect(run?.function.description).toMatch(/FOREGROUND/);
+    expect(SYSTEM_PROMPT).toMatch(/Run a build \(or a test suite\) in the FOREGROUND/);
+  });
+
+  // The reduced goal model: no criterion and no removed fields leak into the prompt or the
+  // tool descriptions the model attends to most (docs/plans/goal_reduction_plan.md §4).
+  it("exposes the reduced goal vocabulary and no removed fields", () => {
     const createGoal = PROPOSAL_TOOLS.find((tool) => tool.function.name === "create_goal");
-    expect(createGoal?.function.description).toContain("repeat_hypothesis");
+    const description = createGoal?.function.description ?? "";
+    expect(description).toContain("sketch");
+    expect(description).toContain("command");
+    for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
+      expect(SYSTEM_PROMPT, `prompt must not mention ${removed}`).not.toContain(removed);
+      expect(description, `create_goal must not mention ${removed}`).not.toContain(removed);
+    }
   });
 });
 
@@ -84,6 +97,16 @@ describe("system prompt: stream discipline", () => {
     expect(SYSTEM_PROMPT).toContain("cd <dir> &&");
   });
 
+  // B6 says the criterion runs from the workspace root, but a live fix-ocaml-gc run created
+  // its goal with the bare `make -C testsuite …` (the subdirectory `ocaml/` was named in the
+  // request) and only revised it late. The `create_goal` tool description — the schema the
+  // model attends to most — must carry the same rule.
+  it("states the workspace-root/cd rule in the create_goal description", () => {
+    const createGoal = PROPOSAL_TOOLS.find((tool) => tool.function.name === "create_goal");
+    expect(createGoal?.function.description).toMatch(/WORKSPACE ROOT/);
+    expect(createGoal?.function.description).toContain("cd <dir> &&");
+  });
+
   it("reacts to a missing path as a wrong working directory, not bad code", () => {
     expect(SYSTEM_PROMPT).toMatch(/WRONG WORKING DIRECTORY/);
     expect(SYSTEM_PROMPT).toContain("No such file or directory");
@@ -108,19 +131,18 @@ describe("system prompt: stream discipline", () => {
   });
 });
 
-// The transcript packaging (SKEIN_CONTEXT_FORMAT=transcript) renders the projection as a
-// role-tagged history: brief first, the branch's steps as call/result pairs
-// chronologically, and the volatile board last (docs/plans/step_reduction_plan_ru.md §4).
+// The only context packaging: the projection rendered as a role-tagged history — brief
+// first, the branch's steps as call/result pairs chronologically, and the volatile board
+// last (docs/plans/step_reduction_plan_ru.md §4).
 describe("context format: transcript", () => {
   const context: Context = {
     path: [
-      { id: "r1", kind: "request", state: "open", text: "fix the failing test" },
+      { id: "r1", kind: "request", text: "fix the failing test" },
       {
         id: "w:goal:1",
         kind: "goal",
-        state: "open",
         what: "green",
-        done_when: "node --test",
+        sketch: "reproduce node --test, fix, stop",
       },
     ],
     constraints: [{ id: "k1", forbid: ["secret"] }],
@@ -139,7 +161,6 @@ describe("context format: transcript", () => {
       error: "boom",
     },
     applicable: ["apply"],
-    checkReady: true,
     budget: { turn: 2, maxTurns: 10, remaining: 8 },
   };
 
@@ -161,21 +182,14 @@ describe("context format: transcript", () => {
     expect(messages[6]).toBeInstanceOf(HumanMessage);
     expect(board).toContain("BOARD");
     expect(board).toContain("w:goal:1");
-    expect(board).toContain("checkReady");
+    expect(board).toContain("applicable");
   });
 
-  it("is selected by SKEIN_CONTEXT_FORMAT and falls back to the JSON projection", () => {
-    const previous = process.env.SKEIN_CONTEXT_FORMAT;
-    try {
-      process.env.SKEIN_CONTEXT_FORMAT = "transcript";
-      expect(buildMessages(context)).toHaveLength(renderTranscript(context).length);
-      process.env.SKEIN_CONTEXT_FORMAT = "json";
-      const json = buildMessages(context);
-      expect(json).toHaveLength(2);
-      expect(String(json[1]?.content)).toContain('"path"');
-    } finally {
-      if (previous === undefined) delete process.env.SKEIN_CONTEXT_FORMAT;
-      else process.env.SKEIN_CONTEXT_FORMAT = previous;
-    }
+  it("is the only packaging: buildMessages renders the transcript", () => {
+    const messages = buildMessages(context);
+    expect(messages).toHaveLength(renderTranscript(context).length);
+    expect(messages[0]).toBeInstanceOf(SystemMessage);
+    expect(String(messages[1]?.content)).toContain("BRIEF");
+    expect(String(messages[messages.length - 1]?.content)).toContain("BOARD");
   });
 });

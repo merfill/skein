@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { Event } from "../../src/ir/events";
 import { fold, type State } from "../../src/ir/graph";
-import type { Action, ActionStep } from "../../src/llm/schemas";
+import type { Action } from "../../src/llm/schemas";
 import { classify, type Classification } from "../../src/loop/classify";
 import { executeAction, type ExecOutcome } from "../../src/tools";
 import { fsWorkspace, type Workspace, type WorkspaceOptions } from "../../src/tools/workspace";
@@ -51,17 +51,14 @@ export function classification(
   return classify({ thought: "", action }, fold(events), held, queried);
 }
 
-// Shorthand constructors. `step` is the first concrete plan item; without it, the step
-// defaults to the criterion command (or `true`), so a goal always carries a plan (I1).
-export function interpretation(what: string, command?: string, step?: ActionStep | string): Action {
-  const resolvedStep: ActionStep =
-    typeof step === "string" ? { command: step } : (step ?? { command: command ?? "true" });
+// Shorthand constructor. `command` is the first concrete plan item; without it the plan is
+// seeded with `true`, so a goal always carries a plan (I1).
+export function interpretation(what: string, command?: string): Action {
   return {
     operator: "create_goal",
     what,
-    done_when: command ?? resolvedStep.command,
-    plan: `${what}: a sketch`,
-    step: resolvedStep,
+    sketch: `${what}: a sketch`,
+    command: command ?? "true",
   };
 }
 
@@ -97,34 +94,8 @@ export function patch(patchText: string, strip?: number): Action {
   return applyTool({ tool: "apply_patch", patch: patchText, ...(strip !== undefined ? { strip } : {}) });
 }
 
-export function check(target: string): Action {
-  return applyTool({ tool: "run", target });
-}
-
 export function query(id?: string): Action {
   return { operator: "query", ...(id !== undefined ? { id } : {}) };
-}
-
-// A criterion run: an observation targeting a goal, carrying an exit code (0 = pass,
-// non-zero = fail). Replaces the old `record_check` event (docs/plans/stop_closure_plan.md
-// §5 step 3).
-export function criterionEvent(
-  goalId: string,
-  verdict: "pass" | "fail",
-  seq: number,
-  command = "make test",
-): Event {
-  return {
-    type: "add_node",
-    node: {
-      id: `obs:${seq}`,
-      space: "work",
-      kind: "observation",
-      label: command,
-      payload: { command, target: goalId, exitCode: verdict === "pass" ? 0 : 1 },
-      seq,
-    },
-  };
 }
 
 const roots: string[] = [];

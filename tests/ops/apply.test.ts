@@ -5,12 +5,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { criterionPass, currentVersion, goalOf, requestSettled, stateOf } from "../../src/ir/graph";
-import { currentGoalId } from "../../src/ir/traversal";
+import { currentVersion } from "../../src/ir/graph";
 import {
   DEFAULT_FILES,
   applyTool,
-  check,
   classification,
   cleanupWorkspaces,
   edit,
@@ -310,121 +308,20 @@ describe("apply: apply_patch", () => {
   });
 });
 
-function objectiveAtFocus(ws: ReturnType<typeof makeWorkspace>["ws"], command: string) {
-  const opened = exec(interpretation("fix", command), [request()], ws);
-  return { goal: currentGoalId(opened.state)!, events: opened.events };
-}
-
 describe("apply: run", () => {
-  it("OP-AP-RUN-1 runs an exploratory command and records its output", () => {
+  it("OP-AP-RUN-1 runs a plain foreground command and records its output", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { outcome } = exec(run("echo hello"), [request()], ws);
     expect(outcome.turn.text).toContain("hello");
   });
 
-  it("OP-AP-RUN-1 / REF-REPEAT refuses an identical exploratory run", () => {
+  it("OP-AP-RUN-1 / REF-REPEAT refuses an identical run", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(run("echo hello"), [request()], ws);
     expect(classification(run("echo hello"), first.events).reason).toMatch(/repeated_action/);
   });
 
-  it("OP-AP-RUN-2 checks an objective focus goal and settles it", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { goal, events } = objectiveAtFocus(ws, "true");
-    expect(classification(check(goal), events).accept).toBe(true);
-    const { events: after, state } = exec(check(goal), events, ws);
-    expect(
-      after.some(
-        (e) =>
-          e.type === "add_node" &&
-          e.node.kind === "observation" &&
-          (e.node.payload as { target?: string; exitCode?: number } | undefined)?.target === goal &&
-          (e.node.payload as { exitCode?: number } | undefined)?.exitCode === 0,
-      ),
-    ).toBe(true);
-    expect(criterionPass(state, goal)).toBe(true);
-  });
-
-  it("OP-AP-RUN-7 a goal is closed only by its own check (no implicit ancestor closure)", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const seeded = exec(interpretation("fix the bug", "true"), [request()], ws);
-    const root = goalOf(seeded.state, "r1")!;
-    const { state } = exec(check(root), seeded.events, ws);
-    expect(criterionPass(state, root)).toBe(true);
-    expect(requestSettled(state, "r1")).toBe(true);
-    // Exactly one criterion run targets the goal; nothing is synthesized above it.
-    const criteria = [...state.nodes.values()].filter(
-      (node) =>
-        node.kind === "observation" &&
-        (node.payload as { target?: string } | undefined)?.target === root,
-    );
-    expect(criteria).toHaveLength(1);
-  });
-
-  it("OP-AP-RUN-4 an inconclusive check stays open and may be retried", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES, { runTimeoutMs: 150 });
-    const opened = exec(interpretation("fix", "sleep 5"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const first = exec(check(goal), opened.events, ws);
-    expect(stateOf(first.state, goal)).toBe("open");
-    expect(classification(check(goal), first.events).accept).toBe(true);
-  });
-
-  it("OP-AP-RUN-5 starts a background command and returns a job id", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { outcome } = exec(applyTool({ tool: "run", background: true, command: "true" }), [request()], ws);
-    expect(outcome.turn.text).toMatch(/started job job-\d+/);
-  });
-
-  it("OP-AP-RUN-6 polls a background job to completion", async () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const started = exec(applyTool({ tool: "run", background: true, command: "true" }), [request()], ws);
-    const jobId = started.outcome.turn.text.match(/job-\d+/)?.[0];
-    expect(jobId).toBeDefined();
-
-    let events = started.events;
-    let text = "";
-    for (let i = 0; i < 100; i += 1) {
-      const poll = exec(applyTool({ tool: "run", job: jobId! }), events, ws);
-      events = poll.events;
-      text = poll.outcome.turn.text;
-      if (!/running/.test(text)) break;
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(text).toMatch(/exit 0/);
-  });
-
-  it("REF-RUN-EMPTY rejects a run with neither command nor target", () => {
+  it("REF-RUN-EMPTY rejects a run with no command", () => {
     expect(classification(applyTool({ tool: "run" }), [request()]).reason).toMatch(/needs a command/);
-  });
-
-  it("REF-RUN-TARGET rejects a check of a non-goal", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const first = exec(read("src/sum.mjs"), [request()], ws);
-    const obs = first.outcome.turn.nodeId!;
-    expect(classification(check(obs), first.events).reason).toBe("invalid_target");
-  });
-
-  it("REF-RUN-CMD rejects substituting a check's command", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { goal, events } = objectiveAtFocus(ws, "true");
-    const bad = applyTool({ tool: "run", target: goal, command: "false" });
-    expect(classification(bad, events).reason).toMatch(/its check runs its own command/);
-  });
-
-  it("REF-RUN-BGCHECK rejects backgrounding a check", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { goal, events } = objectiveAtFocus(ws, "true");
-    const bad = applyTool({ tool: "run", target: goal, background: true });
-    expect(classification(bad, events).reason).toMatch(/background_target/);
-  });
-
-  it("REF-RUN-BGCMD rejects background without a command", () => {
-    expect(classification(applyTool({ tool: "run", background: true }), [request()]).reason).toMatch(/background_run/);
-  });
-
-  it("REF-RUN-POLL rejects a poll with extra fields", () => {
-    const bad = applyTool({ tool: "run", job: "job-1", command: "x" });
-    expect(classification(bad, [request()]).reason).toMatch(/job_poll/);
   });
 });

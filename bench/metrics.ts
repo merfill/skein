@@ -130,9 +130,7 @@ export function graphCounts(proposals: Action[], events: readonly Event[]): Reco
   for (const action of proposals) {
     if (action.operator === "create_goal") createGoal++;
     else if (action.operator === "apply" && action.action.tool === "edit") edits++;
-    else if (action.operator === "apply" && action.action.tool === "run" && action.action.target) {
-      checks++;
-    }
+    else if (action.operator === "apply" && action.action.tool === "run") checks++;
   }
   return {
     createGoal,

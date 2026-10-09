@@ -341,14 +341,14 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) |
 | `SKEIN_TURN` | на ход: токены/кэш/`contextChars`/время |
 | `SKEIN_LLM_ERROR` | ошибка вызова модели (с номером попытки) |
-| `SKEIN_EVENTS` | диагностика IR: цели, планы, альтернативы, `checks`, `observations`, `mutates`, отказы |
+| `SKEIN_EVENTS` | диагностика IR: цели, планы, альтернативы, `observations`, `mutates`, отказы |
 | `SKEIN_METRICS` | сводка: токены, `context` `first/last/peak/growth`, граф |
 
-`contextChars` считается из того же `renderContext(context)`, что уходит в
+`contextChars` считается из того же `promptText(context)`, что уходит в
 `buildMessages`, поэтому размер в логе совпадает с отправленным контекстом.
 Исполненные команды видны в `SKEIN_PROPOSAL` (предложенные) и в
-`SKEIN_EVENTS.checks`/`.observations`/`.actions` (фактические, включая команду из
-`done_when`). Локальный бенч кладёт то же в `bench/runs/<...>/` (§4).
+`SKEIN_EVENTS.observations`/`.actions` (фактические, включая команду запуска).
+Локальный бенч кладёт то же в `bench/runs/<...>/` (§4).
 
 ## 8. Лимиты инструментов и проекции
 

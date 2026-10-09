@@ -17,6 +17,13 @@ import { fsWorkspace, type CommandResult, type PathFilter, type Workspace } from
 // file tools. Isolation: `--network none` by default, no host home mounted, removable on
 // cleanup.
 
+export interface DockerMount {
+  // A host path bound into the container (e.g. an agent binary, a package cache).
+  host: string;
+  dest: string;
+  readOnly?: boolean;
+}
+
 export interface DockerOptions {
   image: string;
   // Where the host root is mounted in the container.
@@ -26,6 +33,21 @@ export interface DockerOptions {
   // Docker network mode; `none` (default) keeps the agent offline.
   network?: string;
   runTimeoutMs?: number;
+  // Extra bind mounts and environment for an agent that runs INSIDE the container
+  // (opencode); the engine's own runs do not need them.
+  mounts?: DockerMount[];
+  env?: Record<string, string>;
+  // `--add-host` entries; e.g. `host.docker.internal:host-gateway` so the container can
+  // reach a host-side proxy.
+  extraHosts?: string[];
+}
+
+// The sandbox `Workspace` plus the container handle: `exec` runs a command with its own
+// timeout (an agent run outlives the 10-minute `run` cap) and `name` lets a caller drop
+// files in with `docker cp`.
+export interface DockerWorkspace extends Workspace {
+  name: string;
+  exec(command: string, timeoutMs?: number): CommandResult;
 }
 
 // Generous by default: a task's own build (fix-ocaml-gc, crack-7z-hash) runs inside the
@@ -64,12 +86,14 @@ export function dockerImageAvailable(image: string): boolean {
   return spawnSync("docker", ["image", "inspect", image], { stdio: "ignore", timeout: 10_000 }).status === 0;
 }
 
-export function dockerWorkspace(root: string, options: DockerOptions): Workspace {
-  const base = fsWorkspace(root);
+export function dockerWorkspace(root: string, options: DockerOptions): DockerWorkspace {
   const mount = options.mountPoint ?? "/app";
   const workdir = options.workdir ?? mount;
   const network = options.network ?? "none";
   const timeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+  // The job registry lives on the host `fsWorkspace`; give it the container's cap so a
+  // background poll waits as long as a foreground run in the container would.
+  const base = fsWorkspace(root, { runTimeoutMs: timeoutMs });
   counter += 1;
   const name = `skein-${process.pid}-${Date.now()}-${counter}`;
 
@@ -91,6 +115,14 @@ export function dockerWorkspace(root: string, options: DockerOptions): Workspace
     "--entrypoint", "sleep",
     "--network", network,
     "-v", `${root}:${mount}`,
+    ...(options.mounts ?? []).flatMap((entry) => [
+      "-v",
+      `${entry.host}:${entry.dest}${entry.readOnly === true ? ":ro" : ""}`,
+    ]),
+    ...(options.env !== undefined
+      ? Object.entries(options.env).flatMap(([key, value]) => ["-e", `${key}=${value}`])
+      : []),
+    ...(options.extraHosts ?? []).flatMap((host) => ["--add-host", host]),
     // A sane fd limit: the host's (huge) RLIMIT_NOFILE is inherited and breaks valgrind's
     // private-file allocation ("lower this limit").
     "--ulimit", "nofile=16384:16384",
@@ -118,13 +150,13 @@ export function dockerWorkspace(root: string, options: DockerOptions): Workspace
   const containerFilter = (filter: PathFilter): PathFilter =>
     filter.path === undefined ? filter : { ...filter, path: containerPath(filter.path) };
 
-  const run = (command: string): CommandResult => {
+  const exec = (command: string, execTimeoutMs = timeoutMs): CommandResult => {
     const result = spawnSync(
       "docker",
       // `umask 000` so files the agent creates inside (as root) are world-writable and the
       // host file tools can read/edit them (the two share the bind-mounted tree).
       ["exec", "-w", workdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`],
-      { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
+      { encoding: "utf8", timeout: execTimeoutMs, maxBuffer: 64 * 1024 * 1024 },
     );
     const timedOut =
       result.signal === "SIGTERM" ||
@@ -137,6 +169,7 @@ export function dockerWorkspace(root: string, options: DockerOptions): Workspace
       ...(result.signal !== undefined && result.signal !== null ? { signal: result.signal } : {}),
     };
   };
+  const run = (command: string): CommandResult => exec(command);
 
   return {
     ...base,
@@ -148,6 +181,8 @@ export function dockerWorkspace(root: string, options: DockerOptions): Workspace
     grep: (pattern, filter) => base.grep(pattern, containerFilter(filter ?? {})),
     listFiles: (filter) => base.listFiles(containerFilter(filter ?? {})),
     run,
+    name,
+    exec,
   };
 }
 

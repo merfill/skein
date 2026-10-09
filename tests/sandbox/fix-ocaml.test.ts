@@ -15,50 +15,34 @@ const objective: Action[] = [
   {
     operator: "create_goal",
     what: "fix the RLE sweep regression so the compiler bootstraps",
-    done_when: "make -C testsuite one DIR=tests/basic",
-    plan: "read the sweep code, fix it, then run the basic testsuite",
-    step: { command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
+    sketch: "read the sweep code, fix it, then run the basic testsuite, stop",
+    command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c",
   },
   FIX_EDIT,
-  { operator: "apply", action: { tool: "run", target: "w:goal:2" } },
+  { operator: "apply", action: { tool: "run", command: "make -C testsuite one DIR=tests/basic" } },
   { operator: "stop", why: "the goal is done" },
 ];
 
 describe("fix-ocaml-gc sandbox (engine, scripted proposer)", () => {
-  it("settles an objective goal by its own check, then stops the goal", async () => {
+  it("carries the plan through edit and a run, then stops the goal", async () => {
     const { result } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, scripted(objective), { maxTurns: 8 });
-    // The goal's criterion passes on the check turn; `stop` then appends the goal's last
-    // plan item and the run ends because the request's goal is stopped.
+    // `stop` appends the goal's last plan item and the run ends because the request's goal
+    // is stopped (there is no criterion gate).
     expect(result.stopReason).toBe("request_addressed");
     expect(result.turns).toBe(4);
-    expect(
-      result.events.filter(
-        (event) =>
-          event.type === "add_node" &&
-          event.node.kind === "observation" &&
-          (event.node.payload as { target?: string } | undefined)?.target !== undefined,
-      ),
-    ).toHaveLength(1);
     expect(result.events.filter((event) => event.type === "record_rejection")).toHaveLength(0);
   });
 
-  // For now only positive stops are accepted: `stop` on a goal whose criterion has not
-  // passed is refused (`check_not_run`), and the run ends on the budget, not on a premature
-  // stop (this is the `fix-ocaml-gc` defect from bench_report.md §4.4.2: it must be gone).
-  it("refuses stop on a goal whose check has not run (check_not_run)", async () => {
+  it("accepts stop on an open goal (no criterion gate)", async () => {
     const { result } = await runSandbox(
       fixOcamlGc,
       FIX_OCAML_REQUEST,
-      scripted([objective[0] as Action, { operator: "stop", why: "premature" }], {
-        operator: "stop",
-        why: "premature",
-      }),
+      scripted(
+        [objective[0] as Action, { operator: "stop", why: "done" }],
+        { operator: "stop", why: "done" },
+      ),
       { maxTurns: 4 },
     );
-    const reasons = result.events
-      .filter((event) => event.type === "record_rejection")
-      .map((event) => (event as { reason?: string }).reason ?? "");
-    expect(reasons.some((reason) => reason.startsWith("check_not_run"))).toBe(true);
-    expect(result.stopReason).toBe("max_turns");
+    expect(result.stopReason).toBe("request_addressed");
   });
 });

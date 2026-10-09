@@ -3,19 +3,14 @@ import {
   actionExecuted,
   alternativesOf,
   childrenOf,
-  criterionFailed,
-  criterionPass,
   goalOf,
   hasStopped,
   lastChild,
   planOf,
   unactionableOf,
-  stateOf,
   type State,
 } from "./graph";
-import type { GoalPayload, NodeState } from "./types";
-
-export { stateOf };
+import type { GoalPayload } from "./types";
 
 export function stackOf(state: State): string[] {
   return [...state.branch];
@@ -152,14 +147,11 @@ export interface Applicable {
   stop: boolean;
   // Decline to formulate a goal (a non-actionable request); only at the request.
   decline: boolean;
-  nextAction?: string;
-  checkReady: boolean;
 }
 
 // The frontier: the moves admissible at the focus. One computation feeds both the
-// projection and `classify`, so the two cannot drift (docs/ir_semantics.md §2.6). The
-// doxa is handed the whole arm; `nextAction` is only informational. `return` is an
-// engine-internal move, never a doxa operator.
+// projection and `classify`, so the two cannot drift (docs/ir_semantics.md §2.6).
+// `return` is an engine-internal move, never a doxa operator.
 export function applicable(state: State, goalId: string | undefined): Applicable {
   const none: Applicable = {
     createGoal: false,
@@ -167,7 +159,6 @@ export function applicable(state: State, goalId: string | undefined): Applicable
     return: false,
     stop: false,
     decline: false,
-    checkReady: false,
   };
   if (goalId === undefined) return none;
 
@@ -188,28 +179,7 @@ export function applicable(state: State, goalId: string | undefined): Applicable
 
   if (isFinished(state, goalId)) return { ...none, goalId, return: true };
 
-  const plan = planOf(state, goalId);
-  const items = plan === undefined ? [] : childrenOf(state, plan);
-  const cursor = cursorOf(state, goalId);
-  const done = cursor === undefined || items.length === 0 || cursor >= items.length;
-  const first = firstUnfulfilledItem(state, goalId);
-  const nextNode = first !== undefined ? state.nodes.get(first) : undefined;
-  const nextAction = nextNode?.kind === "action" ? first : undefined;
-  const checkReady = done && items.length > 0;
-
-  // A doxa `stop` closes the frame; for now only positive stops are offered — the goal's
-  // criterion must have passed (the same condition `classify` enforces).
-  const passed = criterionPass(state, goalId);
-  return {
-    goalId,
-    // A sub-goal (decompose the current step) or a revision after a failed criterion.
-    createGoal: nextAction !== undefined || criterionFailed(state, goalId),
-    // Any open goal: a command may be executed now (a new step or a branched one).
-    apply: true,
-    return: false,
-    stop: passed,
-    decline: false,
-    ...(nextAction !== undefined ? { nextAction } : {}),
-    checkReady,
-  };
+  // An open goal: a command (a new plan item or a branched one) or a sub-goal is always
+  // available; `stop` closes it — there is no criterion gate.
+  return { goalId, createGoal: true, apply: true, return: false, stop: true, decline: false };
 }

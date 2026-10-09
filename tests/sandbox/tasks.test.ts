@@ -45,9 +45,8 @@ const IMAGE_TASKS: SandboxTask[] = [
 const goal = (what: string): Action => ({
   operator: "create_goal",
   what,
-  done_when: "the verifier accepts the result",
-  plan: "work the task, then let the verifier score it",
-  step: { command: "pwd" },
+  sketch: "work the task, then let the verifier score it",
+  command: "pwd",
 });
 const solve: Action = { operator: "apply", action: { tool: "run", command: SOLUTION_COMMAND } };
 const stop: Action = { operator: "stop", why: "done" };

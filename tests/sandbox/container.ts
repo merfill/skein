@@ -26,9 +26,11 @@ const SYSTEM_PATHS = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"];
 const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 
 export function containerWorkspace(root: string, options: ContainerOptions = {}): Workspace {
-  const base = fsWorkspace(root);
   const mount = options.mountPoint ?? "/app";
   const timeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+  // The job registry lives on the host `fsWorkspace`; give it the namespace's cap so a
+  // background poll waits as long as a foreground run would.
+  const base = fsWorkspace(root, { runTimeoutMs: timeoutMs });
   const binds = SYSTEM_PATHS.filter((path) => existsSync(path)).flatMap((path) => ["--ro-bind", path, path]);
 
   // The workspace root as the task sees it: `/app` -> ".", `/app/x` -> "x", relative paths

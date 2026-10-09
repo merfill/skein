@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { constants as osConstants } from "node:os";
 import {
   closeSync,
   existsSync,
@@ -67,10 +68,21 @@ export interface JobResult {
   stderr: string;
 }
 
+export interface JobWaitOptions {
+  // Block up to this long for the job to finish before returning its state. `startJob`
+  // defaults to a short grace (a just-started job that is really short completes in the
+  // start turn instead of forcing a poll); `pollJob` defaults to the foreground cap, so a
+  // poll waits for the job the same way a foreground `run` would.
+  waitMs?: number;
+}
+
 export interface WorkspaceOptions {
   // Cap on a foreground `run`. A background job is not capped here (its caller decides
   // when to stop polling); this exists so a slow verifier can be allowed to finish.
   runTimeoutMs?: number;
+  // How long `startJob` blocks for a just-started job to finish before handing back a
+  // handle (docs/tools.md §4.7). A genuinely long/open-ended command returns `running`.
+  jobGraceMs?: number;
 }
 
 export interface Workspace {
@@ -84,8 +96,8 @@ export interface Workspace {
   grep(pattern: string, filter?: PathFilter): GrepMatch[];
   listFiles(filter?: PathFilter): string[];
   run(command: string): CommandResult;
-  startJob(command: string): JobHandle;
-  pollJob(id: string): JobResult | undefined;
+  startJob(command: string, options?: JobWaitOptions): JobHandle;
+  pollJob(id: string, options?: JobWaitOptions): JobResult | undefined;
   // Download a URL into the workspace (read-only reference evidence). Throws on a path
   // outside the workspace, a failed download, or an unwritable target.
   fetchTo(url: string, path: string): { path: string; bytes: number };
@@ -168,14 +180,36 @@ const DEFAULT_RUN_TIMEOUT_MS = 120_000;
 // `.skein/jobs/<id>.{out,err}`; the poll shows only the tail, so a long build does not
 // flood the context (it is the tail — the error — that matters, tools §4.3).
 const JOB_TAIL_BYTES = 8_000;
+// A just-started background job is given this long to finish before `startJob` hands back
+// a handle. This collapses a short command (the common case) into the start turn: the
+// engine waits the way a foreground `run` would, and only a genuinely long/open-ended
+// command is left to poll (docs/tools.md §4.7).
+const JOB_START_GRACE_MS = 10_000;
 
 interface JobRecord extends JobHandle {
   fullOut: string;
   fullErr: string;
+  // The shell writes its exit status here as its LAST act, so a synchronous wait can
+  // learn the job is done (and its code) without the Node exit event, which cannot fire
+  // while the wait blocks the event loop.
+  fullCode: string;
   startedAt: number;
   state: "running" | "done";
   exitCode: number | null;
   signal: string | null;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+// A shell reports a signal death as 128 + signum; map it back to the name so the crash
+// path (core + backtrace) still fires for a backgrounded command (docs/tools.md §4.3).
+function signalName(number: number): string | null {
+  for (const [name, value] of Object.entries(osConstants.signals)) {
+    if (value === number) return name;
+  }
+  return null;
 }
 
 function readTail(full: string): string {
@@ -202,6 +236,7 @@ function readTail(full: string): string {
 export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Workspace {
   const base = resolve(root);
   const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+  const jobGraceMs = options.jobGraceMs ?? JOB_START_GRACE_MS;
 
   const abs = (path: string): string => {
     const full = resolve(base, path);
@@ -332,17 +367,60 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
   const jobs = new Map<string, JobRecord>();
   let jobCounter = 0;
 
-  const startJob = (command: string): JobHandle => {
+  // Learn a job's outcome from the status file the shell writes as its last act. This is
+  // how a synchronous wait (below) sees completion: the Node exit event cannot fire while
+  // that wait blocks the event loop.
+  const finalizeFromCode = (record: JobRecord): void => {
+    if (record.state === "done") return;
+    let raw: string;
+    try {
+      raw = readFileSync(record.fullCode, "utf8").trim();
+    } catch {
+      return;
+    }
+    if (raw === "") return;
+    record.state = "done";
+    const code = Number.parseInt(raw, 10);
+    if (Number.isFinite(code)) {
+      record.exitCode = code;
+      if (code > 128) record.signal = signalName(code - 128);
+    }
+  };
+
+  // Block up to `waitMs` for the job to finish before returning. The watcher is a tiny
+  // shell loop (a separate process, so the OS keeps the job running while we sleep) that
+  // ends when the status file appears or the job dies; its own timeout bounds the wait.
+  const waitForJob = (record: JobRecord, waitMs: number): void => {
+    if (record.state === "done" || waitMs <= 0) return;
+    const alive = record.pid > 0 ? `kill -0 ${record.pid} 2>/dev/null` : "false";
+    spawnSync(
+      "/bin/bash",
+      ["-c", `while [ ! -s ${shellQuote(record.fullCode)} ] && ${alive}; do sleep 0.1; done`],
+      { timeout: waitMs + 5_000, stdio: "ignore" },
+    );
+    finalizeFromCode(record);
+  };
+
+  const startJob = (command: string, options: JobWaitOptions = {}): JobHandle => {
     jobCounter += 1;
     const id = `job-${jobCounter}`;
     const relOut = `.skein/jobs/${id}.out`;
     const relErr = `.skein/jobs/${id}.err`;
+    const relCode = `.skein/jobs/${id}.code`;
     const fullOut = abs(relOut);
     const fullErr = abs(relErr);
+    const fullCode = abs(relCode);
     mkdirSync(dirname(fullOut), { recursive: true });
     const outFd = openSync(fullOut, "w");
     const errFd = openSync(fullErr, "w");
-    const child = spawn("/bin/bash", ["-c", `set -o pipefail; ulimit -c unlimited 2>/dev/null; ${command}`], {
+    // The command runs in a subshell so its own `exit` does not skip the status write; the
+    // shell then records `$?` to the status file before exiting. The file lets a
+    // synchronous wait see completion without the Node exit event (which cannot fire while
+    // that wait blocks the event loop); `exit $__skein_ec` keeps the verdict for the event.
+    const script =
+      `set -o pipefail; ulimit -c unlimited 2>/dev/null; ( ${command} )\n` +
+      `__skein_ec=$?; printf '%s' "$__skein_ec" > ${shellQuote(fullCode)}; exit $__skein_ec`;
+    const child = spawn("/bin/bash", ["-c", script], {
       cwd: base,
       stdio: ["ignore", outFd, errFd],
     });
@@ -356,6 +434,7 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
       command,
       fullOut,
       fullErr,
+      fullCode,
       startedAt: Date.now(),
       state: "running",
       exitCode: null,
@@ -379,12 +458,16 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
     });
     // Do not let a long build keep the agent process alive once its run is over.
     child.unref();
+    waitForJob(record, options.waitMs ?? jobGraceMs);
     return { id, pid: record.pid, command };
   };
 
-  const pollJob = (id: string): JobResult | undefined => {
+  const pollJob = (id: string, options: JobWaitOptions = {}): JobResult | undefined => {
     const record = jobs.get(id);
     if (record === undefined) return undefined;
+    // A poll waits for the job (up to the foreground cap) rather than returning `running`
+    // at once: the model asked whether it is done, so answer it, don't make it ask again.
+    waitForJob(record, options.waitMs ?? runTimeoutMs);
     return {
       id: record.id,
       command: record.command,

@@ -7,14 +7,8 @@ import {
   planOf,
   type State,
 } from "./graph";
-import {
-  applicable,
-  currentGoalId,
-  cursorOf,
-  stateOf,
-  type Applicable,
-} from "./traversal";
-import type { Node, NodeState } from "./types";
+import { applicable, currentGoalId, cursorOf, type Applicable } from "./traversal";
+import type { Node } from "./types";
 
 // The projection is the context for the next operator, not a state dump: the
 // traversal branch plus its containers, the global constraints, the full latest
@@ -35,7 +29,6 @@ export interface ProjectionItem {
   id: string;
   kind: "goal" | "action";
   label: string;
-  state: NodeState;
   // A goal item's hypothesis (`why`): a refuted item is a previous attempt, and this is
   // what it bet on — so the model does not repeat it (docs/context_design_ru.md §8).
   why?: string;
@@ -47,7 +40,6 @@ export interface ProjectionItem {
 export interface ProjectionAlternative {
   id: string;
   label: string;
-  state: NodeState;
   chosen: boolean;
   why?: string;
 }
@@ -60,19 +52,16 @@ export interface ProjectionPlan {
 export interface PathNode {
   id: string;
   kind: "request" | "goal";
-  state: NodeState;
   text?: string;
   what?: string;
   why?: string;
-  done_when?: string;
+  // The goal's plan as a free-form string note (the old `plan`, renamed).
+  sketch?: string;
   // A closed root goal's note. A closed root goal stays on the path; a nested completed
   // goal leaves the branch (trimmed under a closed ancestor), so its note is surfaced in
   // `calls` (docs §4.4).
   note?: string;
   plan?: ProjectionPlan;
-  // The goal's initial plan as a string sketch (I3), shown as a hint while the goal is in
-  // focus. Distinct from `plan` (the materialized first step container).
-  planHint?: string;
   alternatives?: { chosen?: string; items: ProjectionAlternative[] };
 }
 
@@ -115,13 +104,6 @@ export interface Context {
   shown: ResultView[];
   calls: Call[];
   applicable: string[];
-  // Whether a `run {target: focus}` CHECK is the expected move now: the focus is an
-  // objective goal whose plan is fully carried out. `apply` can still be listed (for a
-  // bare exploratory command) while this is false, so the two are not the same thing.
-  checkReady: boolean;
-  // When the focus plan's cursor points at an action item: its id, to apply verbatim.
-  // Absent when the next item is a goal, or the plan is done.
-  nextAction?: string;
   budget: { turn: number; maxTurns: number; remaining: number };
 }
 
@@ -173,7 +155,6 @@ function itemView(state: State, id: string, maxItems: number): ProjectionItem | 
     id,
     kind: node.kind,
     label: node.label,
-    state: stateOf(state, id),
     ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
     ...(alternatives !== undefined && alternatives.items.length > 0 ? { alternatives } : {}),
   };
@@ -206,7 +187,6 @@ function alternativesView(
         {
           id,
           label: node.label,
-          state: stateOf(state, id),
           chosen: chosen === id,
           ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
         },
@@ -219,7 +199,6 @@ function alternativesView(
 function pathNode(state: State, id: string, maxItems: number): PathNode | undefined {
   const node = state.nodes.get(id);
   if (node === undefined) return undefined;
-  const state_ = stateOf(state, id);
   if (node.kind === "request") {
     const payload = node.payload as { text?: unknown } | undefined;
     // The request's goal is the next node on the path (via `has_goal`), so the request
@@ -227,22 +206,19 @@ function pathNode(state: State, id: string, maxItems: number): PathNode | undefi
     return {
       id,
       kind: "request",
-      state: state_,
       ...(typeof payload?.text === "string" ? { text: payload.text } : {}),
     };
   }
   if (node.kind === "goal") {
-    const payload = node.payload as { what?: unknown; why?: unknown; done_when?: unknown; plan?: unknown } | undefined;
+    const payload = node.payload as { what?: unknown; why?: unknown; sketch?: unknown } | undefined;
     const plan = planView(state, id, maxItems);
     const alternatives = alternativesView(state, id, maxItems);
     return {
       id,
       kind: "goal",
-      state: state_,
       ...(typeof payload?.what === "string" ? { what: payload.what } : {}),
       ...(typeof payload?.why === "string" ? { why: payload.why } : {}),
-      ...(typeof payload?.done_when === "string" ? { done_when: payload.done_when } : {}),
-      ...(typeof payload?.plan === "string" ? { planHint: payload.plan } : {}),
+      ...(typeof payload?.sketch === "string" ? { sketch: payload.sketch } : {}),
       ...(plan !== undefined ? { plan } : {}),
       ...(alternatives !== undefined ? { alternatives } : {}),
     };
@@ -609,8 +585,6 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     shown,
     calls,
     applicable: applicableNames(frontier),
-    checkReady: frontier.checkReady,
-    ...(frontier.nextAction !== undefined ? { nextAction: frontier.nextAction } : {}),
     budget: budget === undefined
       ? { turn: 0, maxTurns: 0, remaining: 0 }
       : {

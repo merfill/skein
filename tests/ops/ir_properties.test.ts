@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { fold, stateOf } from "../../src/ir/graph";
+import { actionExecuted, fold, hasStopped } from "../../src/ir/graph";
 import { project } from "../../src/ir/project";
 import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
 
@@ -35,22 +35,18 @@ function generate(seed: number): Event[] {
   const addEdge = (from: string, to: string, kind: string): void => {
     events.push({ type: "add_edge", edge: { id: `e${next()}`, from, to, kind: kind as never, provenance: { kind: "llm" } } });
   };
+  // A goal is closed by a `stop`: the stop node becomes the last plan item and a
+  // `has_stopped` edge records the closure.
   const close = (id: string): void => {
-    const verdict = pick(["pass", "fail", "inconclusive"] as const);
-    addNode(`o${next()}`, "observation", {
-      command: "make test",
-      target: id,
-      ...(verdict === "inconclusive" ? {} : { exitCode: verdict === "pass" ? 0 : 1 }),
-    });
+    const stop = `s${next()}`;
+    addNode(stop, "stop");
+    addEdge(id, stop, "has_stopped");
   };
 
   let goals = 0;
   const buildGoal = (depth: number): string => {
     const id = `g${goals++}`;
-    const objective = chance(0.5);
-    const payload = objective
-      ? { what: id, done_when: "make test" }
-      : { what: id, why: "hypothesis", done_when: "done" };
+    const payload = chance(0.5) ? { what: id, sketch: "sketch" } : { what: id, why: "hypothesis", sketch: "sketch" };
     addNode(id, "goal", payload);
 
     // A plan of 1..3 ACTION items; sometimes a step carries an alternative sub-goal.
@@ -120,8 +116,12 @@ describe("IR properties (random legal trees)", () => {
       const events = generate(seed);
       const a = fold(events);
       const b = fold(events);
-      const predicatesA = [...a.nodes.keys()].map((id) => `${id}:${stateOf(a, id)}`).sort();
-      const predicatesB = [...b.nodes.keys()].map((id) => `${id}:${stateOf(b, id)}`).sort();
+      const predicatesA = [...a.nodes.keys()]
+        .map((id) => `${id}:${hasStopped(a, id)}:${actionExecuted(a, id)}`)
+        .sort();
+      const predicatesB = [...b.nodes.keys()]
+        .map((id) => `${id}:${hasStopped(b, id)}:${actionExecuted(b, id)}`)
+        .sort();
       expect(predicatesA, `seed ${seed}`).toEqual(predicatesB);
 
       const ctxA = project(a);

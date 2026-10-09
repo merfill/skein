@@ -44,6 +44,8 @@ original and a Russian mirror named with the `_ru` suffix.
   — the traversal stack (the spine and the arms).
 - [plans/step_reduction_plan.md](plans/step_reduction_plan.md) · [RU](plans/step_reduction_plan_ru.md)
   — context format and LLM-turn reduction (current work).
+- [plans/goal_reduction_plan.md](plans/goal_reduction_plan.md) · [RU](plans/goal_reduction_plan_ru.md)
+  — reduce the goal to its minimal, monotone shape (planned).
 - [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
   — observation of changes outside the engine (a/b done, c open).
 
@@ -62,6 +64,8 @@ original and a Russian mirror named with the `_ru` suffix.
 
 ## Benchmarks and reports
 
+- [benches/best_bench.md](benches/best_bench.md) · [RU](benches/best_bench_ru.md) — the
+  leaderboard of the best runs (top-10; currently `fix-ocaml-gc`).
 - [benches/bench_report.md](benches/bench_report.md) · [RU](benches/bench_report_ru.md) — Skein
   vs opencode: metrics, caveats, the controlled `ref-localize` experiment.
 - [benches/fix_ocaml_gc_ideal.md](benches/fix_ocaml_gc_ideal.md) · [RU](benches/fix_ocaml_gc_ideal_ru.md)

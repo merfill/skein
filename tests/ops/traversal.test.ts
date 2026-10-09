@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { actionSuperseded, alternativesOf, childrenOf, criterionFailed, currentFocus, fold, goalOf, lastChild, planOf, unselectedVariant } from "../../src/ir/graph";
+import { actionSuperseded, alternativesOf, childrenOf, currentFocus, fold, goalOf, lastChild, planOf } from "../../src/ir/graph";
 import { currentGoalId, cursorOf, focusEvents, itemFulfilled } from "../../src/ir/traversal";
 import { project } from "../../src/ir/project";
 import {
@@ -121,14 +121,10 @@ describe("traversal and containers", () => {
       { type: "add_edge", edge: { id: "e4", from: "alt", to: "sub", kind: "item", provenance: { kind: "llm" } } },
 
     ];
-    // A failed criterion leaves the sub-goal open, so the step is not fulfilled.
-    const failed = fold([
-      ...events,
-      { type: "add_node", node: { id: "obs:99", space: "work", kind: "observation", label: "make test", payload: { command: "make test", target: "sub", exitCode: 1 }, seq: 99 } },
-    ]);
-    expect(criterionFailed(failed, "sub")).toBe(true);
-    expect(itemFulfilled(failed, "a1")).toBe(false);
-    expect(cursorOf(failed, "g")).toBe(0);
+    // An open sub-goal leaves the step unfulfilled.
+    const open = fold(events);
+    expect(itemFulfilled(open, "a1")).toBe(false);
+    expect(cursorOf(open, "g")).toBe(0);
 
     // Closing the sub-goal with stop fulfills the step.
     const stopped = fold([

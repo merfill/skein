@@ -2,6 +2,13 @@
 
 > Russian mirror — `docs/walkthrough_ru.md`.
 
+> **Goal reduction (`docs/plans/goal_reduction_plan.md`).** This walkthrough uses the
+> pre-reduction vocabulary (criterion `done_when`, `step`, `revises`, `target`, `state`).
+> In the reduced model a goal is `what`/`why`/`sketch` with a plan seeded by the first
+> `command`, and it is closed by `stop` (no criterion gate); a run's `exitCode` is ordinary
+> output. Read "criterion", "check", `done_when`, `step`, `target`/`checkReady` and `state`
+> below as superseded; `docs/ir_operations.md` is the current reference.
+
 ## Preamble
 
 **What Skein is.** Skein is a coding agent that keeps its knowledge not in a dialogue
@@ -25,11 +32,10 @@ do.
 **Arbiter.** Above doxa and logos stands the **arbiter**, an external authority. In the
 current model it is the user (a human or the harness that scores the result). The arbiter
 sets the very first request and accepts the final result from outside. It takes no part in
-accepting individual goals: every goal has its own criterion.
+accepting individual goals: a goal is closed by the doxa's `stop`.
 
 **What closes the work.** The only frame that can be closed is a **goal**. A goal is
-closed **only by an explicit `stop`**, and (for now) only once its criterion has passed.
-A criterion passing closes nothing by itself: it is merely a fact about an exit code. The
+closed **only by an explicit `stop`** — there is no criterion gate. The
 request has no `stop` of its own: it is interpreted **exactly once** as a goal
 (`has_goal`) or declined (`no_goal` → `unactionable`), and the run **ends when its goal is
 stopped** (or when the request is declined).
@@ -74,50 +80,43 @@ code identifiers; they are not translated.
 
 | Term | Meaning |
 |---|---|
-| **request** | the user's unstructured motivation; the root of the tree; it is interpreted **exactly once** as a goal (`has_goal`) or declined (`no_goal` → `unactionable`); it has no plan, no criterion, no `stop`; the run ends when its goal is stopped |
-| **goal** | an interpretation of the request or a subgoal: `what`, optional `why`, the criterion `done_when`, the plan sketch `plan` |
+| **request** | the user's unstructured motivation; the root of the tree; it is interpreted **exactly once** as a goal (`has_goal`) or declined (`no_goal` → `unactionable`); it has no plan and no `stop`; the run ends when its goal is stopped |
+| **goal** | an interpretation of the request or a subgoal: `what`, optional `why`, the plan sketch `sketch`; its plan is seeded with the first `command` |
 | **plan** | a container of items; a plan item is always an **action**; the order is the list, and the **last** item is the current one |
 | **action** | one command; executed one per turn |
 | **observation** | a recorded result: a read window, a run's output, an exit code |
-| **alternatives** | a container of options: a revised goal's variants and a branched/decomposed step (a sub-goal becomes the step's newest alternative) |
+| **alternatives** | a container of options: a branched/decomposed item (a sub-goal becomes the item's newest alternative) |
 | **`stop`** | the terminal move: it closes the focused goal |
 | **`decline`** | the move that records a non-actionable request (`no_goal` → `unactionable`) and ends the run |
 
-### 1.4 Criterion and verdict
+### 1.4 A run and its output
 
 | Term | Meaning |
 |---|---|
-| **`done_when`** | the literal command — the goal's criterion; the engine runs exactly it |
-| **criterion run** (`apply run {target}`) | a run of the goal's `done_when` command, explicitly aimed at that goal |
-| **`target`** | an observation field: which goal was checked; it distinguishes a criterion from an ordinary run |
-| **`exitCode`** | the exit code: `0` = pass, non-zero = fail, absent = no verdict (a timeout) |
+| **command** | the first plan item; one plain foreground shell command |
+| **`exitCode`** | the exit code: `0` = pass, non-zero = fail, absent = no verdict (a timeout) — ordinary output, not a gate |
 
-An important distinction: **an ordinary run (`run` without `target`) is not a criterion**
-— it is just an observation. That is why reproducing the failure does not close a goal
-before the fix.
+A run is an ordinary `observation`; nothing is closed by an exit code — the doxa decides
+when a goal is done and calls `stop`.
 
 ### 1.5 Facts derived from the journal
 
 | Fact | Meaning |
 |---|---|
-| **`criterionPass`** | the goal's latest criterion run returned `exitCode 0` |
-| **`criterionFailed`** | the latest run returned a non-zero `exitCode` |
-| **`planExhausted`** | the goal's plan has no unfulfilled item left |
-| **`hasStopped`** | the goal has a `has_stopped` edge to a `stop` node |
+| **`actionExecuted`** | the action has a `produces` or `mutates` edge |
+| **`hasStopped`** | the goal has a `has_stopped` edge to a `stop` node (it is closed) |
 
 The request has no derived "settled" fact of its own: its completion is read straight from
 its goal — the run ends when the goal is stopped.
 
-### 1.6 Node state
+### 1.6 Node status
 
-A node's displayed state is one of three:
+A node has no stored status; the facts are derived:
 
-- `open` — the goal is still open, the action has not been executed;
-- `executed` — the action produced a result;
-- `stopped` — the goal was closed by `stop`.
+- an action is `executed` once it produced a result;
+- a goal is closed once it has a `has_stopped` edge.
 
-There are no "achieved"/"refuted" statuses on nodes. A criterion passing or failing is a
-fact about an observation, not a property of a node.
+There are no "achieved"/"refuted" statuses on nodes and no criterion.
 
 ### 1.7 Traversal and admissible moves
 
@@ -169,10 +168,9 @@ Nothing doxa "thinks" is stored. The plan is a note to self; the trace is the tr
 | `I`, `G` | goals: the interpretation of `R`, a decomposed subgoal |
 | `a1`, `a2` | plan items (`action`) |
 | `obs` | an `observation` (a read window, a run's output together with its exit code) |
-| `Aₛ`, `A_G` | `alternatives` containers (under a step `s`, under a goal `G`) |
+| `Aₛ`, `A_G` | `alternatives` containers (under a branched item `s`, under a goal `G`) |
 | `→` | the focus moves; `+` a node/edge is created; `⟂` a refusal (`record_rejection`) |
-| `open` / `executed` / `stopped` | the three displayed states (`stateOf`) |
-| `✓` criterion pass (`exitCode 0`), `✗` fail (non-zero), `∅` no verdict (timeout) |
+| `closed` / `open` | a goal has / lacks a `has_stopped` edge |
 
 ---
 
@@ -289,9 +287,8 @@ newest alternative) or stays in place and advances the current item.
 
 **`stop`.** The `stop` move operates **only on a goal**. The engine appends a `stop` node
 as the goal's **last plan item** AND draws a `has_stopped` edge from the goal to that same
-node — that is how the goal is marked closed (but not "satisfied": its criterion is
-unchanged). For now `stop` is accepted only once the goal's criterion has passed (otherwise
-a `check_not_run` refusal). There is no `stop` on the request: the request ends (the run
+node — that is how the goal is marked closed. There is no criterion gate: `stop` is
+accepted on an open goal. There is no `stop` on the request: the request ends (the run
 ends) when its goal is stopped.
 
 ---
@@ -303,8 +300,8 @@ fragment.
 
 ### 5.1 A non-actionable request (`decline`)
 
-A request like "hello, uncle Vasya" contains no actionable task. Doxa does not invent a goal
-with a fake criterion; it declines.
+A request like "hello, uncle Vasya" contains no actionable task. Doxa does not invent a goal;
+it declines.
 
 | Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection (what doxa sees) |
 |---|---|---|---|---|---|
@@ -315,9 +312,9 @@ with a fake criterion; it declines.
 yet). It closes nothing: it records that the request's intent is not actionable and the run
 stops there.
 
-Note the counterpart rule: **a failed criterion is not a `stop`.** After a failed check
-doxa keeps working in the same goal (it appends steps and re-checks, as in §4); it must not
-close the goal, and it does not re-interpret the request.
+Note the counterpart rule: **a failing command is not a closure.** After a failure doxa
+keeps working in the same goal (it appends commands and re-runs, as in §4); `stop` is a
+deliberate decision, and it does not re-interpret the request.
 
 ### 5.2 Decomposing a step into a subgoal
 

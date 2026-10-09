@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     console.info(`thought: ${proposal.thought}`);
     console.info(`action:  ${JSON.stringify(proposal.action)}`);
     console.info(`tokens:  in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} cacheR=${usage.cacheRead} cacheW=${usage.cacheWrite} llm=${usage.llmCalls} chars=${chars}`);
-    console.info(`applicable=${JSON.stringify(context.applicable)} checkReady=${context.checkReady} nextAction=${context.nextAction ?? "-"}`);
+    console.info(`applicable=${JSON.stringify(context.applicable)}`);
     console.info(`calls:\n  ${calls.join("\n  ") || "(none)"}`);
     turn += 1;
     return proposal;

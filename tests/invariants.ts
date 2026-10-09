@@ -1,20 +1,14 @@
 import type { Event } from "../src/ir/events";
-import { criterionPass, fold } from "../src/ir/graph";
+import { fold } from "../src/ir/graph";
 
-/** Invariant: `achieved` needs a criterion run that exited 0. */
+/** Invariant: a goal is closed only by the doxa's `stop` — every `has_stopped` edge must
+ * target a `stop` node. */
 export function achievedWithoutCheck(events: readonly Event[]): string[] {
   const state = fold(events);
   const violations: string[] = [];
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "goal") continue;
-    if (!criterionPass(state, node.id)) continue;
-    let pass = false;
-    for (const obs of state.nodes.values()) {
-      if (obs.kind !== "observation") continue;
-      const payload = obs.payload as { target?: unknown; exitCode?: unknown } | undefined;
-      if (payload?.target === node.id && payload.exitCode === 0) pass = true;
-    }
-    if (!pass) violations.push(node.id);
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "has_stopped") continue;
+    if (state.nodes.get(edge.to)?.kind !== "stop") violations.push(edge.from);
   }
   return violations;
 }

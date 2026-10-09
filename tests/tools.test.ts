@@ -92,6 +92,28 @@ describe("workspace background jobs", () => {
     expect(result.exitCode).toBe(7);
     expect(workspace.pollJob("nope")).toBeUndefined();
   });
+
+  // A short command finishes during `startJob`'s right to a grace period, so it costs the
+  // start turn, not a poll (docs/tools.md §4.7).
+  it("completes a short command in the start turn", () => {
+    const workspace = fsWorkspace(tempRoot(), { jobGraceMs: 2000 });
+    const handle = workspace.startJob("echo quick");
+    const job = workspace.pollJob(handle.id, { waitMs: 0 });
+    expect(job?.state).toBe("done");
+    expect(job?.exitCode).toBe(0);
+    expect(job?.stdout).toContain("quick");
+  });
+
+  // A poll waits for the job, so a backgrounded command is answered in one poll rather
+  // than one turn per retry.
+  it("waits on a poll until the job finishes", () => {
+    const workspace = fsWorkspace(tempRoot(), { jobGraceMs: 0 });
+    const handle = workspace.startJob("sleep 0.3; exit 7");
+    expect(workspace.pollJob(handle.id, { waitMs: 0 })?.state).toBe("running");
+    const done = workspace.pollJob(handle.id);
+    expect(done?.state).toBe("done");
+    expect(done?.exitCode).toBe(7);
+  });
 });
 
 describe("resolveBody", () => {

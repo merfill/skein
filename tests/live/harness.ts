@@ -226,7 +226,6 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
         break;
       case "create_goal":
         used.add("create_goal");
-        if ((action.revises?.length ?? 0) > 0) used.add("revise");
         break;
       case "apply":
         used.add(action.action.tool);

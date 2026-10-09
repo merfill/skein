@@ -6,15 +6,13 @@ import {
   actionExecuted,
   alternativesOf,
   childrenOf,
-  criterionFailed,
-  criterionPass,
   currentVersion,
   planOf,
   type State,
 } from "../ir/graph";
-import { currentGoalId, firstUnfulfilledItem, stateOf } from "../ir/traversal";
-import type { EdgeKind, GoalPayload, Node, Provenance, WitnessEntry } from "../ir/types";
-import type { Action, ActionStep, Apply } from "../llm/schemas";
+import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
+import type { EdgeKind, Node, Provenance, WitnessEntry } from "../ir/types";
+import type { Action, Apply } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, Workspace } from "./workspace";
 
@@ -162,7 +160,6 @@ function runQuery(
     id: node.id,
     kind: node.kind,
     label: node.label,
-    state: stateOf(state, node.id),
     ...(node.payload !== undefined ? { payload: node.payload } : {}),
   });
   const nodes: ReturnType<typeof nodeRow>[] = [];
@@ -232,18 +229,6 @@ function signatureMap(workspace: Workspace): Map<string, string> {
     }
   }
   return signatures;
-}
-
-function witnessOfWorkspace(workspace: Workspace): WitnessEntry[] {
-  const witness: WitnessEntry[] = [];
-  for (const path of workspace.list()) {
-    try {
-      witness.push({ ref: `file:${path}`, version: workspace.version(path) });
-    } catch {
-      // A build can delete a temporary file between listing and hashing.
-    }
-  }
-  return witness;
 }
 
 function changedMutations(
@@ -342,9 +327,6 @@ export function commandOf(apply: Apply): string {
     case "apply_patch":
       return `apply_patch -p${apply.strip ?? 1}`;
     case "run":
-      // A poll of a background job is addressed by the job id, not by a shell command;
-      // this is only used for display/dedup, the run branch builds its own signature.
-      if (apply.job !== undefined) return `poll ${apply.job}`;
       return apply.command ?? "";
   }
 }
@@ -563,23 +545,13 @@ export function executeAction(
     return altId;
   };
 
-  // The container a variant of `goalId` belongs to: the alternatives container it
-  // is already an item of, else the goal's own alternatives container.
-  const variantContainer = (goalId: string): string => {
-    for (const [containerId, ids] of state.children) {
-      if (!ids.includes(goalId)) continue;
-      const container = state.nodes.get(containerId);
-      if (container?.kind === "alternatives") return containerId;
-    }
-    return ensureAlternatives(goalId);
-  };
-
+  // A goal is born with its plan container seeded with the first plan item (the first
+  // command), which becomes the current item (docs/plans/goal_reduction_plan.md §2).
   const buildGoal = (spec: {
     what: string;
     why?: string;
-    done_when: string;
-    plan?: string;
-    step?: ActionStep;
+    sketch?: string;
+    command: string;
   }): string => {
     const goalSeq = next();
     const id = `w:goal:${goalSeq}`;
@@ -593,26 +565,23 @@ export function executeAction(
         payload: {
           what: spec.what,
           why: spec.why,
-          done_when: spec.done_when,
-          ...(spec.plan !== undefined ? { plan: spec.plan } : {}),
+          ...(spec.sketch !== undefined ? { sketch: spec.sketch } : {}),
         },
         seq: goalSeq,
       },
     });
-    if (spec.step !== undefined) {
-      const planId = ensurePlan(id);
-      const stepId = buildActionItem(spec.step.command, spec.step.label);
-      events.push({
-        type: "add_edge",
-        edge: {
-          id: `e:${next()}`,
-          from: planId,
-          to: stepId,
-          kind: "item",
-          provenance: { kind: "llm" },
-        },
-      });
-    }
+    const planId = ensurePlan(id);
+    const stepId = buildActionItem(spec.command);
+    events.push({
+      type: "add_edge",
+      edge: {
+        id: `e:${next()}`,
+        from: planId,
+        to: stepId,
+        kind: "item",
+        provenance: { kind: "llm" },
+      },
+    });
     return id;
   };
 
@@ -691,32 +660,27 @@ export function executeAction(
       if (current === undefined) return fail("create goal failed: no current goal");
       const currentNode = state.nodes.get(current);
       const atRequest = currentNode?.kind === "request";
-      const refuted = criterionFailed(state, current);
-      // Decomposing an open goal (I6): the sub-goal replaces the current step as its
-      // chosen alternative, so there must be a concrete step to decompose.
+      // Decomposing an open goal (I6): the sub-goal replaces the current plan item as its
+      // chosen alternative, so there must be a concrete item to decompose.
       let step: string | undefined;
-      if (!atRequest && !refuted) {
+      if (!atRequest) {
         step = firstUnfulfilledItem(state, current);
         const stepNode = step !== undefined ? state.nodes.get(step) : undefined;
         if (step === undefined || stepNode?.kind !== "action") {
           return fail(
-            `create goal failed: no current step to decompose — a sub-goal can only replace an existing step; if ${current}'s plan is done, check it (run {target: "${current}"}) or apply an action`,
+            `create goal failed: no current plan item to decompose — a sub-goal can only replace an existing item; apply an action to add the next one`,
           );
         }
       }
       const id = buildGoal({
         what: action.what,
         ...(action.why !== undefined ? { why: action.why } : {}),
-        done_when: action.done_when,
-        plan: action.plan,
-        step: action.step,
+        sketch: action.sketch,
+        command: action.command,
       });
       if (atRequest) {
         // The request is interpreted as this goal (`has_goal`); the interpretation is fixed.
         addEdge({ kind: "llm" }, current, id, "has_goal");
-      } else if (refuted) {
-        const container = variantContainer(current);
-        addEdge({ kind: "llm" }, container, id, "item");
       } else {
         const alt = ensureAlternatives(step as string);
         addEdge({ kind: "llm" }, alt, id, "item");
@@ -1179,131 +1143,11 @@ export function executeAction(
       }
 
       // apply.tool === "run"
-      // A run is the criterion of a goal only when it explicitly names that goal as its
-      // target (the observation carries `target`). A bare run (no target) is not read as a
-      // criterion even when its command equals a goal's `done_when`: a reproduce step must
-      // not settle the goal before the fix (docs/plans/traversal_stack_spec.md §9).
-      const target = apply.target;
-      const targetNode = target !== undefined ? state.nodes.get(target) : undefined;
-      if (target !== undefined && (targetNode === undefined || targetNode.kind !== "goal")) {
-        return fail(`check failed: no goal ${target}`);
-      }
-      // A goal is checked by its own done_when command from the IR; the doxa only
-      // initiates the check and cannot substitute the command.
-      let runCommand = apply.command;
-      if (target !== undefined && targetNode?.kind === "goal") {
-        const payload = targetNode.payload as GoalPayload | undefined;
-        runCommand = payload?.done_when;
-      }
-      // A poll of a background job: it has no shell of its own, is never a check, and is
-      // never a repeat — each poll reads new state (docs/tools.md §4.7).
-      if (apply.job !== undefined) {
-        const job = workspace.pollJob(apply.job);
-        if (job === undefined) return fail(`no such job: ${apply.job}`);
-        const actionCommand = `poll ${job.id}`;
-        const actionId = ensureAction(actionCommand, actionCommand, {
-          signature: `${actionCommand}\u0000`,
-        });
-        const observationSeq = next();
-        const observationId = `obs:${observationSeq}`;
-        const done = job.state === "done";
-        // A job killed by a signal crashed: read the core and a backtrace, as for a
-        // foreground run (docs/tools.md §4.3).
-        const crash =
-          done && job.signal !== null
-            ? crashReport(workspace, job.signal, job.startedAt)
-            : undefined;
-        const outputBody = storeStream(observationId, "output", job.stdout);
-        const errorBody = storeStream(observationId, "error", job.stderr);
-        const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
-        const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
-        const crashSummary =
-          crash !== undefined ? crashLine(crash) : `exit ${job.exitCode ?? "?"}`;
-        const header = done
-          ? `$ ${job.command}\njob ${job.id} ${crashSummary}`
-          : `job ${job.id} running (poll again with run {job: "${job.id}"})`;
-        const diagnostic =
-          crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
-        const text = `${job.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
-        events.push({
-          type: "add_node",
-          node: {
-            id: observationId,
-            space: "work",
-            kind: "observation",
-            label: actionCommand,
-            payload: {
-              command: actionCommand,
-              job: job.id,
-              state: job.state,
-              ...(done && job.exitCode !== null ? { exitCode: job.exitCode } : {}),
-              ...(job.signal !== null ? { signal: job.signal } : {}),
-              ...(crash?.core !== undefined ? { core: crash.core } : {}),
-              ...(crash?.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
-              ...(crash?.backtrace !== undefined
-                ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
-                : {}),
-              ...(crash?.backtraceError !== undefined
-                ? { backtraceError: bounded(crash.backtraceError, 2000) }
-                : {}),
-              ...(!done ? { summary: `job ${job.id} running` } : {}),
-              ...(job.stdout !== "" ? { output: outputShown } : {}),
-              ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
-              ...(errorShown !== "" ? { error: errorShown } : {}),
-              ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
-            },
-            seq: observationSeq,
-          },
-        });
-        addEdge({ kind: "llm" }, actionId, observationId, "produces");
-        return {
-          events,
-          turn: proposalTurn(text, observationId, errorShown),
-          done: false,
-          stopReason: null,
-        };
-      }
-
-      if (runCommand === undefined) {
+      // `run` is one plain foreground command: there is no target/criterion and no
+      // background job machinery (docs/plans/goal_reduction_plan.md §4).
+      const runCommand = apply.command;
+      if (runCommand === undefined || runCommand.trim() === "") {
         return fail("run failed: no command");
-      }
-
-      // Start a long command in the background: this turn returns at once and the model
-      // polls the job by id. A background command cannot be guarded (its mutations land
-      // after this turn), so it is refused while a constraint forbids a file.
-      if (apply.background === true) {
-        if (forbiddenPatterns(state).length > 0) {
-          return fail(
-            "background run unavailable while a constraint forbids files; run it in the foreground",
-          );
-        }
-        const started = workspace.startJob(runCommand);
-        const actionId = ensureAction(runCommand, runCommand, {
-          signature: `${runCommand}\u0000`,
-          background: true,
-        });
-        const observationSeq = next();
-        const observationId = `obs:${observationSeq}`;
-        const text = `started job ${started.id} (pid ${started.pid}): ${runCommand}\npoll with run {job: "${started.id}"}`;
-        events.push({
-          type: "add_node",
-          node: {
-            id: observationId,
-            space: "work",
-            kind: "observation",
-            label: `started ${started.id}`,
-            payload: {
-              command: runCommand,
-              job: started.id,
-              state: "running",
-              summary: `job ${started.id} running`,
-              output: text,
-            },
-            seq: observationSeq,
-          },
-        });
-        addEdge({ kind: "llm" }, actionId, observationId, "produces");
-        return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
       const readIfPresent = (path: string): string | undefined => {
@@ -1347,10 +1191,7 @@ export function executeAction(
       );
 
       const command = runCommand;
-      const actionId = ensureAction(command, command, {
-        signature: `${runCommand}\u0000${target ?? ""}`,
-        ...(target !== undefined ? { target } : {}),
-      });
+      const actionId = ensureAction(command, command, { signature: `${runCommand}\u0000` });
       for (const entry of mutations) {
         const path = entry.ref.slice("file:".length);
         ensureFile(path, entry.ref);
@@ -1380,8 +1221,7 @@ export function executeAction(
       }
 
       // A run is an observation: `command` + `exitCode` (0 = pass, non-zero = fail, absent
-      // on a timeout), plus the output. A run with `target` is the criterion of that goal
-      // (docs/plans/stop_closure_plan.md §5 step 3); the exit code replaces the old check.
+      // on a timeout), plus the output.
       const resultSeq = next();
       const resultId = `obs:${resultSeq}`;
       // stdout and stderr are stored separately and never concatenated: a failed run's
@@ -1406,9 +1246,7 @@ export function executeAction(
           label: command,
           payload: {
             command: runCommand,
-            ...(target !== undefined ? { target } : {}),
             ...(exitCode !== undefined ? { exitCode } : {}),
-            ...(target !== undefined ? { witness: witnessOfWorkspace(workspace) } : {}),
             ...(result.stdout !== "" ? { output: outputShown } : {}),
             ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
             ...(errorShown !== "" ? { error: errorShown } : {}),

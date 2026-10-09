@@ -2,6 +2,12 @@
 
 > Russian mirror — `docs/benches/bench_report_ru.md`. This is a working measurement report,
 > not a specification. Harness code lives in `bench/` and `langgraph/`.
+>
+> **Model change (2026-10-09).** The runs below were measured **before** the goal reduction
+> (`docs/plans/goal_reduction_plan.md`): the goal then carried a criterion `done_when`, a
+> separate `step`, `revises` and an exposed `state`, and `stop` was gated on the criterion
+> run. That churn is exactly what the reduction removes; treat these numbers as the
+> baseline the reduction is measured against, not as the current model.
 
 ## 1. Why
 
@@ -609,10 +615,34 @@ verifier's clean rebuild (`stop=max_turns`, edit t22). Fixes:
   `./configure` + a background `make`, and the edit landed at t28.
 - **Named-suspect → edit** (B7/B16) and **a reference diff is a lead, not a checklist** (B9),
   after a transcript run re-read one file's windows for 17 turns without editing.
-- **The transcript format was rejected** (the pending A/B, `docs/plans/step_reduction_plan.md`
-  §4): on `fix-ocaml-gc` it roughly doubled reasoning/cost — one turn summed **4 calls /
-  60.9k completion tokens** — and ended `llm_error`; it did lift the cache hit on short
-  fixtures (`ref-localize-on`: 90–92% vs 47–59%). The JSON projection stays the default.
+- **The transcript format: a measured cache win; the rejection was a truncation storm, not
+  the cache — provisional.** The `ref-localize-on` A/B (n=3 each, 2026-10-09,
+  `SKEIN_CONTEXT_FORMAT`; artifacts
+  `bench/runs/2026-10-09T12-4{0,1,2}-*-ref-localize-on-skein/`) is a decisive cache win at
+  equal reward (1.0):
+
+  | arm | run (12-…) | steps | in | out | reason | cache | cost |
+  |---|---|---|---|---|---|---|---|
+  | JSON (A) | `40-07` | 7 | 58,945 | 891 | 249 | 47% | 0.98₽ |
+  | JSON | `40-28` | 7 | 63,676 | 874 | 281 | 59% | 0.45₽ |
+  | JSON | `40-52` | 7 | 63,507 | 770 | 263 | 57% | 0.45₽ |
+  | transcript (B) | `41-16` | 9 | 81,497 | 1,070 | 374 | 90% | 0.22₽ |
+  | transcript | `41-40` | 7 | 58,695 | 790 | 243 | 92% | 0.15₽ |
+  | transcript | `42-01` | 7 | 58,749 | 788 | 224 | 92% | 0.15₽ |
+  | **A mean** | | 7.0 | 62,043 | 845 | 264 | **54%** | **0.63₽** |
+  | **B mean** | | 7.7 | 66,314 | 883 | 280 | **91%** | **0.17₽** |
+
+  A ≈3.7× cheaper at the same reward — the cache gain is real. The "rejection" rests on
+  **one** long run, `bench/runs/sandbox-tasks/2026-10-09T12-42-29-270Z-fix-ocaml-gc`
+  (reward 0, `stop=llm_error`, 31 turns, 40.70₽, reason 204k of 207k out). There the
+  transcript's cache was **also better** — 63% vs JSON's 42–58% the same day — so the cache
+  mechanism held; the cost came from a **completion truncation storm**: two `read` turns
+  alone spent **t21 3 calls / 34.2k** and **t29 4 calls / 60.9k** completion tokens (36% of
+  the run's cost), because `invokeTools` doubled the cap on `finish_reason: "length"`. The
+  bound added right after (one brevity retry at the ceiling, no cap doubling — bullet below
+  and §4.7) caps exactly that storm, so the rejection is **provisional** and the format
+  should be re-run. The cache gap is the single largest structural cost vs opencode (56% vs
+  96%, §4.4).
 - **Engine:** `invokeTools` bounds a completion truncation to **one** retry at the ceiling
   with a brevity instruction (no cap doubling), and a **read thrash-guard** refuses a third
   read of an unchanged file (`OP-AP-READ-6`).

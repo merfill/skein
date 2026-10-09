@@ -60,31 +60,8 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
         expect(command, "a proposed run must not merge stdout and stderr").not.toMatch(/2>&1|&>/);
       }
 
-      if (
-        step.focusCheck === true &&
-        proposal.action.operator === "apply" &&
-        proposal.action.action.tool === "run" &&
-        proposal.action.action.target !== undefined
-      ) {
-        const focus = step.context.path[step.context.path.length - 1]?.id;
-        expect(
-          proposal.action.action.target,
-          "a check must target the node in focus (path[last]), never an ancestor interpretation",
-        ).toBe(focus);
-      }
-
-      if (step.refusedWhat !== undefined && proposal.action.operator === "create_goal") {
-        expect(
-          proposal.action.what,
-          "a visible repeat_hypothesis refusal must stop an exact repeat",
-        ).not.toBe(step.refusedWhat);
-      }
-
-      if (
-        step.cwdReaction === true &&
-        proposal.action.operator === "create_goal"
-      ) {
-        const command = proposal.action.done_when;
+      if (step.cwdReaction === true && proposal.action.operator === "create_goal") {
+        const command = proposal.action.command;
         expect(
           command.trim(),
           "a revised command must not repeat the bare workspace-root command",

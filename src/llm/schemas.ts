@@ -1,17 +1,5 @@
 import { z } from "zod";
 
-// The first concrete step materialized in a goal's plan container (I2): a plan item is
-// always an action, never a sub-goal.
-export interface ActionStep {
-  command: string;
-  label?: string;
-}
-
-export const stepSchema = z.object({
-  command: z.string(),
-  label: z.string().optional(),
-});
-
 export const applySchema = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("read"),
@@ -52,11 +40,6 @@ export const applySchema = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("run"),
     command: z.string().optional(),
-    target: z.string().optional(),
-    // Start the command in the background and return at once; poll it with `job`.
-    background: z.boolean().optional(),
-    // Poll a background job started earlier (its id came back as `job-N`).
-    job: z.string().optional(),
   }),
   z.object({
     // Fetch a URL into the workspace as read-only reference evidence, so it can be read
@@ -81,11 +64,10 @@ export const actionSchema = z.discriminatedUnion("operator", [
     operator: z.literal("create_goal"),
     what: z.string(),
     why: z.string().optional(),
-    // The criterion: a literal command the engine runs; pass ⇔ exit 0.
-    done_when: z.string(),
-    plan: z.string(),
-    step: stepSchema,
-    revises: z.array(z.string()).optional(),
+    // A short free-form note so the model does not lose the thread.
+    sketch: z.string(),
+    // The first plan item: the concrete command to run now.
+    command: z.string(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),

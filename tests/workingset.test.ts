@@ -136,22 +136,20 @@ describe("working set under a long synthetic horizon", () => {
           action: {
             operator: "create_goal",
             what: "A",
-            done_when: "true",
-            plan: "A: a sketch",
-            step: { command: "true" },
+            sketch: "A: a sketch",
+            command: "true",
           },
         };
       }
       if (n === 2) {
-        // Decompose A's current step into a sub-goal G and descend into it.
+        // Decompose A's current plan item into a sub-goal G and descend into it.
         return {
           thought: "",
           action: {
             operator: "create_goal",
             what: "G",
-            done_when: "true",
-            plan: "G: a sketch",
-            step: { command: "true" },
+            sketch: "G: a sketch",
+            command: "true",
           },
         };
       }
@@ -161,11 +159,11 @@ describe("working set under a long synthetic horizon", () => {
       }
       if (n === 4) {
         f0 = context.lastResult?.id;
-        return { thought: "", action: { operator: "apply", action: { tool: "run", target: goalG } } };
+        return { thought: "", action: { operator: "apply", action: { tool: "run", command: "true" } } };
       }
       if (n === 5) {
-        // Stop G (its criterion passed): focus returns to A, so G's read is off A's
-        // subtree and only a `query` (with its TTL) can bring the body back.
+        // Stop G: focus returns to A, so G's read is off A's subtree and only a `query`
+        // (with its TTL) can bring the body back.
         return { thought: "", action: { operator: "stop", why: "G is done" } };
       }
       if (n === 6) {

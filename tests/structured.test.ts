@@ -187,9 +187,9 @@ describe("tool calling", () => {
       operator: "apply",
       action: { tool: "write", path: "a.txt", content: "hi" },
     });
-    expect(toProposal("run", { target: "w:goal:1" }, "t").action).toEqual({
+    expect(toProposal("run", { command: "node --test" }, "t").action).toEqual({
       operator: "apply",
-      action: { tool: "run", target: "w:goal:1" },
+      action: { tool: "run", command: "node --test" },
     });
     expect(toProposal("fetch", { url: "http://x/y" }, "t").action).toEqual({
       operator: "apply",

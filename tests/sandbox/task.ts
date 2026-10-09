@@ -31,8 +31,9 @@ export interface SandboxTask {
   // runtime (e.g. `git-leak-recovery` has git but no Python), when the host has it.
   checkIn?: "task" | "host";
   // The turn budget for a live run (default 24). A build-heavy task needs more: the
-  // criterion triggers a full rebuild and each background poll costs a turn (`fix-ocaml-gc`
-  // sets 60, like the Harbor acceptance). An explicit `--turns` overrides it.
+  // criterion triggers a full rebuild, and a foreground run of it blocks for minutes but is
+  // one turn (`fix-ocaml-gc` sets 60, like the Harbor acceptance). An explicit `--turns`
+  // overrides it.
   maxTurns?: number;
   // A command run in the task container before the verifier (e.g. `fix-ocaml-gc` rebuilds
   // the compiler and regenerates tests.txt, which the verifier then reads).

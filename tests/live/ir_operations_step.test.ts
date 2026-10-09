@@ -4,14 +4,13 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import { fold } from "../../src/ir/graph";
 import { project, type Context } from "../../src/ir/project";
-import { currentGoalId, focusEvents } from "../../src/ir/traversal";
+import { focusEvents } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
 import type { Action } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
 import {
   DEFAULT_FILES,
-  check,
   cleanupWorkspaces,
   exec,
   interpretation,
@@ -57,91 +56,10 @@ function buildSteps(): Step[] {
   });
 
   {
-    // OP-AP-RUN-2 / TR-6: an objective focus whose plan is done is settled by its check
-    // (checkReady), never by complete or by growing the plan.
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const done = exec(run("true"), opened.events, ws);
-    steps.push({
-      name: "check-ready-objective",
-      context: projectAt(done.events),
-      expectMove: (a) => {
-        expect(a.operator).toBe("apply");
-        if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("run");
-        if (a.action.tool !== "run") return;
-        expect(a.action.target, "the check targets the focus goal").toBe(goal);
-      },
-    });
-  }
-
-  {
-    // OP-AP-RUN-5/6: a running background job is polled, not re-run.
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "make check"), [request()], ws);
-    const action: Event = { type: "add_node", node: { id: "a:job", space: "work", kind: "action", label: "started job job-1", payload: { command: "make", background: true }, seq: 900 } };
-    const observation: Event = {
-      type: "add_node",
-      node: {
-        id: "obs:job",
-        space: "work",
-        kind: "observation",
-        label: "started job job-1",
-        payload: { command: "make", job: "job-1", state: "running", summary: "job job-1 running", output: "started job job-1 (pid 1): make\npoll with run {job: \"job-1\"}" },
-        seq: 901,
-      },
-    };
-    const edge: Event = { type: "add_edge", edge: { id: "e:job", from: "a:job", to: "obs:job", kind: "produces", provenance: { kind: "llm" } } };
-    steps.push({
-      name: "poll-background-job",
-      context: projectAt([...opened.events, action, observation, edge]),
-      expectMove: (a) => {
-        expect(a.operator).toBe("apply");
-        if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("run");
-        if (a.action.tool !== "run") return;
-        expect(a.action.job, "the running job is polled by id").toBe("job-1");
-      },
-    });
-  }
-
-  {
-    // OP-AP-RUN-4: an inconclusive check on a ready objective focus is retried at the
-    // same node (checkReady is true, the goal is still open).
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const done = exec(run("true"), opened.events, ws);
-    const timedOut: Event = {
-      type: "add_node",
-      node: {
-        id: "obs:timeout",
-        space: "work",
-        kind: "observation",
-        label: "make check",
-        payload: { command: "make check", target: goal },
-        seq: 99,
-      },
-    };
-    steps.push({
-      name: "retry-inconclusive",
-      context: projectAt([...done.events, timedOut]),
-      expectMove: (a) => {
-        expect(a.operator).toBe("apply");
-        if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("run");
-        if (a.action.tool !== "run") return;
-        expect(a.action.target).toBe(goal);
-      },
-    });
-  }
-
-  {
-    // TR-6 / OP-AP-RUN-1: the plan cursor points at an action item: apply it verbatim.
+    // OP-AP-RUN-1 / TR-7: the plan cursor points at an action item: apply it verbatim.
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(
-      interpretation("carry out the request", "make check", "echo ready"),
+      interpretation("carry out the request", "echo ready"),
       [request("First run `echo ready`, then continue with the task.")],
       ws,
     );
@@ -159,56 +77,26 @@ function buildSteps(): Step[] {
   }
 
   {
-    // REF-NOT-FOCUS: an objective focus is settled by its own check. The refusal at the
-    // focus (with its hint) must point the model at the check.
+    // OP-ST-1: an open goal offers stop (or a further command); there is no criterion.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "make check", "true"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const done = exec(run("true"), opened.events, ws);
-    const refusal: Event = {
-      type: "record_rejection",
-      tool: "run",
-      target: `run:${goal}`,
-      reason: `not_current_goal: a check acts on the node in focus; check it: apply run {target: "${goal}"}`,
-      turn: 0,
-    };
+    const opened = exec(interpretation("fix the build", "true"), [request()], ws);
     steps.push({
-      name: "follow-focus-hint",
-      context: projectAt([...done.events, refusal]),
-      expectMove: (a) => {
-        expect(a.operator, "the model follows the hint and checks").toBe("apply");
-        if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("run");
-        if (a.action.tool !== "run") return;
-        expect(a.action.target).toBe(goal);
-      },
+      name: "stop-open-goal",
+      context: projectAt(opened.events),
+      expectMove: (a) => expect(["apply", "stop"], "an open goal offers stop").toContain(a.operator),
     });
   }
 
   {
-    // OP-ST-2: a goal whose criterion passed offers stop.
+    // TR-8 (F2): an open goal whose one step is done continues with an action (apply),
+    // not a create_goal funnel.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "true", "true"), [request()], ws);
-    const goal = currentGoalId(opened.state)!;
-    const ran = exec(run("true"), opened.events, ws);
-    const checked = exec(check(goal), ran.events, ws);
-    steps.push({
-      name: "stop-addressed",
-      context: projectAt(checked.events),
-      expectMove: (a) => expect(a.operator, "an addressed request is stopped").toBe("stop"),
-    });
-  }
-
-  {
-    // TR-8 (F2): an open goal whose one step is done continues with an action
-    // (apply), not a create_goal funnel.
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("investigate the failure", undefined, "true"), [request()], ws);
+    const opened = exec(interpretation("investigate the failure", "true"), [request()], ws);
     const ran = exec(run("true"), opened.events, ws);
     steps.push({
       name: "continue-open-goal",
       context: projectAt(ran.events),
-      expectMove: (a) => expect(a.operator, "an open goal continues with an action").toBe("apply"),
+      expectMove: (a) => expect(["apply", "stop"], "an open goal continues").toContain(a.operator),
     });
   }
 

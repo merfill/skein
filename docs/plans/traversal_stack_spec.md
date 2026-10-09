@@ -4,6 +4,12 @@
 > Basis — the discussion of alternatives, plan revision and tree traversal.
 > Touches `docs/ir.md`, `docs/plans/step_reduction_plan.md`, `src/ir/traversal.ts`,
 > `src/ir/project.ts`.
+>
+> **Superseded in part by `docs/plans/goal_reduction_plan.md`.** The criterion gate
+> (§2.3, §9), `done_when`/`chosen`/`state`/`revises` and the `checkReady`/`nextAction`
+> projections are removed: a goal is `what`/`why`/`sketch` + a plan seeded by the first
+> `command`, closed only by the doxa's `stop`. The spine/arm/cursor/traversal model itself
+> still holds.
 
 ## 1. Purpose
 

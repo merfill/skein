@@ -1,7 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
-import { actionExecuted, childrenOf, criterionPass, currentVersion, fold, goalOf, hasStopped, planOf, requestSettled, type State } from "../ir/graph";
+import { actionExecuted, childrenOf, currentVersion, fold, goalOf, hasStopped, planOf, type State } from "../ir/graph";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
@@ -98,10 +98,7 @@ function describeTarget(action: Action): string {
       target = "decline";
       break;
     case "apply":
-      target =
-        action.action.tool === "run" && action.action.command === undefined && action.action.target !== undefined
-          ? `check ${action.action.target}`
-          : commandOf(action.action);
+      target = commandOf(action.action);
       break;
   }
   return target.replace(/\s+/g, " ").trim().slice(0, 120);
@@ -334,13 +331,6 @@ export function compileGraph(deps: AgentDeps) {
         // The request ends when its goal is stopped (there is no `stop` on the request).
         const goal = goalOf(current, rootId);
         if (goal !== undefined && hasStopped(current, goal)) {
-          return {
-            done: true,
-            stopReason: criterionPass(current, goal) ? "request_addressed" : "request_stopped",
-          };
-        }
-        // If the budget runs out while the request's goal is settled, closure wins.
-        if (requestSettled(current, rootId) && state.turn >= deps.maxTurns) {
           return { done: true, stopReason: "request_addressed" };
         }
       }

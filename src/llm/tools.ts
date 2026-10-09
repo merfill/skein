@@ -1,11 +1,6 @@
 import { z } from "zod";
 
-import {
-  actionSchema,
-  stepSchema,
-  type Action,
-  type Proposal,
-} from "./schemas";
+import { actionSchema, type Action, type Proposal } from "./schemas";
 
 // Structured output via native tool calls (docs/testing_ru.md §8.1). The provider does
 // not hold tool calling well when the schema is ONE deeply nested discriminated union
@@ -27,10 +22,8 @@ export interface OpenAITool {
 const createGoalParams = z.object({
   what: z.string(),
   why: z.string().optional(),
-  done_when: z.string(),
-  plan: z.string(),
-  step: stepSchema,
-  revises: z.array(z.string()).optional(),
+  sketch: z.string(),
+  command: z.string(),
 });
 const queryParams = z.object({
   id: z.string().optional(),
@@ -60,9 +53,6 @@ const listParams = z.object({
 const editParams = z.object({ path: z.string(), find: z.string(), replace: z.string() });
 const runParams = z.object({
   command: z.string().optional(),
-  target: z.string().optional(),
-  background: z.boolean().optional(),
-  job: z.string().optional(),
 });
 const writeParams = z.object({ path: z.string(), content: z.string() });
 const fetchParams = z.object({ url: z.string(), path: z.string().optional() });
@@ -79,7 +69,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "create_goal",
     description:
-      "Interpret the request (when the focus is the request; exactly once — the interpretation is FIXED) or add a sub-goal that branches the current step (when the focus is an open goal). done_when is the literal command that verifies the goal (its criterion) — the engine runs it and reads the exit code (0 = pass, non-zero = fail); pick a command that really checks the work. Always give plan (a short free-form string sketch of the steps) and step: the FIRST concrete action to run now ({command, label?}). A plan item is always an action, appended in order; steps run one at a time — after each, decide the next from its result. A sub-goal replaces the current step (its newest alternative); the focus descends into it. When you replace a failed attempt, revises MUST list ALL failed options of the container by id, and the new what must differ from every failed one. Refused if: what/done_when/plan/step.command is empty; a failed option is omitted from revises (missing_revision); a failed hypothesis is repeated (repeat_hypothesis); the request already has an interpretation (interpreted); or the goal's plan is already fully carried out.",
+      "Interpret the request (when the focus is the request; exactly once — the interpretation is FIXED) or add a sub-goal that branches the current plan item (when the focus is an open goal). Give what (the outcome), optional why (your hypothesis), sketch (a short free-form string note of the plan so you do not lose the thread), and command (the FIRST concrete action to run now). The engine executes that command from the WORKSPACE ROOT and returns its result; a plan item is any command, appended in order, one at a time — after each, decide the next from its result. If the project lives in a subdirectory (seen with list, or named in the request, e.g. `ocaml/`), the command MUST carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`), never the bare command. A sub-goal replaces the current plan item (its newest alternative); the focus descends into it. Refused if: what/sketch/command is empty; or the request already has an interpretation (interpreted).",
     schema: createGoalParams,
   },
   {
@@ -115,7 +105,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "run",
     description:
-      "Run a shell command, or check a goal. With target (a goal id) OMIT command — the engine runs the goal's own done_when command (a different command is refused): exit 0 is a pass, non-zero a fail, a timeout leaves it open. target MUST be the current focus (path[last]); an ancestor or sibling is refused (not_current_goal) — settle the focus first. An identical re-check after a timeout is allowed. Without target, command is required (exploratory evidence, not a check). background:true starts a long command and returns at once with a job id; poll it with {job:\"<id>\"} until state \"done\" (the poll carries the exit code and the tail of the output); a background command is never a check.",
+      "Run a shell command (the current plan item's command, or the next step). command is required and is one plain command; the engine runs it from the WORKSPACE ROOT. A run BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output (stdout and stderr kept SEPARATE). Re-running an identical command in an unchanged world is refused as a repeat — fetch the stored result by id with query instead.",
     schema: runParams,
   },
   {
@@ -139,13 +129,13 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      "Stop: finish the focused goal. The engine appends a stop node as the goal's LAST plan item and records a has_stopped edge (the closure and its reason sit in the plan); it then returns to the request and the run ends. Accepted only once the goal's criterion has passed; otherwise refused (check_not_run) — run the check {target}, add a step, or revise. There is no stop on the request.",
+      "Stop: finish the focused goal. The engine appends a stop node as the goal's LAST plan item and records a has_stopped edge (the closure and its reason sit in the plan); it then returns to the request and the run ends. There is no stop on the request.",
     schema: stopParams,
   },
   {
     name: "decline",
     description:
-      "Decline to formulate a goal: the request's intent is not actionable (e.g. chit-chat, no task). Use it INSTEAD of inventing a goal with a fake criterion. Available only while the request has no interpretation yet; records an unactionable node under the request and ends the run. Give why.",
+      "Decline to formulate a goal: the request's intent is not actionable (e.g. chit-chat, no task). Use it INSTEAD of inventing a goal. Available only while the request has no interpretation yet; records an unactionable node under the request and ends the run. Give why.",
     schema: declineParams,
   },
 ];

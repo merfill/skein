@@ -195,13 +195,15 @@ live gate only when `SKEIN_LIVE=true`.
   Optimization (volatile to the tail, settled facts and the file index append-only
   at the front, bounded growth) is deferred as premature; it needs a separate study.
 - **Reducing LLM turns.** The context-format A/B (JSON projection vs a role-tagged
-  transcript) was run and the transcript was **rejected**: on `fix-ocaml-gc` it roughly
-  doubled reasoning/cost (60.9k-token turns, ended `llm_error`), though it lifted the cache
-  hit (90% vs ~55%) on short fixtures. The storm is now bounded (`invokeTools` retries once
-  at the ceiling, no cap doubling), a named-suspect prompt trigger pushes the edit, and a
-  read thrash-guard refuses a third read of an unchanged file. Still open: logos closure (a
-  passing objective check verifies ancestors with the same criterion) —
-  `docs/plans/step_reduction_plan.md`.
+  transcript) was run and the transcript was **provisionally rejected**: on `fix-ocaml-gc` it
+  roughly doubled reasoning/cost (60.9k-token turns, ended `llm_error`), though it lifted the
+  cache hit on short fixtures (90% vs ~55%) — and even on `fix-ocaml-gc` its cache was higher
+  (63% vs 42–58%). The loss was a completion **truncation storm**, not the cache; that storm
+  is now bounded (`invokeTools` retries once at the ceiling, no cap doubling), so the format
+  should be re-run (details — `docs/benches/bench_report.md` §4.8). Meanwhile a named-suspect
+  prompt trigger pushes the edit, and a read thrash-guard refuses a third read of an unchanged
+  file. Still open: logos closure (a passing objective check verifies ancestors with the same
+  criterion) — `docs/plans/step_reduction_plan.md`.
 - **Long builds vs the turn budget (next study).** A build-heavy criterion (`fix-ocaml-gc`
   rebuilds the whole OCaml compiler) costs turns even when the fix is right: after the edit
   the agent starts a background `run {background: true}` and each `poll` is a separate doxa

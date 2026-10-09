@@ -4,6 +4,11 @@
 > Основание — обсуждение механики альтернатив, правок плана и обхода дерева.
 > Касается `docs/ir.md`, `docs/plans/step_reduction_plan.md`, `src/ir/traversal.ts`,
 > `src/ir/project.ts`.
+>
+> **Частично заменено `docs/plans/goal_reduction_plan_ru.md`.** Гейт по критерию
+> (§2.3, §9), `done_when`/`chosen`/`state`/`revises` и проекции `checkReady`/`nextAction`
+> удалены: цель — `what`/`why`/`sketch` + план, засеянный первой `command`, закрывается
+> только `stop` доксы. Сама модель спина/рука/курсор/обход сохраняется.
 
 ## 1. Назначение
 

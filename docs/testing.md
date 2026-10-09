@@ -338,14 +338,14 @@ Results land in the same place, outside the repository:
 | `SKEIN_PROPOSAL` | the proposed action (including command text) |
 | `SKEIN_TURN` | per turn: tokens/cache/`contextChars`/time |
 | `SKEIN_LLM_ERROR` | a model-call error (with the attempt number) |
-| `SKEIN_EVENTS` | IR diagnostics: goals, plans, alternatives, `checks`, `observations`, `mutates`, rejections |
+| `SKEIN_EVENTS` | IR diagnostics: goals, plans, alternatives, `observations`, `mutates`, rejections |
 | `SKEIN_METRICS` | summary: tokens, `context` `first/last/peak/growth`, graph |
 
-`contextChars` is computed from the same `renderContext(context)` that goes into
+`contextChars` is computed from the same `promptText(context)` that goes into
 `buildMessages`, so the size in the log equals the sent context. Executed commands
 appear in `SKEIN_PROPOSAL` (proposed) and in
-`SKEIN_EVENTS.checks`/`.observations`/`.actions` (actual, including the command from
-`done_when`). The local bench writes the same into `bench/runs/<...>/` (§4).
+`SKEIN_EVENTS.observations`/`.actions` (actual, including the run command). The local
+bench writes the same into `bench/runs/<...>/` (§4).
 
 ## 8. Tool and projection limits
 

@@ -44,26 +44,26 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 |---|---|
 | `create_goal` | introduce a goal (the request's interpretation — exactly once — or a subgoal) with a plan |
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `run` / `fetch` / `apply_patch` |
-| `stop` | the sole closure: finish the focused goal (gate: its criterion passed) |
+| `stop` | the sole closure: finish the focused goal (no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `query` | deterministic lookup in the IR tree (does not change state) |
 
-### 2.1 `create_goal { what, why?, done_when, plan, step, revises? }`
+### 2.1 `create_goal { what, why?, sketch, command }`
 
 - `what` — what to achieve; non-empty.
 - `why?` — a rationale (text); the hypothesis for a fix.
-- `done_when` — the **criterion command** (a literal string): the engine runs exactly it
-  and reads the exit code (0 = pass, non-zero = fail).
-- `plan` — a non-empty **string sketch** of the plan (a note to oneself), not a list.
-- `step` — the **first concrete action** `{ command, label? }`, run verbatim; it is the
-  only plan item materialized at creation (an action).
-- `revises?` — ids of **all** failed options of the container when switching approach.
+- `sketch` — a non-empty **string sketch** of the plan (a note to oneself), not a list.
+- `command` — the **first plan item**: the concrete command to run now, verbatim; the engine
+  runs exactly it **from the workspace root**. A project in a subdirectory takes a
+  `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is
+  stated in B6 and in the `create_goal` `description`.
 
 Instruction: at a request node it creates the interpretation — **exactly once**: the
 request's interpretation is FIXED (a `has_goal` edge), so the `what` must be chosen
 deliberately and can never be re-proposed or the request re-interpreted. At an open goal it
-decomposes the current step into a sub-goal (an alternative to that step). Give a plan
-sketch and the first step. List failures fully in `revises`, otherwise a refusal.
+decomposes the current plan item into a sub-goal (an alternative to that item). Give a plan
+sketch and the first command. `command` is not a special "step" — it is simply the first
+plan item.
 
 ### 2.2 `apply { action }`
 
@@ -76,7 +76,7 @@ sketch and the first step. List failures fully in `revises`, otherwise a refusal
 | `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
 | `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`) to read and diff (B9); refused on a path outside the workspace / already existing / forbidden / download failure |
 | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
-| `run` | `{ command?, target?, background?, job? }` | shell command; with `target` — a criterion run of that goal: an **observation** carrying `target` and `exitCode` (the command comes from its `done_when`, `command` is omitted); without `target` — a plain **observation**; with `background` — start a long command and poll it by `job` (see §4.7) |
+| `run` | `{ command }` | one plain **foreground** shell command: an **observation** carrying `command` and `exitCode` (0 = pass, non-zero = fail, absent on a timeout) plus the output (stdout and stderr separate, §4.3) |
 
 ### 2.3 `query { id | kind | edgesOf, start?, end? }`
 
@@ -91,16 +91,16 @@ remain an engine capability but are not offered to the model.
 The doxa's terminal move and the sole closure: it finishes the focused **goal**. The engine
 appends a `stop` node as the goal's **last plan item** and records a `has_stopped` edge
 goal→stop (the closure and its reason sit in the plan); it then returns to the request and
-the run ends. For now `stop` is accepted only once the goal's criterion has passed
-(otherwise refused `check_not_run`). There is **no** `stop` on the request: the request/run
-ends when its goal is stopped, never by a `stop` of its own.
+the run ends. There is **no criterion gate**: `stop` is accepted on an open goal (cycle /
+premature-stop detection is deferred). There is **no** `stop` on the request: the
+request/run ends when its goal is stopped, never by a `stop` of its own.
 
 ### 2.5 `decline { why? }`
 
 Declines to formulate a goal: the request's intent is genuinely not actionable (chit-chat,
 no task). It records an `unactionable` node under the request (a `no_goal` edge) and ends
 the run. Available only while the request has no interpretation yet (before `create_goal`);
-give `why`. Never invent a goal with a fake criterion just to close such a request.
+give `why`. Never invent a goal just to close such a request.
 
 ---
 
@@ -184,17 +184,16 @@ content. The model asks for 120 lines — it sees ~8.
 - A failed `edit` (`find` not found) materializes the file's **current content** in the
   failure observation and keeps it in `shown`, so the model copies `find` verbatim from
   there instead of re-reading a file it already read (which the repeat guard refuses).
-- A criterion run that produced **no `exitCode`** (a timeout) is **not** a repeat: the
-  timeout brought no knowledge, so the same `run {target}` may be repeated. A run of
-  non-decisive runs does not count as progress and leaves the goal `open`.
+- A run that produced **no `exitCode`** (a timeout) is **not** a repeat: the timeout brought
+  no knowledge, so the same command may be repeated. Its `exitCode` is ordinary output, not
+  a closure oracle — a goal is closed only by `stop`.
 - A run killed by a **signal** (a crash, not a controlled exit) carries `signal` (e.g.
   `SIGSEGV`) — never a bare nonzero exit. The wrapper raises `ulimit -c unlimited`, so
   when the platform writes a core the engine finds the newest `core*` in the workspace
   and, if `gdb` is installed, attaches `gdb --batch -c <core> -ex bt -ex "info locals"`
   as `backtrace`. When no core was written, the engine reports the kernel's
   `core_pattern` so the absence is explained, not silently swallowed. `lastResult`
-  carries `signal`/`core`/`corePattern`/`backtrace`, and a `calls` note names the
-  signal; a foreground run and a completed background job are both covered.
+  carries `signal`/`core`/`corePattern`/  `backtrace`, and a `calls` note names the signal.
 
 ### 4.4 Projection: latest result + summary (decided)
 
@@ -225,7 +224,7 @@ content. The model asks for 120 lines — it sees ~8.
   dropped a body larger than the cap (the source window being edited), trapping the model
   in a `query` loop (docs/benches/bench_report.md §4.4). A read observation whose file has
   changed since is dropped (stale content is
-  never shown as active); `run`/criterion bodies are historical and never go stale. There is
+  never shown as active); `run` bodies are historical and never go stale. There is
   **no** model-side declaration of what to show: `query {id}` is the single retrieval
   entrance.
 - `SKEIN_CTX_TOTAL` is not applied; `SKEIN_CTX_EXCERPT` is no longer needed.
@@ -256,21 +255,18 @@ content. The model asks for 120 lines — it sees ~8.
 - read-only and idempotent (a repeat is not a refusal); it gives the model visibility
   of extensions so it can set `include` for `grep` meaningfully.
 
-### 4.7 `run`: long commands in the background (decided)
+### 4.7 `run`: one plain foreground command (decided; reduced)
 
-- A foreground `run` is capped by `SKEIN_RUN_TIMEOUT_MS` (default 120 s); a timeout
-  yields no `exitCode` (no pass/fail fact). That cap is too short for a full build or a
-  test suite.
-- `run { command, background: true }` starts the command detached and returns **at once**
-  with a job id (`job-N`); the turn is not blocked.
-- `run { job: "job-N" }` polls that job: it returns `running` (retry) or `done` with the
-  job's exit code and the **tail** of stdout/stderr (the full log stays at
-  `.skein/jobs/<id>.{out,err}`). A poll carries only `job` — never `command`/`target`.
-- The CLI runs stdout and stderr into **separate** logs (the §4.3 rule holds: the streams
-  are never merged); a poll that is not `done` leaves no `exitCode`.
-- A background job is never a criterion run (`target` is refused); a poll is never a repeat (each
-  poll reads new state). A background command is refused while a constraint forbids a
-  file, because its mutations land after the turn and cannot be reverted.
+- A `run` **blocks** until the command exits or the cap (`SKEIN_RUN_TIMEOUT_MS`, default
+  120 s) elapses; a timeout yields no `exitCode` (no verdict, just output). A build or a test
+  suite is run this way: the turn waits for it, one turn for the whole command.
+- The model-facing `run` is `{ command }` only. `target` (a criterion check) and the
+  `background`/`job` machinery are **removed from the model path**
+  (`docs/plans/goal_reduction_plan.md` §4): there is no criterion to check and no job to
+  poll. The `fsWorkspace` job API (`startJob`/`pollJob`, `.skein/jobs/<id>.{out,err,code}`)
+  remains an engine/test seam but is not reachable from a proposal.
+- stdout and stderr stay in **separate** logs (the §4.3 rule holds). A run is never a
+  closure oracle; a goal is closed only by `stop`.
 
 ---
 
@@ -281,19 +277,19 @@ reflect the real limits. Proposed:
 
 1. **Honest limits** of each tool (from §4) in its description.
 2. **An explicit strategy** for bugfix tasks:
-   1) **reproduce** the failure (usually via `run` of the `done_when` criterion or a
+   1) **reproduce** the failure (usually via `run` of the verification command or a
       build/test) and get a concrete error;
    2) localize by the error/code;
    3) fix (`edit`);
-   4) verify with the same criterion.
+   4) re-run the same command; close the goal with `stop` once it passes.
 3. **The workspace is the source of truth.** Do not assume VCS/history/diff. If `git`
    (or another history tool) is unavailable — **do not hunt for it**, work with files
    and behavior (see §6).
 4. **What to do with a failure/refusal**: look at `calls`/`negative`, do not repeat;
    change the approach, not the phrasing of the command. A failure that says the command
    or path is missing (`No such file or directory`, `can't cd`, `No rule to make target`)
-   is a wrong working directory, not bad code: revise the interpretation/goal so the
-   objective command carries a `cd <dir> &&` prefix (the project directory), instead of
+   is a wrong working directory, not bad code: apply the spelling with a `cd <dir> &&`
+   prefix (the project directory), or a sub-goal whose command carries it, instead of
    repeating the bare command.
 5. **How to read code**: `grep` to localize, `read` a window; the whole file when
    needed; do not re-read the same window without a change to the world.
@@ -303,7 +299,7 @@ reflect the real limits. Proposed:
    window**, with overlap if necessary; do not rely on memory of a previous result.
 7. **Where to search.** Pick the scope from the evidence: logic is in the sources
    (`include` by the project's language), a failure/log is in the output and log files.
-   Set `path` when a file/directory is named in the error, the `done_when` or the
+   Set `path` when a file/directory is named in the error, the first `command` or the
    hypothesis; grep the whole tree only to localize. A `grep` result is windows over
    matches: if there are more matches than the window, continue with `next`/`from`
    **without** changing the `pattern`.
@@ -314,27 +310,31 @@ This is a mandatory separate part of the prompt: without it the model applies a 
 agent's default reflex ("look at the diff").
 
 1. `request.text` is **raw motivation**, not a ready-made task. The first move is
-   `create_goal`: formulate an interpretation (`what`), a rationale (`why`) and
-   `done_when`.
-2. If the request names a **criterion/verification command** — take it verbatim as the
-   `done_when` — but the engine runs it from the **workspace root**, not a
+   `create_goal`: formulate an interpretation (`what`), a rationale (`why`), a plan
+   `sketch` and the first `command`.
+2. If the request names a **verification command** — take it verbatim as the first
+   `command` — but the engine runs it from the **workspace root**, not a
    project subdirectory. A named command is authoritative; its working directory is
    resolved from the tree. If the project lives in a subdirectory, the literal command
    must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
-   never the bare command.
+   never the bare command. The rule is stated in B6 and echoed in the `create_goal` tool
+   `description` (the schema the model sees on every call); the live test
+   `tests/live/root-cd.test.ts` guards it with one call per layout.
 3. After the goal, the first step is to **reproduce** the failure (run the
    verification/build), not to look for a change history.
 4. **The workspace is the source of truth.** Do **not** assume a VCS, `git`, a diff,
    or history. If `git` (or similar) fails — **do not try again**; move on to files
    and reproduction.
-5. **Example (matching).** Request: "I broke the GC build, the compiler crashes during
-   bootstrap; verify with `make -C testsuite one DIR=tests/basic`". Correct:
+5. **Example (matching).** Request: "I broke the GC build (the project is in `ocaml/`),
+   the compiler crashes during bootstrap; verify with
+   `make -C testsuite one DIR=tests/basic`". Correct:
    - goal: `what: "fix the GC regression so the basic testsuite passes"`,
-     `done_when: "make -C testsuite one DIR=tests/basic"`;
-   - a plan of **steps**: `reproduce` and `locate` are **actions** (run the command,
-     read/grep/diff); `fix` IS the hypothesis — `why` + the `done_when` command = the
-     command that shows the failure, so its own criterion run (`run {target}`) settles it
-     (there is no separate `verify`, no `complete`), not a list of bare commands.
+     `command: "cd ocaml && make -C testsuite one DIR=tests/basic"` (the project is in a
+     subdirectory, so the literal command carries the `cd` prefix);
+   - a plan of **commands**: `reproduce` and `locate` are plain **actions** (run the command,
+     read/grep/diff); `fix` IS the hypothesis — `why` states it — and the goal is closed by
+     the doxa's `stop` once the work is done (there is no separate `verify`, no `complete`
+     and no criterion check), not a list of bare commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a
    VCS; do not do it. A `git` failure in `calls` is a signal to change the approach,
    not the command.

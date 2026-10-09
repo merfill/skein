@@ -1,25 +1,12 @@
 import { forbiddenConstraints, matchesPath } from "../ir/constraints";
 import {
   actionExecuted,
-  childrenOf,
-  criterionFailed,
-  criterionPass,
   currentVersion,
   goalOf,
-  hasStopped,
-  planOf,
-  requestSettled,
   unactionableOf,
-  unselectedVariant,
   type State,
 } from "../ir/graph";
-import {
-  currentGoalId,
-  cursorOf,
-  firstUnfulfilledItem,
-  goalPayload,
-  itemFulfilled,
-} from "../ir/traversal";
+import { currentGoalId } from "../ir/traversal";
 import type { Proposal } from "../llm/schemas";
 import { commandOf } from "../tools";
 
@@ -38,10 +25,6 @@ function reject(reason: string, constraintId?: string): Classification {
 }
 
 const accept: Classification = { accept: true };
-
-function doneWhenOk(done: string): boolean {
-  return done.trim() !== "";
-}
 
 // How many times one unchanged file may be read before further reads are refused: a file
 // read over and over with no edit in between is a thrash — its body is already addressable,
@@ -125,55 +108,6 @@ function patchTargets(patch: string): string[] {
   return [...out];
 }
 
-function isFailed(state: State, id: string): boolean {
-  const node = state.nodes.get(id);
-  if (node?.kind !== "goal") return false;
-  return criterionFailed(state, id) || unselectedVariant(state, id);
-}
-
-function containerOf(state: State, goalId: string): string | undefined {
-  for (const [containerId, ids] of state.children) {
-    if (!ids.includes(goalId)) continue;
-    if (state.nodes.get(containerId)?.kind === "alternatives") return containerId;
-  }
-  return undefined;
-}
-
-// When a proposal replaces failed options, `revises` must name all of them.
-// Returns the required set, or null when the proposal is not a revision.
-function revisionContext(state: State, current: string): string[] | null {
-  const node = state.nodes.get(current);
-  // A request is never a revision point now: its interpretation is fixed. It becomes one
-  // when re-interpretation is added (docs/plans/request_goal_plan.md).
-  if (node?.kind === "request") return null;
-  if (node?.kind === "goal" && criterionFailed(state, current)) {
-    const failed = new Set<string>();
-    const container = containerOf(state, current);
-    if (container !== undefined) {
-      for (const id of childrenOf(state, container)) if (isFailed(state, id)) failed.add(id);
-    }
-    failed.add(current);
-    return [...failed];
-  }
-  return null;
-}
-
-function normalize(text: string): string {
-  return text.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function repeatOfFailed(state: State, failed: string[], what: string): boolean {
-  const target = normalize(what);
-  for (const id of failed) {
-    const node = state.nodes.get(id);
-    if (node?.kind !== "goal") continue;
-    const payload = node.payload as { what?: unknown } | undefined;
-    const label = typeof payload?.what === "string" ? payload.what : node.label;
-    if (normalize(label) === target) return true;
-  }
-  return false;
-}
-
 // A node has a retrievable body if it is a result (observation/check) or carries inline
 // output / an outputRef; an action/goal/etc. has none, so `query` of it returns only the
 // node's row, not a body.
@@ -192,45 +126,6 @@ function hasBody(state: State, id: string): boolean {
   );
 }
 
-// A plan "carries a check" when it has at least one checkable step: an action, or a
-// sub-goal (every goal now has a command criterion).
-function planCarriesCheck(state: State, items: readonly string[]): boolean {
-  return items.some((id) => {
-    const node = state.nodes.get(id);
-    if (node?.kind === "action") return true;
-    return node?.kind === "goal";
-  });
-}
-
-// The concrete move the logos expects at the current focus, computed from the same
-// frontier as `applicable`/`checkReady`. A wrong-target/wrong-operator refusal names it,
-// so the model is told not only why it was refused but what to do instead — the engine
-// states the frontier, the doxa still has to propose the move (docs/ir_semantics §4.2).
-function focusHint(state: State): string | undefined {
-  const focus = currentGoalId(state);
-  if (focus === undefined) return undefined;
-  const node = state.nodes.get(focus);
-  if (node?.kind === "request") return "interpret the request: create_goal";
-  if (node?.kind !== "goal") return undefined;
-  const payload = goalPayload(state, focus);
-  const plan = planOf(state, focus);
-  const items = plan === undefined ? [] : childrenOf(state, plan);
-  const cursor = cursorOf(state, focus);
-  const done = cursor === undefined || items.length === 0 || cursor >= items.length;
-  if (!done) {
-    const first = firstUnfulfilledItem(state, focus);
-    const firstNode = first !== undefined ? state.nodes.get(first) : undefined;
-    if (first === undefined) return undefined;
-    return firstNode?.kind === "action"
-      ? `apply the next plan item: ${firstNode.label}`
-      : `descend into the next plan item: ${first}`;
-  }
-  if (payload?.done_when !== undefined && payload.done_when !== "") {
-    return `check it: apply run {target: "${focus}"}`;
-  }
-  return undefined;
-}
-
 export function classify(
   proposal: Proposal,
   state: State,
@@ -241,20 +136,14 @@ export function classify(
 
   if (action.operator === "stop") {
     // The doxa's terminal move. On a goal it finishes the frame (the engine then returns
-    // to the parent and continues); on the request it ends the run. It does not settle a
-    // criterion: a goal must pass its own check first.
+    // to the parent and continues); on the request it ends the run. There is no criterion
+    // gate: `stop` closes the goal while working (docs/plans/goal_reduction_plan.md §2).
     const current = currentGoalId(state);
     const node = current !== undefined ? state.nodes.get(current) : undefined;
-    // Only goals: the request has no `stop` (it ends when its goal is stopped). For now
-    // only positive stops are accepted — the goal's criterion must have passed; the
-    // give-up cases are a later step (docs/plans/request_goal_plan.md).
     if (node?.kind !== "goal") {
       return reject("not_addressed: stop applies to a goal; the request ends when its goal is stopped");
     }
-    if (criterionPass(state, current as string)) return accept;
-    return reject(
-      `check_not_run: goal ${current} has not passed its criterion — run its check (run {target: "${current}"}) before stop`,
-    );
+    return accept;
   }
 
   if (action.operator === "decline") {
@@ -295,120 +184,22 @@ export function classify(
 
   if (action.operator === "create_goal") {
     if (action.what.trim() === "") return reject("empty_what");
-    if (!doneWhenOk(action.done_when)) return reject("empty_done_when");
-    if (action.plan.trim() === "") return reject("empty_plan");
-    if (action.step.command.trim() === "") return reject("empty_step");
+    if (action.sketch.trim() === "") return reject("empty_sketch");
+    if (action.command.trim() === "") return reject("empty_command");
     const current = currentGoalId(state);
     if (current === undefined) return reject("no_current_goal");
     const focusNode = state.nodes.get(current);
-    if (focusNode?.kind === "request" && requestSettled(state, current)) {
-      return reject(
-        "addressed: the request is already addressed; propose stop instead of a new interpretation",
-      );
-    }
     // The interpretation is fixed: a request accepts one goal, created once.
     if (focusNode?.kind === "request" && goalOf(state, current) !== undefined) {
       return reject(
         "interpreted: the request already has an interpretation; work it or stop instead of interpreting it again",
       );
     }
-    const required = revisionContext(state, current);
-    const revises = [...new Set(action.revises ?? [])];
-    if (required !== null) {
-      if (revises.length !== required.length || !required.every((id) => revises.includes(id))) {
-        return reject(
-          `missing_revision: list every failed option of ${current} in revises: expected [${required.join(", ")}]`,
-        );
-      }
-    } else if (revises.length > 0) {
-      return reject(
-        `unknown_revision: the focus goal ${current} is open, not refuted — revises does not apply here. To settle it, run its check (run {target: "${current}"}). To add a step, apply an action instead.`,
-      );
-    }
-    if (repeatOfFailed(state, required ?? [], action.what)) {
-      return reject("repeat_hypothesis");
-    }
-    // A goal whose plan already carries a fulfilled check step must be checked, not grown.
-    // A plan of only epistemic stages (no action) may still grow — otherwise the fix stage
-    // could never be added after reproduce/locate are done (docs/ir_semantics_ru.md §4.2).
-    const currentNode = state.nodes.get(current);
-    const payload = goalPayload(state, current);
-    const plan = planOf(state, current);
-    if (
-      currentNode?.kind === "goal" &&
-      !hasStopped(state, current) &&
-      !criterionFailed(state, current) &&
-      payload?.done_when !== undefined &&
-      plan !== undefined
-    ) {
-      const items = childrenOf(state, plan);
-      if (items.length > 0 && items.every((id) => itemFulfilled(state, id)) && planCarriesCheck(state, items)) {
-        return reject(
-          `all plan items are fulfilled; check this goal (apply run with target "${current}"), do not grow the plan`,
-        );
-      }
-    }
     return accept;
   }
 
   // action.operator === "apply"
   const apply = action.action;
-  // At an addressed request only `stop` applies: everything else is refused so the doxa
-  // cannot wander after the work is done (docs/ir_semantics.md §2.6).
-  {
-    const focus = currentGoalId(state);
-    const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
-    if (focusNode?.kind === "request" && requestSettled(state, focus as string)) {
-      return reject("addressed: the request is already addressed; propose stop instead");
-    }
-  }
-  // A poll of a background job carries only the job id, and reads new state each time,
-  // so it is never a repeat: accept it outright (docs/tools.md §4.7).
-  if (apply.tool === "run" && apply.job !== undefined) {
-    if (apply.command !== undefined || apply.target !== undefined || apply.background === true) {
-      return reject('job_poll: poll a background job with { tool: "run", job } alone');
-    }
-    return accept;
-  }
-  if (apply.tool === "run" && apply.background === true && apply.target !== undefined) {
-    return reject("background_target: a check must run to a verdict; do not background a check");
-  }
-  if (
-    apply.tool === "run" &&
-    apply.target === undefined &&
-    apply.background !== true &&
-    (apply.command ?? "").trim() === ""
-  ) {
-    return reject("run needs a command or an objective target to check");
-  }
-  if (
-    apply.tool === "run" &&
-    apply.background === true &&
-    (apply.command ?? "").trim() === ""
-  ) {
-    return reject("background_run: background needs a command");
-  }
-  if (apply.tool === "run" && apply.target !== undefined) {
-    const target = state.nodes.get(apply.target);
-    if (target === undefined || target.kind !== "goal") return reject("invalid_target");
-    const payload = goalPayload(state, apply.target);
-    if (payload === undefined || payload.done_when === undefined) {
-      return reject(`invalid_target: goal ${apply.target} has no criterion command`);
-    }
-    if (apply.command !== undefined && apply.command !== payload.done_when) {
-      return reject(
-        `target ${apply.target} is a goal; its check runs its own command "${payload.done_when}" — drop "command" (it is ignored) or pass exactly that`,
-      );
-    }
-    const current = currentGoalId(state);
-    if (apply.target !== current) {
-      const hint = focusHint(state);
-      return reject(
-        `not_current_goal: a check acts on the node in focus (${current ?? "none"}), not ${apply.target}; ${hint ?? `settle ${current ?? "the focus"} first`} — the traversal returns to the parent once it closes`,
-      );
-    }
-  }
-
   // A repeated command with the same inputs and an unchanged world is a repeat; the
   // result already exists under an id, so the model must retrieve it (query) instead of
   // re-running. Applies to `read`/`grep` (same window/scope) and to `run` (below).
@@ -428,18 +219,15 @@ export function classify(
   }
 
   if (apply.tool === "run") {
-    let runCommand = apply.command ?? "";
-    if (apply.target !== undefined) {
-      const payload = goalPayload(state, apply.target);
-      if (payload?.done_when !== undefined) runCommand = payload.done_when;
-    }
-    const signature = `${runCommand}\u0000${apply.target ?? ""}`;
+    const runCommand = apply.command ?? "";
+    if (runCommand.trim() === "") return reject("run needs a command");
+    const signature = `${runCommand}\u0000`;
     const found = latestAction(state, signature);
     if (found !== undefined && state.lastMutationSeq < found.seq) {
       const prior = state.nodes.get(resultId(state, found.id));
       const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
-      // A timeout brought no knowledge: an identical re-check after a timeout (no exit
-      // code) is not a repeat, so the model may retry the same check (§4.2, invariant 23).
+      // A timeout brought no knowledge: an identical re-run after a timeout (no exit code)
+      // is not a repeat, so the model may retry the same command.
       if (typeof exit === "number") {
         return reject(repeatReason(resultId(state, found.id), held));
       }
