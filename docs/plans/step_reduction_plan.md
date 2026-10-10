@@ -278,3 +278,42 @@ C remains.
 - **Traversal spec:** `docs/plans/traversal_stack_spec{,_ru}.md` — spine and arms, plan
   revisions (append-only), projection, invariants; §9 — verification only by an explicit
   check.
+
+## 6. Part C — tool observation verbosity (hypotheses for 2026-10-11)
+
+> Recorded from an ACI/prompt review; to be tested before any default change. Refs
+> `src/tools/index.ts`.
+
+Two hypotheses about the **tool-observation surface** (what the engine hands back to
+the doxa) — a different lever from Part B (the context packaging):
+
+- **C1 — `read` budget.** A `read` returns up to `READ_LIMIT = 65,536` chars
+  (`src/tools/index.ts:45`) — ~190+ lines. A flash model spends thousands of reasoning
+  tokens holding such a window, then paginates (`recall`) to "stitch" it. Candidate: cut
+  to 8–16k; the model already chooses a window via an explicit `read {start,end}`.
+- **C2 — `grep` output format.** `grep`/`search` return pretty-printed JSON with
+  `before`/`after` context (`src/tools/index.ts:280`, `:626`). The structural noise costs
+  tokens the model must parse instead of reading the code. Candidate: plain text with
+  line numbers (shell-`grep -n` style).
+
+Already done and not to be re-litigated: the recall/search split, the explicit "never
+recall code from memory" rule (B13, which did cut output tokens and steps), and the
+removal of the upstream/diff wording.
+
+**Experiment (4 steps).**
+
+1. **Baseline on saved contexts** (t8/t13/t20/t28 of `…18-30-49…` and `…16-44-16…`) at the
+   current `READ_LIMIT = 65,536`: record reasoning/output tokens, turns, `recall`/re-read
+   count, truncations (CAP).
+2. **C1 A/B.** Replay the same contexts at `READ_LIMIT ∈ {16,384, 8,192}`; compare against
+   step 1. Watch the opposite risk — a smaller window causing more read/`recall` turns (the
+   read loop seen on `16-44` t19–t30).
+3. **C2 A/B.** Replay grep-heavy turns with plain-text output (line numbers, no JSON
+   envelope) vs the current JSON; compare the same metrics.
+4. **Decision rule.** Change a default only on a stable effect reproduced at n ≥ 3
+   (turns/cost down at equal reward); otherwise record a **null result**, as for the
+   transcript/A+ (§4.2a). A live confirmation on `fix-ocaml-gc` closes the loop.
+
+Reasoning is **not** to be turned off for this: the cut point is not predictable (a wrong
+early stop costs more than the tokens saved); the lever is observation size/format, not the
+reasoning budget.
