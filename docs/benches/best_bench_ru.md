@@ -22,7 +22,8 @@ opencode пишет ещё `opencode.txt`).
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
-| 3 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1 076 441 | 108 811 (4 307 + 104 504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
+| 3 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2 139 649 | 94 123 (4 568 + 89 555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
+| 4 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1 076 441 | 108 811 (4 307 + 104 504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
 
 ## opencode на `fix-ocaml-gc` (наша песочница)
 
@@ -49,13 +50,17 @@ opencode пишет ещё `opencode.txt`).
 `PASS test_tests_output`). Модель `routerai/~deepseek/deepseek-v4-flash-latest`,
 `SKEIN_REASONING_EFFORT=low`, бюджет задачи 60 ходов.
 
-- **net on.** 50 шагов, 50 вызовов (48 ок / 2 отказа). Локализовал чтением (`read`/`grep` по
-  `runtime/shared_heap.c`), скачал upstream `shared_heap.c`, сделал `diff` и одну правку в
-  `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); верификатор прошёл. Завершился
-  `llm_error` (сбой модели), а не само-`stop`, — работа к тому моменту сделана.
-- **Первый reward-1 на ревизованном IR** (лента сообщений; фиксы `query`/отказов). Правка та
-  же, что у старого победителя на транскрипте, но читает и стоит больше; opencode впереди по
-  шагам и (прокси) времени. Время прогона не записано.
+- **net on (#3, `18-30`).** 41 шаг, 41 вызов (все приняты). Срезанный промт — без `sketch`/`why`
+  плюс правило короткого reasoning / запрета припоминания кода в B13 — снизил reasoning до
+  89 555 (с 104 504 ниже) и дал чистый `stop = request_addressed`; 12.68₽. Та же однострочная
+  правка в `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); верификатор прошёл. Модель всё
+  ещё качала upstream дважды (дифф-искательство осталось), контекст вырос до 352k символов
+  (пик); один ход упёрся в completion-cap и восстановился через reasoning-off ретрай.
+  Пошаговый reasoning — в `reasoning.ndjson`.
+- **net on (#4, `08-40`).** 50 шагов, 50 вызовов (48 ок / 2 отказа). Первый reward-1 на
+  ревизованном IR. Локализовал чтением (`read`/`grep` по `runtime/shared_heap.c`), скачал
+  upstream `shared_heap.c`, сделал `diff` и ту же однострочную правку; завершился `llm_error`
+  (сбой модели), а не само-`stop`, — работа к тому моменту сделана. Время не записано.
 
 ## Дальше
 
