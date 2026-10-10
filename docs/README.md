@@ -15,6 +15,8 @@ original and a Russian mirror named with the `_ru` suffix.
 ## The IR (the engine's source of truth)
 
 - [ir.md](ir.md) · [RU](ir_ru.md) — the IR as built: operations, state, control.
+- [ir_revision.md](ir_revision.md) · [RU](ir_revision_ru.md) — the working revision of the IR:
+  shape, operations and context (in progress; to be folded back once agreed).
 - [ir_semantics.md](ir_semantics.md) · [RU](ir_semantics_ru.md) — the semantics of the tree
   and the doxa's operators (spine/arms, state, invariants).
 - [walkthrough.md](walkthrough.md) · [RU](walkthrough_ru.md) — the end-to-end example: the
