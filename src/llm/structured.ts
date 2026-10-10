@@ -260,9 +260,40 @@ export interface ToolsOptions {
   settings?: Settings;
   ceiling?: number;
   bumps?: number;
+  // Retries for a THROWN provider call (network/5xx/rate limit): the same request is resent
+  // up to this many extra times before the error is given up. Defaults to `settings.llmRetries`.
+  retries?: number;
+  // Base backoff between retries, in ms (linear). Tests set 0 to stay fast.
+  retryDelayMs?: number;
   // LangChain's `max_tokens` is a constructor field, so raising the completion cap needs a
-  // fresh instance; the caller supplies the factory (as in the JSON path).
-  rebuild?: (maxTokens: number) => BaseChatModel;
+  // fresh instance; the caller supplies the factory (as in the JSON path). `reasoningOff`
+  // asks the factory to rebuild with the provider's reasoning disabled (see the truncation
+  // retry in `invokeTools`).
+  rebuild?: (maxTokens: number, options?: { reasoningOff?: boolean }) => BaseChatModel;
+}
+
+const RETRY_DELAY_MS = 500;
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// A provider hiccup surfaces as a thrown `invoke` (not a response). Resend the SAME request
+// with a small backoff; a non-transient error just wastes the retries and is then rethrown.
+async function invokeWithRetry(
+  bound: { invoke(messages: BaseMessage[], options?: unknown): Promise<unknown> },
+  messages: BaseMessage[],
+  invokeOptions: unknown,
+  retries: number,
+  delayMs: number,
+  onError: ((error: unknown, phase: "tools") => void) | undefined,
+): Promise<unknown> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await bound.invoke(messages, invokeOptions);
+    } catch (error) {
+      onError?.(error, "tools");
+      if (attempt >= retries) throw error;
+      if (delayMs > 0) await wait(delayMs * (attempt + 1));
+    }
+  }
 }
 
 interface ToolCallingModel {
@@ -291,32 +322,32 @@ export async function invokeTools(
   options: ToolsOptions = {},
 ): Promise<Proposal> {
   const settings = options.settings ?? loadSettings();
-  const ceiling = options.ceiling ?? settings.maxTokensCeiling;
   const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
+  const retries = options.retries ?? settings.llmRetries;
+  const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
 
   let maxTokens: number | undefined;
   let raised = 0;
+  let reasoningOff = false;
   let repair: HumanMessage | undefined;
   for (;;) {
     const base =
-      maxTokens !== undefined && options.rebuild !== undefined
-        ? options.rebuild(maxTokens)
+      (maxTokens !== undefined || reasoningOff) && options.rebuild !== undefined
+        ? options.rebuild(maxTokens ?? settings.maxTokens, reasoningOff ? { reasoningOff: true } : undefined)
         : model;
     const target = base as unknown as ToolCallingModel;
     const bound =
       typeof target.bindTools === "function"
         ? target.bindTools(PROPOSAL_TOOLS as unknown[], { tool_choice: "required" })
         : target;
-    let response: unknown;
-    try {
-      response = await bound.invoke(
-        repair === undefined ? messages : [...messages, repair],
-        invokeOptions,
-      );
-    } catch (error) {
-      options.onError?.(error, "tools");
-      throw error;
-    }
+    const response = await invokeWithRetry(
+      bound,
+      repair === undefined ? messages : [...messages, repair],
+      invokeOptions,
+      retries,
+      retryDelayMs,
+      options.onError,
+    );
     options.onResponse?.(response);
     const first = toolCallsOf(response)[0];
     if (first !== undefined) {
@@ -332,15 +363,15 @@ export async function invokeTools(
         continue;
       }
     }
-    // No tool call. A response cut at the completion cap means the model burned the
-    // completion budget on hidden reasoning. Retry ONCE, at the ceiling, with an explicit
-    // brevity instruction — do NOT keep doubling the cap, which only invites more
-    // reasoning (a live fix-ocaml-gc run turned one `read` into 4 calls / 60.9k completion
-    // tokens before giving up). Any other no-call gets one repair round.
+    // No tool call. A response cut at the completion cap means the model burned the whole
+    // completion budget on hidden reasoning (a live fix-ocaml-gc run: 8192, then even 32768,
+    // tokens of reasoning with no call). Retry ONCE — but do NOT raise the cap (a bigger
+    // budget only invites more reasoning). Rebuild with reasoning DISABLED so the model must
+    // answer with a call, and add a brevity note. Any other no-call gets one repair round.
     if (finishReason(response) === "length") {
       if (raised === 0) {
         raised = 1;
-        maxTokens = Math.max(maxTokens ?? settings.maxTokens, ceiling);
+        reasoningOff = true;
         repair = new HumanMessage(
           "Your last reply was cut off by the length limit — that is excessive reasoning. Call exactly one tool now, with minimal reasoning; do not restate analysis.",
         );

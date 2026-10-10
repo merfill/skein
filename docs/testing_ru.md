@@ -40,8 +40,8 @@ SKEIN_LIVE=false npx vitest run
 ### Операции над IR
 
 Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
-`OP-AP`, `OP-QR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
-сгруппированы по оператору в `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
+`OP-AP`, `OP-RC`, `OP-SR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
+сгруппированы по оператору в `tests/ops/` (`create_goal`, `apply`, `recall`, `search`, `stop`,
 `applicable`, `traversal`, `derivation`); инварианты проверяются на 400 случайных легальных деревьях
 (`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
 нет теста или тест ссылается на ID вне реестра.
@@ -58,7 +58,7 @@ SKEIN_LIVE=true npx vitest run tests/gate.test.ts
 
 ### Live-сценарии
 
-Короткие сценарии на отдельные ветки цикла (`query`, ревизия гипотезы,
+Короткие сценарии на отдельные ветки цикла (`recall`/`search`, ревизия гипотезы,
 ограничения, ответ без правки, план, восстановление после отказа, поиск при
 многих файлах). Отдельная группа — **матрица «команды × действия»**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — задачи,
@@ -357,17 +357,20 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 
 | Предел | Значение | Смысл |
 | --- | --- | --- |
-| `MAX_READ_LINES` | 400 | окно `read` за вызов; инструмент говорит «строки X–Y из Z» |
-| `GREP_COUNT_DEFAULT` | 100 | совпадений `grep` в окне по умолчанию |
-| `MAX_GREP_MATCHES` | 200 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
-| `MAX_LIST_FILES` | 500 | максимум файлов в окне `list` |
-| `OUTPUT_LIMIT` | 8000 | байтовый предел JSON-результата `grep`/`list` и вывода `run`; лишние `grep`/`list`-результаты отбрасываются целиком, вывод `run` — head+tail и `outputRef`/`errorRef` (stdout/stderr раздельно) |
+| `GREP_COUNT_DEFAULT` | 50 | совпадений `grep` в окне по умолчанию |
+| `MAX_GREP_MATCHES` | 100 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
+| `GREP_BEFORE_DEFAULT` / `GREP_AFTER_DEFAULT` | 3 / 3 | строк контекста вокруг совпадения `grep` |
+| `MAX_LIST_FILES` | 200 | максимум файлов в окне `list` |
+| `READ_LIMIT` | 65536 | байтовый предел (64K) окна `read` (по байтам, без лимита строк; резервирует место под трейлер `continue from`); большее тело держит голову и уходит за `outputRef` |
+| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | малый байтовый предел (8K) результата `grep`/`list`: указатель на кандидатов, не содержимое; лишние элементы отбрасываются целиком |
+| `RUN_LIMIT` | 8192 | малый байтовый предел (8K) `run`; показывается хвост, полный поток — за `outputRef`/`errorRef` (stdout/stderr раздельно) |
+| `QUERY_BODY_LIMIT` | 65536 | предел окна тела `recall`; окно ужимается по строкам, чтобы JSON-результат остался валидным |
 | `SKEIN_CTX_ITEMS` | 20 | элементов в `plan`/`alternatives` проекции |
 
 ### 8.1 Устойчивый structured output
 
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
-плоскому function-инструменту на операцию (`create_goal`, `query`, `read`,
+плоскому function-инструменту на операцию (`create_goal`, `recall`, `search`, `read`,
 `grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`), а `invokeTools` в `src/llm/structured.ts`
 биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
@@ -377,8 +380,12 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 нет, `invokeTools` делает **один** повтор на потолке с явной краткостной инструкцией
 («вызови инструмент сейчас, не пересказывай анализ») — он **не** удваивает cap дальше,
 что лишь провоцирует ещё больший reasoning (живой прогон `fix-ocaml-gc` превратил одно
-`read` в 4 вызова / 60.9k токенов); для голого отсутствия вызова — один repair-раунд;
-иначе цикл завершается с `stopReason: "llm_error"`, а не падает.
+`read` в 4 вызова / 60.9k токенов); для голого отсутствия вызова — один repair-раунд.
+**Брошенный** провайдерный вызов (сеть/5xx/лимит) — другой сбой: тот же запрос
+перепосылается `SKEIN_LLM_RETRIES` раз (по умолчанию 2) с небольшим backoff, чтобы флаки
+провайдера не срывали прогон. Лишь когда ретраи и repair-раунды исчерпаны, цикл
+завершается с `stopReason: "llm_error"`, а не падает; текст ошибки при этом пишется в
+`stopText` (`result.json`/`metrics.json` прогона), а не только в транзиентный ход.
 
 `invokeStructured` остаётся общим JSON-путём (схема в промпте, `response_format:
 json_object`, ручной разбор, поднятый cap при обрыве, один repair-раунд); он покрыт

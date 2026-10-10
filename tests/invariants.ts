@@ -1,25 +1,25 @@
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 
-/** Invariant: a goal is closed only by the doxa's `stop` — every `has_stopped` edge must
+/** Invariant: a goal is closed only by the doxa's `stop` — every `stop` relation must
  * target a `stop` node. */
 export function achievedWithoutCheck(events: readonly Event[]): string[] {
   const state = fold(events);
   const violations: string[] = [];
   for (const edge of state.edges.values()) {
-    if (edge.kind !== "has_stopped") continue;
+    if (edge.kind !== "stop") continue;
     if (state.nodes.get(edge.to)?.kind !== "stop") violations.push(edge.from);
   }
   return violations;
 }
 
-/** Invariant: every non-root goal is bound by a `has_goal` (the request's interpretation)
- * or an `item` edge of a plan/alternatives. */
+/** Invariant: every non-root goal is bound by a `goal` (the request's interpretation)
+ * or an `alts` edge of an item. */
 export function unboundGoals(events: readonly Event[]): string[] {
   const state = fold(events);
   const bound = new Set<string>();
   for (const edge of state.edges.values()) {
-    if ((edge.kind === "item" || edge.kind === "has_goal") && state.nodes.get(edge.to)?.kind === "goal") {
+    if ((edge.kind === "alts" || edge.kind === "goal") && state.nodes.get(edge.to)?.kind === "goal") {
       bound.add(edge.to);
     }
   }
@@ -32,11 +32,11 @@ export function unboundGoals(events: readonly Event[]): string[] {
   return violations;
 }
 
-/** Invariant: structural edges (`has_plan`, `has_goal`, `item`, `has_alternatives`,
- * `no_goal`) form a DAG — no cycles. */
+/** Invariant: structural edges (`plan`, `goal`, `items`, `alts`, `unactionable`)
+ * form a DAG — no cycles. */
 export function structuralCycle(events: readonly Event[]): boolean {
   const state = fold(events);
-  const kinds = new Set(["has_plan", "has_goal", "item", "has_alternatives", "no_goal"]);
+  const kinds = new Set(["plan", "goal", "items", "alts", "unactionable"]);
   const adjacency = new Map<string, string[]>();
   for (const edge of state.edges.values()) {
     if (!kinds.has(edge.kind)) continue;

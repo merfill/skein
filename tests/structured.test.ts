@@ -177,6 +177,8 @@ describe("runAgent on a broken model", () => {
     );
     expect(result.stopReason).toBe("llm_error");
     expect(result.done).toBe(true);
+    // The failure text is carried out so the trace can record it.
+    expect(result.stopText).toMatch(/llm_error: length limit/);
   });
 });
 
@@ -234,8 +236,8 @@ describe("tool calling", () => {
     expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
-  it("invokeTools raises the completion cap on a truncated no-tool response", async () => {
-    const caps: number[] = [];
+  it("invokeTools disables reasoning on a truncated no-tool response", async () => {
+    const rebuilds: { maxTokens: number; reasoningOff: boolean }[] = [];
     let calls = 0;
     const makeModel = (): unknown => ({
       bindTools: () => ({
@@ -249,13 +251,15 @@ describe("tool calling", () => {
     });
     const model = makeModel() as unknown as BaseChatModel;
     const settings = loadSettings();
-    const rebuild = (maxTokens: number) => {
-      caps.push(maxTokens);
+    const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) => {
+      rebuilds.push({ maxTokens, reasoningOff: opts?.reasoningOff === true });
       return makeModel() as unknown as BaseChatModel;
     };
     const proposal = await invokeTools(model, [new HumanMessage("go")], { settings, rebuild });
-    expect(caps).toHaveLength(1);
-    expect(caps[0]).toBeGreaterThan(settings.maxTokens);
+    // The retry does NOT raise the cap (a bigger budget only invites more reasoning); it
+    // rebuilds with reasoning disabled so the model must answer with a tool call.
+    expect(rebuilds).toHaveLength(1);
+    expect(rebuilds[0]?.reasoningOff).toBe(true);
     expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
@@ -273,6 +277,41 @@ describe("tool calling", () => {
     // brevity hint, then give up (a live run turned one `read` into 4 calls / 60.9k tokens).
     await expect(invokeTools(model, [new HumanMessage("go")])).rejects.toThrow();
     expect(calls).toBe(2);
+  });
+
+  it("invokeTools retries a thrown provider call with the same request, then succeeds", async () => {
+    let calls = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          if (calls < 3) throw new Error("502 bad gateway");
+          return { content: "", tool_calls: [{ name: "list", args: {} }] };
+        },
+      }),
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")], {
+      retries: 2,
+      retryDelayMs: 0,
+    });
+    expect(calls).toBe(3);
+    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+  });
+
+  it("invokeTools gives up after the retries are exhausted", async () => {
+    let calls = 0;
+    const model = {
+      bindTools: () => ({
+        invoke: async () => {
+          calls += 1;
+          throw new Error("connection reset");
+        },
+      }),
+    } as unknown as BaseChatModel;
+    await expect(
+      invokeTools(model, [new HumanMessage("go")], { retries: 2, retryDelayMs: 0 }),
+    ).rejects.toThrow("connection reset");
+    expect(calls).toBe(3); // the first try plus two retries
   });
 
   it("invokeTools repairs once when the tool call is malformed", async () => {

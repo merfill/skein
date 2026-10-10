@@ -1,5 +1,11 @@
 # Skein — a coding agent with a deterministic IR context
 
+> **Note (IR revision folded).** The sections below that describe the tree, the traversal
+> and the projection reflect the model **before** the IR revision. The current shape
+> (`item`/`alts`, `stop` on the goal, the message tape) is in `docs/ir_semantics.md`; the
+> as-built is `docs/ir.md`. The conceptual frame (doxa/logos, the journal, the projection)
+> still holds.
+
 ## The core idea
 
 An ordinary agent treats the context as a message tape: the LLM reads the tape and
@@ -18,7 +24,7 @@ call, and the only signal that the task is over is the model itself emitting a f
 answer. Skein **unwinds that loop along a tree**:
 
 ```
-request ─(has_goal)▶ goal (a hypothesis) ─(has_plan)▶ plan (a string sketch; last item is current) ─▶ action ─▶ observation
+request ─(has_goal)▶ goal (a hypothesis) ─(has_plan)▶ plan (a container of items; last item is current) ─▶ action ─▶ observation
 ```
 
 A request is interpreted **once** as a goal (`has_goal`); the interpretation is fixed for
@@ -35,8 +41,8 @@ decomposes it into a composite sub-goal — and each branch is still an arm, i.e
 again, one level down. In this sense the tree is "ReAct unwound": not a different
 policy, but ReAct plus explicit memory, branching, and a termination criterion.
 
-- Only the goal's first step is materialized as a plan item; the plan itself is a string
-  sketch, and steps are chosen one at a time. The plan's `item` edges append in order, and
+- Only the goal's first step is materialized as a plan item; later steps are chosen one at
+  a time. The plan's `item` edges append in order, and
   the **last** is the current step. The tree grows one node per turn.
 - With no alternatives, the tree is a flat, typed, addressable list — exactly the
   ReAct limit, no worse.
@@ -46,7 +52,7 @@ policy, but ReAct plus explicit memory, branching, and a termination criterion.
   rather than a growing tape.
 - "Are we done?" is decided by the engine against the criterion, not by an LLM turn.
 
-The plan is a live sketch, not a contract: it is revised by **adding nodes**
+The plan is live, not a contract: it is revised by **adding nodes**
 (alternatives, new items), never by rewriting one. The IR only grows.
 
 ## First principle: knowledge has a source
@@ -71,7 +77,7 @@ Three consequences used throughout:
 The frame comes from the doxa/logos distinction (Ankyra, `doxa_and_logos.tex`):
 
 - **Doxa** is the LLM. It only *proposes*: exactly one operator per turn
-  (`create_goal`, `apply`, `stop`, `decline`; `query` is read-only addressing). Its
+  (`create_goal`, `apply`, `stop`, `decline`; `recall`/`search` are read-only addressing). Its
   thought is narrative and stays out of the IR. A proposed goal enters `open`; it is
   never at once closed.
 - **Logos** is the deterministic side: the gate (`classify`), the execution and
@@ -110,15 +116,13 @@ not statuses.
 `record_rejection`. There is no `set_status` and no `record_check`: a state change is a
 new node-event (`observation`/`stop`).
 
-**Operators.** `create_goal { what, why?, done_when, plan, step, revises? }` interprets
-the request once, or decomposes the current step into a sub-goal (an alternative); `plan`
-is a string sketch and `step` the first action. `apply { action }` runs/reads/edits the
-world. A `run` with an explicit `target` is the goal's **criterion run** (an observation
-with `target`+`exitCode`); a bare `run` is an ordinary observation. `decline { why? }`
-answers a non-actionable request (`unactionable`). `stop { why? }` is the sole closure,
-accepted (for now) only on a goal whose criterion passed: it appends the `stop` as the
-goal's last plan item. There is no `stop` on the request. `query` is read-only
-addressing.
+**Operators.** `create_goal { what, command }` interprets
+the request once, or decomposes the current item into a sub-goal (an alternative); the goal
+gets a plan container whose first item is the `command` (run at once). `apply { action }`
+runs/reads/edits the world. `decline { why? }`
+answers a non-actionable request (`unactionable`). `stop { why? }` is the sole closure: the
+doxa's `stop` closes the goal — there is no criterion and no check; the request has no
+`stop`. `recall`/`search` are read-only addressing.
 
 ## The cycle
 
@@ -146,7 +150,7 @@ position inside it (the last item). Moving is a `descend` (push) or a `return`
 Neither the stack nor the cursor is stored: the stack is the fold of `descend`/
 `return` over the journal, the cursor is derived from the plan. So `same events → same
 context`. History (executed items, observations, criterion runs) is not kept on the spine
-— it lives in the tree and is recalled **by address** (`query { id }`). The full model is
+— it lives in the tree and is recalled **by address** (`recall { id }`). The full model is
 `docs/plans/traversal_stack_spec.md`.
 
 ## Projection
@@ -161,8 +165,8 @@ deterministic function of the state, not an LLM summary. `Context` carries:
   `checkReady`, `nextAction`, `budget`.
 
 Everything else — file contents, raw output, older bodies — is reached through
-`query`. Addressability is always guaranteed: every node is either shown or one query
-away.
+`recall`/`search`. Addressability is always guaranteed: every node is either shown or one
+recall away.
 
 ## Staleness by version
 

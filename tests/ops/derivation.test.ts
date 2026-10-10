@@ -25,7 +25,7 @@ describe("derived predicates", () => {
           id: "e1",
           from: "a1",
           to: "o1",
-          kind: "produces",
+          kind: "result",
           provenance: { kind: "read", ref: "file:x", version: "v" },
         },
       },
@@ -33,7 +33,7 @@ describe("derived predicates", () => {
     expect(actionExecuted(fold(produced), "a1")).toBe(true);
   });
 
-  it("DER-GOAL-1 a goal is closed iff it has a has_stopped edge", () => {
+  it("DER-GOAL-1 a goal is closed iff it has a stop relation", () => {
     const base: Event[] = [request(), goalNode("g1", "fix it", 1)];
     expect(hasStopped(fold(base), "g1")).toBe(false);
     const stopped: Event[] = [
@@ -41,7 +41,7 @@ describe("derived predicates", () => {
       { type: "add_node", node: { id: "s1", space: "work", kind: "stop", label: "done", seq: 2 } },
       {
         type: "add_edge",
-        edge: { id: "e1", from: "g1", to: "s1", kind: "has_stopped", provenance: { kind: "llm" } },
+        edge: { id: "e1", from: "g1", to: "s1", kind: "stop", provenance: { kind: "llm" } },
       },
     ];
     expect(hasStopped(fold(stopped), "g1")).toBe(true);

@@ -1,0 +1,195 @@
+
+
+===================== bash =====================
+itCommandRestriction:"git commands",createPrInstruction:"Create PR using gh pr create with a PowerShell here-string to pass the body correctly.",createPrExample:`gh pr create --title "the pr title" --body @'
+## Summary
+- <1-3 bullet points>
+'@`};return{intro:"Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.",workdirSection:"All commands run in the current working directory by default. Use the `workdir` parameter if you need to run a command in a different directory. AVOID using `cd <directory> && <command>` patterns - use `workdir` instead.",commandSection:Vi(n,r,t),gitCommands:"bash commands",gitCommandRestriction:"git bash commands",createPrInstruction:"Create PR using gh pr create with the format below. Use a HEREDOC to pass the body to ensure correct formatting.",createPrExample:`gh pr create --title "the pr title" --body "$(cat <<'EOF'
+## Summary
+<1-3 bullet points>`}}function Ii(o,e,r,t){let i=Fi(o,e,r,t);return{description:Qi(Ye,{intro:i.intro,os:e,shell:o,tmp:Mo.Path.tmp,workdirSection:i.workdirSection,commandSection:i.commandSection,gitCommands:i.gitCommands,toolName:lo.ToolID,gitCommandRestriction:i.gitCommandRestriction,createPrInstruction:i.createPrInstruction,createPrExample:i.createPrExample}),parameters:jr()}}var fo={};so(fo,{prefix:()=>Zi,BashArity:()=>fo});function Zi(o){for(let e=o.length;e>0;e--){let r=o.slice(0,e).join(" "),t=_i[r];if(t!==void 0)return o.slice(0,t)}if(o.length===0)return[];return o.slice(0,1)}var _i={cat:1,cd:1,chmod:1,chown:1,cp:1,echo:1,env:1,export:1,grep:1,kill:1,killall:1,ln:1,ls:1,mkdir:1,mv:1,ps:1,pwd:1,rm:1,rmdir:1,sleep:1,source:1,tail:1,touch:1,unset:1,which:1,aws:3,az:3,bazel:2,brew:2,bun:2,"bun run":3,"bun x":3,cargo:2,"cargo add":3,"cargo run":3,cdk:2,cf:2,cmake:2,composer:2,consul:2,"consul kv":3,crictl:2,deno:2,"deno task":3,doctl:3,docker:2,"docker builder":3,"docker compose":3,"docker container":3,"docker image":3,"docker network":3,"docker volume":3,eksctl:2,"eksctl create":3,firebase:2,flyctl:2,gcloud:3,gh:3,git:2,"git config":3,"git remote":3,"git stash":3,go:2,gradle:2,helm:2,heroku:2,hugo:2,ip:2,"ip addr":3,"ip link":3,"ip netns":3,"ip route":3,kind:2,"kind create":3,kubectl:2,"kubectl kustomize":3,"kubectl rollout":3,kustomize:2,make:2,mc:2,"mc admin":3,minikube:2,mongosh:2,mysql:2,mvn:2,ng:2,npm:2,"npm exec":3,"npm init":3,"npm run":3,"npm view":3,nvm:2,nx:2,openssl:2,"openssl req":3,"openssl x509":3,pip:2,pipenv:2,pnpm:2,"pnpm dlx":3,"pnpm exec":3,"pnpm run":3,poetry:2,podman:2,"podman container":3,"podman image":3,psql:2,pulumi:2,"pulumi stack":3,pyenv:2,python:2,rake:2,rbenv:2,"redis-cli":2,rustup:2,serverless:2,sfdx:3,skaffold:2,sls:2,sst:2,swift:2,systemctl:2,terraform:2,"terraform workspace":3,tmux:2,turbo:2,ufw:2,vault:2,"vault auth":3,"vault kv":3,vercel:2,volt
+
+
+===================== read =====================
+w.push(`  Line ${U.line}: ${U.text}`)}if(h)w.push(""),w.push("(Results truncated. Consider using a more specific path or pattern.)");return{title:r.pattern,metadata:{matches:T,truncated:h},output:w.join(`
+`)}}).pipe(s.orDie)}}));import*as z from"path";var et=`Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
+
+Usage:
+- The filePath parameter should be an absolute path.
+- By default, this tool returns up to 2000 lines from the start of the file.
+- The offset parameter is the line number to start from (1-indexed).
+- To read later sections, call this tool again with a larger offset.
+- Use the grep tool to find specific content in large files or files with long lines.
+- If you are unsure of the correct file path, use the glob tool to look up filenames by glob pattern.
+- Contents are returned with each line prefixed by its line number as `<line>: <content>`. For example, if a file has contents "foo\\n", you will receive "1: foo\\n". For directories, entries are returned one per line (without line numbers) with a trailing `/` for subdirectories.
+- Any line longer than 2000 characters is truncated.
+- Call this tool in parallel when you know there are multiple files you want to read.
+- Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
+- This tool can read image files and PDFs and return them as file attachments.
+`;var tt=2000,Sr=2000,Gs=`... (line truncated to ${Sr} chars)`,nt=51200,Ys=`${nt/1024} KB`,Qs=4096,Js=new Set(["image/jpeg","image/png","image/gif","image/webp"]);class zr extends p.TaggedErrorClass()("ReadStop",{}){}var Ks=p.Struct({filePath:p.String.annotate({description:"The absolute path to the file or directory to read"}),offset:p.optional(Xr).annotate({description:"The line number to start reading from (1-indexed)"}),limit:p.optional(Xr).annotate({description:"The maximum number of lines to read (defaults to 2000)"})}),ut=j("read",s.gen(function*(){let o=yield*V.Service,e=yield*Wo.Service,r=yield*P.Service,t=yield*qr.Scope,i=s.fn("ReadTool.miss")(function*(a){let g=z.dirname(a),c=z.basename(a),h=yield*o.readDirectory(g).pipe(s.map((b)=>b.filter((T)=>T.toLowerCase().includes(c.toLowerCase())||c.toLowerCase().includes(T.toLowerCase())).map((T)=>z.join(g,T)).slice(0,3)),s.catch(()=>s.succeed([])));if(h.length>0)return yield*s.fail(Error(`File not found: ${a}
+
+Did you mean one of these?
+${h.join(`
+`)}`));return yield*s.fail(Error(`File not found: ${a}`))}),n=s.fn("ReadTool.list")(function*(a){let g=yield*o.readDirectoryEntries(a);return yield*s.forEach(g,s.fnUntraced(function*(c){if(c.type==="directory")return c.name+"/";if(c.type!=="symlink")return c.name;if((yield*o.stat(z.join(a,c.name)).pipe(s.catch(()=>s.void)))?.type==="Directory")return c.name+"/";return c.name}),{concurrency:"unbounded"}).pipe(s.map((c)
+
+
+===================== edit =====================
+et K=yield*s.acquireRelease(ts(w.command,N),(W)=>s.sync(()=>W.delete())),G=yield*$(K.rootNode,q,N,h,U);if(!xo(q,U))G.dirs.add(q);yield*is(O,G,w)})),yield*g({shell:h,command:w.command,cwd:q,env:yield*a(O,q),timeout:R},O)})}})}));import*as qo from"path";var ze='Performs exact string replacements in files. \n\nUsage:\n- You must use your `Read` tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file. \n- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + colon + space (e.g., `1: `). Everything after that space is the actual file content to match. Never include any part of the line number prefix in the oldString or newString.\n- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.\n- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.\n- The edit will FAIL if `oldString` is not found in the file with an error "oldString not found in content".\n- The edit will FAIL if `oldString` is found multiple times in the file with an error "Found multiple matches for oldString. Provide more surrounding lines in oldString to identify the correct match." Either provide a larger string with more surrounding context to make it unique or use `replaceAll` to change every instance of `oldString`. \n- Use `replaceAll` for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.\n';import _r from"path";var M=s.fn("Tool.assertExternalDirectory")(function*(o,e,r){if(!e)return!1;if(r?.bypass)return!1;let t=yield*J.context,i=e;if(xo(i,t))return!1;let y=(r?.kind??"file")==="directory"?i:_r.dirname(i),u=_r.join(y,"*").replaceAll("\\","/");return yield*o.ask({permission:"external_directory",patterns:[u],always:[u],metadata:{filepath:i,parentDir:y}}),!0});var Ce=65279,ys=String.fromCharCode(Ce);function x(o){if(o.charCodeAt(0)!==Ce)return{bom:!1,text:o};return{bom:!0,text:o.slice(1)}}function E(o,e){let r=x(o).text;if(!e)return r;return ys+r}var go=s.fn("Bom.readFile")(function*(o,e){return x(new TextDecoder("utf-8",{ignoreBOM:!0}).decode(yield*o.readFile(e)))}),Yo=s.fn("Bom.syncFile")(function*(o,e,r){let t=yield*go(o,e);if(t.bom===r)return t.text;return yield*o.writeWithDirs(e,E(t.text,r)),t.text});function Io(o){return o.replaceAll(`\r
+`,`
+`)}function ms(o){return o.includes(`\r
+`)?`\r
+`:`
+`}function Me(o,e){if(e===`
+`)return o;return o.replaceAll(`
+`,`\r
+`)}var Pe=new Map;function ds(o){let e=V.resolve(o),r=Pe.get(e);if(r)return r;let t=Le.makeUnsafe(1);return Pe.set(e,t),t}var ls=p.Struct({filePath:p.String.annotate({description:"The absolute path to the file to modify"}),oldStrin
+
+
+===================== write =====================
+0)r--}});return t.write(o),t.end(),e.trim()}function xs(o){let e=new qt({headingStyle:"atx",hr:"---",bulletListMarker:"-",codeBlockStyle:"fenced",emDelimiter:"*"});return e.remove(["script","style","meta","link"]),e.turndown(o)}import*as Ko from"path";var Rt=`Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.
+- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
+`;var rn=5,en=p.Struct({content:p.String.annotate({description:"The content to write to the file"}),filePath:p.String.annotate({description:"The absolute path to the file to write (must be absolute, not relative)"})}),vr=j("write",s.gen(function*(){let o=yield*P.Service,e=yield*V.Service,r=yield*L.Service,t=yield*To.Service;return{description:Rt,parameters:en,execute:(i,n)=>s.gen(function*(){let y=yield*J.context,u=Ko.isAbsolute(i.filePath)?i.filePath:Ko.join(y.directory,i.filePath);yield*M(n,u);let m=yield*e.existsSafe(u),l=m?yield*go(e,u):{bom:!1,text:""},$=x(i.content),a=l.bom||$.bom,g=l.text,c=$.text,h=po(uo(u,u,g,c));if(yield*n.ask({permission:"edit",patterns:[Ko.relative(y.worktree,u)],always:["*"],metadata:{filepath:u,diff:h}}),yield*e.writeWithDirs(u,E(c,a)),yield*t.file(u))yield*Yo(e,u,a);yield*r.publish(Qo.Event.Edited,{file:u}),yield*r.publish(Jo.Event.Updated,{file:u,event:m?"change":"add"});let b="Wrote file successfully.";yield*o.touchFile(u,"document");let T=yield*o.diagnostics(),d=V.normalizePath(u),w=0;for(let[O,U]of Object.entries(T)){let q=O===d;if(!q&&w>=rn)continue;let R=P.Diagnostic.report(q?u:O,U);if(!R)continue;if(q){b+=`
+
+LSP errors detected in this file, please fix:
+${R}`;continue}w++,b+=`
+
+LSP errors detected in other files:
+${R}`}return{title:Ko.relative(y.worktree,u),metadata:{diagnostics:T,filepath:u,exists:m},output:b}}).pipe(s.orDie)}}));var tn=p.Struct({tool:p.String,error:p.String}),Nt=j("invalid",s.succeed({description:"Do not use",parameters:tn,execute:(o)=>s.succeed({title:"Invalid Tool",output:`The arguments provided to the tool are invalid: ${o.error}`,metadata:{}})}));import Dt from"path";var Wt=`Load a specialized skill when the task at hand matches one of the skills listed in the system prompt.
+
+Use this tool to inject the skill's instructions and resources into current conversation. The output may contain detailed workflow guidance as well as references to scripts, files, etc in the same directory as 
+
+
+===================== grep =====================
+,$.push(`(Results are truncated: showing first ${u} results. Consider using a more specific path or pattern.)`)}return{title:gr.relative(i.worktree,n),metadata:{count:m.length,truncated:l},output:$.join(`
+`)}}).pipe(s.orDie)}}));import Zo from"path";var ot=`- Fast content search tool that works with any codebase size
+- Searches file contents using regular expressions
+- Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
+- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
+- Returns file paths and line numbers with matching lines
+- Use this tool when you need to find files containing specific patterns
+- If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.
+- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead
+`;var Ds=p.Struct({pattern:p.String.annotate({description:"The regex pattern to search for in file contents"}),path:p.optional(p.String).annotate({description:"The directory to search in. Defaults to the current working directory."}),include:p.optional(p.String).annotate({description:'File pattern to include in the search (e.g. "*.js", "*.{ts,tsx}")'})}),rt=j("grep",s.gen(function*(){let o=yield*V.Service,e=yield*Uo.Service;return{description:ot,parameters:Ds,execute:(r,t)=>s.gen(function*(){let i={title:r.pattern,metadata:{matches:0,truncated:!1},output:"No files found"};if(!r.pattern)throw Error("pattern is required");yield*t.ask({permission:"grep",patterns:[r.pattern],always:["*"],metadata:{pattern:r.pattern,path:r.path,include:r.include}});let n=yield*J.context,y=Zo.isAbsolute(r.path??n.directory)?r.path??n.directory:Zo.join(n.directory,r.path??"."),u=yield*o.stat(y).pipe(s.catch(()=>s.succeed(void 0)));yield*M(t,y,{bypass:!1,kind:u?.type==="Directory"?"directory":"file"});let m=V.resolve(y),$=(yield*o.stat(m).pipe(s.catch(()=>s.succeed(void 0))))?.type==="Directory"?m:Zo.dirname(m),a=yield*e.grep({cwd:$,pattern:r.pattern,include:r.include,limit:100});if(a.length===0)return i;let g=a.map((U)=>({path:Zo.resolve(u?.type==="Directory"?y:Zo.dirname(y),U.entry.path),line:U.line,text:U.text})),c=100,h=g.length===c,b=g;if(b.length===0)return i;let T=g.length,d=h||a.length===c,w=[`Found ${T} matches${d?" (more matches available)":""}`],O="";for(let U of b){if(O!==U.path){if(O!=="")w.push("");O=U.path,w.push(`${U.path}:`)}w.push(`  Line ${U.line}: ${U.text}`)}if(h)w.push(""),w.push("(Results truncated. Consider using a more specific path or pattern.)");return{title:r.pattern,metadata:{matches:T,truncated:h},output:w.join(`
+`)}}).pipe(s.orDie)}}));import*as z from"path";var et=`Read a file or directory from the local filesystem. If the path does not exist, an error is returned.
+
+Usage:
+- The filePath parameter s
+
+
+===================== glob =====================
+rrounding context to make the match unique.")}function Us(o,e){let r=e.split(`
+`).length;if(o.split(`
+`).length>=Math.max(r+3,r*2))return!0;if(r===1)return!1;return o.trim().length>Math.max(e.trim().length+500,e.trim().length*4)}import gr from"path";var Ee=`- Fast file pattern matching tool that works with any codebase size
+- Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Returns matching file paths
+- Use this tool when you need to find files by name patterns
+- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead
+- You have the capability to call multiple tools in a single response. It is always better to speculatively perform multiple searches as a batch that are potentially useful.
+`;var Ns=p.Struct({pattern:p.String.annotate({description:"The glob pattern to match files against"}),path:p.optional(p.String).annotate({description:'The directory to search in. If not specified, the current working directory will be used. IMPORTANT: Omit this field to use the default directory. DO NOT enter "undefined" or "null" - simply omit it for the default behavior. Must be a valid directory path if provided.'})}),xe=j("glob",s.gen(function*(){let o=yield*V.Service,e=yield*Uo.Service;return{description:Ee,parameters:Ns,execute:(r,t)=>s.gen(function*(){let i=yield*J.context;yield*t.ask({permission:"glob",patterns:[r.pattern],always:["*"],metadata:{pattern:r.pattern,path:r.path}});let n=r.path??i.directory;if(n=gr.isAbsolute(n)?n:gr.resolve(i.directory,n),(yield*o.stat(n).pipe(s.catch(()=>s.succeed(void 0))))?.type==="File")throw Error(`glob path must be a directory: ${n}`);yield*M(t,n,{bypass:!1,kind:"directory"});let u=100,m=yield*e.glob({cwd:n,pattern:r.pattern,limit:u}),l=m.length===u,$=[];if(m.length===0)$.push("No files found");if(m.length>0){if($.push(...m.map((a)=>gr.resolve(n,a.path))),l)$.push(""),$.push(`(Results are truncated: showing first ${u} results. Consider using a more specific path or pattern.)`)}return{title:gr.relative(i.worktree,n),metadata:{count:m.length,truncated:l},output:$.join(`
+`)}}).pipe(s.orDie)}}));import Zo from"path";var ot=`- Fast content search tool that works with any codebase size
+- Searches file contents using regular expressions
+- Supports full regex syntax (eg. "log.*Error", "function\\s+\\w+", etc.)
+- Filter files by pattern with the include parameter (eg. "*.js", "*.{ts,tsx}")
+- Returns file paths and line numbers with matching lines
+- Use this tool when you need to find files containing specific patterns
+- If you need to identify/count the number of matches within files, use the Bash tool with `rg` (ripgrep) directly. Do NOT use `grep`.
+- When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead
+`;var Ds=p.Struct({pattern:p.String
+
+
+===================== task =====================
+ice(0,20).join(`
+`),truncated:G,loaded:d.map((W)=>W.filepath),display:{type:"file",path:h,text:q.raw.join(`
+`),lineStart:q.offset,lineEnd:N,totalLines:q.count,truncated:G}}}});return{description:et,parameters:Ks,execute:(a,g)=>$(a,g).pipe(s.orDie)}}));var Cr=`Launch a new agent to handle complex, multistep tasks autonomously.
+
+When using the Task tool, you must specify a subagent_type parameter to select which agent type to use.
+
+When NOT to use the Task tool:
+- If you want to read a specific file path, use the Read or Glob tool instead of the Task tool, to find the match more quickly
+- If you are searching for a specific class definition like "class Foo", use the Grep tool instead, to find the match more quickly
+- If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Task tool, to find the match more quickly
+- If no available agent is a good fit for the task, use other tools directly
+
+
+Usage notes:
+1. Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
+2. Once you have delegated work to an agent, do not duplicate that work yourself. Continue with non-overlapping tasks, or wait for the result. For background tasks, you will be notified automatically when the result is ready.
+3. When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result. The output includes a task_id you can reuse later to continue the same subagent session.
+4. Each agent invocation starts with a fresh context unless you provide task_id to resume the same subagent session (which continues with its previous messages and tool outputs). When starting fresh, your prompt should contain a highly detailed task description for the agent to perform autonomously and you should specify exactly what information the agent should return back to you in its final and only message to you.
+5. The agent's outputs should generally be trusted
+6. Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent. Tell it how to verify its work if possible (e.g., relevant test commands).
+7. If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
+`;var tr={};so(tr,{fromTool:()=>js,fromSchema:()=>dt,ToolJsonSchema:()=>tr});var yt=new WeakMap;function dt(o){let e=yt.get(o);if(e)return e;let r=p.toJsonSchemaDocument(o,{additionalProperties:!0}),t=wo({$schema:mt.META_SCHEMA_URI_DRAFT_2020_12,...r.schema,...Object.keys(r.definitions).length>
+
+
+===================== todowrite =====================
+c(()=>{l.abort.removeEventListener("abort",D)}))))});return{description:n.experimentalBackgroundSubagents?[Cr,Hs].join(`
+
+`):Cr,parameters:zs,jsonSchema:n.experimentalBackgroundSubagents?void 0:tr.fromSchema(Ss),execute:(m,l)=>u(m,l).pipe(s.orDie)}}));var bt=`Create and maintain a structured task list for the current coding session. Tracks progress, organizes multi-step work, and surfaces status to the user.
+
+## When to use
+Use proactively when:
+- The task requires 3+ distinct steps or actions (not just 3 tool calls for a single conceptual step)
+- The work is non-trivial and benefits from planning
+- The user provides multiple tasks (numbered or comma-separated) or explicitly asks for a todo list
+- New instructions arrive - capture them as todos
+- You start a task - mark it `in_progress` (only one at a time) before working
+- You finish a task - mark it `completed` and add any follow-ups discovered during the work
+
+## When NOT to use
+Skip when:
+- The work is a single, straightforward task (or <3 trivial steps)
+- The request is purely informational or conversational
+- Tracking adds no organizational value
+
+## States
+- `pending` - not started
+- `in_progress` - actively working (exactly ONE at a time)
+- `completed` - finished successfully
+- `cancelled` - no longer needed
+
+## Rules
+- Update status in real time; don't batch completions
+- Mark `completed` only after the required work is actually done, including any required verification. Never based on intent.
+- Keep exactly one `in_progress` while work remains
+- If blocked or partial, keep it `in_progress` and add a follow-up todo describing the blocker
+- Preserve user-provided commands verbatim (flags, args, order)
+- Items should be specific and actionable; break large work into smaller steps
+
+## Examples
+
+Use it:
+- "Add a dark mode toggle and run the tests" -> multi-step feature + explicit verification
+- "Rename getCwd -> getCurrentWorkingDirectory across the repo" -> grep reveals 15 occurrences in 8 files
+- "Implement registration, catalog, cart, checkout" -> multiple complex features
+
+Skip it:
+- "How do I print Hello World in Python?" -> informational
+- "Add a comment to calculateTotal" -> single edit
+- "Run npm install and tell me what happened" -> one command
+
+When in doubt, use it.
+`;var Ms=p.Struct({todos:p.mutable(p.Array($o.Info)).annotate({description:"The updated todo list"})}),ct=j("todowrite",s.gen(function*(){let o=yield*$o.Service;return{description:bt,parameters:Ms,execute:(e,r)=>s.gen(function*(){return yield*r.ask({permission:"todowrite",patterns:["*"],always:["*"],metadata:{}}),yield*o.update({sessionID:r.sessionID,todos:e.todos}),{title:`${e.todos.filter((t)=>t.status!=="completed").length} todos`,output:JSON.stringify(e.todos,null,2),metadata:{todos:e.todos}}})}}));var Ot=`- Fetches content from a specified URL
+- Takes a URL a
+
+
+===================== webfetch =====================
+on:"todowrite",patterns:["*"],always:["*"],metadata:{}}),yield*o.update({sessionID:r.sessionID,todos:e.todos}),{title:`${e.todos.filter((t)=>t.status!=="completed").length} todos`,output:JSON.stringify(e.todos,null,2),metadata:{todos:e.todos}}})}}));var Ot=`- Fetches content from a specified URL
+- Takes a URL and optional format as input
+- Fetches the URL content, converts to requested format (markdown by default)
+- Returns the content in the specified format
+- Use this tool when you need to retrieve and analyze web content
+
+Usage notes:
+  - IMPORTANT: if another tool is present that offers better web fetching capabilities, is more targeted to the task, or has fewer restrictions, prefer using that tool instead of this one.
+  - The URL must be a fully-formed valid URL
+  - HTTP URLs will be automatically upgraded to HTTPS
+  - Format options: "markdown" (default), "text", or "html"
+  - This tool is read-only and does not modify any files
+  - Results may be summarized if the content is very large
+`;var $t=5242880,vs=30000,fs=120000,Ls=p.Struct({url:p.String.annotate({description:"The URL to fetch content from"}),format:p.Literals(["text","markdown","html"]).annotate({description:"The format to return the content in (text, markdown, or html). Defaults to markdown.",default:"markdown"}).pipe(p.withDecodingDefault(s.succeed("markdown"))),timeout:p.optional(p.Number).annotate({description:"Optional timeout in seconds (max 120)"})}),Ut=j("webfetch",s.gen(function*(){let o=yield*Fo.HttpClient,e=Fo.filterStatusOk(o);return{description:Ot,parameters:Ls,execute:(r,t)=>s.gen(function*(){if(!r.url.startsWith("http://")&&!r.url.startsWith("https://"))throw Error("URL must start with http:// or https://");yield*t.ask({permission:"webfetch",patterns:[r.url],always:["*"],metadata:{url:r.url,format:r.format,timeout:r.timeout}});let i=Math.min((r.timeout??vs/1000)*1000,fs),n="*/*";switch(r.format){case"markdown":n="text/markdown;q=1.0, text/x-markdown;q=0.9, text/plain;q=0.8, text/html;q=0.7, */*;q=0.1";break;case"text":n="text/plain;q=1.0, text/markdown;q=0.9, text/html;q=0.8, */*;q=0.1";break;case"html":n="text/html;q=1.0, application/xhtml+xml;q=0.9, text/plain;q=0.8, text/markdown;q=0.7, */*;q=0.1";break;default:n="text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"}let y={"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",Accept:n,"Accept-Language":"en-US,en;q=0.9"},u=No.get(r.url).pipe(No.setHeaders(y)),m=yield*e.execute(u).pipe(s.catchIf((b)=>b.reason._tag==="StatusCodeError"&&b.reason.response.status===403&&b.reason.response.headers["cf-mitigated"]==="challenge",()=>e.execute(No.get(r.url).pipe(No.setHeaders({...y,"User-Agent":"opencode"})))),s.timeoutOrElse({duration:i,orElse:()=>s.die(Error("Request 

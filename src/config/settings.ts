@@ -11,6 +11,10 @@ export interface Settings {
   // plain JSON parsing (docs/testing_ru.md §8.1).
   maxTokensCeiling: number;
   maxTokensBumps: number;
+  // A thrown model call (provider/network hiccup) is retried with the same request this many
+  // times before the run is given up with `llm_error` (structured.ts `invokeTools`). A
+  // completion-cap or a no-tool response is bounded separately and is not retried here.
+  llmRetries: number;
   reasoningEffort: string;
   maxTurns: number;
   // Cap on a foreground `run`; a long verifier build may need more than the default
@@ -37,6 +41,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     maxTokens: num(env.SKEIN_MAX_TOKENS, 8192),
     maxTokensCeiling: num(env.SKEIN_MAX_TOKENS_CEILING, 32768),
     maxTokensBumps: num(env.SKEIN_MAX_TOKENS_BUMPS, 2),
+    llmRetries: num(env.SKEIN_LLM_RETRIES, 2),
     reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "low",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
     runTimeoutMs: num(env.SKEIN_RUN_TIMEOUT_MS, 120_000),

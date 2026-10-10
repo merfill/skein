@@ -1,11 +1,16 @@
 # Skein — the foundation and internal representation of a coding agent
 
+> **Note (historical).** This document records the foundation and an earlier IR (modes, the
+> `W` gate, the criterion, `achieved`/`Refutation`). The current shape, operations and context
+> are `docs/ir_semantics.md`; the as-built is `docs/ir.md`. Kept for the conceptual frame
+> (doxa/logos, the journal, the projection), not as current semantics.
+
 > A working design document. Russian mirror — `docs/logos_ir_ru.md`.
 >
 > **Note.** This is a design/analysis document, not the as-built. Sections that describe
 > what is "absent" or "not yet" (e.g. §4.5, §7) reflect the state at the time of writing;
 > since then the operator model (three operators `create_goal`/`apply`/`stop` + read-only
-> `query`), `no_progress` and the traversal stack have been implemented. The current
+> `recall`/`search`), `no_progress` and the traversal stack have been implemented. The current
 > as-built is `docs/ir.md`; the superseded roadmap is
 > `docs/plans/archive/logos_roadmap_plan.md`.
 >

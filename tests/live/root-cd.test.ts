@@ -58,15 +58,12 @@ const CASES: Case[] = [
 ];
 
 // A fresh request: `create_goal` (or `decline`) is the only applicable move, so the first
-// and only call is the interpretation.
+// and only call is the interpretation. The context is the tape: a single user turn.
 function requestContext(text: string): Context {
   return {
-    path: [{ id: "r1", kind: "request", text }],
+    history: [{ role: "user", text }],
+    situation: "request",
     constraints: [],
-    calls: [],
-    shown: [],
-    applicable: ["create_goal", "decline"],
-    budget: { turn: 0, maxTurns: 20, remaining: 20 },
   };
 }
 

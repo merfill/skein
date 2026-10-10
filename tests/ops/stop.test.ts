@@ -36,7 +36,7 @@ describe("stop", () => {
     expect(verdict.accept).toBe(true);
   });
 
-  it("OP-ST-2 appends the stop as the last plan item and records a has_stopped edge", () => {
+  it("OP-ST-2 records the closure on the goal via a `stop` relation, not as a plan item", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = exec(interpretation("make true pass", "true"), [request()], ws, 0);
     const goal = goalOf(opened.state, "r1")!;
@@ -48,10 +48,10 @@ describe("stop", () => {
     expect(outcome.done).toBe(false);
     const after = fold(outcome.events, opened.state);
     expect(hasStopped(after, goal)).toBe(true);
-    // The stop is the LAST item of the goal's plan.
-    const items = childrenOf(after, planOf(after, goal)!);
-    const last = after.nodes.get(items[items.length - 1]!);
-    expect(last?.kind).toBe("stop");
+    // The closure lives on the goal (`stop` relation), not among the plan items.
+    const plan = planOf(after, goal)!;
+    const items = childrenOf(after, plan);
+    expect(items.every((id) => after.nodes.get(id)?.kind !== "stop")).toBe(true);
   });
 
   it("OP-ST-3 the loop ends when the request's goal is stopped (request_addressed)", async () => {
@@ -62,7 +62,7 @@ describe("stop", () => {
       if (index === 1) return proposal(interpretation("make true pass", "true"));
       if (index === 2) return proposal(run("true"));
       if (index === 3) return proposal({ operator: "stop", why: "the goal is done" });
-      return proposal({ operator: "query", id: "r1" });
+      return proposal({ operator: "recall", id: "r1" });
     };
     const result = await runAgent(
       { propose, workspace: ws, maxTurns: 8 },

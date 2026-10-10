@@ -24,13 +24,32 @@ export function reasoningBody(effort: string): Record<string, unknown> {
   return effort === "none" ? reasoningOffBody(effort) : { reasoning: { effort } };
 }
 
-export function createChatModel(settings: Settings = loadSettings()): ChatOpenAI {
+export interface ChatModelHooks {
+  // The raw provider response body of every (non-streaming) call: telemetry that the parsed
+  // LangChain message drops, such as the hidden reasoning text in `choices[0].message.reasoning`.
+  onResponseBody?: (body: unknown) => void;
+}
+
+export function createChatModel(settings: Settings = loadSettings(), hooks: ChatModelHooks = {}): ChatOpenAI {
+  const configuration: { baseURL: string; fetch?: typeof fetch } = { baseURL: settings.apiUrl };
+  if (hooks.onResponseBody !== undefined) {
+    const onResponseBody = hooks.onResponseBody;
+    configuration.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const response = await fetch(input, init);
+      void response
+        .clone()
+        .json()
+        .then(onResponseBody)
+        .catch(() => undefined);
+      return response;
+    }) as typeof fetch;
+  }
   return new ChatOpenAI({
     apiKey: settings.apiKey,
     model: settings.model,
     temperature: settings.temperature,
     maxTokens: settings.maxTokens,
-    configuration: { baseURL: settings.apiUrl },
+    configuration,
     modelKwargs: reasoningBody(settings.reasoningEffort),
   });
 }

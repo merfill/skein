@@ -16,11 +16,10 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-// Generate a random but LEGAL IR tree under the current semantics: every plan holds
-// action items only (I2); a sub-goal enters as an alternative (item + chosen) to a step;
-// an objective goal closes by its own check, an arbiter goal by an external (user)
-// acceptance; structural edges form a forest. The generator only needs the shapes the
-// engine must keep invariant, not the exact operator paths.
+// Generate a random but LEGAL IR tree under the current semantics: a plan holds items, each
+// item holds alternatives (a command, and sometimes a sub-goal); a goal closes by a `stop`
+// relation; structural edges form a forest (docs/ir_revision.md §2). The generator only
+// needs the shapes the engine must keep invariant, not the exact operator paths.
 function generate(seed: number): Event[] {
   const rng = mulberry32(seed);
   const events: Event[] = [];
@@ -35,36 +34,36 @@ function generate(seed: number): Event[] {
   const addEdge = (from: string, to: string, kind: string): void => {
     events.push({ type: "add_edge", edge: { id: `e${next()}`, from, to, kind: kind as never, provenance: { kind: "llm" } } });
   };
-  // A goal is closed by a `stop`: the stop node becomes the last plan item and a
-  // `has_stopped` edge records the closure.
+  // A goal is closed by a `stop`: a `stop` relation from the goal to a stop node.
   const close = (id: string): void => {
     const stop = `s${next()}`;
     addNode(stop, "stop");
-    addEdge(id, stop, "has_stopped");
+    addEdge(id, stop, "stop");
   };
 
   let goals = 0;
   const buildGoal = (depth: number): string => {
     const id = `g${goals++}`;
-    const payload = chance(0.5) ? { what: id, sketch: "sketch" } : { what: id, why: "hypothesis", sketch: "sketch" };
+    const payload = { what: id };
     addNode(id, "goal", payload);
 
-    // A plan of 1..3 ACTION items; sometimes a step carries an alternative sub-goal.
+    // A plan of 1..3 items; each item holds a command alternative, and sometimes a step
+    // carries an alternative sub-goal (docs/ir_revision.md §2.3).
     if (depth > 0 && chance(0.6)) {
       const plan = `p${id}`;
       addNode(plan, "plan");
-      addEdge(id, plan, "has_plan");
+      addEdge(id, plan, "plan");
       const count = 1 + Math.floor(rng() * 3);
       for (let i = 0; i < count; i += 1) {
+        const item = `i${next()}`;
+        addNode(item, "item");
+        addEdge(plan, item, "items");
         const action = `a${next()}`;
         addNode(action, "action", { command: "make test" });
-        addEdge(plan, action, "item");
+        addEdge(item, action, "alts");
         if (depth > 1 && chance(0.4)) {
           const sub = buildGoal(depth - 1);
-          const alt = `alt${action}`;
-          addNode(alt, "alternatives");
-          addEdge(action, alt, "has_alternatives");
-          addEdge(alt, sub, "item");
+          addEdge(item, sub, "alts");
         }
       }
     }
@@ -81,8 +80,8 @@ function generate(seed: number): Event[] {
   };
 
   addNode("r1", "request", { text: "solve it" });
-  // The interpretation is fixed: the request has one goal via `has_goal`.
-  addEdge("r1", buildGoal(2), "has_goal");
+  // The interpretation is fixed: the request has one goal via the `goal` relation.
+  addEdge("r1", buildGoal(2), "goal");
 
   if (chance(0.3)) {
     events.push({ type: "add_node", node: { id: "constraint", space: "work", kind: "constraint", label: "no src", payload: { forbid: ["src/"] }, seq: next() } });
@@ -127,7 +126,7 @@ describe("IR properties (random legal trees)", () => {
       const ctxA = project(a);
       const ctxB = project(b);
       expect(JSON.stringify(ctxA), `seed ${seed}`).toBe(JSON.stringify(ctxB));
-      expect(Array.isArray(ctxA.path)).toBe(true);
+      expect(Array.isArray(ctxA.history)).toBe(true);
     }
   });
 });

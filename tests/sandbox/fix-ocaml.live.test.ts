@@ -24,7 +24,8 @@ describe.skipIf(!settings.live)("fix-ocaml-gc sandbox (live model)", () => {
     "works the task and stops (finishes the goal / ends the request)",
     async () => {
       const model = createChatModel(settings);
-      const rebuild = (maxTokens: number) => createChatModel({ ...settings, maxTokens });
+      const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
+    createChatModel({ ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) });
       const trajectory: { turn: number; action: string; chars: number }[] = [];
 
       const propose = async (context: Context): Promise<Proposal> => {

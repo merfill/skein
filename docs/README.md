@@ -15,10 +15,8 @@ original and a Russian mirror named with the `_ru` suffix.
 ## The IR (the engine's source of truth)
 
 - [ir.md](ir.md) · [RU](ir_ru.md) — the IR as built: operations, state, control.
-- [ir_revision.md](ir_revision.md) · [RU](ir_revision_ru.md) — the working revision of the IR:
-  shape, operations and context (in progress; to be folded back once agreed).
-- [ir_semantics.md](ir_semantics.md) · [RU](ir_semantics_ru.md) — the semantics of the tree
-  and the doxa's operators (spine/arms, state, invariants).
+- [ir_semantics.md](ir_semantics.md) · [RU](ir_semantics_ru.md) — the source of truth for the
+  shape, the doxa's operators and the context (folded from the revision).
 - [walkthrough.md](walkthrough.md) · [RU](walkthrough_ru.md) — the end-to-end example: the
   tree and the context across execution contexts (a fix, a revision, a give-up, a
   decomposed step, a non-decisive run, the world).
@@ -42,6 +40,9 @@ original and a Russian mirror named with the `_ru` suffix.
   output lands.
 - [plans/implementation_plan.md](plans/implementation_plan.md) · [RU](plans/implementation_plan_ru.md)
   — overall plan, decisions, roadmap, status.
+- [plans/ir_revision_implementation_plan.md](plans/ir_revision_implementation_plan.md) ·
+  [RU](plans/ir_revision_implementation_plan_ru.md) — the IR revision rollout (shape,
+  operations, context tape; the spec was folded into `ir_semantics`).
 - [plans/traversal_stack_spec.md](plans/traversal_stack_spec.md) · [RU](plans/traversal_stack_spec_ru.md)
   — the traversal stack (the spine and the arms).
 - [plans/step_reduction_plan.md](plans/step_reduction_plan.md) · [RU](plans/step_reduction_plan_ru.md)

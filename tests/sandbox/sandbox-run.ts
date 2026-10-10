@@ -33,6 +33,7 @@ async function main(): Promise<void> {
       `out=${t.outputTokens} (visible ${t.visibleOutput} + reason ${t.reasoningTokens}) ` +
       `cost=${t.costRub?.toFixed(3) ?? "n/a"}₽ chars ${t.contextChars.first}→${t.contextChars.last} (peak ${t.contextChars.peak})`,
   );
+  if (result.error !== undefined) console.info(`error: ${result.error}`);
   console.info(`trace: ${result.dir}`);
   cleanupContainers();
   cleanupSandboxes();

@@ -1,5 +1,10 @@
 # Skein — tools and the calling contract (proposal)
 
+> **Note (IR revision folded).** The tool input shapes below still hold, but the effects
+> changed: `stop` records a relation on the goal (it no longer appends a plan item), and the
+> context is a message tape (`docs/ir_semantics.md` §7, `docs/projection.md`). The as-built is
+> `docs/ir.md`.
+
 > Russian mirror — `docs/tools_ru.md`.
 >
 > **Status: §4 is implemented.** §3 is historical context (the defects are fixed).
@@ -46,13 +51,11 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `run` / `fetch` / `apply_patch` |
 | `stop` | the sole closure: finish the focused goal (no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
-| `query` | deterministic lookup in the IR tree (does not change state) |
+| `recall` / `search` | read / search a stored result by id (does not change state) |
 
-### 2.1 `create_goal { what, why?, sketch, command }`
+### 2.1 `create_goal { what, command }`
 
 - `what` — what to achieve; non-empty.
-- `why?` — a rationale (text); the hypothesis for a fix.
-- `sketch` — a non-empty **string sketch** of the plan (a note to oneself), not a list.
 - `command` — the **first plan item**: the concrete command to run now, verbatim; the engine
   runs exactly it **from the workspace root**. A project in a subdirectory takes a
   `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is
@@ -61,8 +64,8 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 Instruction: at a request node it creates the interpretation — **exactly once**: the
 request's interpretation is FIXED (a `has_goal` edge), so the `what` must be chosen
 deliberately and can never be re-proposed or the request re-interpreted. At an open goal it
-decomposes the current plan item into a sub-goal (an alternative to that item). Give a plan
-sketch and the first command. `command` is not a special "step" — it is simply the first
+decomposes the current plan item into a sub-goal (an alternative to that item). Give the first
+command. `command` is not a special "step" — it is simply the first
 plan item.
 
 ### 2.2 `apply { action }`
@@ -74,17 +77,20 @@ plan item.
 | `list` | `{ path?, include?, from? }` | list files by mask, JSON (see §4.6); the engine also accepts `exclude`/`limit`, which the model tool does not expose |
 | `edit` | `{ path, find, replace }` | exact substring replacement |
 | `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
-| `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`) to read and diff (B9); refused on a path outside the workspace / already existing / forbidden / download failure |
+| `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`), to read alongside the tree; refused on a path outside the workspace / already existing / forbidden / download failure |
 | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
 | `run` | `{ command }` | one plain **foreground** shell command: an **observation** carrying `command` and `exitCode` (0 = pass, non-zero = fail, absent on a timeout) plus the output (stdout and stderr separate, §4.3) |
 
-### 2.3 `query { id | kind | edgesOf, start?, end? }`
+### 2.3 `recall { id, start?, end? }` and `search { id, pattern, before?, after? }`
 
-Deterministic read of the tree/journal: nodes, edges, their payloads; and by `id` — the
-**body of a stored result** (a small one from the payload, a large one behind
-`outputRef`), optionally a line window (`start`/`end`). Does not change state. The
-model-facing tool exposes `{ id, start?, end? }`; the tree selectors (`kind`/`edgesOf`)
-remain an engine capability but are not offered to the model.
+Two read-only tools address a **stored result** by `id` (a small body from the payload, a
+large one behind `outputRef`). `recall` opens the body — optionally a line window
+(`start`/`end`) with a `continue from N` cursor. `search` finds a regex **inside** the body —
+stdout **and** stderr — with `before`/`after` context (default 3/3) and no paging (a broad
+pattern is truncated with a "narrow the pattern" note, never a dangling cursor). Neither
+changes state. They are separate so reading a result is never confused with searching one, or
+with `read`/`grep` (which target the workspace). The old tree selectors (`kind`/`edgesOf`) are
+gone — the model never used them.
 
 ### 2.4 `stop { why? }`
 
@@ -128,15 +134,15 @@ content. The model asks for 120 lines — it sees ~8.
 - `read { path, start?, end? }`:
   - without `start/end` — from the start of the file;
   - with `start/end` — a window of lines (1-based, `end` inclusive).
-- The **window maximum `MAX_READ_LINES = 400`** (decided) is **declared in the tool
-  description**: the model knows the limit in advance.
+- The window is bounded by the **64K byte cap** (`READ_LIMIT`), declared in the tool
+  description: the model knows the limit in advance (there is no separate line cap).
 - If more than the maximum is requested, or the file is longer than the window, the
   tool returns the maximum and **explicitly reports**: "showing lines 1–400 of 3000;
   continue from 401".
 - The result is shown **fully** (this is `lastResult`, not cut to 400 chars).
 - Consequence: the window content lives in `lastResult` for **one turn**; a previous
   read on the current branch is kept in `shown` (and can be pulled back via
-  `query {id}`). An **identical** re-read (the same window, with an unchanged world) is
+  `recall {id}`). An **identical** re-read (the same window, with an unchanged world) is
   refused as `repeated_action`; a **different** window is a new read. If the needed part
   is at a window boundary (read 1–100 and 101–200, but the code is at 80–120), read a
   window with margin (say 60–160). A **thrash** is also refused: once an unchanged file has
@@ -151,36 +157,35 @@ content. The model asks for 120 lines — it sees ~8.
   - `include`/`exclude` — glob filters over paths (`**/*.c`, `runtime/**`,
     `**/.depend` as an exclude); choosing "where to search" (code/logs/tests) is the model's job;
     there is no language→extension table in the engine;
-  - `before`/`after` — context lines above/below, **`5/5` by default**;
+  - `before`/`after` — context lines above/below, **`3/3` by default**;
   - `from`/`count` — a window **over matches** (1-based, like lines in `read`);
-    `count` defaults to `100`, maximum **`MAX_GREP_MATCHES = 200`**;
+    `count` defaults to `50`, maximum **`MAX_GREP_MATCHES = 100`**;
 - the result is **valid JSON**:
   `{ pattern, scope, context, total, from, returned, next?, results:
   [{ path, line, match, before: [], after: [] }] }`. Matches are structurally
   separated from each other, the matched line (`match`) from the context
   (`before`/`after`); the context of adjacent matches may duplicate;
-- byte limit (**`OUTPUT_LIMIT = 8000`**): when exceeded, whole trailing results are
-  dropped, `returned` shrinks, `next` points to the continuation; the JSON stays valid
-  (the middle is never cut);
+- byte limit (**`GREP_LIMIT = 8192`**, 8K: a localization pointer, not content): when
+  exceeded, whole trailing results are dropped, `returned` shrinks, `next` points to the
+  continuation; the JSON stays valid (the middle is never cut);
 - pagination is the same `grep` with a new `from`: recomputation is deterministic (like
   re-reading a window in `read`); the window body is kept via `storeOutput`, so recall
-  via `shown`/`query {id}` works exactly as for `read`;
+  via `shown`/`recall {id}` works exactly as for `read`;
 - default skips: `SKIP_DIRS` directories + dot files/directories (`.depend`,
   `.mailmap`); `.gitignore` filtering comes later.
 
 ### 4.3 `run`: the full output, stdout and stderr separate (decided)
 
-- Show the command's full output (not 400 chars from the start); when
-  **`OUTPUT_LIMIT = 8000`** is exceeded — head+tail with an explicit note +
-  `outputRef`/`errorRef`.
+- Show the command's output; when **`RUN_LIMIT = 8192`** (8K) is exceeded — the **tail**
+  with an explicit note + `outputRef`/`errorRef` (the error and exit sit at the end).
 - **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
   The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
   is always kept on a failure. A command that runs `2>&1`/`&>` merges the streams before
   the engine sees them, so the prompt forbids it: the engine, not the shell, decides
   how the two are shown.
-- Store both in the observation (already the case) for `query`: a small body inline, a
-  large one behind `outputRef`/`errorRef`, and `query {id}` reads the full body, not the
-  inline excerpt.
+- Store both in the observation (already the case) for `recall`/`search`: a small body inline, a
+  large one behind `outputRef`/`errorRef`, and `recall {id}` reads the full body, not the
+  inline excerpt (the error stream stays the bounded inline tail).
 - A failed `edit` (`find` not found) materializes the file's **current content** in the
   failure observation and keeps it in `shown`, so the model copies `find` verbatim from
   there instead of re-reading a file it already read (which the repeat guard refuses).
@@ -193,55 +198,27 @@ content. The model asks for 120 lines — it sees ~8.
   and, if `gdb` is installed, attaches `gdb --batch -c <core> -ex bt -ex "info locals"`
   as `backtrace`. When no core was written, the engine reports the kernel's
   `core_pattern` so the absence is explained, not silently swallowed. `lastResult`
-  carries `signal`/`core`/`corePattern`/  `backtrace`, and a `calls` note names the signal.
+  carries `signal`/`core`/`corePattern`/  `backtrace`, and the observation names the signal.
 
-### 4.4 Projection: latest result + summary (decided)
+### 4.4 Projection: the message tape (folded)
 
-- `lastResult` — the **full** result of the latest call (§4.1–4.3).
-- `calls` — a **summary of previous calls without results**: per entry
-  `{ id?, action, status: ok|fail|refused, note, count }`, deduplicated by signature.
-  `action` includes the parameters: for `read` — the **range** (`read f [1-100]`),
-  for `grep` — the **pattern and context** (`grep sweep 5/5`), for `run` — the
-  command, for `edit` — the **short diff** (`-find +replace`). This gives the model
-  "memory of what was already done" without inflating the context, and makes coverage
-  visible. An edit keeps `find`/`replace` in its action payload, so a failed or repeated
-  edit shows the exact `find` already tried instead of a blank "applied".
-- `negative` is **merged into `calls`** (one list): status `refused`/`fail` + the rule
-  "do not repeat while the world has not changed". A repeated command with the same
-  signature (`read`/`grep` too) and an unchanged world is **refused**, and the reason
-  names the `id` of the existing result and says how to see it: if the body is already in
-  `shown`, use it there; otherwise fetch it via `query {id}` (§4.5). The advice never
-  sends the model to `query` a body that is already shown — that is itself refused, and
-  the model would loop `read → query → read`.
-- `shown` is the **working set**, owned by the engine: the produced results of **every
-  level on the current branch** (not just the leaf) are kept, so a stage's evidence (the
-  error that motivated the next stage) stays in view until the parent closes, newest
-  first. `query {id}` adds one **result body** from an earlier level (or an evicted one),
-  held for **`HELD_TURNS` (6)** turns (re-querying refreshes); the cap is `MAX_HELD` (5)
-  bodies, the least recently requested evicted first. Each body is bounded per tool by
-  `OUTPUT_LIMIT` (8000 characters) — `read` included (whole lines, with a continuation
-  hint) — so there is no separate total-character cap: one was removed because it silently
-  dropped a body larger than the cap (the source window being edited), trapping the model
-  in a `query` loop (docs/benches/bench_report.md §4.4). A read observation whose file has
-  changed since is dropped (stale content is
-  never shown as active); `run` bodies are historical and never go stale. There is
-  **no** model-side declaration of what to show: `query {id}` is the single retrieval
-  entrance.
-- `SKEIN_CTX_TOTAL` is not applied; `SKEIN_CTX_EXCERPT` is no longer needed.
+**Folded into `docs/ir_semantics.md` §7 and `docs/projection.md`.** The `lastResult`/`calls`/
+`shown` blocks are gone: the context is a **message tape** rebuilt from the tree each turn. A
+result is addressed by id with `recall`/`search`; a body is shown whole up to its **per-tool**
+limit — `read` 64K, `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
+**tail**; only a body beyond that is bounded (with an omission note), behind `outputRef`. A refused structural move is a
+transient `tool` reason on the next turn; a command's non-execution is an observation. There is
+no per-file read cap: distinct windows are new knowledge, only an identical window is a repeat.
 
-### 4.5 `query`: fetch a result by `id` (decided)
+### 4.5 `recall` / `search`: read or search a result by `id` (folded)
 
-- `query { id, start?, end? }` returns the **body** of a stored result (a small one
-  from the payload, a large one behind `outputRef`), optionally a line window.
-- This is the "index" mechanism: a past result is fetched by `id`, not by repeating the
-  call. A repeated command with the same inputs and an unchanged world is refused (see
-  §4.2, semantics §2.7) and the reason names the `id`.
-- `query {id}` **enters the working set** (§4.4): the body is shown from `shown` for
-  several turns. Re-querying the same `id` **while it is in the set** is redundant and
-  refused; a body evicted by the cap leaves `held`, so re-querying it is **allowed**. For
-  **non-results** (`action`/`goal`) a separate set of recently queried ids with the same
-  TTL is kept, so a repeated `query` of such a node is refused too (spin). A state query
-  (`kind`/`edgesOf`) is not pinned: its answer changes as the graph grows.
+**Folded into `docs/ir_semantics.md` §4.5, §7.** `recall { id, start?, end? }` returns a line
+window of a stored result's body (a small one inline, a large one behind `outputRef`);
+`search { id, pattern, before?, after? }` returns matching line windows over its stdout and
+stderr. Either enters the tape as a transient `assistant`+`tool` pair. A `recall` window is
+shrunk by whole lines so its JSON-escaped form fits `QUERY_BODY_LIMIT` (valid JSON, never
+clipped mid-string). A windowed `recall` or any `search` is new content and is allowed; only a
+bare recall of an id already in view is refused as redundant.
 
 ### 4.6 `list`: file listing (decided)
 
@@ -250,7 +227,7 @@ content. The model asks for 120 lines — it sees ~8.
   - scope and filters (`path`/`include`) — as for `grep`; the same default
     skips (`SKIP_DIRS` + dot files/directories);
   - `from`/`limit` — a window **over files** (1-based); the engine defaults `limit` to
-    `LIST_LIMIT_DEFAULT` (200), capped at `MAX_LIST_FILES` (500);
+    `LIST_LIMIT_DEFAULT` (100), capped at `MAX_LIST_FILES` (200);
 - the result is JSON: `{ root, total, from, returned, next?, files: [] }`;
 - read-only and idempotent (a repeat is not a refusal); it gives the model visibility
   of extensions so it can set `include` for `grep` meaningfully.
@@ -310,8 +287,8 @@ This is a mandatory separate part of the prompt: without it the model applies a 
 agent's default reflex ("look at the diff").
 
 1. `request.text` is **raw motivation**, not a ready-made task. The first move is
-   `create_goal`: formulate an interpretation (`what`), a rationale (`why`), a plan
-   `sketch` and the first `command`.
+   `create_goal`: formulate an interpretation (`what`) and the first
+   `command`.
 2. If the request names a **verification command** — take it verbatim as the first
    `command` — but the engine runs it from the **workspace root**, not a
    project subdirectory. A named command is authoritative; its working directory is
@@ -332,7 +309,7 @@ agent's default reflex ("look at the diff").
      `command: "cd ocaml && make -C testsuite one DIR=tests/basic"` (the project is in a
      subdirectory, so the literal command carries the `cd` prefix);
    - a plan of **commands**: `reproduce` and `locate` are plain **actions** (run the command,
-     read/grep/diff); `fix` IS the hypothesis — `why` states it — and the goal is closed by
+     read/grep/diff); `fix` is the goal itself, and the goal is closed by
      the doxa's `stop` once the work is done (there is no separate `verify`, no `complete`
      and no criterion check), not a list of bare commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a

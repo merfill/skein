@@ -3,14 +3,14 @@ import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
-import { PROMPT_BLOCKS, SYSTEM_PROMPT as ASSEMBLED } from "../src/loop/prompt";
-import { buildMessages, renderTranscript, SYSTEM_PROMPT } from "../src/loop/propose";
+import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
+import { buildMessages } from "../src/loop/propose";
 
-// The prompt is assembled from named behavior blocks (docs/system_prompt_ru.md). These
-// tests guard the assembly contract: one block is one behavior, ids are stable, and the
-// exported prompt is exactly the concatenation of the blocks.
+// The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
+// stable base (true on any move) and node instructions (a fresh request / an open goal).
+// These tests guard the assembly and the tool contract.
 
-describe("system prompt: block assembly", () => {
+describe("system prompt: base + node assembly", () => {
   it("has unique, non-empty block ids", () => {
     const ids = PROMPT_BLOCKS.map((block) => block.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -20,24 +20,31 @@ describe("system prompt: block assembly", () => {
     }
   });
 
-  it("exposes the prompt as the concatenation of blocks", () => {
-    expect(ASSEMBLED).toBe(PROMPT_BLOCKS.map((block) => block.text).join("\n\n"));
-    expect(SYSTEM_PROMPT).toBe(ASSEMBLED);
+  it("assembles the base prompt as the concatenation of the base blocks", () => {
+    expect(BASE_PROMPT).toBe(BASE_BLOCKS.map((block) => block.text).join("\n\n"));
+  });
+
+  it("gives the request and goal situations their own instructions", () => {
+    expect(NODE_INSTRUCTIONS.request.length).toBeGreaterThan(0);
+    expect(NODE_INSTRUCTIONS.goal.length).toBeGreaterThan(0);
+    expect(NODE_INSTRUCTIONS.request).not.toBe(NODE_INSTRUCTIONS.goal);
+    expect(NODE_INSTRUCTIONS.request).toMatch(/interpret/i);
+    expect(NODE_INSTRUCTIONS.goal).toMatch(/stop/i);
   });
 });
 
-// The tool contract is single-sourced from the registry: the prompt names the flat tools
-// by name and must not drift back to the old nested `apply { action: { tool } }` form.
+// The tool contract is single-sourced from the registry: the base prompt names the flat
+// tools by name and must not drift back to the old nested `apply { action: { tool } }` form.
 describe("system prompt: tool contract", () => {
   it("names every registered tool by its callable name", () => {
     for (const tool of PROPOSAL_TOOLS) {
-      expect(SYSTEM_PROMPT).toContain(tool.function.name);
+      expect(BASE_PROMPT).toContain(tool.function.name);
     }
   });
 
   it("does not describe a non-existent `apply` wrapper or nested tool objects", () => {
-    expect(SYSTEM_PROMPT).not.toContain("apply {");
-    expect(SYSTEM_PROMPT).not.toContain("{ tool:");
+    expect(BASE_PROMPT).not.toContain("apply {");
+    expect(BASE_PROMPT).not.toContain("{ tool:");
   });
 
   it("keeps stream discipline in its own block (B14)", () => {
@@ -45,151 +52,170 @@ describe("system prompt: tool contract", () => {
     expect(b14?.text).toMatch(/NEVER merge/);
   });
 
-  it("keeps the stop condition in its own block (B15): a goal closes by stop, no criterion", () => {
-    const b15 = PROMPT_BLOCKS.find((block) => block.id === "B15");
-    expect(b15?.text).toMatch(/a goal is finished by stop/i);
-    expect(b15?.text).toMatch(/no criterion/i);
+  it("keeps the stop condition in the goal instruction (B7): a goal closes by stop, no criterion", () => {
+    const b7 = PROMPT_BLOCKS.find((block) => block.id === "B7");
+    expect(b7?.text).toMatch(/stop \{ why\? \} closes the goal/i);
+    expect(b7?.text).toMatch(/no criterion/i);
+    expect(NODE_INSTRUCTIONS.goal).toContain(b7?.text ?? "");
   });
 
   // A live run backgrounded every build and then spent turns polling it; a foreground run
-  // blocks and finishes in one turn. The prompt must say to run builds in the foreground.
-  it("tells the model to run builds in the foreground", () => {
+  // blocks and finishes in one turn. The run tool description says to run builds in the foreground.
+  it("tells the model to run builds in the foreground (in the run tool description)", () => {
     const run = PROPOSAL_TOOLS.find((tool) => tool.function.name === "run");
     expect(run?.function.description).toMatch(/FOREGROUND/);
-    expect(SYSTEM_PROMPT).toMatch(/Run a build \(or a test suite\) in the FOREGROUND/);
   });
 
-  // The reduced goal model: no criterion and no removed fields leak into the prompt or the
-  // tool descriptions the model attends to most (docs/plans/goal_reduction_plan.md §4).
   it("exposes the reduced goal vocabulary and no removed fields", () => {
     const createGoal = PROPOSAL_TOOLS.find((tool) => tool.function.name === "create_goal");
     const description = createGoal?.function.description ?? "";
-    expect(description).toContain("sketch");
+    expect(description).not.toContain("sketch");
     expect(description).toContain("command");
+    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.request}\n${NODE_INSTRUCTIONS.goal}`;
     for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
-      expect(SYSTEM_PROMPT, `prompt must not mention ${removed}`).not.toContain(removed);
+      expect(prompt, `prompt must not mention ${removed}`).not.toContain(removed);
       expect(description, `create_goal must not mention ${removed}`).not.toContain(removed);
+    }
+  });
+
+  it("does not promise a parameter the tool schema lacks", () => {
+    const props = (name: string) =>
+      ((PROPOSAL_TOOLS.find((tool) => tool.function.name === name)?.function.parameters ?? {}) as {
+        properties?: Record<string, unknown>;
+      }).properties ?? {};
+    const description = (name: string) =>
+      PROPOSAL_TOOLS.find((tool) => tool.function.name === name)?.function.description ?? "";
+    // A description may only mention parameters the native schema actually accepts, so a
+    // promised `recall { id, start, end }` / `search { id, pattern }` cannot silently drop a key.
+    for (const promised of ["id", "start", "end"]) {
+      if (description("recall").includes(promised)) {
+        expect(props("recall"), `recall must expose '${promised}'`).toHaveProperty(promised);
+      }
+    }
+    for (const promised of ["id", "pattern", "before", "after"]) {
+      if (description("search").includes(promised)) {
+        expect(props("search"), `search must expose '${promised}'`).toHaveProperty(promised);
+      }
     }
   });
 });
 
-// The engine captures stdout and stderr separately, so the prompt must stop the model
-// from merging them with a shell redirect (docs/tools.md §4.3): a merged command hides
-// which stream carried the failure.
+describe("tool surface: no drift to a removed tool", () => {
+  it("exposes exactly the current operator set", () => {
+    const names = PROPOSAL_TOOLS.map((tool) => tool.function.name).sort();
+    expect(names).toEqual(
+      [
+        "apply_patch",
+        "create_goal",
+        "decline",
+        "edit",
+        "fetch",
+        "grep",
+        "list",
+        "read",
+        "recall",
+        "run",
+        "search",
+        "stop",
+        "write",
+      ].sort(),
+    );
+  });
+
+  it("keeps fetch a plain reference (no diff/localization steering)", () => {
+    const fetch = PROPOSAL_TOOLS.find((tool) => tool.function.name === "fetch");
+    const description = fetch?.function.description ?? "";
+    // fetch only acquires read-only reference evidence; the localization/diff playbook was
+    // removed as a crutch that steered the model into a wrong-version whole-file diff.
+    expect(description).toMatch(/reference evidence/i);
+    expect(description).not.toMatch(/diff|localiz|same version|drift/i);
+  });
+
+  it("mentions no removed tool anywhere the model reads", () => {
+    // `query` was split into `recall`/`search`; the old name must not survive in a tool
+    // description or the prompt, or the model will call a tool that does not exist.
+    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.request}\n${NODE_INSTRUCTIONS.goal}`;
+    for (const tool of PROPOSAL_TOOLS) {
+      expect(tool.function.description, `${tool.function.name} mentions 'query'`).not.toMatch(
+        /\bquery\b/i,
+      );
+    }
+    expect(prompt).not.toMatch(/\bquery\b/i);
+  });
+});
 
 describe("system prompt: stream discipline", () => {
   it("categorically forbids merging stdout and stderr", () => {
-    expect(SYSTEM_PROMPT).toMatch(/NEVER merge/);
-    expect(SYSTEM_PROMPT).toContain("2>&1");
-    expect(SYSTEM_PROMPT).toContain("&>");
-  });
-
-  it("tells the model that lastResult carries output and error separately", () => {
-    expect(SYSTEM_PROMPT).toMatch(/"output" is stdout and "error" is stderr/);
+    expect(BASE_PROMPT).toMatch(/NEVER merge/);
+    expect(BASE_PROMPT).toContain("2>&1");
+    expect(BASE_PROMPT).toContain("&>");
   });
 
   it("keeps the no-pipe rule (the exit code must survive)", () => {
-    expect(SYSTEM_PROMPT).toMatch(/never pipe them through `tail`\/`head`/i);
+    expect(BASE_PROMPT).toMatch(/never pipe them through `tail`\/`head`/i);
   });
 
   it("requires objective commands to be runnable from the workspace root", () => {
-    expect(SYSTEM_PROMPT).toMatch(/WORKSPACE ROOT/);
-    expect(SYSTEM_PROMPT).toContain("cd <dir> &&");
+    expect(NODE_INSTRUCTIONS.request).toMatch(/WORKSPACE ROOT/);
+    expect(NODE_INSTRUCTIONS.request).toContain("cd <dir> &&");
   });
 
-  // B6 says the criterion runs from the workspace root, but a live fix-ocaml-gc run created
-  // its goal with the bare `make -C testsuite …` (the subdirectory `ocaml/` was named in the
-  // request) and only revised it late. The `create_goal` tool description — the schema the
-  // model attends to most — must carry the same rule.
   it("states the workspace-root/cd rule in the create_goal description", () => {
     const createGoal = PROPOSAL_TOOLS.find((tool) => tool.function.name === "create_goal");
     expect(createGoal?.function.description).toMatch(/WORKSPACE ROOT/);
     expect(createGoal?.function.description).toContain("cd <dir> &&");
   });
 
-  it("reacts to a missing path as a wrong working directory, not bad code", () => {
-    expect(SYSTEM_PROMPT).toMatch(/WRONG WORKING DIRECTORY/);
-    expect(SYSTEM_PROMPT).toContain("No such file or directory");
+  it("carries no failure-diagnosis playbook (the log and the tools carry it)", () => {
+    expect(NODE_INSTRUCTIONS.goal).not.toMatch(/WRONG WORKING DIRECTORY/);
+    expect(NODE_INSTRUCTIONS.goal).not.toMatch(/SETUP, not the defect/);
+    expect(NODE_INSTRUCTIONS.goal).not.toMatch(/From a failure to its cause/);
   });
 
-  // A missing build output is a DIFFERENT cause from a wrong directory: the tree is not
-  // configured/built — setup, not the defect (a live run read `No rule to make target
-  // '../Makefile.build_config'` as a directory error and never ran `./configure && make`).
-  it("separates an unbuilt tree (setup) from a wrong directory", () => {
-    expect(SYSTEM_PROMPT).toMatch(/SETUP, not the defect/);
-    expect(SYSTEM_PROMPT).toMatch(/configure && make/);
-    expect(SYSTEM_PROMPT).toMatch(/Makefile\.build_config|Makefile\.config/);
+  it("keeps the stale-read safety but no localize->edit trigger", () => {
+    expect(NODE_INSTRUCTIONS.goal).toMatch(/never edit on top of a stale read/);
+    expect(NODE_INSTRUCTIONS.goal).not.toMatch(/LOCALIZED|NAMED SUSPECT/);
   });
 
-  // The named-suspect trigger: a live run kept re-reading one unchanged file for 17 turns
-  // after a (noisy) reference diff already isolated the defect. The prompt must say edit
-  // is the next action once the suspect is named, and that a reference diff is a lead.
-  it("tells the model to edit once the suspect is named (localize -> edit)", () => {
-    expect(SYSTEM_PROMPT).toMatch(/NEXT action is edit/);
-    expect(SYSTEM_PROMPT).toMatch(/LOCALIZED once you can point at the exact expression/);
-    expect(SYSTEM_PROMPT).toMatch(/LEAD, not a checklist/);
+  it("no longer carries the external-reference / diff playbook", () => {
+    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.goal}`;
+    expect(prompt).not.toMatch(/External reference/i);
+    expect(prompt).not.toMatch(/LEAD, not a checklist/i);
   });
 });
 
-// The only context packaging: the projection rendered as a role-tagged history — brief
-// first, the branch's steps as call/result pairs chronologically, and the volatile board
-// last (docs/plans/step_reduction_plan_ru.md §4).
-describe("context format: transcript", () => {
+// The context the model sees is the tape: a stable system prefix (base + the situation's
+// instruction + constraints) and then the history as role-tagged turns (docs/ir_revision.md §5).
+describe("context format: tape", () => {
   const context: Context = {
-    path: [
-      { id: "r1", kind: "request", text: "fix the failing test" },
-      {
-        id: "w:goal:1",
-        kind: "goal",
-        what: "green",
-        sketch: "reproduce node --test, fix, stop",
-      },
+    history: [
+      { role: "user", text: "fix the failing test" },
+      { role: "assistant", text: "node --test" },
+      { role: "tool", text: "exit 1\nboom" },
     ],
+    situation: "goal",
     constraints: [{ id: "k1", forbid: ["secret"] }],
-    // Newest-first, as the projection keeps them.
-    calls: [
-      { id: "obs:2", action: "edit src/a.mjs", status: "ok", count: 1 },
-      { id: "obs:1", action: "node --test", status: "fail", note: "boom", count: 1 },
-    ],
-    shown: [{ id: "obs:2", kind: "action", label: "edit src/a.mjs", output: "applied" }],
-    lastResult: {
-      id: "obs:1",
-      kind: "observation",
-      command: "node --test",
-      exitCode: 1,
-      output: "",
-      error: "boom",
-    },
-    applicable: ["apply"],
-    budget: { turn: 2, maxTurns: 10, remaining: 8 },
   };
 
-  it("lays the branch out as roles: brief, chronological steps, board last", () => {
-    const messages = renderTranscript(context);
-    expect(messages).toHaveLength(7);
+  it("lays the context out as a system prefix then the tape", () => {
+    const messages = buildMessages(context);
     expect(messages[0]).toBeInstanceOf(SystemMessage);
-    expect(messages[1]).toBeInstanceOf(HumanMessage);
-    expect(String(messages[1]?.content)).toContain("BRIEF");
-    expect(String(messages[1]?.content)).toContain("fix the failing test");
-    expect(String(messages[1]?.content)).toContain("k1");
-    // Oldest first: the failing run, then the edit.
-    expect(messages[2]).toBeInstanceOf(AIMessage);
-    expect(String(messages[2]?.content)).toContain("node --test");
-    expect(String(messages[3]?.content)).toContain("boom");
-    expect(String(messages[4]?.content)).toContain("edit src/a.mjs");
-    expect(String(messages[5]?.content)).toContain("applied");
-    const board = String(messages[6]?.content);
-    expect(messages[6]).toBeInstanceOf(HumanMessage);
-    expect(board).toContain("BOARD");
-    expect(board).toContain("w:goal:1");
-    expect(board).toContain("applicable");
+    expect(String(messages[0]?.content)).toBe(BASE_PROMPT);
+    expect(messages[1]).toBeInstanceOf(SystemMessage);
+    expect(String(messages[1]?.content)).toBe(NODE_INSTRUCTIONS.goal);
+    expect(messages[2]).toBeInstanceOf(SystemMessage);
+    expect(String(messages[2]?.content)).toContain("k1");
+    expect(messages[3]).toBeInstanceOf(HumanMessage);
+    expect(String(messages[3]?.content)).toContain("fix the failing test");
+    expect(messages[4]).toBeInstanceOf(AIMessage);
+    expect(String(messages[4]?.content)).toContain("node --test");
+    expect(messages[5]).toBeInstanceOf(HumanMessage);
+    expect(String(messages[5]?.content)).toContain("OBSERVATION");
+    expect(String(messages[5]?.content)).toContain("boom");
   });
 
-  it("is the only packaging: buildMessages renders the transcript", () => {
-    const messages = buildMessages(context);
-    expect(messages).toHaveLength(renderTranscript(context).length);
-    expect(messages[0]).toBeInstanceOf(SystemMessage);
-    expect(String(messages[1]?.content)).toContain("BRIEF");
-    expect(String(messages[messages.length - 1]?.content)).toContain("BOARD");
+  it("prepends the request instruction on a fresh request", () => {
+    const messages = buildMessages({ ...context, history: [], situation: "request" });
+    expect(String(messages[1]?.content)).toBe(NODE_INSTRUCTIONS.request);
   });
 });

@@ -1,0 +1,1 @@
+};return{intro:"Executes a given bash command in a persistent shell session with optional timeout, ensuring proper handling and security measures.",workdirSection:"All commands run in the current working directory by default. Use the 

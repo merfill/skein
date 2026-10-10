@@ -1,24 +1,34 @@
 import { createHash } from "node:crypto";
 
-import { forbiddenPatterns, matchesPath } from "../ir/constraints";
+import { forbiddenConstraints, forbiddenPatterns, matchesPath } from "../ir/constraints";
 import type { Event } from "../ir/events";
 import {
   actionExecuted,
-  alternativesOf,
+  actionSucceeded,
   childrenOf,
   currentVersion,
+  itemOf,
   planOf,
   type State,
 } from "../ir/graph";
 import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
-import type { EdgeKind, Node, Provenance, WitnessEntry } from "../ir/types";
+import type { EdgeKind, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, Workspace } from "./workspace";
 
 export interface ExecOutcome {
   events: Event[];
-  turn: { seq: number; kind: "proposal" | "tool"; text: string; nodeId?: string; error?: string };
+  turn: {
+    seq: number;
+    kind: "proposal" | "tool";
+    text: string;
+    nodeId?: string;
+    error?: string;
+    // The rendered call of a move that leaves no node (a `recall`/`search`), so the projection shows
+    // what was asked rather than a bare operator name (the assistant's own history).
+    call?: string;
+  };
   done: boolean;
   stopReason: string | null;
   // Result ids the loop must pin into the working set (`shown`) after this turn, so the
@@ -26,26 +36,36 @@ export interface ExecOutcome {
   pin?: string[];
 }
 
-export const OUTPUT_LIMIT = 8000;
-const MAX_READ_LINES = 400;
-const MAX_GREP_MATCHES = 200;
-const GREP_COUNT_DEFAULT = 100;
-const GREP_BEFORE_DEFAULT = 5;
-const GREP_AFTER_DEFAULT = 5;
-const MAX_LIST_FILES = 500;
-const LIST_LIMIT_DEFAULT = 200;
-// A result body is kept in the node when small, otherwise in a temp file referenced by
-// the node (docs/context_design_ru.md §8).
-const MAX_INLINE_RESULT = 2000;
+// Per-tool inline budgets (docs/ir_semantics.md §7). `read` is the big one: a whole
+// file/function comes back in one go, bounded by bytes (no line cap). The rest are small,
+// because they are pointers, not content — a `grep`/`list` result names candidates, a `run`
+// result is a log tail — and a large inline body only floods the tape (no eviction yet). A
+// body still over its cap keeps its head (inspection) or tail (command) and is spilled
+// behind `outputRef`/`errorRef`.
+export const READ_LIMIT = 65536;
+const GREP_LIMIT = 8192;
+const LIST_LIMIT = 8192;
+const RUN_LIMIT = 8192;
+// A `recall` re-reads a stored body (often a `read`), so it shares the read budget.
+const QUERY_BODY_LIMIT = READ_LIMIT;
+// The read window leaves room for its `continue from` trailer, so window + trailer still
+// fit the budget and the shown body is never cut a second time.
+const READ_CONTINUE_RESERVE = 96;
+const MAX_GREP_MATCHES = 100;
+const GREP_COUNT_DEFAULT = 50;
+const GREP_BEFORE_DEFAULT = 3;
+const GREP_AFTER_DEFAULT = 3;
+const MAX_LIST_FILES = 200;
+const LIST_LIMIT_DEFAULT = 100;
 
-function clip(text: string, limit = OUTPUT_LIMIT): string {
+function clip(text: string, limit = QUERY_BODY_LIMIT): string {
   if (text.length <= limit) return text;
   return `${text.slice(0, limit)}\n…[truncated ${text.length - limit} chars]`;
 }
 
-// A read window is capped at MAX_READ_LINES and at OUTPUT_LIMIT bytes (whole lines), so a
-// single body is bounded like every other tool result; the tool reports the window it
-// returned so the model knows where to continue.
+// A read window is bounded by READ_LIMIT bytes (whole lines, no line cap): the window is not
+// fragmented by a line count below the byte budget. The tool reports the window it returned
+// so the model knows where to continue.
 function readWindow(
   content: string,
   start: number | undefined,
@@ -58,33 +78,39 @@ function readWindow(
   const requestedEnd = end !== undefined && end > 0 ? end : total;
   let to = Math.min(requestedEnd, total);
   if (to < from) to = from;
-  if (to - from + 1 > MAX_READ_LINES) to = from + MAX_READ_LINES - 1;
+  const budget = READ_LIMIT - READ_CONTINUE_RESERVE;
   let last = from;
   let size = 0;
   for (let i = from; i <= to; i += 1) {
     const line = lines[i - 1] ?? "";
     const added = line.length + (i > from ? 1 : 0);
-    if (i > from && size + added > OUTPUT_LIMIT) break;
+    if (i > from && size + added > budget) break;
     size += added;
     last = i;
   }
   to = last;
   let text = lines.slice(from - 1, to).join("\n");
-  if (text.length > OUTPUT_LIMIT) text = clip(text, OUTPUT_LIMIT);
+  if (text.length > budget) text = clip(text, budget);
   return { text, start: from, end: to, total };
 }
 
-function excerpt(text: string, ref: string, limit = OUTPUT_LIMIT): string {
+// A body larger than `limit` is bounded with an omission note and the full body behind a
+// ref; the middle is never dropped silently. An inspection result (read/grep/list) is
+// consumed from the beginning, so its HEAD is kept; a command's output matters at its end
+// (the error and exit), so its TAIL is kept.
+function headExcerpt(text: string, ref: string, limit: number): string {
   if (text.length <= limit) return text;
-  const head = Math.floor(limit / 2);
-  const tail = limit - head;
-  const omitted = text.length - limit;
-  return `${text.slice(0, head)}\n…[${omitted} chars omitted; full output: ${ref}]…\n${text.slice(-tail)}`;
+  return `${text.slice(0, limit)}\n…[${text.length - limit} chars omitted; full output: ${ref}]…`;
+}
+
+function tailExcerpt(text: string, ref: string, limit: number): string {
+  if (text.length <= limit) return text;
+  return `…[${text.length - limit} chars omitted; full output: ${ref}]…\n${text.slice(-limit)}`;
 }
 
 // Bound a body for the projection without a reference (head+tail), so a copy-paste error
 // message stays small while the tail (usually what matters) survives.
-function bounded(text: string, limit = OUTPUT_LIMIT): string {
+function bounded(text: string, limit = READ_LIMIT): string {
   if (text.length <= limit) return text;
   const head = Math.floor(limit / 2);
   const omitted = text.length - limit;
@@ -104,13 +130,11 @@ function crashLine(crash: CrashReport): string {
   return `killed by ${crash.signal}${core}${backtrace}`;
 }
 
-const QUERY_LIMIT = 50;
-
 // The body of a stored result. stdout (`output`) and stderr (`error`) are separate
 // streams; a small body lives inline in the payload, a large one behind
-// `outputRef`/`errorRef` (invariant 11). `preferRef` reads the full file — used by
-// `query`, which windows it; the working set keeps the inline (bounded) body so the
-// projection stays small.
+// `outputRef`/`errorRef` (invariant 11). `preferRef` reads the full file — used by `recall`,
+// which windows it; the working set keeps the inline (bounded) body so the projection stays
+// small.
 export interface ResultBody {
   output: string;
   error: string;
@@ -151,72 +175,136 @@ export function resolveBody(
   return { output: output ?? "", error: error ?? "" };
 }
 
-function runQuery(
+// Read a stored result by id — the "index" mechanism (tools §4.5): re-see a past step
+// without re-running it. The body is fetched from `outputRef` when present (so a large body
+// pages by window); the error stream is taken from the bounded inline value (never the full
+// stderr). The window is bounded by `QUERY_BODY_LIMIT`, shrunk by whole lines so the result
+// stays valid JSON and is never clipped mid-string.
+function runRecall(
   state: State,
-  action: Extract<Action, { operator: "query" }>,
-  resolve: (id: string) => ResultBody | undefined,
+  action: Extract<Action, { operator: "recall" }>,
+  workspace: Workspace,
 ): string {
-  const nodeRow = (node: Node) => ({
-    id: node.id,
-    kind: node.kind,
-    label: node.label,
-    ...(node.payload !== undefined ? { payload: node.payload } : {}),
-  });
-  const nodes: ReturnType<typeof nodeRow>[] = [];
-  const edges: { id: string; kind: string; from: string; to: string }[] = [];
-
-  if (action.edgesOf !== undefined) {
-    for (const edge of state.edges.values()) {
-      if (edge.from !== action.edgesOf && edge.to !== action.edgesOf) continue;
-      edges.push({ id: edge.id, kind: edge.kind, from: edge.from, to: edge.to });
-    }
-  } else if (action.id !== undefined) {
-    const node = state.nodes.get(action.id);
-    if (node === undefined) return "(nothing matches)";
-    // A stored result's body is fetched by id — the "index" mechanism (tools §4.5):
-    // re-see a past step without re-running it.
-    const body = resolve(action.id);
-    if (body !== undefined) {
-      const window = readWindow(body.output, action.start, action.end);
-      const trailer =
-        window.total > 0 && window.end < window.total
-          ? `\n…[lines ${window.start}–${window.end} of ${window.total}; continue from ${window.end + 1}]`
-          : "";
-      return JSON.stringify(
-        {
-          id: action.id,
-          kind: node.kind,
-          start: window.start,
-          end: window.end,
-          total: window.total,
-          output: `${window.text}${trailer}`,
-          ...(body.error !== "" ? { error: body.error } : {}),
-        },
-        null,
-        2,
-      );
-    }
-    nodes.push(nodeRow(node));
-    for (const edge of state.edges.values()) {
-      if (edge.from === action.id || edge.to === action.id) {
-        edges.push({ id: edge.id, kind: edge.kind, from: edge.from, to: edge.to });
-      }
-    }
-  } else if (action.kind !== undefined) {
-    for (const node of state.nodes.values()) {
-      if (action.kind !== undefined && node.kind !== action.kind) continue;
-      nodes.push(nodeRow(node));
-    }
-  } else {
-    return "(no selector: pass id, kind, or edgesOf)";
+  const node = state.nodes.get(action.id);
+  if (node === undefined) return `(nothing to recall: ${action.id} is not a node)`;
+  const full = resolveBody(state, action.id, workspace, true);
+  if (full === undefined) return `(nothing to recall: ${action.id} has no stored body)`;
+  const error = resolveBody(state, action.id, workspace, false)?.error ?? "";
+  const render = (end: number | undefined): { json: string; view: ReturnType<typeof readWindow> } => {
+    const view = readWindow(full.output, action.start, end);
+    const trailer =
+      view.total > 0 && view.end < view.total
+        ? `\n…[lines ${view.start}–${view.end} of ${view.total}; continue from ${view.end + 1}]`
+        : "";
+    const json = JSON.stringify(
+      {
+        id: action.id,
+        kind: node.kind,
+        start: view.start,
+        end: view.end,
+        total: view.total,
+        output: `${view.text}${trailer}`,
+        ...(error !== "" ? { error } : {}),
+      },
+      null,
+      2,
+    );
+    return { json, view };
+  };
+  let { json, view } = render(action.end);
+  for (let guard = 0; guard < 6 && json.length > QUERY_BODY_LIMIT && view.end > view.start; guard += 1) {
+    const lines = view.end - view.start + 1;
+    const keep = Math.max(1, Math.floor(lines * (QUERY_BODY_LIMIT / json.length)));
+    if (keep >= lines) break;
+    ({ json, view } = render(view.start + keep - 1));
   }
+  return json;
+}
 
-  if (nodes.length === 0 && edges.length === 0) return "(nothing matches)";
+interface SearchResultItem {
+  stream: "stdout" | "stderr";
+  line: number;
+  match: string;
+  before: string[];
+  after: string[];
+}
 
-  const payload: Record<string, unknown> = {};
-  if (nodes.length > 0) payload.nodes = nodes.slice(0, QUERY_LIMIT);
-  if (edges.length > 0) payload.edges = edges.slice(0, QUERY_LIMIT);
-  return JSON.stringify(payload, null, 2);
+function sliceLines(lines: string[], from: number, to: number): string[] {
+  const out: string[] = [];
+  for (let i = Math.max(1, from); i <= Math.min(lines.length, to); i += 1) out.push(lines[i - 1] ?? "");
+  return out;
+}
+
+// Search INSIDE one stored result (stdout and stderr) for a pattern, returned as matching
+// line windows (a `grep` scoped to a single id). There is no paging cursor: a broad pattern
+// is truncated with a "narrow the pattern" note, never a dangling `next` (the tool has no
+// `from`). A single oversized result has its lines clipped as a last resort.
+function runSearch(
+  state: State,
+  action: Extract<Action, { operator: "search" }>,
+  workspace: Workspace,
+): string {
+  const node = state.nodes.get(action.id);
+  if (node === undefined) return `(nothing to search: ${action.id} is not a node)`;
+  const body = resolveBody(state, action.id, workspace, true);
+  if (body === undefined) return `(nothing to search: ${action.id} has no stored body)`;
+  let re: RegExp;
+  try {
+    re = new RegExp(action.pattern);
+  } catch {
+    return JSON.stringify({ id: action.id, pattern: action.pattern, error: "invalid pattern" }, null, 2);
+  }
+  const before = action.before ?? GREP_BEFORE_DEFAULT;
+  const after = action.after ?? GREP_AFTER_DEFAULT;
+  const streams: [SearchResultItem["stream"], string][] = [];
+  if (body.output !== "") streams.push(["stdout", body.output]);
+  if (body.error !== "") streams.push(["stderr", body.error]);
+  const results: SearchResultItem[] = [];
+  let total = 0;
+  for (const [stream, text] of streams) {
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!re.test(lines[i] ?? "")) continue;
+      total += 1;
+      if (results.length >= MAX_GREP_MATCHES) continue;
+      results.push({
+        stream,
+        line: i + 1,
+        match: lines[i] ?? "",
+        before: sliceLines(lines, i + 1 - before, i),
+        after: sliceLines(lines, i + 2, i + 1 + after),
+      });
+    }
+  }
+  const build = (kept: number): string =>
+    JSON.stringify(
+      {
+        id: action.id,
+        pattern: action.pattern,
+        context: { before, after },
+        total,
+        returned: kept,
+        results: results.slice(0, kept),
+        ...(kept < total ? { note: `showing ${kept} of ${total} matches; narrow the pattern` } : {}),
+      },
+      null,
+      2,
+    );
+  let kept = results.length;
+  let json = build(kept);
+  while (kept > 1 && json.length > GREP_LIMIT) {
+    kept -= 1;
+    json = build(kept);
+  }
+  if (json.length > GREP_LIMIT && kept === 1) {
+    const item = results[0] as SearchResultItem;
+    const perLine = Math.max(100, Math.floor(GREP_LIMIT / (item.before.length + item.after.length + 2)));
+    item.match = clipLine(item.match, perLine);
+    item.before = item.before.map((line) => clipLine(line, perLine));
+    item.after = item.after.map((line) => clipLine(line, perLine));
+    json = build(kept);
+  }
+  return json;
 }
 
 function signatureMap(workspace: Workspace): Map<string, string> {
@@ -270,6 +358,116 @@ function latestReadVersion(state: State, ref: string): string | undefined {
     if (best === undefined || node.seq > best.seq) best = { seq: node.seq, version: payload.version };
   }
   return best?.version;
+}
+
+function actionCommand(payload: unknown): string | undefined {
+  const value = payload as { signature?: unknown; command?: unknown } | undefined;
+  if (typeof value?.signature === "string") return value.signature;
+  if (typeof value?.command === "string") return value.command;
+  return undefined;
+}
+
+// The latest executed action with this command signature, if any. A refused attempt (a
+// command that did not run: repeat/stale/forbidden/empty) does not become the baseline, so
+// repeated refusals keep naming the same original result and read as no new knowledge.
+function latestAction(state: State, command: string): { seq: number; id: string } | undefined {
+  let best: { seq: number; id: string } | undefined;
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "action" || !actionExecuted(state, node.id)) continue;
+    if (actionCommand(node.payload) !== command) continue;
+    const result = state.nodes.get(resultId(state, node.id));
+    if ((result?.payload as { refused?: unknown } | undefined)?.refused === true) continue;
+    if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: node.id };
+  }
+  return best;
+}
+
+// The addressable result of an action: its produced child, else the action itself.
+function resultId(state: State, actionId: string): string {
+  let best: { seq: number; id: string } | undefined;
+  for (const edge of state.edges.values()) {
+    if (edge.kind !== "result" || edge.from !== actionId) continue;
+    const node = state.nodes.get(edge.to);
+    if (node === undefined) continue;
+    if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: edge.to };
+  }
+  return best?.id ?? actionId;
+}
+
+// The workspace-relative paths a unified diff would touch, from its `---`/`+++` headers.
+function patchTargets(patch: string): string[] {
+  const out = new Set<string>();
+  for (const line of patch.split("\n")) {
+    const match = line.match(/^(?:\+\+\+|---) (?:[ab]\/)?(.+)$/);
+    const path = match?.[1]?.trim();
+    if (path !== undefined && path !== "" && path !== "/dev/null") out.add(path);
+  }
+  return [...out];
+}
+
+// The extra payload a tool keeps on its action node, so the calls index / repeat guard can
+// read it back (docs/ir_revision.md §4).
+function actionExtra(apply: Apply): Record<string, unknown> {
+  switch (apply.tool) {
+    case "edit":
+      return { find: apply.find, replace: apply.replace };
+    case "write":
+      return { path: apply.path, bytes: apply.content.length };
+    case "run":
+      return { signature: `${apply.command ?? ""}\u0000` };
+    case "fetch":
+      return { url: apply.url, ...(apply.path !== undefined ? { path: apply.path } : {}) };
+    case "apply_patch":
+      return { strip: apply.strip ?? 1 };
+    default:
+      return {};
+  }
+}
+
+// Non-execution of a command (docs/ir_revision.md §3.3, §4): a repeat, a stale base, a
+// forbidden path or an empty command is a reason, returned here so the engine records it as
+// an observation rather than refusing without a node. The checks are state-only.
+function commandRefusal(state: State, apply: Apply, command: string): string | undefined {
+  if (apply.tool === "read" || apply.tool === "grep") {
+    const found = latestAction(state, command);
+    if (found !== undefined && state.lastMutationSeq < found.seq) {
+      return `repeated_action: ${resultId(state, found.id)} already has it; retrieve it by id (recall), do not repeat`;
+    }
+  }
+  if (apply.tool === "run") {
+    if (command.trim() === "") return "run needs a command";
+    const found = latestAction(state, `${command}\u0000`);
+    if (found !== undefined && state.lastMutationSeq < found.seq) {
+      const prior = state.nodes.get(resultId(state, found.id));
+      const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
+      if (typeof exit === "number") {
+        return `repeated_action: ${resultId(state, found.id)} already has it; retrieve it by id (recall), do not repeat`;
+      }
+    }
+  }
+  if (apply.tool === "edit" || apply.tool === "write") {
+    for (const { id, pattern } of forbiddenConstraints(state)) {
+      if (matchesPath(pattern, apply.path)) return `constraint_violation:${pattern}:${id}`;
+    }
+    const ref = `file:${apply.path}`;
+    const readVersion = latestReadVersion(state, ref);
+    if (readVersion !== undefined && currentVersion(state, ref) !== readVersion) {
+      return "stale_base";
+    }
+  }
+  if (apply.tool === "fetch" && apply.path !== undefined) {
+    for (const { pattern } of forbiddenConstraints(state)) {
+      if (matchesPath(pattern, apply.path)) return `constraint_violation:${pattern}`;
+    }
+  }
+  if (apply.tool === "apply_patch") {
+    for (const target of patchTargets(apply.patch)) {
+      for (const { pattern } of forbiddenConstraints(state)) {
+        if (matchesPath(pattern, target)) return `constraint_violation:${pattern}`;
+      }
+    }
+  }
+  return undefined;
 }
 
 function descendTo(state: State, parent: string, node: string): Event[] {
@@ -329,6 +527,22 @@ export function commandOf(apply: Apply): string {
     case "run":
       return apply.command ?? "";
   }
+}
+
+// The rendered `recall`/`search` call (a move with no node), so the assistant's own history
+// shows what was asked rather than a bare operator name (the projection re-inserts it).
+function recallCall(action: Extract<Action, { operator: "recall" }>): string {
+  const parts = [`id: ${action.id}`];
+  if (action.start !== undefined) parts.push(`start: ${action.start}`);
+  if (action.end !== undefined) parts.push(`end: ${action.end}`);
+  return `recall { ${parts.join(", ")} }`;
+}
+
+function searchCall(action: Extract<Action, { operator: "search" }>): string {
+  const parts = [`id: ${action.id}`, `pattern: ${action.pattern}`];
+  if (action.before !== undefined) parts.push(`before: ${action.before}`);
+  if (action.after !== undefined) parts.push(`after: ${action.after}`);
+  return `search { ${parts.join(", ")} }`;
 }
 
 interface GrepResultItem {
@@ -413,15 +627,15 @@ function buildGrepWindow(
   };
   let kept = results.length;
   let json = build(kept);
-  while (kept > 1 && json.length > OUTPUT_LIMIT) {
+  while (kept > 1 && json.length > GREP_LIMIT) {
     kept -= 1;
     json = build(kept);
   }
-  if (json.length > OUTPUT_LIMIT && kept === 1) {
+  if (json.length > GREP_LIMIT && kept === 1) {
     const item = results[0] as GrepResultItem;
     const perLine = Math.max(
       100,
-      Math.floor(OUTPUT_LIMIT / (item.before.length + item.after.length + 2)),
+      Math.floor(GREP_LIMIT / (item.before.length + item.after.length + 2)),
     );
     item.match = clipLine(item.match, perLine);
     item.before = item.before.map((line) => clipLine(line, perLine));
@@ -478,19 +692,26 @@ export function executeAction(
     });
   };
 
-  // Keep a result body: small ones inline in the node, large ones in a temp file
-  // referenced by the node, so the model can recall it by id (§8).
-  const storeOutput = (id: string, text: string): { output?: string; outputRef?: string } => {
-    if (text.length <= MAX_INLINE_RESULT) return { output: text };
+  // Keep an inspection body (read/grep/list): the tool's own window is honored whole when
+  // it fits its per-tool limit; otherwise its head is shown (with an omission note) and the
+  // full body is written to a file behind `outputRef`, recalled by id via `recall` (§8). The
+  // middle is never dropped silently.
+  const storeOutput = (
+    id: string,
+    text: string,
+    limit: number,
+  ): { output?: string; outputRef?: string } => {
+    if (text.length <= limit) return { output: text };
     const ref = `.skein/observations/${id}.txt`;
     workspace.write(ref, text);
-    return { outputRef: ref };
+    return { output: headExcerpt(text, ref, limit), outputRef: ref };
   };
 
   // A run result body: stdout (`output`) and stderr (`error`) are stored as separate
-  // streams. The inline value is the shown body (head+tail when long); when it exceeds
-  // OUTPUT_LIMIT the full stream is also written behind `outputRef`/`errorRef`, so it is
-  // retrievable by id. The error stream is never dropped.
+  // streams. The inline value is the TAIL of the stream (the error and exit sit at the
+  // end); when it exceeds RUN_LIMIT the full stream is also written behind
+  // `outputRef`/`errorRef`, so the earlier part is retrievable by id. The error stream is
+  // never dropped.
   const storeStream = (
     id: string,
     kind: "output" | "error",
@@ -498,10 +719,17 @@ export function executeAction(
   ): Record<string, string> => {
     if (text === "") return {};
     const refKey = kind === "output" ? "outputRef" : "errorRef";
-    if (text.length <= OUTPUT_LIMIT) return { [kind]: text };
+    if (text.length <= RUN_LIMIT) return { [kind]: text };
     const ref = `.skein/observations/${id}.${kind === "output" ? "out" : "err"}.txt`;
     workspace.write(ref, text);
-    return { [kind]: excerpt(text, ref), [refKey]: ref };
+    return { [kind]: tailExcerpt(text, ref, RUN_LIMIT), [refKey]: ref };
+  };
+
+  const addEdge = (provenance: Provenance, from: string, to: string, kind: EdgeKind): void => {
+    events.push({
+      type: "add_edge",
+      edge: { id: `e:${next()}`, from, to, kind, provenance },
+    });
   };
 
   const ensurePlan = (goalId: string): string => {
@@ -513,76 +741,18 @@ export function executeAction(
       type: "add_node",
       node: { id: planId, space: "work", kind: "plan", label: `plan for ${goalId}`, seq: planSeq },
     });
-    events.push({
-      type: "add_edge",
-      edge: {
-        id: `e:${next()}`,
-        from: goalId,
-        to: planId,
-        kind: "has_plan",
-        provenance: { kind: "llm" },
-      },
-    });
+    addEdge({ kind: "llm" }, goalId, planId, "plan");
     return planId;
   };
 
-  const ensureAlternatives = (owner: string): string => {
-    const existing = alternativesOf(state, owner);
-    if (existing !== undefined) return existing;
-    const altSeq = next();
-    const altId = `w:alt:${altSeq}`;
+  const buildItem = (goalId: string): string => {
+    const itemSeq = next();
+    const itemId = `w:item:${itemSeq}`;
     events.push({
       type: "add_node",
-      node: {
-        id: altId,
-        space: "work",
-        kind: "alternatives",
-        label: `alternatives for ${owner}`,
-        seq: altSeq,
-      },
+      node: { id: itemId, space: "work", kind: "item", label: `item for ${goalId}`, seq: itemSeq },
     });
-    addEdge({ kind: "llm" }, owner, altId, "has_alternatives");
-    return altId;
-  };
-
-  // A goal is born with its plan container seeded with the first plan item (the first
-  // command), which becomes the current item (docs/plans/goal_reduction_plan.md §2).
-  const buildGoal = (spec: {
-    what: string;
-    why?: string;
-    sketch?: string;
-    command: string;
-  }): string => {
-    const goalSeq = next();
-    const id = `w:goal:${goalSeq}`;
-    events.push({
-      type: "add_node",
-      node: {
-        id,
-        space: "work",
-        kind: "goal",
-        label: spec.what,
-        payload: {
-          what: spec.what,
-          why: spec.why,
-          ...(spec.sketch !== undefined ? { sketch: spec.sketch } : {}),
-        },
-        seq: goalSeq,
-      },
-    });
-    const planId = ensurePlan(id);
-    const stepId = buildActionItem(spec.command);
-    events.push({
-      type: "add_edge",
-      edge: {
-        id: `e:${next()}`,
-        from: planId,
-        to: stepId,
-        kind: "item",
-        provenance: { kind: "llm" },
-      },
-    });
-    return id;
+    return itemId;
   };
 
   const buildActionItem = (command: string, label?: string, extra?: Record<string, unknown>): string => {
@@ -602,57 +772,175 @@ export function executeAction(
     return id;
   };
 
-  // Reuse an unexecuted action item of the current goal whose command matches.
-  // Otherwise the logos branches the current unfulfilled item: the executed action
-  // becomes its chosen alternative (append-only), so a bypassed planned command never
-  // traps the plan (docs/context_design_ru.md).
-  const ensureAction = (
-    command: string,
-    label: string,
-    extra?: Record<string, unknown>,
-  ): string => {
-    const goalId = currentGoalId(state);
-    if (goalId !== undefined) {
-      const plan = planOf(state, goalId);
-      if (plan !== undefined) {
-        for (const itemId of childrenOf(state, plan)) {
-          const node = state.nodes.get(itemId);
-          if (node?.kind !== "action") continue;
-          if (actionExecuted(state, itemId)) continue;
-          const itemCommand = (node.payload as { command?: unknown } | undefined)?.command;
-          if (itemCommand === command) return itemId;
-        }
-      }
-    }
-    const id = buildActionItem(command, label, extra);
-    if (goalId !== undefined) {
-      const first = firstUnfulfilledItem(state, goalId);
-      const firstNode = first !== undefined ? state.nodes.get(first) : undefined;
-      if (first !== undefined && firstNode?.kind === "action") {
-        const alt = ensureAlternatives(first);
-        addEdge({ kind: "llm" }, alt, id, "item");
-        return id;
-      }
-      const plan = ensurePlan(goalId);
-      events.push({
-        type: "add_edge",
-        edge: { id: `e:${next()}`, from: plan, to: id, kind: "item", provenance: { kind: "llm" } },
-      });
-    }
-    return id;
+  // A goal is born with its plan: one item, seeded with the first command by the caller
+  // (docs/ir_revision.md §2.3, §3.1).
+  const buildGoal = (spec: { what: string }): {
+    goalId: string;
+    itemId: string;
+  } => {
+    const goalSeq = next();
+    const id = `w:goal:${goalSeq}`;
+    events.push({
+      type: "add_node",
+      node: {
+        id,
+        space: "work",
+        kind: "goal",
+        label: spec.what,
+        payload: {
+          what: spec.what,
+        },
+        seq: goalSeq,
+      },
+    });
+    const planId = ensurePlan(id);
+    const itemId = buildItem(id);
+    addEdge({ kind: "llm" }, planId, itemId, "items");
+    return { goalId: id, itemId };
   };
 
-  const addEdge = (provenance: Provenance, from: string, to: string, kind: EdgeKind): void => {
-    events.push({
-      type: "add_edge",
-      edge: { id: `e:${next()}`, from, to, kind, provenance },
+  // Place a new action under the goal (docs/ir_revision.md §4): as a new alternative of the
+  // current (first unfulfilled) item, or as a new plan item when the plan is exhausted.
+  const placeAction = (goalId: string, actionId: string): void => {
+    const item = firstUnfulfilledItem(state, goalId);
+    if (item !== undefined) {
+      addEdge({ kind: "llm" }, item, actionId, "alts");
+      return;
+    }
+    const planId = ensurePlan(goalId);
+    const itemId = buildItem(goalId);
+    addEdge({ kind: "llm" }, planId, itemId, "items");
+    addEdge({ kind: "llm" }, itemId, actionId, "alts");
+  };
+
+  // One plain foreground shell command: recorded as an observation with its exit code,
+  // stdout and stderr (docs/ir_revision.md §3.3, §4). A command that changes a forbidden
+  // file is reverted and recorded as a violation.
+  const runShell = (command: string, actionId: string): ExecOutcome => {
+    const readIfPresent = (path: string): string | undefined => {
+      try {
+        return workspace.read(path);
+      } catch {
+        return undefined;
+      }
+    };
+    const guards = new Map<string, { pattern: string; content: string }>();
+    for (const pattern of forbiddenPatterns(state)) {
+      for (const path of workspace.list()) {
+        if (guards.has(path) || !matchesPath(pattern, path)) continue;
+        const content = readIfPresent(path);
+        if (content !== undefined) guards.set(path, { pattern, content });
+      }
+    }
+
+    const before = signatureMap(workspace);
+    const runStartedAt = Date.now();
+    const result = workspace.run(command);
+    const crash =
+      result.signal !== undefined && result.timedOut !== true
+        ? crashReport(workspace, result.signal, runStartedAt)
+        : undefined;
+    const violated = [...guards.entries()].filter(([path, guard]) => {
+      const content = readIfPresent(path);
+      return content === undefined || content !== guard.content;
     });
+    for (const [path, guard] of violated) workspace.write(path, guard.content);
+
+    const after = signatureMap(workspace);
+    const mutations = changedMutations(
+      workspace,
+      before,
+      after,
+      new Set(violated.map(([path]) => path)),
+    );
+
+    for (const entry of mutations) {
+      const path = entry.ref.slice("file:".length);
+      ensureFile(path, entry.ref);
+      addEdge({ kind: "llm" }, actionId, entry.ref, "mutates");
+      events.push({ type: "mutate", ref: entry.ref, version: entry.version, actionId });
+    }
+
+    if (violated.length > 0) {
+      const paths = violated.map(([path]) => path).join(", ");
+      const first = violated[0];
+      const pattern = first ? first[1].pattern : "constraint";
+      const label = `constraint violation (${pattern}): reverted ${paths}`;
+      const observationSeq = next();
+      const observationId = `obs:${observationSeq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: observationId,
+          space: "work",
+          kind: "observation",
+          label,
+          payload: { failed: true, refused: true, pattern, paths: violated.map(([path]) => path), reverted: true },
+          seq: observationSeq,
+        },
+      });
+      addEdge({ kind: "llm" }, actionId, observationId, "result");
+      return { events, turn: proposalTurn(label, observationId), done: false, stopReason: null };
+    }
+
+    const resultSeq = next();
+    const resultId = `obs:${resultSeq}`;
+    const outputBody = storeStream(resultId, "output", result.stdout);
+    const errorBody = storeStream(resultId, "error", result.stderr);
+    const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
+    const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
+    const crashSummary = crash === undefined ? `exit ${result.code}` : crashLine(crash);
+    const header = `$ ${command}\n${crashSummary}`;
+    const diagnostic = crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
+    const text = `${result.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
+    const exitCode =
+      result.timedOut === true || typeof result.code !== "number" ? undefined : result.code;
+    events.push({
+      type: "add_node",
+      node: {
+        id: resultId,
+        space: "work",
+        kind: "observation",
+        label: command,
+        payload: {
+          command,
+          ...(exitCode !== undefined ? { exitCode } : {}),
+          ...(result.stdout !== "" ? { output: outputShown } : {}),
+          ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
+          ...(errorShown !== "" ? { error: errorShown } : {}),
+          ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
+          ...(crash !== undefined
+            ? {
+                signal: crash.signal,
+                ...(crash.core !== undefined ? { core: crash.core } : {}),
+                ...(crash.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
+                ...(crash.backtrace !== undefined
+                  ? { backtrace: bounded(crash.backtrace, RUN_LIMIT) }
+                  : {}),
+                ...(crash.backtraceError !== undefined
+                  ? { backtraceError: bounded(crash.backtraceError, 2000) }
+                  : {}),
+              }
+            : {}),
+        },
+        seq: resultSeq,
+      },
+    });
+    addEdge({ kind: "llm" }, actionId, resultId, "result");
+    return { events, turn: proposalTurn(text, resultId, errorShown), done: false, stopReason: null };
   };
 
   switch (action.operator) {
-    case "query": {
-      const text = runQuery(state, action, (id) => resolveBody(state, id, workspace, true));
-      return { events, turn: proposalTurn(clip(text)), done: false, stopReason: null };
+    case "recall": {
+      const text = runRecall(state, action, workspace);
+      const turn = proposalTurn(clip(text));
+      return { events, turn: { ...turn, call: recallCall(action) }, done: false, stopReason: null };
+    }
+
+    case "search": {
+      const text = runSearch(state, action, workspace);
+      const turn = proposalTurn(clip(text));
+      return { events, turn: { ...turn, call: searchCall(action) }, done: false, stopReason: null };
     }
 
     case "create_goal": {
@@ -660,33 +948,32 @@ export function executeAction(
       if (current === undefined) return fail("create goal failed: no current goal");
       const currentNode = state.nodes.get(current);
       const atRequest = currentNode?.kind === "request";
-      // Decomposing an open goal (I6): the sub-goal replaces the current plan item as its
-      // chosen alternative, so there must be a concrete item to decompose.
-      let step: string | undefined;
-      if (!atRequest) {
-        step = firstUnfulfilledItem(state, current);
-        const stepNode = step !== undefined ? state.nodes.get(step) : undefined;
-        if (step === undefined || stepNode?.kind !== "action") {
-          return fail(
-            `create goal failed: no current plan item to decompose — a sub-goal can only replace an existing item; apply an action to add the next one`,
-          );
-        }
+      // Decomposing an open goal (I6): the sub-goal becomes the current item's newest
+      // alternative, so there must be an item to decompose.
+      const step = atRequest ? undefined : firstUnfulfilledItem(state, current);
+      if (!atRequest && step === undefined) {
+        return fail(
+          "create goal failed: no current plan item to decompose — a sub-goal can only replace an existing item; apply an action to add the next one",
+        );
       }
-      const id = buildGoal({
+      const { goalId, itemId } = buildGoal({
         what: action.what,
-        ...(action.why !== undefined ? { why: action.why } : {}),
-        sketch: action.sketch,
-        command: action.command,
       });
       if (atRequest) {
-        // The request is interpreted as this goal (`has_goal`); the interpretation is fixed.
-        addEdge({ kind: "llm" }, current, id, "has_goal");
+        // The request is interpreted as this goal (`goal` relation); the interpretation is fixed.
+        addEdge({ kind: "llm" }, current, goalId, "goal");
       } else {
-        const alt = ensureAlternatives(step as string);
-        addEdge({ kind: "llm" }, alt, id, "item");
+        addEdge({ kind: "llm" }, step as string, goalId, "alts");
       }
-      events.push(...descendTo(state, current, id));
-      return { events, turn: proposalTurn(`created goal: ${action.what}`), done: false, stopReason: null };
+      events.push(...descendTo(state, current, goalId));
+      // The logos runs the first command at once (docs/ir_revision.md §3.1): the goal is born
+      // with its first item executed. Messages: assistant(goal) + assistant(call) + tool(obs).
+      const firstCommand = action.command;
+      const actionId = buildActionItem(firstCommand, firstCommand, {
+        signature: `${firstCommand}\u0000`,
+      });
+      addEdge({ kind: "llm" }, itemId, actionId, "alts");
+      return runShell(firstCommand, actionId);
     }
 
     case "decline": {
@@ -707,7 +994,7 @@ export function executeAction(
         },
       });
       const focus = currentGoalId(state);
-      if (focus !== undefined) addEdge({ kind: "llm" }, focus, id, "no_goal");
+      if (focus !== undefined) addEdge({ kind: "llm" }, focus, id, "unactionable");
       return {
         events,
         turn: proposalTurn(`declined: ${action.why ?? "not actionable"}`, id),
@@ -717,10 +1004,10 @@ export function executeAction(
     }
 
     case "stop": {
-      // The doxa's terminal move, on a goal: the `stop` node becomes the LAST plan item
-      // and an outgoing `has_stopped` edge records the closure and its reason. The engine
-      // returns to the request on the next projection and the run ends there. There is no
-      // `stop` on the request (docs/plans/request_goal_plan.md).
+      // The doxa's terminal move, on a goal: a `stop` node hung off the goal via the `stop`
+      // relation records the closure and its reason. The engine returns to the request on
+      // the next projection and the run ends there. There is no `stop` on the request
+      // (docs/ir_revision.md §3.4).
       const focus = currentGoalId(state);
       const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
       if (focusNode?.kind !== "goal" || focus === undefined) {
@@ -739,9 +1026,7 @@ export function executeAction(
           seq,
         },
       });
-      const planId = planOf(state, focus) ?? ensurePlan(focus);
-      addEdge({ kind: "llm" }, planId, stopId, "item");
-      addEdge({ kind: "llm" }, focus, stopId, "has_stopped");
+      addEdge({ kind: "llm" }, focus, stopId, "stop");
       return {
         events,
         turn: proposalTurn(`stopped goal: ${focus}`, stopId),
@@ -752,6 +1037,34 @@ export function executeAction(
 
     case "apply": {
       const apply = action.action;
+      const focus = currentGoalId(state);
+      if (focus === undefined) return fail("apply failed: no current goal");
+      const command = commandOf(apply);
+      // Every attempt leaves an action node (docs/ir_revision.md §4); it is placed by the
+      // outcome of the current item (new alternative, or a new plan item when exhausted).
+      const actionId = buildActionItem(command, command, actionExtra(apply));
+      placeAction(focus, actionId);
+      const failed = (text: string): ExecOutcome => {
+        const seq = next();
+        const id = `obs:${seq}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id,
+            space: "work",
+            kind: "observation",
+            label: text,
+            payload: { failed: true, refused: true, output: text },
+            seq,
+          },
+        });
+        addEdge({ kind: "llm" }, actionId, id, "result");
+        return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
+      };
+      // Non-execution of a command is an observation with a reason, not a refusal without a
+      // node (docs/ir_revision.md §3.3, §4).
+      const refusal = commandRefusal(state, apply, command);
+      if (refusal !== undefined) return failed(refusal);
 
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
@@ -761,9 +1074,9 @@ export function executeAction(
         try {
           present = workspace.exists(apply.path);
         } catch (error) {
-          return fail(`read failed: ${(error as Error).message}`);
+          return failed(`read failed: ${(error as Error).message}`);
         }
-        if (!present) return fail(`read failed: ${apply.path} does not exist`);
+        if (!present) return failed(`read failed: ${apply.path} does not exist`);
         const ref = `file:${apply.path}`;
         let version: string;
         let raw: string;
@@ -771,15 +1084,13 @@ export function executeAction(
           version = workspace.version(apply.path);
           raw = workspace.read(apply.path);
         } catch {
-          return fail(`read failed: ${apply.path} disappeared`);
+          return failed(`read failed: ${apply.path} disappeared`);
         }
         const window = readWindow(raw, apply.start, apply.end);
         ensureFile(apply.path, ref);
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command);
         const observationSeq = next();
         const observationId = `obs:${observationSeq}`;
-        // The window is shown in full (bounded by MAX_READ_LINES); if the file is
+        // The requested window is shown whole (bounded by the byte budget); if the file is
         // longer, say where to continue.
         const trailer =
           window.total > 0 && window.end < window.total
@@ -800,12 +1111,12 @@ export function executeAction(
               start: window.start,
               end: window.end,
               total: window.total,
-              ...storeOutput(observationId, shown),
+              ...storeOutput(observationId, shown, READ_LIMIT),
             },
             seq: observationSeq,
           },
         });
-        addEdge({ kind: "read", ref, version }, actionId, observationId, "produces");
+        addEdge({ kind: "read", ref, version }, actionId, observationId, "result");
         return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
       }
 
@@ -819,10 +1130,8 @@ export function executeAction(
         try {
           matches = workspace.grep(apply.pattern, scope);
         } catch (error) {
-          return fail(`grep failed: ${(error as Error).message}`);
+          return failed(`grep failed: ${(error as Error).message}`);
         }
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command);
         // Files are read once per call even when many matches share one.
         const cache = new Map<string, string | undefined>();
         const reader = (path: string): string | undefined => {
@@ -870,7 +1179,7 @@ export function executeAction(
               from,
               returned: window.returned,
               summary,
-              ...storeOutput(observationId, shown),
+              ...storeOutput(observationId, shown, GREP_LIMIT),
             },
             seq: observationSeq,
           },
@@ -887,7 +1196,7 @@ export function executeAction(
           },
           actionId,
           observationId,
-          "produces",
+          "result",
         );
         return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
       }
@@ -900,23 +1209,30 @@ export function executeAction(
         try {
           files = workspace.listFiles(scope);
         } catch (error) {
-          return fail(`list failed: ${(error as Error).message}`);
+          return failed(`list failed: ${(error as Error).message}`);
         }
         const total = files.length;
         const start = Math.min(Math.max(from - 1, 0), total);
         const page = files.slice(start, start + limit);
-        const returned = page.length;
-        const result: Record<string, unknown> = {
-          root: apply.path ?? ".",
-          total,
-          from: total === 0 ? 0 : start + 1,
-          returned,
-          files: page,
+        // The window is bounded by dropping whole trailing files (never mid-JSON), so the
+        // listing the model asked for is shown whole (docs/ir_semantics.md §7).
+        const build = (kept: number): string => {
+          const result: Record<string, unknown> = {
+            root: apply.path ?? ".",
+            total,
+            from: total === 0 ? 0 : start + 1,
+            returned: kept,
+            files: page.slice(0, kept),
+          };
+          if (start + kept < total) result.next = start + kept + 1;
+          return JSON.stringify(result, null, 2);
         };
-        if (start + returned < total) result.next = start + returned + 1;
-        const shown = JSON.stringify(result, null, 2);
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command);
+        let returned = page.length;
+        let shown = build(returned);
+        while (returned > 1 && shown.length > LIST_LIMIT) {
+          returned -= 1;
+          shown = build(returned);
+        }
         const observationSeq = next();
         const observationId = `obs:${observationSeq}`;
         const more = start + returned < total;
@@ -939,7 +1255,7 @@ export function executeAction(
               from: total === 0 ? 0 : start + 1,
               returned,
               summary,
-              ...storeOutput(observationId, shown),
+              ...storeOutput(observationId, shown, LIST_LIMIT),
             },
             seq: observationSeq,
           },
@@ -953,7 +1269,7 @@ export function executeAction(
           },
           actionId,
           observationId,
-          "produces",
+          "result",
         );
         return { events, turn: proposalTurn(shown, observationId), done: false, stopReason: null };
       }
@@ -964,14 +1280,14 @@ export function executeAction(
         try {
           present = workspace.exists(apply.path);
         } catch (error) {
-          return fail(`edit failed: ${(error as Error).message}`);
+          return failed(`edit failed: ${(error as Error).message}`);
         }
-        if (!present) return fail(`edit failed: ${apply.path} does not exist`);
+        if (!present) return failed(`edit failed: ${apply.path} does not exist`);
         let original: string;
         try {
           original = workspace.read(apply.path);
         } catch {
-          return fail(`edit failed: ${apply.path} disappeared`);
+          return failed(`edit failed: ${apply.path} disappeared`);
         }
         if (!original.includes(apply.find)) {
           // Materialize the current content so the model can copy `find` verbatim from it
@@ -979,13 +1295,6 @@ export function executeAction(
           // the failed edit is the exact moment the content is needed (tools §4.3).
           const label = `edit failed: find not found in ${apply.path}`;
           const full = `${label}\n--- current content of ${apply.path} (copy "find" verbatim) ---\n${original}\n--- end ---`;
-          // Record the attempt too, with the `find`/`replace` that failed, so `calls`
-          // shows what was already tried instead of only the file content (docs §4.4).
-          const command = commandOf(apply);
-          const actionId = ensureAction(command, command, {
-            find: apply.find,
-            replace: apply.replace,
-          });
           const observationSeq = next();
           const observationId = `obs:${observationSeq}`;
           events.push({
@@ -995,11 +1304,11 @@ export function executeAction(
               space: "work",
               kind: "observation",
               label,
-              payload: { failed: true, ...storeOutput(observationId, full) },
+              payload: { failed: true, ...storeOutput(observationId, full, READ_LIMIT) },
               seq: observationSeq,
             },
           });
-          addEdge({ kind: "llm" }, actionId, observationId, "produces");
+          addEdge({ kind: "llm" }, actionId, observationId, "result");
           return {
             events,
             turn: proposalTurn(bounded(full), observationId),
@@ -1012,13 +1321,6 @@ export function executeAction(
         workspace.write(apply.path, updated);
         const version = workspace.version(apply.path);
         ensureFile(apply.path, ref);
-        const command = commandOf(apply);
-        // Keep `find`/`replace` in the action payload: a short diff in `calls` is what
-        // lets the model learn from its edits (docs §4.4).
-        const actionId = ensureAction(command, command, {
-          find: apply.find,
-          replace: apply.replace,
-        });
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         return { events, turn: proposalTurn(`edited ${apply.path}`, actionId), done: false, stopReason: null };
@@ -1032,28 +1334,26 @@ export function executeAction(
         try {
           present = workspace.exists(apply.path);
         } catch (error) {
-          return fail(`write failed: ${(error as Error).message}`);
+          return failed(`write failed: ${(error as Error).message}`);
         }
         if (present) {
           const readVersion = latestReadVersion(state, ref);
           if (readVersion === undefined) {
-            return fail(
+            return failed(
               `write failed: ${apply.path} exists; read it before overwriting (use edit for a small change)`,
             );
           }
           if (currentVersion(state, ref) !== readVersion) {
-            return fail(`write failed: stale base: ${apply.path} changed since it was read; re-read first`);
+            return failed(`write failed: stale base: ${apply.path} changed since it was read; re-read first`);
           }
         }
         try {
           workspace.write(apply.path, apply.content);
         } catch (error) {
-          return fail(`write failed: ${(error as Error).message}`);
+          return failed(`write failed: ${(error as Error).message}`);
         }
         const version = workspace.version(apply.path);
         ensureFile(apply.path, ref);
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command, { path: apply.path, bytes: apply.content.length });
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         return { events, turn: proposalTurn(`wrote ${apply.path}`, actionId), done: false, stopReason: null };
@@ -1067,24 +1367,18 @@ export function executeAction(
         try {
           present = workspace.exists(path);
         } catch (error) {
-          return fail(`fetch failed: ${(error as Error).message}`);
+          return failed(`fetch failed: ${(error as Error).message}`);
         }
-        if (present) return fail(`fetch failed: ${path} already exists; choose another path`);
+        if (present) return failed(`fetch failed: ${path} already exists; choose another path`);
         let fetched: { path: string; bytes: number };
         try {
           fetched = workspace.fetchTo(apply.url, path);
         } catch (error) {
-          return fail(`fetch failed: ${(error as Error).message}`);
+          return failed(`fetch failed: ${(error as Error).message}`);
         }
         const ref = `file:${fetched.path}`;
         ensureFile(fetched.path, ref);
         const version = workspace.version(fetched.path);
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command, {
-          signature: `${apply.url}\u0000${fetched.path}`,
-          url: apply.url,
-          path: fetched.path,
-        });
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
         const observationSeq = next();
@@ -1101,7 +1395,7 @@ export function executeAction(
             seq: observationSeq,
           },
         });
-        addEdge({ kind: "llm" }, actionId, observationId, "produces");
+        addEdge({ kind: "llm" }, actionId, observationId, "result");
         return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
@@ -1110,12 +1404,10 @@ export function executeAction(
         try {
           workspace.applyPatch(apply.patch, apply.strip);
         } catch (error) {
-          return fail(`apply_patch failed: ${(error as Error).message}`);
+          return failed(`apply_patch failed: ${(error as Error).message}`);
         }
         const after = signatureMap(workspace);
         const mutations = changedMutations(workspace, before, after, new Set());
-        const command = commandOf(apply);
-        const actionId = ensureAction(command, command, { strip: apply.strip ?? 1 });
         for (const entry of mutations) {
           const path = entry.ref.slice("file:".length);
           ensureFile(path, entry.ref);
@@ -1138,138 +1430,16 @@ export function executeAction(
             seq: observationSeq,
           },
         });
-        addEdge({ kind: "llm" }, actionId, observationId, "produces");
+        addEdge({ kind: "llm" }, actionId, observationId, "result");
         return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
-      // apply.tool === "run"
-      // `run` is one plain foreground command: there is no target/criterion and no
-      // background job machinery (docs/plans/goal_reduction_plan.md §4).
+      // apply.tool === "run": one plain foreground command (docs/ir_revision.md §3.3).
       const runCommand = apply.command;
       if (runCommand === undefined || runCommand.trim() === "") {
-        return fail("run failed: no command");
+        return failed("run failed: no command");
       }
-
-      const readIfPresent = (path: string): string | undefined => {
-        try {
-          return workspace.read(path);
-        } catch {
-          return undefined;
-        }
-      };
-      const guards = new Map<string, { pattern: string; content: string }>();
-      for (const pattern of forbiddenPatterns(state)) {
-        for (const path of workspace.list()) {
-          if (guards.has(path) || !matchesPath(pattern, path)) continue;
-          const content = readIfPresent(path);
-          if (content !== undefined) guards.set(path, { pattern, content });
-        }
-      }
-
-      const before = signatureMap(workspace);
-      const runStartedAt = Date.now();
-      const result = workspace.run(runCommand);
-      // A crash (a signal, not a controlled exit) is knowledge: read the core and, when
-      // gdb is present, a backtrace (docs/tools.md §4.3). A timeout is a SIGTERM we sent
-      // ourselves, not a crash, so it is excluded.
-      const crash =
-        result.signal !== undefined && result.timedOut !== true
-          ? crashReport(workspace, result.signal, runStartedAt)
-          : undefined;
-      const violated = [...guards.entries()].filter(([path, guard]) => {
-        const content = readIfPresent(path);
-        return content === undefined || content !== guard.content;
-      });
-      for (const [path, guard] of violated) workspace.write(path, guard.content);
-
-      const after = signatureMap(workspace);
-      const mutations = changedMutations(
-        workspace,
-        before,
-        after,
-        new Set(violated.map(([path]) => path)),
-      );
-
-      const command = runCommand;
-      const actionId = ensureAction(command, command, { signature: `${runCommand}\u0000` });
-      for (const entry of mutations) {
-        const path = entry.ref.slice("file:".length);
-        ensureFile(path, entry.ref);
-        addEdge({ kind: "llm" }, actionId, entry.ref, "mutates");
-        events.push({ type: "mutate", ref: entry.ref, version: entry.version, actionId });
-      }
-
-      if (violated.length > 0) {
-        const paths = violated.map(([path]) => path).join(", ");
-        const first = violated[0];
-        const pattern = first ? first[1].pattern : "constraint";
-        const label = `constraint violation (${pattern}): reverted ${paths}`;
-        const observationSeq = next();
-        const observationId = `obs:${observationSeq}`;
-        events.push({
-          type: "add_node",
-          node: {
-            id: observationId,
-            space: "work",
-            kind: "observation",
-            label,
-            payload: { pattern, paths: violated.map(([path]) => path), reverted: true },
-            seq: observationSeq,
-          },
-        });
-        return { events, turn: proposalTurn(label, observationId), done: false, stopReason: null };
-      }
-
-      // A run is an observation: `command` + `exitCode` (0 = pass, non-zero = fail, absent
-      // on a timeout), plus the output.
-      const resultSeq = next();
-      const resultId = `obs:${resultSeq}`;
-      // stdout and stderr are stored separately and never concatenated: a failed run's
-      // error is the primary signal, and a merged log hides which stream carried it.
-      const outputBody = storeStream(resultId, "output", result.stdout);
-      const errorBody = storeStream(resultId, "error", result.stderr);
-      const outputShown = typeof outputBody.output === "string" ? outputBody.output : "";
-      const errorShown = typeof errorBody.error === "string" ? errorBody.error : "";
-      const crashSummary = crash === undefined ? `exit ${result.code}` : crashLine(crash);
-      const header = `$ ${runCommand}\n${crashSummary}`;
-      const diagnostic =
-        crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
-      const text = `${result.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
-      const exitCode =
-        result.timedOut === true || typeof result.code !== "number" ? undefined : result.code;
-      events.push({
-        type: "add_node",
-        node: {
-          id: resultId,
-          space: "work",
-          kind: "observation",
-          label: command,
-          payload: {
-            command: runCommand,
-            ...(exitCode !== undefined ? { exitCode } : {}),
-            ...(result.stdout !== "" ? { output: outputShown } : {}),
-            ...(outputBody.outputRef !== undefined ? { outputRef: outputBody.outputRef } : {}),
-            ...(errorShown !== "" ? { error: errorShown } : {}),
-            ...(errorBody.errorRef !== undefined ? { errorRef: errorBody.errorRef } : {}),
-            ...(crash !== undefined
-              ? {
-                  signal: crash.signal,
-                  ...(crash.core !== undefined ? { core: crash.core } : {}),
-                  ...(crash.corePattern !== undefined ? { corePattern: crash.corePattern } : {}),
-                  ...(crash.backtrace !== undefined
-                    ? { backtrace: bounded(crash.backtrace, OUTPUT_LIMIT) }
-                    : {}),
-                  ...(crash.backtraceError !== undefined
-                    ? { backtraceError: bounded(crash.backtraceError, 2000) }
-                    : {}),
-                }
-              : {}),
-          },
-          seq: resultSeq,
-        },
-      });
-      addEdge({ kind: "llm" }, actionId, resultId, "produces");
-      return { events, turn: proposalTurn(text, resultId, errorShown), done: false, stopReason: null };
+      return runShell(runCommand, actionId);
     }
   }
 }

@@ -1,5 +1,11 @@
 # Skein — plan for reducing LLM turns and the context format
 
+> **Note (superseded by the IR revision's context).** The context draft here (a
+> role-tagged transcript over the old projection fields) was carried into the revision: the
+> context is now a **message tape** rebuilt from the tree (`docs/ir_semantics.md` §7,
+> `docs/projection.md`). The remaining subject — the base/node system prompt — is the next
+> stage.
+
 > English mirror of `docs/plans/step_reduction_plan_ru.md`.
 > Basis — the `ref-localize` run analysis (`docs/benches/bench_report.md` §4.5) and the
 > doxa/logos principle discussion. Touches `docs/ir.md`, `docs/system_prompt.md`.

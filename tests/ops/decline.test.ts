@@ -19,8 +19,7 @@ function decline(why?: string): Action {
   return { operator: "decline", ...(why !== undefined ? { why } : {}) };
 }
 
-// A request whose chosen interpretation exists but has not passed its criterion, so the
-// focus stays at the request and the request is not settled.
+// A request already interpreted as a goal (the interpretation is fixed).
 function interpretedRequest(): Event[] {
   return [
     request(),
@@ -31,11 +30,11 @@ function interpretedRequest(): Event[] {
         space: "work",
         kind: "goal",
         label: "approach",
-        payload: { what: "approach", done_when: "true" },
+        payload: { what: "approach" },
         seq: 1,
       },
     },
-    { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "has_goal", provenance: { kind: "llm" } } },
+    { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } } },
   ];
 }
 

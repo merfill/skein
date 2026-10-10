@@ -40,8 +40,8 @@ overwrite an already-set variable. Live tests are marked `describe.skipIf(!setti
 ### IR operations
 
 The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
-`OP-AP`, `OP-QR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
-are grouped by operator under `tests/ops/` (`create_goal`, `apply`, `query`, `stop`,
+`OP-AP`, `OP-RC`, `OP-SR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
+are grouped by operator under `tests/ops/` (`create_goal`, `apply`, `recall`, `search`, `stop`,
 `applicable`, `traversal`, `derivation`); the invariants are exercised on 400 random legal trees
 (`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
 ID has no test or a test cites an ID outside the registry.
@@ -57,7 +57,7 @@ test without editing the tests. Timeout — 300 s per fixture. Needs a key (§9)
 
 ### Live scenarios
 
-Short scenarios for individual loop branches (query, hypothesis revision,
+Short scenarios for individual loop branches (recall/search, hypothesis revision,
 constraints, an answer without a mutation, plan, recovery after a failure, search over
 many files). A separate group is the **"commands × actions" matrix**: `fail-recover`,
 `script-two-bugs`, `make-command`, `verbatim-flag`, `command-from-package` — tasks whose
@@ -354,17 +354,20 @@ limits, and the projection does not cut it (`docs/tools.md`).
 
 | Limit | Value | Meaning |
 | --- | --- | --- |
-| `MAX_READ_LINES` | 400 | `read` window per call; the tool reports "lines X–Y of Z" |
-| `GREP_COUNT_DEFAULT` | 100 | `grep` matches in a window by default |
-| `MAX_GREP_MATCHES` | 200 | maximum `grep` matches per window; continuation via `next`/`from` |
-| `MAX_LIST_FILES` | 500 | maximum files per `list` window |
-| `OUTPUT_LIMIT` | 8000 | byte cap for a `grep`/`list` JSON result and for `run` output; excess `grep`/`list` results are dropped whole, run output becomes head+tail with `outputRef`/`errorRef` (stdout/stderr separate) |
+| `GREP_COUNT_DEFAULT` | 50 | `grep` matches in a window by default |
+| `MAX_GREP_MATCHES` | 100 | maximum `grep` matches per window; continuation via `next`/`from` |
+| `GREP_BEFORE_DEFAULT` / `GREP_AFTER_DEFAULT` | 3 / 3 | `grep` context lines around each match |
+| `MAX_LIST_FILES` | 200 | maximum files per `list` window |
+| `READ_LIMIT` | 65536 | byte cap (64K) for a `read` window (bounded by bytes, no line cap; leaves room for the `continue from` trailer); a larger body keeps its head and is spilled behind `outputRef` |
+| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | small byte cap (8K) for a `grep`/`list` result: a localization pointer, not content; excess `grep`/`list` entries are dropped whole |
+| `RUN_LIMIT` | 8192 | small byte cap (8K) for `run`; the tail is shown, the full stream stays behind `outputRef`/`errorRef` (stdout/stderr separate) |
+| `QUERY_BODY_LIMIT` | 65536 | cap for a `recall` body window; the window is shrunk by lines so the JSON-escaped result stays valid |
 | `SKEIN_CTX_ITEMS` | 20 | items in the projection's `plan`/`alternatives` |
 
 ### 8.1 Robust structured output
 
 The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
-function tool per operation (`create_goal`, `query`, `read`, `grep`, `list`,
+function tool per operation (`create_goal`, `recall`, `search`, `read`, `grep`, `list`,
 `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`) and `src/llm/structured.ts` `invokeTools` binds them with
 `tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
 per-operation schemas matter: one deeply nested discriminated union came back flat
@@ -374,8 +377,12 @@ the whole projection). When a response is cut at the cap (`finish_reason: "lengt
 carries no call, `invokeTools` retries ONCE at the ceiling with an explicit brevity
 instruction (call the tool now, do not restate analysis) — it does **not** keep doubling
 the cap, which only invites more reasoning (a live `fix-ocaml-gc` run turned one `read`
-into 4 calls / 60.9k completion tokens); a bare no-call gets one repair round; if that
-fails the loop stops with `stopReason: "llm_error"` instead of crashing.
+into 4 calls / 60.9k completion tokens); a bare no-call gets one repair round. A **thrown**
+provider call (network/5xx/rate limit) is a different failure: the SAME request is resent
+`SKEIN_LLM_RETRIES` times (default 2) with a small backoff, so a flaky provider does not sink
+the run. Only when the retries and the repair rounds are exhausted does the loop stop with
+`stopReason: "llm_error"` instead of crashing; the message is then recorded on `stopText`
+(the run trace's `result.json`/`metrics.json`), not only in a transient turn.
 
 `invokeStructured` remains the generic JSON path (schema spelled out in the prompt,
 `response_format: json_object`, manual parse, raised cap on a completion cut, one repair

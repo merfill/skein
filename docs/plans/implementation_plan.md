@@ -76,7 +76,7 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
 
 > **Brought to the IR semantics.** The code follows `docs/ir_semantics.md`: the old
 > model (`claim`/`decision`/`subgoal`, status fields, `mode`) is replaced by the
-> operator model (`create_goal`/`apply`/`stop`, plus read-only `query`) and derived
+> operator model (`create_goal`/`apply`/`stop`, plus read-only `recall`/`search`) and derived
 > state. Plan and status — `docs/plans/archive/ir_semantics_migration_plan.md`; the
 > as-built — `docs/ir.md`. The Tier 0/Tier 1 line below is history.
 
@@ -113,7 +113,7 @@ Beyond Tier 0, the current line adds:
   `superseded`/`achieved` statuses are derived; the projection shows subgoals and
   links (`docs/plans/archive/tier1_plan.md`).
 - **Path-based relevance (T1.2)** — `frontier` is the reachable closure from the
-  goal along path edges; the unreachable stays retrievable through `query`
+  goal along path edges; the unreachable stays retrievable through `recall`
   (`docs/plans/archive/tier1_plan.md` §5).
 - **Explicit check node (T1.3)** — `record_check` materializes a `check` node
   (command, verdict, witness, `actor`) and a `verifies` `check → claim` edge;
@@ -171,6 +171,15 @@ Beyond Tier 0, the current line adds:
   `tests/sandbox/task.ts`). Live re-run — `reward=1`, `stop=request_addressed` (the first
   positive close in the sandbox; it used all 60 turns). The transcript A/B was run and
   rejected. Details — `docs/benches/bench_report.md` §4.8; prompt — `docs/system_prompt.md`.
+
+- **IR revision folded (shape, operations, context; done).** The `item` node replaced the
+  `alternatives` container; relations renamed (`goal`/`unactionable`/`plan`/`stop`/`items`/
+  `alts`/`result`/`mutates`); `stop` is a relation on the goal (not a plan item);
+  `create_goal` runs its first command at once; `apply` places a command by the outcome of the
+  current item, and a command's non-execution is an observation with a reason (not a
+  node-less refusal); the context is a **message tape** rebuilt from the tree. Spec —
+  `docs/ir_semantics.md`; rollout — `docs/plans/ir_revision_implementation_plan.md`. The
+  earlier shape statements in this section are history.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.

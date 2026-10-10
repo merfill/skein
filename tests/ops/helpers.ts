@@ -57,7 +57,6 @@ export function interpretation(what: string, command?: string): Action {
   return {
     operator: "create_goal",
     what,
-    sketch: `${what}: a sketch`,
     command: command ?? "true",
   };
 }
@@ -94,8 +93,17 @@ export function patch(patchText: string, strip?: number): Action {
   return applyTool({ tool: "apply_patch", patch: patchText, ...(strip !== undefined ? { strip } : {}) });
 }
 
-export function query(id?: string): Action {
-  return { operator: "query", ...(id !== undefined ? { id } : {}) };
+export function recall(id: string, start?: number, end?: number): Action {
+  return {
+    operator: "recall",
+    id,
+    ...(start !== undefined ? { start } : {}),
+    ...(end !== undefined ? { end } : {}),
+  };
+}
+
+export function search(id: string, pattern: string): Action {
+  return { operator: "search", id, pattern };
 }
 
 const roots: string[] = [];

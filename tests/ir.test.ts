@@ -35,25 +35,30 @@ function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: 
 
 const llm: Provenance = { kind: "llm" };
 
-function goal(id: string, what: string, seq: number, sketch?: string, why?: string): Event {
-  const payload: GoalPayload = {
-    what,
-    ...(why !== undefined ? { why } : {}),
-    ...(sketch !== undefined ? { sketch } : {}),
-  };
+function goal(id: string, what: string, seq: number): Event {
+  const payload: GoalPayload = { what };
   return { type: "add_node", node: workNode(id, "goal", what, seq, payload) };
 }
 
-function plan(id: string, goalId: string, items: string[], seq: number): Event[] {
+// A plan (`plan` relation from its goal) with the given item ids, in order (`items`).
+function plan(id: string, goalId: string, itemIds: string[], seq: number): Event[] {
   const events: Event[] = [
     { type: "add_node", node: workNode(id, "plan", `plan for ${goalId}`, seq) },
-    { type: "add_edge", edge: edge(`hp:${id}`, goalId, id, "has_plan", llm) },
+    { type: "add_edge", edge: edge(`hp:${id}`, goalId, id, "plan", llm) },
   ];
-  items.forEach((item, index) => {
-    events.push({
-      type: "add_edge",
-      edge: edge(`it:${id}:${index}`, id, item, "item", llm),
-    });
+  itemIds.forEach((item, index) => {
+    events.push({ type: "add_edge", edge: edge(`it:${id}:${index}`, id, item, "items", llm) });
+  });
+  return events;
+}
+
+// A plan item (`item` node) whose ordered alternatives (action/goal) hang off it via `alts`.
+function item(id: string, goalId: string, seq: number, alts: string[]): Event[] {
+  const events: Event[] = [
+    { type: "add_node", node: workNode(id, "item", `item for ${goalId}`, seq) },
+  ];
+  alts.forEach((alt, index) => {
+    events.push({ type: "add_edge", edge: edge(`al:${id}:${index}`, id, alt, "alts", llm) });
   });
   return events;
 }
@@ -121,145 +126,116 @@ describe("fold", () => {
       goal("g1", "make test green", 0),
       { type: "add_node", node: workNode("a1", "action", "read", 1) },
       { type: "add_node", node: workNode("o1", "observation", "read", 2) },
-      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "read", ref: "file:x", version: "v1" }) },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "read", ref: "file:x", version: "v1" }) },
     ]);
     expect(actionExecuted(state, "a1")).toBe(true);
   });
 
-  it("keeps plan item order from the item edge order", () => {
+  it("keeps plan item order from the items edge order", () => {
     const state = fold([
       goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "one", 1) },
-      { type: "add_node", node: workNode("a2", "action", "two", 2) },
-      ...plan("p1", "g1", ["a2", "a1"], 3),
+      { type: "add_node", node: workNode("i1", "item", "one", 1) },
+      { type: "add_node", node: workNode("i2", "item", "two", 2) },
+      ...plan("p1", "g1", ["i2", "i1"], 3),
     ]);
-    expect(childrenOf(state, "p1")).toEqual(["a2", "a1"]);
+    expect(childrenOf(state, "p1")).toEqual(["i2", "i1"]);
   });
 });
 
 describe("closure", () => {
-  it("a goal is closed by a stop: has_stopped edge + stop item", () => {
+  it("a goal is closed by a stop: a `stop` relation to the stop node", () => {
     const base: Event[] = [goal("g1", "make test green", 0)];
     expect(hasStopped(fold(base), "g1")).toBe(false);
     const stopped = fold([
       ...base,
       { type: "add_node", node: workNode("s1", "stop", "done", 1) },
-      { type: "add_edge", edge: edge("es", "g1", "s1", "has_stopped", llm) },
+      { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
     ]);
     expect(hasStopped(stopped, "g1")).toBe(true);
   });
 });
 
-describe("projection", () => {
-  it("is the traversal path; the focus carries its plan and cursor", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "run build", 1) },
-      { type: "add_node", node: workNode("a2", "action", "locate", 2) },
-      ...plan("p1", "g1", ["a1", "a2"], 3),
-    ]);
-    const context = project(state, { budget: { turn: 2, maxTurns: 10 } });
-    expect(context.path.map((node) => node.id)).toEqual(["g1"]);
-    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1", "a2"]);
-    expect(context.path[0]?.plan?.cursor).toBe(0);
-    expect(context.budget).toEqual({ turn: 2, maxTurns: 10, remaining: 8 });
+describe("projection (the message tape)", () => {
+  const requestNode = (seq: number): Event => ({
+    type: "add_node",
+    node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "do it" }, seq },
   });
 
-  it("surfaces the goal's sketch (the initial string note, I3)", () => {
-    const state = fold([goal("g1", "green", 0, "reproduce, then fix")]);
-    const context = project(state);
-    expect(context.path[0]?.sketch).toBe("reproduce, then fix");
-  });
-
-  it("starts at the request and descends into its goal", () => {
+  it("renders the request, the goal and the first command as a tape", () => {
     const state = fold([
-      {
-        type: "add_node",
-        node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "do it" }, seq: 0 },
-      },
-      goal("g1", "approach one", 1),
-      { type: "add_edge", edge: edge("e1", "r1", "g1", "has_goal", llm) },
-      { type: "descend", node: "g1" },
+      requestNode(0),
+      goal("g1", "green", 1),
+      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
+      { type: "add_node", node: workNode("a1", "action", "make test", 2, { command: "make test" }) },
+      { type: "add_node", node: workNode("o1", "observation", "make test", 3, { command: "make test", exitCode: 1, output: "boom" }) },
+      { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
+      ...plan("p1", "g1", ["i1"], 4),
+      ...item("i1", "g1", 5, ["a1"]),
     ]);
     const context = project(state);
-    expect(context.path[0]?.kind).toBe("request");
-    expect(context.path[0]?.text).toBe("do it");
-    expect(context.path[1]?.kind).toBe("goal");
-    expect(context.path[1]?.id).toBe("g1");
-  });
-
-  it("renders the latest result in full, without files or versions", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 1) },
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "read src/a.ts", 2, { ref: "file:src/a.ts", version: "v1" }),
-      },
+    expect(context.situation).toBe("goal");
+    expect(context.history.map((message) => message.role)).toEqual([
+      "user",
+      "assistant",
+      "assistant",
+      "tool",
     ]);
-    const context = project(state, { lastOutput: "x".repeat(1000), lastOutputId: "o1" });
-    expect(context.lastResult?.kind).toBe("observation");
-    expect(context.lastResult?.id).toBe("o1");
-    expect(context.lastResult?.ref).toBe("src/a.ts");
-    expect(context.lastResult?.output).toBe("x".repeat(1000));
-    const serialized = JSON.stringify(context);
-    expect(serialized).not.toContain("artifacts");
-    expect(serialized).not.toContain("version");
-    // The reduced model exposes neither node state nor the criterion-coupled fields.
-    expect(serialized).not.toContain("checkReady");
-    expect(serialized).not.toContain("nextAction");
-    expect(serialized).not.toContain('"state"');
-
-    // A tool turn that produced no result node (query) is shown without an id, so the
-    // model cannot address a stale body by a mismatched id.
-    const nodeLess = project(state, { lastOutput: "queried: g1" });
-    expect(nodeLess.lastResult?.id).toBeUndefined();
-    expect(nodeLess.lastResult?.output).toBe("queried: g1");
+    expect(context.history[0]?.text).toBe("do it");
+    expect(context.history[1]?.text).toContain("what: green");
+    expect(context.history[2]?.text).toContain("make test");
+    expect(context.history[3]?.text).toContain("exit 1");
+    expect(context.history[3]?.text).toContain("boom");
   });
 
-  it("lists constraints and exposes the applicable operators", () => {
+  it("reports the request situation and the constraints before interpretation", () => {
     const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1, { forbid: ["\\.test\\.mjs$"] }) },
-      { type: "add_node", node: workNode("a1", "action", "run build", 2) },
-      { type: "add_node", node: workNode("o1", "observation", "done", 3) },
-      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "grep", pattern: "x" }) },
-      ...plan("p1", "g1", ["a1"], 4),
+      requestNode(0),
+      { type: "add_node", node: workNode("k1", "constraint", "no tests", 1, { forbid: ["\\.test\\.mjs$"] }) },
     ]);
     const context = project(state);
+    expect(context.situation).toBe("request");
     expect(context.constraints).toEqual([{ id: "k1", forbid: ["\\.test\\.mjs$"] }]);
-    expect(context.applicable).toEqual(["create_goal", "apply", "stop"]);
   });
 
-  it("exposes a step alternative's hypothesis (why) so a refuted attempt is not repeated", () => {
+  it("cuts a closed goal's internals to a single closure message", () => {
     const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "fix", 1) },
-      ...plan("p1", "g1", ["a1"], 2),
-      { type: "add_node", node: workNode("alt", "alternatives", "opts", 3) },
-      { type: "add_edge", edge: edge("ha", "a1", "alt", "has_alternatives", llm) },
-      goal("g2", "fix the loop bound", 4, undefined, "the loop excludes n"),
-      { type: "add_edge", edge: edge("ei", "alt", "g2", "item", llm) },
+      requestNode(0),
+      goal("g1", "green", 1),
+      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
+      { type: "add_node", node: workNode("a1", "action", "make test", 2, { command: "make test" }) },
+      { type: "add_node", node: workNode("o1", "observation", "make test", 3, { command: "make test", exitCode: 1 }) },
+      { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
+      goal("g2", "sub", 4),
+      ...plan("p1", "g1", ["i1"], 5),
+      ...item("i1", "g1", 6, ["a1", "g2"]),
+      { type: "add_node", node: workNode("s1", "stop", "done", 7, { why: "the sub-goal is done" }) },
+      { type: "add_edge", edge: edge("es", "g2", "s1", "stop", llm) },
     ]);
     const context = project(state);
-    const item = context.path[0]?.plan?.items.find((entry) => entry.id === "a1");
-    const option = item?.alternatives?.items.find((entry) => entry.id === "g2");
-    expect(option?.chosen).toBe(true);
-    expect(option?.why).toBe("the loop excludes n");
+    const texts = context.history.map((message) => message.text);
+    expect(texts.some((text) => text.includes("what: sub"))).toBe(false);
+    expect(texts[texts.length - 1]).toBe("stopped: the sub-goal is done");
   });
 
-  it("keeps the full latest result and has no context budget", () => {
+  it("marks an alternative command with its previous attempt", () => {
     const state = fold([
-      goal("g1", "green", 0),
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "run build", 1, { command: "run build", output: "stored" }),
-      },
+      requestNode(0),
+      goal("g1", "green", 1),
+      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
+      { type: "add_node", node: workNode("a1", "action", "run one", 2, { command: "run one" }) },
+      { type: "add_node", node: workNode("o1", "observation", "run one", 3, { command: "run one", exitCode: 1 }) },
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "llm" }) },
+      { type: "add_node", node: workNode("a2", "action", "run two", 4, { command: "run two" }) },
+      { type: "add_node", node: workNode("o2", "observation", "run two", 5, { command: "run two", exitCode: 0 }) },
+      { type: "add_edge", edge: edge("e2", "a2", "o2", "result", { kind: "llm" }) },
+      ...plan("p1", "g1", ["i1"], 6),
+      ...item("i1", "g1", 7, ["a1", "a2"]),
     ]);
-    const output = "y".repeat(4000);
-    const context = project(state, { lastOutput: output });
-    expect(context.lastResult?.output).toBe(output);
-    expect(context).not.toHaveProperty("truncated");
+    const context = project(state);
+    const call = context.history.find((message) => message.text.includes("run two"));
+    expect(call?.text).toContain("alternative to step");
+    expect(call?.text).toContain("previous attempt");
+    expect(call?.text).toContain("run one");
   });
 
   it("reports the applicable operators at the current point", () => {
@@ -267,8 +243,9 @@ describe("projection", () => {
       goal("g1", "green", 0),
       { type: "add_node", node: workNode("a1", "action", "run build", 1) },
       { type: "add_node", node: workNode("o1", "observation", "done", 2) },
-      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "grep", pattern: "x" }) },
-      ...plan("p1", "g1", ["a1"], 3),
+      { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "grep", pattern: "x" }) },
+      ...plan("p1", "g1", ["i1"], 3),
+      ...item("i1", "g1", 4, ["a1"]),
     ]);
     const app = applicable(state, "g1");
     // An open goal always offers apply, create_goal and stop (no criterion gate).
@@ -309,193 +286,6 @@ describe("record_rejection", () => {
   });
 });
 
-describe("call summary", () => {
-  it("aggregates refusals by signature and keeps distinct ones", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "record_rejection", tool: "read", target: "/app/a.txt", reason: "repeated_action", turn: 3 },
-      { type: "record_rejection", tool: "read", target: "/app/a.txt", reason: "repeated_action", turn: 4 },
-      { type: "record_rejection", tool: "query", target: "x", reason: "unknown_selector", turn: 5 },
-    ]);
-    const calls = project(state).calls;
-    const repeated = calls.find((entry) => entry.action === "read /app/a.txt");
-    expect(repeated).toMatchObject({ status: "refused", note: "repeated_action", count: 2 });
-    expect(calls.some((entry) => entry.note === "unknown_selector")).toBe(true);
-  });
-
-  it("summarizes an executed action with its outcome", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "git status", 1, { command: "git status" }) },
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "git status", 2, {
-          command: "git status",
-          exitCode: 1,
-          output: "hint: something\nfatal: not a git repository\n",
-        }),
-      },
-      { type: "add_edge", edge: edge("e1", "a1", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
-    ]);
-    const calls = project(state).calls;
-    expect(calls).toEqual([
-      { id: "o1", action: "git status", status: "fail", note: "fatal: not a git repository", count: 1 },
-    ]);
-  });
-
-  it("surfaces the crash line when a piped build exits 0", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "make | tail", 1, { command: "make | tail" }) },
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "make | tail", 2, {
-          command: "make | tail",
-          exitCode: 0,
-          output: "  OCAMLC a.cmi\nmake: *** Segmentation fault (core dumped)\nmake: *** Error 2\n",
-        }),
-      },
-      {
-        type: "add_edge",
-        edge: edge("e1", "a1", "o1", "produces", { kind: "llm" }),
-      },
-    ]);
-    const entry = project(state).calls.find((call) => call.action === "make | tail");
-    expect(entry?.status).toBe("ok");
-    expect(entry?.note).toContain("Segmentation fault");
-  });
-
-  it("keeps stderr separate and names its failure line, not a stdout false positive", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "make", 1, { command: "make" }) },
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "make", 2, {
-          command: "make",
-          exitCode: 1,
-          output: "checking if gcc supports -fno-rtti -fno-exceptions... no\n  CC runtime/shared_heap.b.o",
-          error:
-            "make[2]: *** [Makefile:147: caml.cmi] Segmentation fault (core dumped)\nmake: *** [Makefile:855: world.opt] Error 2",
-        }),
-      },
-      {
-        type: "add_edge",
-        edge: edge("e1", "a1", "o1", "produces", { kind: "llm" }),
-      },
-    ]);
-    const shown = "checking if gcc supports -fno-rtti -fno-exceptions... no";
-    const context = project(state, {
-      lastOutput: shown,
-      lastOutputId: "o1",
-      lastError: "make[2]: *** [Makefile:147: caml.cmi] Segmentation fault (core dumped)",
-    });
-    expect(context.lastResult?.output).toBe(shown);
-    expect(context.lastResult?.error).toContain("Segmentation fault");
-    const entry = context.calls.find((call) => call.action === "make");
-    expect(entry?.note).toContain("Segmentation fault");
-    expect(entry?.note).not.toContain("fno-rtti");
-  });
-
-  it("shows a refusal at the request point, which lies outside the interpretation subtree", () => {
-    const state = fold([
-      { type: "add_node", node: workNode("r1", "request", "task", 0, { text: "do it" }) },
-      goal("g1", "approach one", 1),
-      { type: "add_edge", edge: edge("e1", "r1", "g1", "has_goal", llm) },
-      { type: "record_rejection", tool: "create_goal", target: "goal:approach one", reason: "interpreted", turn: 0 },
-    ]);
-    const calls = project(state).calls;
-    expect(calls.some((entry) => entry.status === "refused" && entry.note === "interpreted")).toBe(true);
-  });
-
-  it("includes a materialized action failure that has no action node", () => {
-    const state = fold([
-      goal("g1", "green", 0),
-      {
-        type: "add_node",
-        node: workNode("o1", "observation", "read failed: a does not exist", 1, {
-          failed: true,
-          output: "read failed: a does not exist",
-        }),
-      },
-    ]);
-    expect(project(state).calls).toEqual([
-      { id: "o1", action: "read failed: a does not exist", status: "fail", note: "read failed: a does not exist", count: 1 },
-    ]);
-  });
-
-  it("keeps a failure after a mutation, alongside successes and refusals", () => {
-    const failure: Event = {
-      type: "add_node",
-      node: workNode("o1", "observation", "make", 1, { failed: true, output: "boom" }),
-    };
-    const success: Event[] = [
-      { type: "add_node", node: workNode("a2", "action", "read a", 2, { command: "read a" }) },
-      { type: "add_node", node: workNode("o2", "observation", "read a", 3, { ref: "file:a", version: "v1" }) },
-      { type: "add_edge", edge: edge("e2", "a2", "o2", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
-    ];
-    const constraint: Event = {
-      type: "record_rejection",
-      tool: "edit",
-      target: "test/x",
-      reason: "constraint_violation",
-      constraintId: "k1",
-      turn: 4,
-    };
-    const before = fold([goal("g1", "green", 0), failure, ...success, constraint]);
-    expect(project(before).calls).toHaveLength(3);
-    const after = fold([
-      goal("g1", "green", 0),
-      failure,
-      ...success,
-      constraint,
-      { type: "mutate", ref: "file:a", version: "v2", actionId: "a1" },
-    ]);
-    const calls = project(after).calls;
-    expect(calls).toHaveLength(3);
-    expect(calls.some((entry) => entry.status === "fail")).toBe(true);
-    expect(calls.some((entry) => entry.status === "ok")).toBe(true);
-    expect(calls.some((entry) => entry.note === "constraint_violation")).toBe(true);
-  });
-
-  it("keeps the whole interpretation history, not just the focus path", () => {
-    const state = fold([
-      {
-        type: "add_node",
-        node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 },
-      },
-      goal("g1", "interp", 2),
-      { type: "add_edge", edge: edge("ei", "r1", "g1", "has_goal", { kind: "llm" }) },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
-      { type: "add_edge", edge: edge("ep", "g1", "p1", "has_plan", { kind: "llm" }) },
-      { type: "add_node", node: workNode("a1", "action", "run", 4, { command: "run" }) },
-      { type: "add_edge", edge: edge("e2", "p1", "a1", "item", { kind: "llm" }) },
-      { type: "add_node", node: { id: "alt2", space: "work", kind: "alternatives", label: "opts", seq: 5 } },
-      { type: "add_edge", edge: edge("e3", "a1", "alt2", "has_alternatives", { kind: "llm" }) },
-      goal("g2", "stage one", 6),
-      { type: "add_edge", edge: edge("e4", "alt2", "g2", "item", { kind: "llm" }) },
-      { type: "descend", node: "g1" },
-      { type: "descend", node: "g2" },
-      { type: "add_node", node: workNode("a2", "action", "read a", 7, { command: "read a" }) },
-      { type: "add_node", node: workNode("o1", "observation", "read a", 8, { ref: "file:a", version: "v1" }) },
-      { type: "add_edge", edge: edge("e6", "a2", "o1", "produces", { kind: "read", ref: "file:a", version: "v1" }) },
-      { type: "return" },
-      { type: "return" },
-    ]);
-    expect(state.branch).toEqual(["r1"]);
-    expect(project(state).calls.some((entry) => entry.action === "read a")).toBe(true);
-  });
-
-  it("changes the projection on a refusal (feedback invariant)", () => {
-    const state = fold([goal("g1", "green", 0)]);
-    const refused = fold([
-      goal("g1", "green", 0),
-      { type: "record_rejection", tool: "query", target: "x", reason: "repeated_action", turn: 1 },
-    ]);
-    expect(JSON.stringify(project(refused))).not.toBe(JSON.stringify(project(state)));
-  });
-});
-
 describe("progress key", () => {
   it("changes when a goal is added and when a goal is stopped", () => {
     const base = fold([goal("g1", "green", 0)]);
@@ -505,7 +295,7 @@ describe("progress key", () => {
     const stopped = fold([
       goal("g1", "green", 0),
       { type: "add_node", node: workNode("s1", "stop", "done", 1) },
-      { type: "add_edge", edge: edge("es", "g1", "s1", "has_stopped", llm) },
+      { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
     ]);
     expect(knowledgeKey(stopped)).not.toBe(knowledgeKey(base));
   });
@@ -550,13 +340,11 @@ describe("traversal focus", () => {
   const interpreted = (extra?: Event[]): Event[] => [
     { type: "add_node", node: workNode("r1", "request", "task", 0, { text: "go" }) },
     goal("g1", "interp", 1),
-    { type: "add_edge", edge: edge("ea", "r1", "g1", "has_goal", llm) },
-    ...plan("p1", "g1", ["a1"], 3),
+    { type: "add_edge", edge: edge("ea", "r1", "g1", "goal", llm) },
+    ...plan("p1", "g1", ["i1"], 3),
     { type: "add_node", node: workNode("a1", "action", "run", 4, { command: "run" }) },
-    { type: "add_node", node: workNode("alt2", "alternatives", "opts", 5) },
-    { type: "add_edge", edge: edge("ha", "a1", "alt2", "has_alternatives", llm) },
-    goal("g2", "stage", 6),
-    { type: "add_edge", edge: edge("i2", "alt2", "g2", "item", llm) },
+    goal("g2", "stage", 5),
+    ...item("i1", "g1", 6, ["a1", "g2"]),
     { type: "descend", node: "g1" },
     { type: "descend", node: "g2" },
     ...(extra ?? []),
@@ -566,7 +354,7 @@ describe("traversal focus", () => {
     const state = fold(
       interpreted([
         { type: "add_node", node: workNode("s1", "stop", "done", 99) },
-        { type: "add_edge", edge: edge("es", "g1", "s1", "has_stopped", llm) },
+        { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
       ]),
     );
     expect(state.branch).toEqual(["r1", "g1", "g2"]);

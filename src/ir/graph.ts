@@ -57,23 +57,25 @@ export function currentVersion(state: State, ref: string): string | undefined {
 
 export function planOf(state: State, goalId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "has_plan" && edge.from === goalId) return edge.to;
+    if (edge.kind === "plan" && edge.from === goalId) return edge.to;
   }
   return undefined;
 }
 
-// The goal a request is interpreted as (`has_goal` edge). The interpretation is fixed for
+// The goal a request is interpreted as (`goal` edge). The interpretation is fixed for
 // now (one goal), so there is at most one (docs/plans/request_goal_plan.md).
 export function goalOf(state: State, requestId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "has_goal" && edge.from === requestId) return edge.to;
+    if (edge.kind === "goal" && edge.from === requestId) return edge.to;
   }
   return undefined;
 }
 
-export function alternativesOf(state: State, goalId: string): string | undefined {
+// The item that owns a node as one of its alternatives (`alts` edge), if any. An action or
+// sub-goal belongs to exactly one item (docs/ir_revision.md §2.2).
+export function itemOf(state: State, nodeId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "has_alternatives" && edge.from === goalId) return edge.to;
+    if (edge.kind === "alts" && edge.to === nodeId) return edge.from;
   }
   return undefined;
 }
@@ -87,31 +89,34 @@ export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefi
   return payload?.witness;
 }
 
-// A goal the doxa has finished: it has an outgoing `has_stopped` edge to a stop node.
-// This is a control fact (the arm is done), not truth.
-// The edge points goal → stop (like `has_plan`), so from a goal one can always tell it is
-// finished and follow the edge to the stop node (and its why / arm history).
-export function hasStopped(state: State, goalId: string): boolean {
+// The `stop` node a goal is closed by (`stop` relation, goal → stop), if any. This is a
+// control fact (the arm is done), not truth. The closure (and its `why`) lives on the goal;
+// it is no longer a plan item (docs/ir_revision.md §2.2).
+export function stopOf(state: State, goalId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "has_stopped" && edge.from === goalId) return true;
-  }
-  return false;
-}
-
-// The request's `unactionable` node, if the doxa declined to formulate a goal for it
-// (`no_goal` edge). A declined request is terminal (docs/plans/request_goal_plan.md).
-export function unactionableOf(state: State, requestId: string): string | undefined {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "no_goal" && edge.from === requestId) return edge.to;
+    if (edge.kind === "stop" && edge.from === goalId) return edge.to;
   }
   return undefined;
 }
 
-// An action bypassed by a newer alternative of its own container (a revised step).
+export function hasStopped(state: State, goalId: string): boolean {
+  return stopOf(state, goalId) !== undefined;
+}
+
+// The request's `unactionable` node, if the doxa declined to formulate a goal for it
+// (`unactionable` relation). A declined request is terminal (docs/plans/request_goal_plan.md).
+export function unactionableOf(state: State, requestId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "unactionable" && edge.from === requestId) return edge.to;
+  }
+  return undefined;
+}
+
+// An action bypassed by a newer alternative of its own item (a revised step).
 export function actionSuperseded(state: State, actionId: string): boolean {
-  const alt = alternativesOf(state, actionId);
-  if (alt === undefined) return false;
-  const current = lastChild(state, alt);
+  const item = itemOf(state, actionId);
+  if (item === undefined) return false;
+  const current = lastChild(state, item);
   return current !== undefined && current !== actionId;
 }
 
@@ -125,9 +130,32 @@ export function lastChild(state: State, containerId: string): string | undefined
 export function actionExecuted(state: State, actionId: string): boolean {
   for (const edge of state.edges.values()) {
     if (edge.from !== actionId) continue;
-    if (edge.kind === "produces" || edge.kind === "mutates") return true;
+    if (edge.kind === "result" || edge.kind === "mutates") return true;
   }
   return false;
+}
+
+// The outcome of an action (docs/ir_revision.md §4): a command that mutated a file is a
+// success; otherwise its result observation decides — `failed: true` is a failure, a
+// non-zero `exitCode` is a failure (a missing `exitCode` is a timeout, no verdict), and a
+// read/grep/list result is a success. An unexecuted action is not a success.
+export function actionSucceeded(state: State, actionId: string): boolean {
+  let hasMutates = false;
+  let result: Node | undefined;
+  for (const edge of state.edges.values()) {
+    if (edge.from !== actionId) continue;
+    if (edge.kind === "mutates") hasMutates = true;
+    if (edge.kind === "result") {
+      const child = state.nodes.get(edge.to);
+      if (child !== undefined && (result === undefined || child.seq > result.seq)) result = child;
+    }
+  }
+  if (hasMutates) return true;
+  if (result === undefined) return false;
+  const payload = result.payload as { failed?: unknown; exitCode?: unknown } | undefined;
+  if (payload?.failed === true) return false;
+  if (typeof payload?.exitCode === "number") return payload.exitCode === 0;
+  return true;
 }
 
 export function fold(events: readonly Event[], base: State = emptyState()): State {
@@ -179,7 +207,8 @@ function applyEvent(state: State, event: Event): void {
     }
     case "add_edge": {
       state.edges.set(event.edge.id, event.edge);
-      if (event.edge.kind === "item") {
+      // Ordered children: a plan's items (`items`) and an item's alternatives (`alts`).
+      if (event.edge.kind === "items" || event.edge.kind === "alts") {
         const list = state.children.get(event.edge.from);
         if (list) list.push(event.edge.to);
         else state.children.set(event.edge.from, [event.edge.to]);

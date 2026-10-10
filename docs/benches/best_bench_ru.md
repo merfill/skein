@@ -22,6 +22,7 @@ opencode пишет ещё `opencode.txt`).
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
+| 3 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1 076 441 | 108 811 (4 307 + 104 504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
 
 ## opencode на `fix-ocaml-gc` (наша песочница)
 
@@ -40,6 +41,21 @@ opencode пишет ещё `opencode.txt`).
 
 Оба — не строки Skein: это baseline opencode на той же задаче/песочнице. Записано по просьбе
 владельца.
+
+## Skein на `fix-ocaml-gc` (наша песочница)
+
+`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc` (Docker, **без Harbor**) запускает агента
+внутри образа задачи; результат оценивает верификатор самой задачи (`check.code = 0`,
+`PASS test_tests_output`). Модель `routerai/~deepseek/deepseek-v4-flash-latest`,
+`SKEIN_REASONING_EFFORT=low`, бюджет задачи 60 ходов.
+
+- **net on.** 50 шагов, 50 вызовов (48 ок / 2 отказа). Локализовал чтением (`read`/`grep` по
+  `runtime/shared_heap.c`), скачал upstream `shared_heap.c`, сделал `diff` и одну правку в
+  `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); верификатор прошёл. Завершился
+  `llm_error` (сбой модели), а не само-`stop`, — работа к тому моменту сделана.
+- **Первый reward-1 на ревизованном IR** (лента сообщений; фиксы `query`/отказов). Правка та
+  же, что у старого победителя на транскрипте, но читает и стоит больше; opencode впереди по
+  шагам и (прокси) времени. Время прогона не записано.
 
 ## Дальше
 

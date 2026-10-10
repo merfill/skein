@@ -15,7 +15,6 @@ const objective: Action[] = [
   {
     operator: "create_goal",
     what: "fix the RLE sweep regression so the compiler bootstraps",
-    sketch: "read the sweep code, fix it, then run the basic testsuite, stop",
     command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c",
   },
   FIX_EDIT,

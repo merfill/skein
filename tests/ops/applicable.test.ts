@@ -21,14 +21,14 @@ function goalNode(id: string, what: string, seq: number): Event {
   };
 }
 
-// A request already interpreted: it has a goal via a `has_goal` edge.
+// A request already interpreted: it has a goal via a `goal` relation.
 function addressedRequest(): Event[] {
   return [
     request(),
     goalNode("g1", "approach", 1),
     {
       type: "add_edge",
-      edge: { id: "eg", from: "r1", to: "g1", kind: "has_goal", provenance: { kind: "llm" } },
+      edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } },
     },
   ];
 }

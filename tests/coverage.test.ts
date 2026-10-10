@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 const DOC = join(import.meta.dirname, "..", "docs", "ir_operations.md");
 const TESTS = join(import.meta.dirname, "..", "tests");
 
-const ID = "(?:OP-CG-\\d+|OP-AP-[A-Z]+-\\d+|OP-ST-\\d+|OP-DC-\\d+|OP-CP-\\d+|OP-QR-\\d+|TR-\\d+|DER-[A-Z]+-\\d+|REF-[A-Z][A-Z-]*)";
+const ID = "(?:OP-CG-\\d+|OP-AP-[A-Z]+-\\d+|OP-ST-\\d+|OP-DC-\\d+|OP-CP-\\d+|OP-RC-\\d+|OP-SR-\\d+|TR-\\d+|DER-[A-Z]+-\\d+|REF-[A-Z][A-Z-]*)";
 
 function registryIds(): string[] {
   const doc = readFileSync(DOC, "utf8");

@@ -35,7 +35,7 @@ function projectAt(events: readonly Event[]): Context {
   const base = fold(events);
   const drift = focusEvents(base);
   const current = drift.length > 0 ? fold(drift, base) : base;
-  return project(current, { budget: { turn: 0, maxTurns: 20 } });
+  return project(current);
 }
 
 interface Step {
@@ -97,6 +97,45 @@ function buildSteps(): Step[] {
       name: "continue-open-goal",
       context: projectAt(ran.events),
       expectMove: (a) => expect(["apply", "stop"], "an open goal continues").toContain(a.operator),
+    });
+  }
+
+  {
+    // OP-RC (recall): a long result's head scrolled off; re-read it from the STORED result
+    // (by id) instead of re-running the command.
+    const { ws } = makeWorkspace({});
+    const opened = exec(
+      interpretation("inspect the failing output", "true"),
+      [request("The command's output is long; the part I need scrolled off the top. Re-read more of the stored result.")],
+      ws,
+    );
+    const ran = exec(run("for i in $(seq 1 3000); do echo row $i; done"), opened.events, ws);
+    steps.push({
+      name: "recall-stored-body",
+      context: projectAt(ran.events),
+      expectMove: (a) =>
+        expect(["recall"], "read more of the stored result (not a re-run)").toContain(a.operator),
+    });
+  }
+
+  {
+    // OP-SR (search): find a marker inside a big stored output instead of paging it.
+    const { ws } = makeWorkspace({});
+    const opened = exec(
+      interpretation("locate the failure in the output", "true"),
+      [request("Find the line naming MIDDLE_ASSERT_FAIL in the long output; it is somewhere in the middle.")],
+      ws,
+    );
+    const ran = exec(
+      run("for i in $(seq 1 3000); do echo row $i; done; echo MIDDLE_ASSERT_FAIL"),
+      opened.events,
+      ws,
+    );
+    steps.push({
+      name: "search-stored-body",
+      context: projectAt(ran.events),
+      expectMove: (a) =>
+        expect(["search"], "search a pattern inside the stored result").toContain(a.operator),
     });
   }
 

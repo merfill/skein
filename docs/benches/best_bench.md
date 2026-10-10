@@ -22,6 +22,7 @@ writes `opencode.txt`).
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
+| 3 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1,076,441 | 108,811 (4,307 + 104,504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
 
 ## opencode on `fix-ocaml-gc` (our sandbox)
 
@@ -40,6 +41,21 @@ task image `alexgshaw/fix-ocaml-gc:20251031`; the task's own verifier scores the
 
 Neither is a Skein row — this is the opencode baseline on the same task/sandbox. Recorded per
 the owner's request.
+
+## Skein on `fix-ocaml-gc` (our sandbox)
+
+`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc` (Docker, **no Harbor**) runs the agent
+inside the task image; the task's own verifier scores the result (`check.code = 0`,
+`PASS test_tests_output`). Model `routerai/~deepseek/deepseek-v4-flash-latest`,
+`SKEIN_REASONING_EFFORT=low`, task budget 60 turns.
+
+- **net on.** 50 steps, 50 tool calls (48 ok / 2 refused). Localized by reading (`read`/`grep`
+  over `runtime/shared_heap.c`), fetched the upstream `shared_heap.c`, diffed it, and made the
+  one edit in `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); the verifier passed. Ended on
+  `llm_error` (a model failure), not a self-`stop` — the work was already done.
+- **First reward-1 run on the revised IR** (message-tape context; `query`/refusal fixes). It is
+  the same edit as the old-transcript winner, but reads more and costs more; opencode stays
+  ahead on steps and (proxy) time. Wall time was not recorded for this run.
 
 ## Next
 

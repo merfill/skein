@@ -5,9 +5,9 @@ export const SPACES = ["work", "artifact"] as const;
 export const WORK_KINDS = [
   "request",
   "goal",
-  "action",
   "plan",
-  "alternatives",
+  "item",
+  "action",
   "observation",
   "stop",
   "unactionable",
@@ -53,20 +53,20 @@ export type Provenance =
 
 export interface GoalPayload {
   what: string;
-  why?: string;
-  // A short free-form string note so the model does not lose the thread (I3); the first
-  // concrete plan item is materialized in the plan container, later ones are appended.
-  sketch?: string;
+  // The first concrete plan item is materialized in the plan container; later ones are appended.
 }
 
+// Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):
+// plan items hang off a plan via `items`; an item's alternatives hang off the item via
+// `alts`; a goal's closure hangs off the goal via `stop`.
 export const EDGE_KINDS = [
-  "has_plan",
-  "item",
-  "has_goal",
-  "has_alternatives",
-  "produces",
-  "has_stopped",
-  "no_goal",
+  "goal",
+  "unactionable",
+  "plan",
+  "stop",
+  "items",
+  "alts",
+  "result",
   "mutates",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];

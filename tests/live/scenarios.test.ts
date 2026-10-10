@@ -33,20 +33,15 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
   const first = chars[0] ?? 0;
   const peak = chars.reduce((max, value) => Math.max(max, value), 0);
   const used = [...branchesOf(run.turns)];
-  const ws = workingSetStats(
-    run.turns.map((turn) => ({
-      shown: turn.context.shown,
-      requested:
-        turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : [],
-    })),
-  );
+  // The context is the message tape: report its peak length (the old bounded working set
+  // is gone; docs/ir_revision.md §5).
+  const peakHistory = run.turns.reduce((max, turn) => Math.max(max, turn.context.history.length), 0);
   const parts = [
     `turns=${run.result.turns}`,
     `stop=${run.result.stopReason}`,
     `check=${run.check.code}`,
     `ctx=${first}->${peak}`,
-    `ws=${ws.peakCount}/${ws.peakChars}`,
-    `reacq=${ws.reacquired}`,
+    `tape=${peakHistory}`,
     `repeats=${repeatsOf(run.result.events).length}`,
     `refuted=${refutedChecks(run.result.events).length}`,
     `mutations=${mutationsOf(run.result.events).length}`,

@@ -14,7 +14,6 @@ import { invokeTools } from "../../src/llm/structured";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import { buildMessages, promptText } from "../../src/loop/propose";
 import { fsWorkspace } from "../../src/tools/workspace";
-import { workingSetStats } from "../workset";
 
 // Live scenario harness: run the agent on a tiny fixture project and keep the full
 // per-turn projection so a run can be analysed after the fact (which information the
@@ -120,29 +119,41 @@ function dumpRun(
     turns.map((turn) => JSON.stringify({ turn: turn.turn, action: turn.action })).join("\n"),
   );
 
-  // Working-set telemetry (docs/testing_ru.md §3): per turn and an aggregate, so a run's
-  // growth/eviction/re-acquisition is analysable offline.
+  // Tape telemetry (docs/testing_ru.md §3): the context is the message tape, so an offline
+  // analyser reads its length, per-turn tool-message volume and the ids the model queried.
   const requested = turns.map((turn) =>
-    turn.action.operator === "query" && turn.action.id !== undefined ? [turn.action.id] : [],
+    turn.action.operator === "recall"
+      ? [turn.action.id]
+      : turn.action.operator === "search"
+        ? [turn.action.id]
+        : [],
   );
-  const worksetTurns = turns.map((turn, index) => ({
-    shown: turn.context.shown,
-    requested: requested[index] ?? [],
-  }));
+  const toolChars = (context: Context): number =>
+    context.history.filter((message) => message.role === "tool").reduce((sum, message) => sum + message.text.length, 0);
   writeFileSync(
     join(dir, "workset.ndjson"),
     turns
       .map((turn, index) =>
         JSON.stringify({
           turn: turn.turn,
-          shownCount: turn.context.shown.length,
-          shownChars: turn.context.shown.reduce((sum, view) => sum + (view.output?.length ?? 0), 0),
+          historyCount: turn.context.history.length,
+          toolChars: toolChars(turn.context),
           requested: requested[index] ?? [],
         }),
       )
       .join("\n"),
   );
-  writeFileSync(join(dir, "workset.json"), JSON.stringify(workingSetStats(worksetTurns), null, 2));
+  writeFileSync(
+    join(dir, "workset.json"),
+    JSON.stringify(
+      {
+        peakHistory: Math.max(0, ...turns.map((turn) => turn.context.history.length)),
+        peakToolChars: Math.max(0, ...turns.map((turn) => toolChars(turn.context))),
+      },
+      null,
+      2,
+    ),
+  );
   return dir;
 }
 
@@ -205,7 +216,8 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
 }
 
 export type Branch =
-  | "query"
+  | "recall"
+  | "search"
   | "grep"
   | "list"
   | "read"
@@ -221,8 +233,11 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
   const used = new Set<Branch>();
   for (const { action } of turns) {
     switch (action.operator) {
-      case "query":
-        used.add("query");
+      case "recall":
+        used.add("recall");
+        break;
+      case "search":
+        used.add("search");
         break;
       case "create_goal":
         used.add("create_goal");

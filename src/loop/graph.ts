@@ -1,28 +1,27 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
-import { actionExecuted, childrenOf, currentVersion, fold, goalOf, hasStopped, planOf, type State } from "../ir/graph";
+import { actionExecuted, childrenOf, currentVersion, fold, goalOf, hasStopped, lastChild, planOf, type State } from "../ir/graph";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
 import type { Action, Proposal } from "../llm/schemas";
-import { OUTPUT_LIMIT, commandOf, executeAction, resolveBody } from "../tools";
+import { commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
 import type { Proposer } from "./propose";
 import { LoopState, type HeldEntry, type LoopStateType } from "./state";
 
-// How long a body stays in the working set after the model fetched it with `query {id}`,
+// How long a body stays in the working set after the model fetched it with `recall {id}`,
 // and how many bodies it holds (docs §9). Retention is otherwise structural: the produced
-// results of every level on the branch stay in view until the parent closes. A fresh query
+// results of every level on the branch stay in view until the parent closes. A fresh recall
 // refreshes the entry; eviction drops the least recently requested first. TTL 6 covers the
 // observed cross-level gaps — see tests/workingset.test.ts.
 //
 // The working set is bounded by the number of bodies only: every tool result is already
-// bounded per body (`grep`/`list`/`read`/`run` ≤ `OUTPUT_LIMIT`), so `MAX_HELD * OUTPUT_LIMIT`
-// is the ceiling. A total-character cap was removed: it silently dropped a body larger than
-// the cap (a source window being edited), which trapped the model in a `query` loop
+// bounded per body by its own tool limit, so `MAX_HELD` times that is the ceiling. A total-character cap was removed: it silently dropped a body larger than
+// the cap (a source window being edited), which trapped the model in a `recall` loop
 // (docs/benches/bench_report.md §4.4).
 const HELD_TURNS = 6;
 const MAX_HELD = 5;
@@ -50,20 +49,22 @@ function isStale(state: State, id: string): boolean {
   return currentVersion(state, payload.ref) !== payload.version;
 }
 
-// Every goal on the branch plus its plan descendants. A stage's evidence (the diff that
-// localized the bug) must stay in view while an ancestor on the branch is still open, even
-// after the stage itself closes — otherwise the model re-fetches it with a `query` call.
-// Plan-only (not alternatives): abandoned sibling interpretations stay out.
+// Every goal on the branch (the roots) plus, for each, its plan items and their current
+// action alternative. A stage's evidence (the diff that localized the bug) must stay in
+// view while an ancestor on the branch is still open. A stopped sub-goal is no longer on
+// the branch, so its evidence leaves with it (its current alternative is a goal, not an
+// action, and is not followed) — the model re-fetches it with a `recall` call if needed.
 function branchSubtree(state: State, roots: readonly string[]): Set<string> {
-  const out = new Set<string>();
-  const stack = [...roots];
-  while (stack.length > 0) {
-    const id = stack.pop() as string;
-    if (out.has(id)) continue;
-    out.add(id);
+  const out = new Set<string>(roots);
+  for (const id of roots) {
     const plan = planOf(state, id);
-    if (plan !== undefined) {
-      for (const child of childrenOf(state, plan)) stack.push(child);
+    if (plan === undefined) continue;
+    out.add(plan);
+    for (const item of childrenOf(state, plan)) {
+      out.add(item);
+      const alt = lastChild(state, item);
+      const altNode = alt !== undefined ? state.nodes.get(alt) : undefined;
+      if (altNode?.kind === "action") out.add(alt as string);
     }
   }
   return out;
@@ -74,7 +75,7 @@ function branchSubtree(state: State, roots: readonly string[]): Set<string> {
 function producedResultId(state: State, actionId: string): string | undefined {
   let best: { seq: number; id: string } | undefined;
   for (const edge of state.edges.values()) {
-    if (edge.kind !== "produces" || edge.from !== actionId) continue;
+    if (edge.kind !== "result" || edge.from !== actionId) continue;
     const node = state.nodes.get(edge.to);
     if (node === undefined) continue;
     if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: edge.to };
@@ -85,8 +86,11 @@ function producedResultId(state: State, actionId: string): string | undefined {
 function describeTarget(action: Action): string {
   let target: string;
   switch (action.operator) {
-    case "query":
-      target = action.id ?? action.kind ?? action.edgesOf ?? "query";
+    case "recall":
+      target = action.id;
+      break;
+    case "search":
+      target = `${action.id}:${action.pattern}`;
       break;
     case "create_goal":
       target = `goal:${action.what}`;
@@ -126,6 +130,9 @@ export interface AgentResult {
   done: boolean;
   stopReason: string | null;
   turns: number;
+  // The message behind a terminal stop (`llm_error` today), persisted by the caller so a
+  // provider failure is diagnosable after the fact.
+  stopText?: string | null;
 }
 
 export function compileGraph(deps: AgentDeps) {
@@ -144,99 +151,50 @@ export function compileGraph(deps: AgentDeps) {
     let current = fold(drift, base);
     const focusDrift = focusEvents(current);
     if (focusDrift.length > 0) current = fold(focusDrift, current);
+    // A `recall`/`search` result creates no node, so it is not in the tree: append it as a
+    // transient assistant/tool pair for this turn only (docs/ir_revision.md §5.2). A
+    // command's result is already a `tool` message in the tape, so it is not appended again.
     const lastToolTurn = [...state.recent].reverse().find((turn) => turn.kind === "tool");
-    // Two sources feed `shown`, kept together by recency under the shared caps:
-    // - current level: every result the focus goal's own actions produced. These do NOT
-    //   expire by TTL — the level's attempts stay in view until the focus leaves it.
-    // - explicit: bodies the model fetched with `query {id}` from other levels, held for
-    //   HELD_TURNS.
-    const explicit = state.held
-      .filter((entry) => entry.expiresAt >= state.turn)
-      .sort((a, b) => b.pinnedAt - a.pinnedAt);
-    const explicitIds = new Set(explicit.map((entry) => entry.id));
-    // Every level under the branch, not just the leaf: a stage's evidence (the error that
-    // motivated the next stage) stays in view until the parent closes. Newest first, so
-    // the current level still wins the caps and an open stage never drops its own evidence.
-    const roots =
-      current.branch.length > 0
-        ? current.branch
-        : current.rootId !== undefined
-          ? [current.rootId]
-          : [];
-    const levelIds = branchSubtree(current, roots);
-    const level: HeldEntry[] = [];
-    if (levelIds.size > 0) {
-      for (const node of current.nodes.values()) {
-        if (node.kind !== "action") continue;
-        const focus = current.focusOf.get(node.id);
-        if (focus === undefined || !levelIds.has(focus)) continue;
-        if (!actionExecuted(current, node.id)) continue;
-        const childId = producedResultId(current, node.id);
-        if (childId !== undefined) {
-          level.push({ id: childId, expiresAt: Number.MAX_SAFE_INTEGER, pinnedAt: node.seq });
-        }
-      }
-      level.sort((a, b) => b.pinnedAt - a.pinnedAt);
-    }
-    // Explicit requests come first (the model asked for them); the current level's
-    // results fill the rest, kept by recency under the shared caps.
-    const candidates = [...explicit, ...level];
-    const recalled: { id: string; output: string; error: string }[] = [];
-    const kept: HeldEntry[] = [];
-    const seen = new Set<string>();
-    let shownCount = 0;
-    for (const entry of candidates) {
-      if (seen.has(entry.id) || isStale(current, entry.id)) continue;
-      const body = resolveBody(current, entry.id, deps.workspace);
-      if (body === undefined) continue;
-      if (shownCount >= maxHeld) continue;
-      seen.add(entry.id);
-      recalled.push({ id: entry.id, output: body.output, error: body.error });
-      shownCount += 1;
-      if (explicitIds.has(entry.id)) kept.push(entry);
-    }
+    const retrieval =
+      lastToolTurn !== undefined && lastToolTurn.nodeId === undefined && lastToolTurn.text !== ""
+        ? {
+            call: lastToolTurn.call ?? "retrieval",
+            output: lastToolTurn.text,
+            ...(lastToolTurn.error !== undefined ? { error: lastToolTurn.error } : {}),
+          }
+        : undefined;
+    // A structural move (create_goal/stop/decline/recall/search) refused by `classify` creates no
+    // node, so — like the retrieval result — its reason is appended as a transient `tool`
+    // message for the next turn, so the doxa sees why its move was refused (§2.7).
+    const rejection = state.rejection ?? undefined;
     return {
       events: [...external, ...drift, ...focusDrift],
-      held: kept,
+      held: state.held.filter((entry) => entry.expiresAt >= state.turn),
       queried: state.queried.filter((entry) => entry.expiresAt >= state.turn),
       context: project(current, {
-        budget: { turn: state.turn, maxTurns: deps.maxTurns },
-        ...(lastToolTurn !== undefined
-          ? {
-              lastOutput: lastToolTurn.text,
-              ...(lastToolTurn.nodeId !== undefined ? { lastOutputId: lastToolTurn.nodeId } : {}),
-              ...(lastToolTurn.error !== undefined ? { lastError: lastToolTurn.error } : {}),
-            }
-          : {}),
-        ...(recalled.length > 0 ? { recalled } : {}),
+        ...(retrieval !== undefined ? { retrieval } : {}),
+        ...(rejection !== undefined ? { rejection } : {}),
       }),
     };
   };
 
   const proposeNode = async (state: LoopStateType) => {
-    const context =
-      state.context ??
-      project(fold(state.events), {
-        budget: { turn: state.turn, maxTurns: deps.maxTurns },
-      });
+    const context = state.context ?? project(fold(state.events));
     let proposal: Proposal;
     try {
       proposal = await deps.propose(context);
     } catch (error) {
       // A persistent model failure (e.g. the provider keeps truncating) must not crash
-      // the run: stop gracefully with `llm_error` so the partial work is kept.
+      // the run: stop gracefully with `llm_error` so the partial work is kept. The message
+      // is also carried on `stopText` so the trace can record it (not only a transient turn).
+      const text = `llm_error: ${error instanceof Error ? error.message : String(error)}`;
       return {
         context,
         proposal: null,
         done: true,
         stopReason: "llm_error",
-        recent: [
-          {
-            seq: state.turn,
-            kind: "proposal" as const,
-            text: `llm_error: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
+        stopText: text,
+        recent: [{ seq: state.turn, kind: "proposal" as const, text }],
       };
     }
     return {
@@ -249,7 +207,7 @@ export function compileGraph(deps: AgentDeps) {
   const classifyNode = (state: LoopStateType) => {
     if (!state.proposal) return { classification: null };
     // The working set is engine-owned: the projection keeps the branch levels' results,
-    // and only `query {id}` (execute) pins a body from elsewhere. The model does not
+    // and only `recall {id}` (execute) pins a body from elsewhere. The model does not
     // declare what to show.
     const classification = classify(
       state.proposal,
@@ -273,6 +231,7 @@ export function compileGraph(deps: AgentDeps) {
     }
     if (!classification.accept) {
       const reason = classification.reason ?? "rejected";
+      const text = `rejected ${describeTarget(proposal.action)}: ${reason}`;
       return {
         events: [
           {
@@ -287,7 +246,8 @@ export function compileGraph(deps: AgentDeps) {
           },
         ],
         turn: state.turn + 1,
-        recent: [{ seq: state.turn, kind: "proposal" as const, text: `rejected: ${reason}` }],
+        recent: [{ seq: state.turn, kind: "proposal" as const, text }],
+        rejection: text,
       };
     }
     const outcome = executeAction(
@@ -296,20 +256,25 @@ export function compileGraph(deps: AgentDeps) {
       deps.workspace,
       state.turn,
     );
-    // `query {id}` pins the fetched body; a tool may also ask to pin a result it produced
+    // `recall {id}` pins the fetched body; a tool may also ask to pin a result it produced
     // (e.g. the materialized content of a failed edit), so the next move does not re-read.
-    const pinIds = [
-      ...(proposal.action.operator === "query" && proposal.action.id !== undefined
-        ? [proposal.action.id]
-        : []),
-      ...(outcome.pin ?? []),
-    ];
+    const recallId =
+      proposal.action.operator === "recall" ? proposal.action.id : undefined;
+    const pinIds = [...(recallId !== undefined ? [recallId] : []), ...(outcome.pin ?? [])];
     const held =
       pinIds.length > 0 ? pinHeld(state.held, pinIds, state.turn, heldTurns) : state.held;
     const queried =
-      proposal.action.operator === "query" && proposal.action.id !== undefined
-        ? pinHeld(state.queried, [proposal.action.id], state.turn, heldTurns)
+      recallId !== undefined
+        ? pinHeld(state.queried, [recallId], state.turn, heldTurns)
         : state.queried;
+    // An accepted `recall`/`search` adds no node, so its signature is the only progress
+    // signal (§2.8).
+    const moveKey =
+      proposal.action.operator === "recall"
+        ? `recall:${proposal.action.id}:${proposal.action.start ?? ""}:${proposal.action.end ?? ""}`
+        : proposal.action.operator === "search"
+          ? `search:${proposal.action.id}:${proposal.action.pattern}`
+          : "";
     return {
       events: outcome.events,
       recent: [outcome.turn],
@@ -318,6 +283,8 @@ export function compileGraph(deps: AgentDeps) {
       stopReason: outcome.stopReason,
       held,
       queried,
+      rejection: null,
+      moveKey,
     };
   };
 
@@ -338,7 +305,8 @@ export function compileGraph(deps: AgentDeps) {
     // Closure wins over the budget: if the last allowed turn closed the request, that is
     // the honest verdict, not `max_turns`.
     if (state.turn >= deps.maxTurns) return { done: true, stopReason: "max_turns" };
-    const key = knowledgeKey(current);
+    // A retrieved fragment (`recall`/`search`) is progress even though it adds no node (§2.8).
+    const key = `${knowledgeKey(current)}|${state.moveKey}`;
     if (key === state.progressKey) {
       const stall = state.stall + 1;
       if (stall >= noProgress) return { stall, done: true, stopReason: "no_progress" };
@@ -398,7 +366,7 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   }
 
   const final = await graph.invoke(
-    { events: seed, recent: [], turn: 0, done: false, stopReason: null, progressKey: "", stall: 0 },
+    { events: seed, recent: [], turn: 0, done: false, stopReason: null, stopText: null, progressKey: "", stall: 0 },
     { recursionLimit: deps.maxTurns * 5 + 20 },
   );
 
@@ -407,5 +375,6 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
     done: final.done,
     stopReason: final.stopReason,
     turns: final.turn,
+    stopText: final.stopText,
   };
 }

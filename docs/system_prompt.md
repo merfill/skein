@@ -1,5 +1,11 @@
 # Skein — system prompt: behavior and blocks
 
+> **Note (IR revision folded; a next stage).** The prompt is now split into a stable **base**
+> and **node instructions** (request/goal) — see `src/loop/prompt/blocks.ts` and
+> `docs/ir_semantics.md` §6–7. The per-block detail below predates that split and the message
+> tape; the composite base/node prompt is the following stage, so this document is expected to
+> change.
+
 > Russian mirror — `docs/system_prompt_ru.md`.
 
 Related: `docs/ir_semantics.md` (IR semantics: the prompt is the doxa's policy over it),
@@ -42,91 +48,52 @@ L2 is under the gate, L3 is acceptance.
 
 ## 2. Blocks
 
+The prompt is deliberately plain (an "opencode-style" trim, Phase 11): it states what the
+engine requires, not how to think. Strategy lives in the tool `description`s and the tape.
+Current blocks:
+
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
-| B1 | Frame: the doxa proposes exactly one operator, the logos decides; the context is a projection, not a dialogue | `ir_semantics` §1, §7 | in code |
+| B1 | Frame: the doxa proposes exactly one operator, the logos decides; the context is a message tape rebuilt each turn | `ir_semantics` §1, §7 | in code |
 | B2 | Capabilities from `FRAGMENT`; anything else is outside the fragment | `src/ir/fragment.ts` | in code |
-| B3 | Tree vocabulary: `request`/`goal`(`what`/`why`/`sketch`)/`plan`/`action`/`observation`/`stop`; a request is interpreted exactly once (`has_goal`) or declined (`unactionable`/`decline`); a goal is closed only by `stop` (no criterion) | `ir_semantics` §2, §2.6 | in code |
-| B4 | Reading the projection: `path`/`constraints`/`lastResult`/`calls`/`shown`/`applicable`/`budget`; the current item is the last in its container (no `chosen`) | `src/ir/project.ts` | in code |
-| B5 | Memory and working set: `shown`, `query {id}`, "no knowledge outside the context" | `tools` §4.4–4.5 | in code |
 | B6 | Goal from the request: literal commands verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
-| B7 | Decomposition: `sketch` string + first `command`; one command per turn; the current item is the last in a container (no `chosen`); a sub-goal only as an alternative; no separate verify; prepare/build the tree before reading a failure as the defect, and run that build/test in the foreground | `ir_semantics` §4.1, `tools` §4.7 | in code |
-| B8 | VCS/history policy: git is fine when present; do not retry a failed git | this doc, §4 | in code (revised) |
-| B9 | External reference / differential localization; a reference diff is a lead, not a checklist | this doc, §4 | in code |
-| B10 | Failure → cause: log → location; distinguish a wrong working directory (missing source path) from an unbuilt/unconfigured tree (setup); read symbol/macro definitions | `tools` §5 | in code |
-| B11 | Revision loop: a failed command = progress; branch the current item (sub-goal or a different command); the new `what` must state a DIFFERENT hypothesis | `ir_semantics` §4.1 | in code |
-| B12 | Tool contract: flat names, including `decline`, generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
-| B13 | Output discipline: `thought` ≤1 sentence, exactly one call | `tests/prompt.test.ts` | in code |
-| B14 | Stream discipline: no `2>&1`/`&>`, no pipe through `tail`/`head` | `tools` §4.3 | in code (B14) |
-| B15 | Stop: `stop` finishes the focused goal — appends a `stop` node as its last plan item + a `has_stopped` edge; there is no criterion gate; there is no `stop` on the request | `ir_semantics` §4.3, §6 | in code (B15) |
-| B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read; once localized, edit — not more reading | `ir_semantics` §9 | in code (trimmed) |
+| B7 | Work one command per turn; `apply` follows the outcome; a sub-goal decomposes a step; `stop` closes the goal (no criterion); a large result body is addressed by id with `recall`/`search` | `ir_semantics` §4.1 | in code |
+| B12 | Tool contract: flat names generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
+| B13 | Output discipline: `thought` ≤1 sentence, exactly one call; output+reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning | `tests/prompt.test.ts` | in code |
+| B14 | Stream discipline: no `2>&1`/`&>`, no pipe through `tail`/`head` | `tools` §4.3 | in code |
+| B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read | `ir_semantics` §9 | in code (trimmed) |
+
+Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
+**B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
+bullet in B7), **B17** (foreground — now in the `run` description). Also cut: **B10** (the
+failure-diagnosis playbook) and the localize→edit trigger from **B16**, and the
+diff/localization steering from the `fetch`/`grep` descriptions. The rationale: these were
+opinionated strategy heuristics; the prompt now keeps only the engine contract, and a generic
+coding model strategizes from the tape and the tool descriptions.
 
 ### Per-block detail
 
-- **B1** sets the role: the doxa only proposes; refusals and tool failures are the only
-  facts the engine adds, and the projection is not a dialogue.
+- **B1** sets the role: the doxa only proposes; refusals and tool failures are the only facts
+  the engine adds. The context is a message tape rebuilt from the tree each turn, not a
+  dialogue.
 - **B2** lists `FRAGMENT` (inspect/modify/execute/verify/abduce).
-- **B3** introduces the node vocabulary; there is no separate
-  `claim`/`decision` kind. It names the node kinds a turn can add — a command (apply), a
-  goal (create_goal), stop, decline — so every accepted turn adds exactly one node. A
-  request is interpreted exactly once (a `has_goal` edge) or declined (`unactionable`); the
-  interpretation is FIXED. A goal carries `what`/`why?`/`sketch`, its plan is seeded with
-  the first `command`, and it is closed only by `stop` (there is no criterion).
-- **B4** describes the `Context` fields the model sees; in any container the current item
-  is the last one added (there is no `chosen` edge). When only `create_goal`/`decline` is
-  offered (focus is a fresh request), the request has not been interpreted yet.
-- **B5** fixes: the working set is engine-owned; `query {id}` is the only entry point.
-- **B6** forbids guessing a command; the first command is literal, from the workspace
-  root, with a `cd <dir> &&` prefix in a subdirectory. **Command rule:** if the request
-  mentions any command that verifies the work, the interpretation's `command` MUST be
-  that literal command. The same rule is stated in the `create_goal` tool `description`
-  (B12) — the schema the model sees on every call (Phase 9).
-- **B7** fixes decomposition: every `create_goal` carries a `sketch` (a free-form string
-  note) and a `command` — the first concrete plan item. The engine does NOT auto-run the
-  plan; you work one command per turn and choose the next from its result. Every accepted
-  turn adds exactly one node — a command (apply), a goal (create_goal), stop, or decline.
-  The current item in a container is the last one added (there is no `chosen` edge). A
-  sub-goal is allowed only as an **alternative** to the current item (decompose it), never
-  as a plan item and never mandatory. The repair routine **prepares the tree first**: a
-  run usually has a BUILD prerequisite, and a failure from an unbuilt/unconfigured tree
-  is SETUP, not the defect — read the project's own build docs (README/HACKING/INSTALL) and
-  build (e.g. `./configure && make`) before localizing. Run that build (and any test suite)
-  in the FOREGROUND: it blocks until it finishes (one turn for the whole command). A goal is
-  finished only by `stop`, which appends a `stop` node as the goal's last plan item and a
-  `has_stopped` edge. There is no `stop` on the request — the request/run ends when its goal
-  is stopped. Nothing closes a chain of ancestors.
-- **B8** (revised in Phase 3): git/history is a normal tool when present; this workspace
-  may have no `.git`, and a failed history command must not be retried or probed in other
-  roots; local history and an external reference are different things.
-- **B9** (Phases 3–4): if an artifact has a canonical reference (upstream, a published
-  version, a sibling/backup copy), obtaining it and diffing is legitimate and often the
-  fastest localization. An external reference is fetched with `fetch { url, path? }` (or
-  `curl` through `run`) as read-only evidence; an upstream change is applied with
-  `apply_patch`. In IR: an artifact `file`; the diff is an observation. A reference diff is
-  a **lead, not a checklist**: the upstream may carry many unrelated deltas, so it names a
-  suspect to hunt, not a list of hunks to reconcile.
-- **B10** sets the log-to-location move and separates the two causes of "not found": a
-  missing SOURCE path (the suite/entry directory is absent → wrong working directory →
-  `cd <dir> &&`) from a missing BUILD OUTPUT the project generates (`Makefile.config`/
-  `config.status`/a compiled binary → the tree is not configured/built → run the project's
-  build; setup, not the defect).
-- **B11** sets the behavior on failure: a failed command is progress, not a dead end.
-  The next move branches the current item — a sub-goal (create_goal) or a different
-  command (apply, the item's newest alternative) — and the new `what` must state a
-  DIFFERENT hypothesis (`ir_semantics` §4.1).
-- **B12** lists the tools; it is generated from `PROPOSAL_TOOLS`, so drift (e.g. a
-  non-existent `apply`) is impossible.
-- **B13** bounds `thought`.
+- **B6** forbids guessing a command; the first command is literal, from the workspace root,
+  with a `cd <dir> &&` prefix in a subdirectory. If the request names no command, the first
+  item is a discovery command (`ls`, `cat README.md`). The same rule is in the `create_goal`
+  `description` (B12) — the schema the model sees on every call.
+- **B7** fixes the loop: work ONE command per turn; `apply` follows the outcome of the current
+  step (a SUCCEEDED command is a new plan item, a FAILED one a new alternative marked
+  `alternative to step …`). `create_goal` while the goal is open decomposes the step into a
+  sub-goal. `stop` closes the goal and is the only way to finish it (no criterion gate). A
+  large result body is addressed by id: `recall { id, start?, end? }` re-reads a fragment,
+  `search { id, pattern }` finds a pattern inside it.
+- **B10** was removed: the failure→cause playbook (wrong-directory vs unbuilt-tree) was an
+  opinionated heuristic; the log on the tape and the tool descriptions carry it.
+- **B12** lists the tools; generated from `PROPOSAL_TOOLS`, so drift is impossible.
+- **B13** bounds `thought` (≤1 sentence; a decision, not analysis) and keeps output/reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning (to see code, `read`/`grep`/`fetch`).
 - **B14** forbids `2>&1`/`&>` and pipes through `tail`/`head`.
-- **B15** finishes a goal: the doxa proposes `stop` and the engine appends a `stop` node as
-  the goal's last plan item and a `has_stopped` edge — there is no criterion gate; it then
-  returns to the request and the run ends. There is no `stop` on the request — it ends when
-  its goal is stopped.
-- **B16** is trimmed to unique safety rules (constraints, stale read, "suspect → edit",
-  explanatory gap); the duplicates moved to B6/B7/B11/B14/B15 and to the tool
-  `description`s. It states the **localized** trigger: once the doxa can point at the exact
-  expression to change, the only advance is `edit` (or a check that refutes it) — not more
-  reading.
+- **B16** keeps only the unique safety rules (constraints, stale read); the localize→edit
+  trigger was removed as a strategy crutch.
 
 ## 3. Cross-cutting invariants
 
@@ -185,11 +152,17 @@ L2 is under the gate, L3 is acceptance.
   revised it late, turning most of the run into criterion churn. B7's interpretation bullet
   also gained the caveat. New live test `tests/live/root-cd.test.ts` (one call per layout).
 - **Phase 10 (2026-10-09).** Goal reduction (`docs/plans/goal_reduction_plan.md`): B3/B4/B6/
-  B7/B11/B15 lose the criterion vocabulary. A goal is `what`/`why`/`sketch` with a plan
+  B7/B11/B15 lose the criterion vocabulary. A goal is `what` with a plan
   seeded by the first `command`; `stop` closes it with no criterion gate; `revises`/
   `repeat_hypothesis`/`check_not_run`/`checkReady`/`nextAction`/`state` are gone. The
   `create_goal` and `run` tool `description`s are rewritten accordingly (`run` is one plain
   foreground command — no `target`/`background`/`job`).
+- **Phase 11 (2026-10-10).** Opencode-style trim: the prompt states the engine contract, not
+  strategy. Removed **B9** (external reference / diff playbook), **B8** (VCS), **B11** (revision
+  loop), **B17** (foreground), and the folded **B3/B4/B5**; **B15** moved into B7 (stop bullet);
+  **B10** trimmed to the wrong-directory vs unbuilt-tree split; **B1/B6/B7/B13** reworded
+  shorter. Motivated by the `fix-ocaml-gc` comparison: opencode's build prompt carries no
+  diff/localization heuristics at all, yet localizes with the same model.
 
 ## 5. Test map
 
@@ -197,12 +170,12 @@ L2 is under the gate, L3 is acceptance.
 |---|---|---|
 | L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; stream discipline; workspace root (prompt + `create_goal` description); wrong-directory reaction; setup (unbuilt tree) vs wrong directory |
 | L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is named; no `apply {`/`{ tool:` |
-| L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7/B8/B9/B10/B11/B15) |
+| L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7/B10/B16) |
 | L3 | `bench/`, `docs/benches/bench_report.md` | acceptance; the controlled experiment (Phase 5) |
 
 ## 6. Open questions
 
 - The target character budget for the prompt and what to move into tool `description`s.
 - How strict B6/B7 should be (how much to dictate order vs leave flexibility).
-- B9 is implemented: `fetch` for an external reference (Phase 4); `curl` through `run`
-  also works.
+- The prompt no longer carries a diff/localization heuristic (Phase 11); if one is wanted
+  later it should be an optional tool-usage hint, not a base block.

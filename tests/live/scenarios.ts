@@ -31,7 +31,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "reproduce-then-read",
-    expect: { solved: true, uses: ["run", "query"] },
+    expect: { solved: true, uses: ["run", "recall"] },
   },
   {
     name: "stale-base",
@@ -87,17 +87,17 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "retrieve-at-scale",
-    expect: { solved: true,     maxRepeats: 5, uses: ["query"] },
+    expect: { solved: true,     maxRepeats: 5, uses: ["recall"] },
   },
   {
-    // A canonical copy sits in the workspace: the expected localization is a diff against
-    // it, not a line-by-line read (B9, docs/system_prompt_ru.md).
+    // A canonical copy sits in the workspace: if the model reaches for it, the localization
+    // is a diff against it, not a line-by-line read. (No longer prompted — B9 removed.)
     name: "reference-diff",
     expect: { solved: true, uses: ["run"], commands: [{ match: "diff", min: 1 }] },
   },
   {
-    // No `.git`; the request tempts a history probe. The policy (B8) allows one attempt
-    // but forbids retrying/probing: the run must fall back to files and behavior.
+    // No `.git`; the request tempts a history probe. The run must fall back to files and
+    // behavior rather than retrying/probing history. (No longer prompted — B8 removed.)
     name: "no-vcs",
     expect: { solved: true, maxRepeats: 5, commands: [{ match: "\\bgit\\b", max: 2 }] },
   },

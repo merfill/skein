@@ -145,7 +145,7 @@ describe("resolveBody", () => {
     expect(resolveBody(state, "o1", workspace)).toEqual({ output: "inline-out", error: "inline-err" });
   });
 
-  it("reads the full body behind the ref for query", () => {
+  it("reads the full body behind the ref for recall", () => {
     const workspace = tempWorkspace();
     workspace.write(".skein/observations/o1.out.txt", "FULL-STDOUT");
     workspace.write(".skein/observations/o1.err.txt", "FULL-STDERR");
@@ -162,14 +162,16 @@ describe("resolveBody", () => {
     expect(resolveBody(noBody, "g1", tempWorkspace())).toBeUndefined();
   });
 
-  it("query returns stdout and stderr separately and reachable by id", () => {
+  it("recall returns stdout and stderr separately and reachable by id", () => {
     const workspace = tempWorkspace();
     workspace.write(".skein/observations/o1.out.txt", "STDOUT-BODY");
     workspace.write(".skein/observations/o1.err.txt", "STDERR-BODY");
-    const outcome = executeAction({ operator: "query", id: "o1" }, state, workspace, 0);
+    const outcome = executeAction({ operator: "recall", id: "o1" }, state, workspace, 0);
     const json = JSON.parse(outcome.turn.text) as { output: string; error?: string };
+    // The output pages from the full ref; the error is the bounded inline value (its tail),
+    // so a large stderr can never flood the recall (which has no error window).
     expect(json.output).toContain("STDOUT-BODY");
-    expect(json.error).toContain("STDERR-BODY");
+    expect(json.error).toContain("inline-err");
   });
 
   it("treats an error-only run result as a retrievable body", () => {
@@ -186,7 +188,7 @@ describe("resolveBody", () => {
         },
       },
     ]);
-    const proposal = { thought: "t", action: { operator: "query" as const, id: "o2" } };
+    const proposal = { thought: "t", action: { operator: "recall" as const, id: "o2" } };
     expect(classify(proposal, state).accept).toBe(true);
   });
 });

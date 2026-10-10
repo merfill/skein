@@ -1,10 +1,16 @@
 # Skein — walkthrough: the tree and the context, step by step
 
+> **Note (IR revision folded).** The tree drawn below predates the IR revision: the
+> `alternatives` container is now the plan item `item` (`items`/`alts`), a goal's closure is
+> a relation on the goal (not a plan item), and the context is a message tape. The current
+> shape is `docs/ir_semantics.md`; the as-built is `docs/ir.md`. A full pass over this
+> walkthrough is a follow-up.
+
 > Russian mirror — `docs/walkthrough_ru.md`.
 
 > **Goal reduction (`docs/plans/goal_reduction_plan.md`).** This walkthrough uses the
 > pre-reduction vocabulary (criterion `done_when`, `step`, `revises`, `target`, `state`).
-> In the reduced model a goal is `what`/`why`/`sketch` with a plan seeded by the first
+> In the reduced model a goal is `what` with a plan seeded by the first
 > `command`, and it is closed by `stop` (no criterion gate); a run's `exitCode` is ordinary
 > output. Read "criterion", "check", `done_when`, `step`, `target`/`checkReady` and `state`
 > below as superseded; `docs/ir_operations.md` is the current reference.
@@ -81,7 +87,7 @@ code identifiers; they are not translated.
 | Term | Meaning |
 |---|---|
 | **request** | the user's unstructured motivation; the root of the tree; it is interpreted **exactly once** as a goal (`has_goal`) or declined (`no_goal` → `unactionable`); it has no plan and no `stop`; the run ends when its goal is stopped |
-| **goal** | an interpretation of the request or a subgoal: `what`, optional `why`, the plan sketch `sketch`; its plan is seeded with the first `command` |
+| **goal** | an interpretation of the request or a subgoal: `what`; its plan is seeded with the first `command` |
 | **plan** | a container of items; a plan item is always an **action**; the order is the list, and the **last** item is the current one |
 | **action** | one command; executed one per turn |
 | **observation** | a recorded result: a read window, a run's output, an exit code |
@@ -131,7 +137,7 @@ There are no "achieved"/"refuted" statuses on nodes and no criterion.
 - **refusal** (`record_rejection`) — a record that a proposal was rejected, with a reason;
 - **`mutate`** — an event that a file changed; it bumps the file's **version**;
 - **witness** (`witness`) — a snapshot of file versions at the moment of a criterion run; staleness is computed from it;
-- **`query`** — addressed reading: a past result's body is fetched by `id`, without repeating the call.
+- **`recall` / `search`** — addressed reading: a past result's body is fetched by `id` (window) or searched by pattern, without repeating the call.
 
 ---
 
@@ -156,7 +162,7 @@ projection.
   global constraints, the latest full result, the working set, the call summary, the
   admissible moves, the budget.
 - **Doxa** — reads the `Context` and proposes exactly one operator (`create_goal` /
-  `apply` / `stop` / `decline`; `query` is read-only addressing).
+  `apply` / `stop` / `decline`; `recall`/`search` are read-only addressing).
 
 Nothing doxa "thinks" is stored. The plan is a note to self; the trace is the tree.
 
@@ -189,7 +195,7 @@ which facts appear, and what doxa will see on the next turn.
 | Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection (what doxa sees) |
 |---|---|---|---|---|---|
 | 0 | `[R]` | — *(the arbiter sets the request)* | `+ request R {text}` | `rootId=R` | `path=[R:open]`; `applicable=[create_goal, decline]` |
-| 1 | `[R] → [R,I]` | `create_goal I` `{what:"fix the build so make test passes", why:"the request says the build is broken", done_when:"make test", plan:"reproduce, localize, fix, re-check", step:{command:"make test"}}` | `+ goal I`; `+ has_goal R→I`; `+ plan Q`; `+ has_plan I→Q`; `+ action a1 "make test"`; `+ item Q→a1`; `descend → I` | `I=open`; the request's interpretation is `I` | `path=[R, I]`; `I.done_when="make test"`; `I.plan.items=[a1:open]`; `applicable=[apply, create_goal]`; `nextAction=a1` |
+| 1 | `[R] → [R,I]` | `create_goal I` `{what:"fix the build so make test passes", done_when:"make test", plan:"reproduce, localize, fix, re-check", step:{command:"make test"}}` | `+ goal I`; `+ has_goal R→I`; `+ plan Q`; `+ has_plan I→Q`; `+ action a1 "make test"`; `+ item Q→a1`; `descend → I` | `I=open`; the request's interpretation is `I` | `path=[R, I]`; `I.done_when="make test"`; `I.plan.items=[a1:open]`; `applicable=[apply, create_goal]`; `nextAction=a1` |
 | 2 | `[R,I]` | `apply run "make test"` (**no `target`** — reproduce) | run; `+ obs o1 {command:"make test", exitCode:1}`; `produces a1→o1` | `a1=executed`; the current item is now the last | `lastResult={command:"make test", exitCode:1}`; `calls=[run make test: fail]`; `applicable=[apply, create_goal]` |
 | 3 | `[R,I]` | `apply grep "run-length"` (localize) | `+ action a2`; `+ item Q→a2`; `+ obs o2`; `produces a2→o2` | the current item moves to `a2` | `lastResult` — matches in `runtime/shared_heap.c`; `calls` grows |
 | 4 | `[R,I]` | `apply read runtime/shared_heap.c [40-120]` | `+ action a3`; `+ item Q→a3`; `+ obs o3 {ref, version:v1}`; `produces a3→o3` | `observed(file)=v1` | `lastResult` — a code window; `shown=[o3]` |
@@ -231,7 +237,7 @@ The order of a plan's items is given by the **list** (insertion order), not by t
 the tree: `item` edges show container membership, the list shows the sequence, and the
 **last** child is the current one. At any moment the projection shows **not** this whole
 tree, but only the current branch, its containers, the latest result, the call summary and
-the admissible moves. Everything else is one `query` away.
+the admissible moves. Everything else is one `recall`/`search` away.
 
 ### 4.2 What to notice in the main run
 
@@ -362,12 +368,12 @@ turn. A background command is an ordinary observation.
 |---|---|---|---|---|---|
 | r | `[R,I]` | `apply read runtime/shared_heap.c [10-80]` | `+ action`; `+ obs{ref, version:v1}`; `produces` | `observed(file)=v1` | `lastResult={ref:"…", output:"…"}` |
 | e | `[R,I]` | `apply edit runtime/shared_heap.c` | `+ action`; `+ mutates`; `mutate v1→v2` | `currentVersion(file)=v2`; the `v1` read is now stale | the stale read is **removed** from `shown` |
-| q | `[R,I]` | `query {id:"obs:…"}` | no node; the body is returned | — | the body enters `shown` for a few turns |
+| q | `[R,I]` | `recall {id:"obs:…"}` | no node; the body is returned | — | the body enters `shown` for a few turns |
 
 A file changing emits `mutate` (a version bump); actualness is **computed**, not stored as
 a flag. The `v1` read fact is not deleted — it simply stops belonging to the current
 context, and stale content is never shown as active. Everything is addressable: a past
-result's body is fetched by `id` with `query`, without repeating the call. That is why a
+result's body is fetched by `id` with `recall`, without repeating the call. That is why a
 repeated command with the same inputs and an unchanged world is refused — the knowledge
 already exists, take it by address.
 

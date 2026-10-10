@@ -36,6 +36,24 @@ function proposal(action: Action): Proposal {
   return { thought: "", action };
 }
 
+// The tape exposes node ids as a leading `[id]` on each assistant/tool message, so the model
+// can address a result by id (`recall`). These read them back for the tests.
+function idFrom(text: string | undefined): string | undefined {
+  return text?.match(/^\[([^\]]+)\]/)?.[1];
+}
+
+function lastToolId(context: Context | undefined): string | undefined {
+  const tool = [...(context?.history ?? [])].reverse().find((message) => message.role === "tool");
+  return idFrom(tool?.text);
+}
+
+function goalIdOf(context: Context | undefined): string | undefined {
+  const goal = context?.history.find(
+    (message) => message.role === "assistant" && message.text.includes("create_goal"),
+  );
+  return idFrom(goal?.text);
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     const dir = tempDirs.pop();
@@ -68,11 +86,26 @@ describe("reasoning budget", () => {
 describe("classify", () => {
   const goal = {
     type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", sketch: "done" } },
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green" } },
   };
 
-  it("rejects an edit forbidden by a constraint", () => {
-    const state = fold([
+  const cmdDir = mkdtempSync(join(tmpdir(), "skein-cmd-"));
+  tempDirs.push(cmdDir);
+  const cmdWs = fsWorkspace(cmdDir);
+
+  // A command's non-execution is an observation with a reason (docs/ir_revision.md §3.3,
+  // §4): run it and report the failed observation's reason.
+  function runApply(action: Action, events: readonly Event[], workspace = cmdWs) {
+    const outcome = executeAction(action, fold(events), workspace, 0);
+    const all = [...events, ...outcome.events];
+    const state = fold(all);
+    const node = outcome.turn.nodeId ? state.nodes.get(outcome.turn.nodeId) : undefined;
+    const failed = (node?.payload as { failed?: boolean } | undefined)?.failed === true;
+    return { failed, reason: failed ? node?.label : undefined, state, events: all };
+  }
+
+  it("rejects an edit forbidden by a constraint (as a failed observation)", () => {
+    const events: Event[] = [
       goal,
       {
         type: "add_node",
@@ -85,20 +118,17 @@ describe("classify", () => {
           seq: 1,
         },
       },
-    ]);
-    const verdict = classify(
-      proposal({
-        operator: "apply",
-        action: { tool: "edit", path: "test/sum.test.mjs", find: "a", replace: "b" },
-      }),
-      state,
+    ];
+    const verdict = runApply(
+      { operator: "apply", action: { tool: "edit", path: "test/sum.test.mjs", find: "a", replace: "b" } },
+      events,
     );
-    expect(verdict.accept).toBe(false);
+    expect(verdict.failed).toBe(true);
     expect(verdict.reason).toContain("constraint_violation");
   });
 
   it("refuses an edit on a stale read basis", () => {
-    const state = fold([
+    const events: Event[] = [
       goal,
       { type: "add_node", node: { id: "file:src/a.ts", space: "artifact", kind: "file", label: "src/a.ts", seq: 1 } },
       {
@@ -106,26 +136,23 @@ describe("classify", () => {
         node: { id: "o1", space: "work", kind: "observation", label: "read src/a.ts", payload: { ref: "file:src/a.ts", version: "v1" }, seq: 2 },
       },
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-    ]);
-    const verdict = classify(
-      proposal({ operator: "apply", action: { tool: "edit", path: "src/a.ts", find: "a", replace: "b" } }),
-      state,
+    ];
+    const verdict = runApply(
+      { operator: "apply", action: { tool: "edit", path: "src/a.ts", find: "a", replace: "b" } },
+      events,
     );
-    expect(verdict).toEqual({ accept: false, reason: "stale_base" });
+    expect(verdict.reason).toBe("stale_base");
   });
 
   it("refuses a repeated run with no change since it ran", () => {
-    const state = fold([
+    const events: Event[] = [
       goal,
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build", signature: "run build\u0000" }, seq: 1 } },
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", payload: { command: "run build", exitCode: 0 }, seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "grep", pattern: "x" } } },
-    ]);
-    const verdict = classify(
-      proposal({ operator: "apply", action: { tool: "run", command: "run build" } }),
-      state,
-    );
-    expect(verdict.accept).toBe(false);
+      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "grep", pattern: "x" } } },
+    ];
+    const verdict = runApply({ operator: "apply", action: { tool: "run", command: "run build" } }, events);
+    expect(verdict.failed).toBe(true);
     expect(verdict.reason).toContain("repeated_action");
     expect(verdict.reason).toContain("o1");
   });
@@ -135,77 +162,27 @@ describe("classify", () => {
     tempDirs.push(root);
     writeFileSync(join(root, "a.txt"), "one\ntwo\nthree\n");
     const workspace = fsWorkspace(root);
-    const state0 = fold([goal]);
-    const first = executeAction(
-      { operator: "apply", action: { tool: "read", path: "a.txt" } },
-      state0,
-      workspace,
-      0,
-    );
-    const state = fold(first.events, state0);
-    const obs = [...state.nodes.values()].find((node) => node.kind === "observation");
+    const first = runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, [goal], workspace);
+    const obsId = [...first.state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
 
-    const same = classify(
-      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
-      state,
-    );
-    expect(same.accept).toBe(false);
-    expect(same.reason).toContain(obs?.id ?? "?");
+    const same = runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, first.events, workspace);
+    expect(same.failed).toBe(true);
+    expect(same.reason).toContain(obsId);
 
     // A different window is a new action.
     expect(
-      classify(
-        proposal({ operator: "apply", action: { tool: "read", path: "a.txt", start: 2, end: 3 } }),
-        state,
-      ),
-    ).toEqual({ accept: true });
+      runApply({ operator: "apply", action: { tool: "read", path: "a.txt", start: 2, end: 3 } }, first.events, workspace)
+        .failed,
+    ).toBe(false);
 
     // After a change to the world, re-reading is allowed.
-    const afterMutation = fold(
-      [...first.events, { type: "mutate", ref: "file:a.txt", version: "v2", actionId: "a1" }],
-      state0,
-    );
+    const afterMutation = [...first.events, { type: "mutate", ref: "file:a.txt", version: "v2", actionId: "a1" } as Event];
     expect(
-      classify(
-        proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
-        afterMutation,
-      ),
-    ).toEqual({ accept: true });
+      runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, afterMutation, workspace).failed,
+    ).toBe(false);
   });
 
-  it("points a repeated read at `shown` when the body is already held, else at query", () => {
-    const root = mkdtempSync(join(tmpdir(), "skein-read-held-"));
-    tempDirs.push(root);
-    writeFileSync(join(root, "a.txt"), "one\ntwo\n");
-    const workspace = fsWorkspace(root);
-    const state0 = fold([goal]);
-    const first = executeAction(
-      { operator: "apply", action: { tool: "read", path: "a.txt" } },
-      state0,
-      workspace,
-      0,
-    );
-    const state = fold(first.events, state0);
-    const obsId = [...state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
-
-    const held = classify(
-      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
-      state,
-      [obsId],
-    );
-    expect(held.accept).toBe(false);
-    expect(held.reason).toContain("shown");
-
-    const notHeld = classify(
-      proposal({ operator: "apply", action: { tool: "read", path: "a.txt" } }),
-      state,
-      [],
-    );
-    expect(notHeld.accept).toBe(false);
-    expect(notHeld.reason).toContain("query");
-  });
-
-  it("points a repeated query at `shown` when the body is already held", () => {
+  it("points a repeated recall at the result already held", () => {
     const state = fold([
       goal,
       {
@@ -213,9 +190,9 @@ describe("classify", () => {
         node: { id: "o1", space: "work", kind: "observation", label: "run", payload: { output: "x" }, seq: 1 },
       },
     ]);
-    const verdict = classify(proposal({ operator: "query", id: "o1" }), state, ["o1"]);
+    const verdict = classify(proposal({ operator: "recall", id: "o1" }), state, ["o1"]);
     expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("shown");
+    expect(verdict.reason).toContain("recalled");
   });
 
   it("refuses an identical re-search and names the stored result", () => {
@@ -223,58 +200,47 @@ describe("classify", () => {
     tempDirs.push(root);
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\n");
     const workspace = fsWorkspace(root);
-    const state0 = fold([goal]);
-    const first = executeAction(
-      { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
-      state0,
-      workspace,
-      0,
-    );
-    const state = fold(first.events, state0);
-    const obs = [...state.nodes.values()].find((node) => node.kind === "observation");
+    const first = runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }, [goal], workspace);
+    const obsId = [...first.state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
 
-    const same = classify(
-      proposal({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }),
-      state,
-    );
-    expect(same.accept).toBe(false);
-    expect(same.reason).toContain(obs?.id ?? "?");
+    const same = runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }, first.events, workspace);
+    expect(same.failed).toBe(true);
+    expect(same.reason).toContain(obsId);
 
     expect(
-      classify(
-        proposal({ operator: "apply", action: { tool: "grep", pattern: "MATCH", from: 2 } }),
-        state,
-      ),
-    ).toEqual({ accept: true });
+      runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH", from: 2 } }, first.events, workspace)
+        .failed,
+    ).toBe(false);
   });
 
-  it("accepts a create_goal with a sketch and a command, and rejects empty content", () => {
-    const state = fold([goal]);
+  it("accepts a create_goal on a fresh request, and rejects empty content", () => {
+    const req: Event = {
+      type: "add_node",
+      node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 },
+    };
+    const state = fold([req]);
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "locate", sketch: "locate: a sketch", command: "node --test" }),
+        proposal({ operator: "create_goal", what: "locate", command: "node --test" }),
         state,
       ),
     ).toEqual({ accept: true });
     expect(
-      classify(proposal({ operator: "create_goal", what: "", sketch: "p", command: "true" }), state).reason,
+      classify(proposal({ operator: "create_goal", what: "", command: "true" }), state).reason,
     ).toBe("empty_what");
     expect(
-      classify(proposal({ operator: "create_goal", what: "x", sketch: "", command: "true" }), state).reason,
-    ).toBe("empty_sketch");
-    expect(
-      classify(proposal({ operator: "create_goal", what: "x", sketch: "p", command: "" }), state).reason,
+      classify(proposal({ operator: "create_goal", what: "x", command: "" }), state).reason,
     ).toBe("empty_command");
     expect(
       classify(
-        proposal({ operator: "create_goal", what: "x", sketch: "p", command: "node --test" }),
+        proposal({ operator: "create_goal", what: "x", command: "node --test" }),
         fold([]),
       ).reason,
     ).toContain("no_current_goal");
   });
 
   it("guards run: it needs a command", () => {
-    const state = fold([
+    const events: Event[] = [
       {
         type: "add_node",
         node: {
@@ -282,17 +248,17 @@ describe("classify", () => {
           space: "work",
           kind: "goal",
           label: "crit",
-          payload: { what: "crit", sketch: "run npm test" },
+          payload: { what: "crit" },
           seq: 1,
         },
       },
-    ]);
-    expect(classify(proposal({ operator: "apply", action: { tool: "run" } }), state).reason).toContain(
+    ];
+    expect(runApply({ operator: "apply", action: { tool: "run" } }, events).reason).toContain(
       "run needs a command",
     );
-    expect(
-      classify(proposal({ operator: "apply", action: { tool: "run", command: "npm test" } }), state),
-    ).toEqual({ accept: true });
+    expect(runApply({ operator: "apply", action: { tool: "run", command: "npm test" } }, events).failed).toBe(
+      false,
+    );
   });
 
   it("allows a repeated run after a timeout (no exit code), refuses a deterministic one", () => {
@@ -301,12 +267,12 @@ describe("classify", () => {
       goal,
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "true", payload: { command: "true", signature: "true\u0000" }, seq: 1 } },
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "true", payload, seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "produces", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "llm" } } },
     ];
     // A timeout brought no knowledge: the same command may be retried.
-    expect(classify(proposal(runAction), fold(ranWith({ command: "true" })))).toEqual({ accept: true });
+    expect(runApply(proposal(runAction).action, ranWith({ command: "true" })).failed).toBe(false);
     // A deterministic exit is a repeat: retrieve the body instead.
-    expect(classify(proposal(runAction), fold(ranWith({ command: "true", exitCode: 1 }))).reason).toMatch(
+    expect(runApply(proposal(runAction).action, ranWith({ command: "true", exitCode: 1 })).reason).toMatch(
       /repeated_action/,
     );
   });
@@ -316,18 +282,17 @@ describe("executeAction", () => {
   it("create_goal builds a goal, its plan and descends into it", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan for g1", seq: 1 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 2 } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "items", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
     ]);
     const outcome = executeAction(
       {
         operator: "create_goal",
         what: "locate",
-        sketch: "locate: a sketch",
         command: "node --test",
       },
       root,
@@ -341,7 +306,7 @@ describe("executeAction", () => {
     const childGoal = goals[0];
     expect(childGoal).toBeDefined();
     const planEdges = [...state.edges.values()].filter(
-      (edge) => edge.kind === "has_plan" && edge.from === childGoal?.id,
+      (edge) => edge.kind === "plan" && edge.from === childGoal?.id,
     );
     expect(planEdges).toHaveLength(1);
     expect(childrenOf(state, planEdges[0]?.to as string)).toHaveLength(1);
@@ -350,13 +315,13 @@ describe("executeAction", () => {
   it("refuses to decompose an open goal with no current plan item", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
       { type: "descend", node: "g1" },
     ]);
     const outcome = executeAction(
-      { operator: "create_goal", what: "sub", sketch: "sub: a sketch", command: "true" },
+      { operator: "create_goal", what: "sub", command: "true" },
       root,
       workspace,
       0,
@@ -373,7 +338,7 @@ describe("executeAction", () => {
     const root = setup("off-by-one");
     const workspace = fsWorkspace(root);
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
@@ -389,7 +354,7 @@ describe("executeAction", () => {
   it("refuses to create a file with edit (it only rewrites existing files)", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "package.json", find: "", replace: "{}" } },
@@ -423,10 +388,11 @@ describe("executeAction", () => {
         (candidate.payload as { signal?: string } | undefined)?.signal === "SIGSEGV",
     );
     expect(node).toBeDefined();
-    expect(project(observed).lastResult?.signal).toBe("SIGSEGV");
+    // The crash summary is part of the observation payload the tape renders.
+    expect((node?.payload as { signal?: string } | undefined)?.signal).toBe("SIGSEGV");
   });
 
-  it("keeps find/replace of an edit in the calls diff", () => {
+  it("keeps find/replace of an edit on the action payload", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
@@ -437,14 +403,12 @@ describe("executeAction", () => {
       workspace,
       1,
     );
-    const call = project(fold(outcome.events, state)).calls.find(
-      (entry) => entry.action === "edit src/sum.mjs",
-    );
-    expect(call?.note).toContain("i < n");
-    expect(call?.note).toContain("i <= n");
+    const action = [...fold(outcome.events, state).nodes.values()].find((n) => n.kind === "action");
+    expect((action?.payload as { find?: string } | undefined)?.find).toBe("i < n");
+    expect((action?.payload as { replace?: string } | undefined)?.replace).toBe("i <= n");
   });
 
-  it("shows the attempted find of a failed edit", () => {
+  it("records the attempted find of a failed edit", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
@@ -455,21 +419,29 @@ describe("executeAction", () => {
       workspace,
       1,
     );
-    const call = project(fold(outcome.events, state)).calls.find(
-      (entry) => entry.action === "edit src/sum.mjs",
-    );
-    expect(call?.status).toBe("fail");
-    expect(call?.note).toContain("NOT PRESENT");
+    const observed = fold(outcome.events, state);
+    expect(
+      [...observed.nodes.values()].some(
+        (n) => n.kind === "observation" && (n.payload as { failed?: boolean } | undefined)?.failed === true,
+      ),
+    ).toBe(true);
+    const action = [...observed.nodes.values()].find((n) => n.kind === "action");
+    expect((action?.payload as { find?: string } | undefined)?.find).toBe("NOT PRESENT");
   });
 
-  it("reads a bounded window and says where to continue", () => {
+  it("reads a byte-bounded window and says where to continue", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-read-"));
     tempDirs.push(root);
-    const lines = Array.from({ length: 600 }, (_, index) => `line ${index + 1}`).join("\n");
+    // Long lines so the whole file exceeds 64K: the first read is a byte-bounded prefix and
+    // reports where to continue (there is no line cap).
+    const lines = Array.from(
+      { length: 400 },
+      (_, index) => `line ${index + 1} ${"x".repeat(200)}`,
+    ).join("\n");
     writeFileSync(join(root, "big.txt"), lines);
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "read", path: "big.txt" } },
@@ -477,27 +449,30 @@ describe("executeAction", () => {
       workspace,
       0,
     );
-    expect(first.turn.text).toContain("line 1\n");
-    expect(first.turn.text).toContain("line 400");
-    expect(first.turn.text).toContain("[lines 1–400 of 600; continue from 401]");
+    expect(first.turn.text).toContain("line 1 ");
+    const match = first.turn.text.match(/continue from (\d+)/);
+    expect(match).not.toBeNull();
+    const resume = Number(match?.[1]);
+    expect(resume).toBeGreaterThan(1);
+    expect(resume).toBeLessThanOrEqual(400);
     const next = executeAction(
-      { operator: "apply", action: { tool: "read", path: "big.txt", start: 401, end: 600 } },
+      { operator: "apply", action: { tool: "read", path: "big.txt", start: resume, end: 400 } },
       state,
       workspace,
       1,
     );
-    expect(next.turn.text).toContain("line 600");
+    expect(next.turn.text).toContain("line 400 ");
     expect(next.turn.text).not.toContain("continue from");
   });
 
   it("branches the current plan item when the action differs, so the plan never blocks", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "cat HACKING.adoc", payload: { command: "cat HACKING.adoc" }, seq: 2 } },
-      { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "items", provenance: { kind: "llm" } } },
     ]);
     expect(itemFulfilled(root, "a1")).toBe(false);
     const outcome = executeAction(
@@ -517,7 +492,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
@@ -547,7 +522,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\nMATCH three\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH", count: 2 } },
@@ -587,7 +562,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, ".depend"), "hidden\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "done" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "list", include: "**/*.c" } },
@@ -605,7 +580,7 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(root);
     const original = workspace.read("test/sum.test.mjs");
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "node --test" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
       {
         type: "add_node",
         node: { id: "k1", space: "work", kind: "constraint", label: "no tests", payload: { forbid: ["\\.test\\.mjs$"] }, seq: 1 },
@@ -630,14 +605,14 @@ describe("executeAction", () => {
   });
 });
 
-describe("query by id (history index)", () => {
+describe("recall by id (history index)", () => {
   const goal = {
     type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green", sketch: "done" } },
+    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green" } },
   };
 
   it("returns a stored body by id and windows a large one", () => {
-    const root = mkdtempSync(join(tmpdir(), "skein-query-"));
+    const root = mkdtempSync(join(tmpdir(), "skein-recall-"));
     tempDirs.push(root);
     const workspace = fsWorkspace(root);
     const big = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
@@ -648,13 +623,13 @@ describe("query by id (history index)", () => {
       { type: "add_node", node: { id: "o2", space: "work", kind: "observation", label: "big", payload: { outputRef: ".skein/observations/o2.txt" }, seq: 2 } },
     ]);
 
-    const small = executeAction({ operator: "query", id: "o1" }, state, workspace, 0);
+    const small = executeAction({ operator: "recall", id: "o1" }, state, workspace, 0);
     const smallJson = JSON.parse(small.turn.text) as { id: string; output: string; total: number };
     expect(smallJson.id).toBe("o1");
     expect(smallJson.output).toContain("hello");
 
     const windowed = executeAction(
-      { operator: "query", id: "o2", start: 2, end: 4 },
+      { operator: "recall", id: "o2", start: 2, end: 4 },
       state,
       workspace,
       1,
@@ -670,27 +645,24 @@ describe("query by id (history index)", () => {
     expect(bigJson.output).not.toContain("line 5");
   });
 
-  it("refuses a query for a result already in the working set", () => {
+  it("refuses a recall for a result already in the working set", () => {
     const state = fold([goal]);
     const held = ["obs:30"];
 
-    const repeat = classify(proposal({ operator: "query", id: "obs:30" }), state, held);
+    const repeat = classify(proposal({ operator: "recall", id: "obs:30" }), state, held);
     expect(repeat.accept).toBe(false);
     expect(repeat.reason).toContain("obs:30");
     expect(repeat.reason).toContain("repeated_action");
 
-    // Another id, or a state query, is fine.
-    expect(classify(proposal({ operator: "query", id: "obs:31" }), state, held)).toEqual({
-      accept: true,
-    });
-    expect(classify(proposal({ operator: "query", kind: "goal" }), state, held)).toEqual({
+    // Another id is fine.
+    expect(classify(proposal({ operator: "recall", id: "obs:31" }), state, held)).toEqual({
       accept: true,
     });
   });
 
-  it("refuses a re-query of a non-result id (e.g. an action node)", () => {
+  it("refuses a re-recall of a non-result id (e.g. an action node)", () => {
     const state = fold([goal]);
-    const verdict = classify(proposal({ operator: "query", id: "w:action:77" }), state, [
+    const verdict = classify(proposal({ operator: "recall", id: "w:action:77" }), state, [
       "w:action:77",
     ]);
     expect(verdict.accept).toBe(false);
@@ -699,97 +671,58 @@ describe("query by id (history index)", () => {
   });
 });
 
-describe("working set (shown) with TTL", () => {
-  it("retains the current level's results beyond the old TTL", async () => {
+describe("the message tape", () => {
+  it("grows with each move and keeps the open goal's history", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
-    const shown: string[][] = [];
-    let id: string | undefined;
+    const roles: string[][] = [];
     let index = 0;
     const propose = async (context: Context): Promise<Proposal> => {
-      shown.push(
-        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
-      );
+      roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
-      }
-      if (index === 2) {
-        id = context.lastResult?.id;
-        return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
-      }
-      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
-    };
-    await runAgent(
-      { propose, workspace, maxTurns: 9, noProgress: 10, held: { turns: 3 } },
-      { request: { id: "r1", text: "green" } },
-    );
-
-    expect(id).toBeDefined();
-    // The read belongs to the current level (the request), so it is not evicted by TTL.
-    expect(shown[2]).toContain(id);
-    expect(shown[4]).toContain(id);
-    expect(shown[5]).toContain(id);
-  });
-
-  it("drops a retained read once its file changes", async () => {
-    const workspace = fsWorkspace(setup("off-by-one"));
-    const shown: string[][] = [];
-    let id: string | undefined;
-    let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
-      shown.push(
-        context.shown.map((view) => view.id).filter((value): value is string => value !== undefined),
-      );
-      index += 1;
-      if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
-      }
-      if (index === 2) {
-        id = context.lastResult?.id;
-        return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
-      }
-      if (index === 3) {
         return proposal({
-          operator: "apply",
-          action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" },
+          operator: "create_goal",
+          what: "green",
+          command: "echo start",
         });
       }
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
       return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
     };
     await runAgent(
-      { propose, workspace, maxTurns: 9, noProgress: 10 },
+      { propose, workspace, maxTurns: 6, noProgress: 10 },
       { request: { id: "r1", text: "green" } },
     );
 
-    expect(shown[2]).toContain(id); // before the edit
-    expect(shown[3]).not.toContain(id); // the edit at turn 2 makes the read stale
+    // A fresh request is a single user turn; create_goal adds the goal and its first command.
+    expect(roles[0]).toEqual(["user"]);
+    expect(roles[1]).toEqual(["user", "assistant", "assistant", "tool"]);
+    // A command appends an assistant/tool pair.
+    expect(roles[2]).toEqual(["user", "assistant", "assistant", "tool", "assistant", "tool"]);
   });
 
-  it("caps the current level's retained results", async () => {
-    const root = mkdtempSync(join(tmpdir(), "skein-held-"));
-    tempDirs.push(root);
-    for (let i = 0; i < 10; i += 1) writeFileSync(join(root, `f${i}.txt`), `body ${i}\n`);
-    const workspace = fsWorkspace(root);
-    const ids = new Set<string>();
-    let shownCount = -1;
+  it("carries the read's body as a tool message", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const contexts: Context[] = [];
     let index = 0;
     const propose = async (context: Context): Promise<Proposal> => {
-      if (context.lastResult?.id) ids.add(context.lastResult.id);
+      contexts.push(context);
       index += 1;
-      if (index <= 10) {
-        return proposal({ operator: "apply", action: { tool: "read", path: `f${index - 1}.txt` } });
+      if (index === 1) {
+        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
       }
-      shownCount = Math.max(shownCount, context.shown.length);
-      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
     };
-    await runAgent(
-      { propose, workspace, maxTurns: 14, noProgress: 10 },
-      { request: { id: "r1", text: "green" } },
-    );
-
-    expect(ids.size).toBeGreaterThan(8);
-    expect(shownCount).toBeGreaterThan(0);
-    expect(shownCount).toBeLessThanOrEqual(8);
+    await runAgent({ propose, workspace, maxTurns: 5, noProgress: 10 }, { request: { id: "r1", text: "green" } });
+    // After the later run, the read's tool message is still in the tape (the tape is the
+    // tree's history, not a bounded working set).
+    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    expect(tape).toContain("sumTo");
   });
 });
 
@@ -868,8 +801,6 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "fix the off-by-one",
-          why: "the loop stops one short",
-          sketch: "reproduce, fix, re-run, stop",
           command: "echo start",
         });
       }
@@ -902,7 +833,6 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "make the suite pass",
-          sketch: "make the suite pass",
           command: "true",
         });
       }
@@ -919,7 +849,7 @@ describe("runAgent", () => {
   it("stops with no_progress when nothing changes", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const result = await runAgent(
-      { propose: fixed({ operator: "query", id: "r1" }), workspace, maxTurns: 10, noProgress: 2 },
+      { propose: fixed({ operator: "recall", id: "r1" }), workspace, maxTurns: 10, noProgress: 2 },
       { request: { id: "r1", text: "green" } },
     );
     expect(result.stopReason).toBe("no_progress");
@@ -934,7 +864,6 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "interpret the request",
-          sketch: "interpret the request",
           command: "echo hi",
         });
       }
@@ -945,10 +874,15 @@ describe("runAgent", () => {
       { request: { id: "r1", text: "green" } },
     );
     expect(result.stopReason).toBe("no_progress");
-    expect(result.events.some((event) => event.type === "record_rejection")).toBe(true);
+    // A repeated command is a failed observation with a reason, not a node-less refusal.
+    expect(
+      [...fold(result.events).nodes.values()].some(
+        (node) => node.kind === "observation" && node.label.startsWith("repeated_action"),
+      ),
+    ).toBe(true);
   });
 
-  it("keeps the current level's read in shown after a later call", async () => {
+  it("keeps the read's body in the tape after a later call", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
@@ -956,85 +890,149 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
       }
       if (index === 2) {
-        return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "query", id: "r1" });
+      return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
     };
-    await runAgent(
-      { propose, workspace, maxTurns: 4 },
-      { request: { id: "r1", text: "green" } },
-    );
-    const readId = contexts[1]?.lastResult?.id;
-    const shown = contexts[2]?.shown ?? [];
-    const readView = shown.find((view) => view.id === readId);
-    expect(readView?.output).toContain("sumTo");
+    await runAgent({ propose, workspace, maxTurns: 5 }, { request: { id: "r1", text: "green" } });
+    // After the later run, the read's tool message is still in the tape.
+    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    expect(tape).toContain("sumTo");
   });
 
-  it("reports the focus plan and applicable operators in the projection", () => {
-    const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", sketch: "node --test" }, seq: 0 } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "has_plan", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", seq: 2 } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "item", provenance: { kind: "llm" } } },
-    ]);
-    const context = project(state);
-    expect(context.path[0]?.plan?.items.map((item) => item.id)).toEqual(["a1"]);
-    expect(context.applicable).toContain("apply");
-  });
-
-  it("refuses a repeated read, names the stored id, and can be retrieved by query", async () => {
+  it("shows a refused structural move to the model on the next turn", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
-    const ids: (string | undefined)[] = [];
+    const contexts: Context[] = [];
     let index = 0;
     const propose = async (context: Context): Promise<Proposal> => {
-      ids.push(context.lastResult?.id);
+      contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+      }
+      // `decline` is valid only at the request; at the open goal it is a structural refusal.
+      return proposal({ operator: "decline", why: "nothing to do" });
+    };
+    await runAgent(
+      { propose, workspace, maxTurns: 6, noProgress: 3 },
+      { request: { id: "r1", text: "green" } },
+    );
+    // The refusal reason is on the tape the model sees next, so the loop is never blind.
+    const later = contexts[2]?.history.map((message) => message.text).join("\n") ?? "";
+    expect(later).toContain("rejected");
+    expect(later).toContain("not_request");
+  });
+
+  it("pages a large stored body by a recall window (a windowed recall is not refused)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "skein-page-"));
+    tempDirs.push(root);
+    const lines = Array.from({ length: 120 }, (_, i) => `line ${i + 1} ${"x".repeat(40)}`);
+    writeFileSync(join(root, "big.txt"), `${lines.join("\n")}\n`);
+    const workspace = fsWorkspace(root);
+    const contexts: Context[] = [];
+    let id: string | undefined;
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposal> => {
+      contexts.push(context);
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "create_goal", what: "read the long file", command: "echo start" });
       }
       if (index === 2) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+        return proposal({ operator: "apply", action: { tool: "read", path: "big.txt" } });
       }
+      id = id ?? lastToolId(context);
       if (index === 3) {
-        return proposal({ operator: "query", id: ids[1] ?? "missing" });
+        return proposal({ operator: "recall", id: id ?? "missing", start: 55, end: 65 });
       }
-      return proposal({ operator: "query", id: "r1" });
+      return proposal({ operator: "stop", why: "seen enough" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { propose, workspace, maxTurns: 6, noProgress: 3 },
+      { request: { id: "r1", text: "read the long file" } },
+    );
+    // The windowed recall returned the middle fragment (line 60), not a refusal.
+    const after = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    expect(after).toContain("line 60");
+    // The assistant's own history shows the call's arguments, not a bare `recall`.
+    expect(after).toMatch(/recall \{ id: obs:\d+, start: 55, end: 65 \}/);
+    expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
+  });
+
+  it("renders the request's goal as a tape", () => {
+    const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "green" }, seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 1 } },
+      { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
+      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 3 } },
+      { type: "add_edge", edge: { id: "e2", from: "p1", to: "i1", kind: "items", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build" }, seq: 4 } },
+      { type: "add_edge", edge: { id: "e3", from: "i1", to: "a1", kind: "alts", provenance: { kind: "llm" } } },
+    ]);
+    const context = project(state);
+    expect(context.situation).toBe("goal");
+    expect(context.history[0]?.role).toBe("user");
+    expect(context.history[0]?.text).toBe("green");
+    expect(context.history[1]?.text).toContain("create_goal");
+    expect(context.history[2]?.text).toContain("run build");
+  });
+
+  it("refuses a repeated read and names the stored result", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (): Promise<Proposal> => {
+      index += 1;
+      if (index === 1) {
+        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+      }
+      if (index === 2 || index === 3) {
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+      }
+      return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 5, noProgress: 2 },
       { request: { id: "r1", text: "green" } },
     );
 
-    const reads = [...fold(result.events).nodes.values()].filter(
+    const state = fold(result.events);
+    const reads = [...state.nodes.values()].filter(
       (node) =>
         node.kind === "action" &&
         (node.payload as { command?: string } | undefined)?.command === "read src/sum.mjs",
     );
-    expect(reads).toHaveLength(1);
-    const rejection = result.events.find((event) => event.type === "record_rejection");
-    const reason =
-      rejection?.type === "record_rejection" ? rejection.reason : "";
-    expect(reason).toContain(ids[1] ?? "?");
+    // Each attempt leaves an action node (docs/ir_revision.md §4): the read and its refused
+    // repeat.
+    expect(reads).toHaveLength(2);
+    const firstRead = [...state.nodes.values()].find(
+      (node) => node.kind === "observation" && (node.payload as { ref?: string } | undefined)?.ref === "file:src/sum.mjs",
+    );
+    const refusal = [...state.nodes.values()].find(
+      (node) => node.kind === "observation" && node.label.startsWith("repeated_action"),
+    );
+    expect(refusal?.label).toContain(firstRead?.id ?? "?");
   });
 
-  it("refuses an identical re-query by id instead of re-retrieving", async () => {
+  it("refuses an identical re-recall by id instead of re-retrieving", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let readId: string | undefined;
     let index = 0;
     const propose = async (context: Context): Promise<Proposal> => {
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
+        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
       }
       if (index === 2) {
-        readId = context.lastResult?.id;
-        return proposal({ operator: "query", id: readId ?? "missing" });
+        return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "query", id: readId ?? "missing" });
+      // The read's result id is exposed on the tape's tool message; reuse it on every recall.
+      readId = readId ?? lastToolId(context);
+      return proposal({ operator: "recall", id: readId ?? "missing" });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 8, noProgress: 2 },
@@ -1044,13 +1042,11 @@ describe("runAgent", () => {
     const rejection = result.events.find((event) => event.type === "record_rejection");
     const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
     expect(reason).toContain("repeated_action");
-    expect(reason).toContain(readId ?? "?");
     expect(result.stopReason).toBe("no_progress");
   });
 
-  it("refuses a repeated query of a non-result node", async () => {
+  it("refuses a repeated recall of a non-result node", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
-    let goalId: string | undefined;
     let index = 0;
     const propose = async (context: Context): Promise<Proposal> => {
       index += 1;
@@ -1058,12 +1054,11 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          sketch: "green: a sketch",
           command: "echo hi",
         });
       }
-      goalId = context.path[context.path.length - 1]?.id;
-      return proposal({ operator: "query", id: goalId ?? "missing" });
+      // The goal id is exposed on the tape's create_goal message.
+      return proposal({ operator: "recall", id: goalIdOf(context) ?? "missing" });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 6, noProgress: 2 },
@@ -1073,7 +1068,6 @@ describe("runAgent", () => {
     const rejection = result.events.find((event) => event.type === "record_rejection");
     const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
     expect(reason).toContain("repeated_action");
-    expect(reason).toContain(goalId ?? "?");
   });
 });
 
@@ -1089,7 +1083,6 @@ describe("failed edit materializes the file content", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          sketch: "green: a sketch",
           command: "echo done",
         });
       }
@@ -1116,9 +1109,8 @@ describe("failed edit materializes the file content", () => {
     expect(output).toContain("current content");
     expect(output).toContain("sumTo");
 
-    // The failed-edit body is pinned, so it is already in `shown` the next turn.
-    const afterEdit = contexts[3];
-    const shown = (afterEdit?.shown ?? []).map((view) => view.output ?? "").join("\n");
-    expect(shown).toContain("current content");
+    // The failed-edit observation is a tool message in the tape; its body is in view.
+    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    expect(tape).toContain("current content");
   });
 });

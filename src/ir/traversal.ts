@@ -1,7 +1,7 @@
 import type { Event } from "./events";
 import {
   actionExecuted,
-  alternativesOf,
+  actionSucceeded,
   childrenOf,
   goalOf,
   hasStopped,
@@ -29,27 +29,14 @@ export function isFinished(state: State, id: string): boolean {
   return hasStopped(state, id);
 }
 
-// An item is resolved when it is itself done, or when it owns an alternatives
-// container with a chosen option that is done. The engine branches a stale item by
-// adding an alternative (append-only), so a failed or bypassed attempt never blocks
-// the plan (docs/context_design_ru.md).
+// An item is fulfilled when its current (last) alternative is: an executed action or a
+// stopped goal. The item itself is a container of alternatives; the last one is current
+// (docs/ir_revision.md §2.3).
 export function itemFulfilled(state: State, itemId: string): boolean {
-  const node = state.nodes.get(itemId);
-  if (node === undefined) return false;
-  const selfDone =
-    node.kind === "action"
-      ? actionExecuted(state, itemId)
-      : node.kind === "goal"
-        ? isFinished(state, itemId)
-        : false;
-  if (selfDone) return true;
-
-  const alt = alternativesOf(state, itemId);
-  if (alt === undefined) return false;
-  const current = lastChild(state, alt);
-  if (current === undefined || current === itemId) return false;
+  const current = lastChild(state, itemId);
+  if (current === undefined) return false;
   const option = state.nodes.get(current);
-  if (option?.kind === "action") return actionExecuted(state, current);
+  if (option?.kind === "action") return actionSucceeded(state, current);
   if (option?.kind === "goal") return isFinished(state, current);
   return false;
 }
@@ -128,11 +115,15 @@ export function focusEvents(state: State): Event[] {
     if (isFinished(state, current)) break;
     const first = firstUnfulfilledItem(state, current);
     if (first === undefined) break;
-    const firstNode = state.nodes.get(first);
-    if (firstNode?.kind === "goal" && first !== current) {
-      out.push({ type: "descend", node: first });
-      branch.push(first);
-      continue;
+    // Descend into the current item's alternative when it is an open sub-goal.
+    const altId = lastChild(state, first);
+    if (altId !== undefined && altId !== current) {
+      const altNode = state.nodes.get(altId);
+      if (altNode?.kind === "goal") {
+        out.push({ type: "descend", node: altId });
+        branch.push(altId);
+        continue;
+      }
     }
     break;
   }

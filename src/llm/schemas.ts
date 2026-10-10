@@ -63,9 +63,6 @@ export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
     operator: z.literal("create_goal"),
     what: z.string(),
-    why: z.string().optional(),
-    // A short free-form note so the model does not lose the thread.
-    sketch: z.string(),
     // The first plan item: the concrete command to run now.
     command: z.string(),
   }),
@@ -75,12 +72,20 @@ export const actionSchema = z.discriminatedUnion("operator", [
   // `unactionable` node under the request and ends the run (docs/plans/request_goal_plan.md).
   z.object({ operator: z.literal("decline"), why: z.string().optional() }),
   z.object({
-    operator: z.literal("query"),
-    id: z.string().optional(),
-    kind: z.string().optional(),
-    edgesOf: z.string().optional(),
+    // Read a stored result (an earlier observation) by id — a read/grep/run's output —
+    // instead of repeating the command. An optional line window pages a large body.
+    operator: z.literal("recall"),
+    id: z.string(),
     start: z.number().int().positive().optional(),
     end: z.number().int().positive().optional(),
+  }),
+  z.object({
+    // Search a stored result by a regular expression, returning matching line windows.
+    operator: z.literal("search"),
+    id: z.string(),
+    pattern: z.string(),
+    before: z.number().int().nonnegative().optional(),
+    after: z.number().int().nonnegative().optional(),
   }),
 ]);
 

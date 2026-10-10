@@ -67,7 +67,7 @@ The IR stays monotone (design principle: the context is a projection, facts are 
   command; applying a different command to the current item adds it as an **alternative**.
 - `stop { why? }` — appends a `stop` plan item and closes the goal (no criterion gate).
 - `decline { why? }` — a non-actionable request (kept).
-- `query { id }` — addressing a stored body (kept).
+- `recall { id }` / `search { id, pattern }` — addressing a stored body (kept).
 
 > **Decided:** the first plan item is carried by `command` — `create_goal { what, why?,
 > sketch, command }`; the old `step`'s `label` is dropped.

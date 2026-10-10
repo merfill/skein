@@ -77,7 +77,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 
 > **Приведение к семантике IR.** Код приведён к `docs/ir_semantics_ru.md`:
 > старая модель (`claim`/`decision`/`subgoal`, статусы-поля, `mode`) заменена
-> операторной моделью (`create_goal`/`apply`/`stop` + read-only `query`) и производным
+> операторной моделью (`create_goal`/`apply`/`stop` + read-only `recall`/`search`) и производным
 > состоянием. План и статус —
 > `docs/plans/archive/ir_semantics_migration_plan_ru.md`; текущий as-built — `docs/ir_ru.md`.
 > Описанная ниже линия Tier 0/Tier 1 — история.
@@ -115,7 +115,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `superseded`/`achieved` производны; проекция показывает подцели и связи
   (`docs/plans/archive/tier1_plan_ru.md`).
 - **Path-based релевантность (T1.2)** — `frontier` есть достижимое замыкание от
-  цели по рёбрам пути; недостижимое остаётся доставаемым через `query`
+  цели по рёбрам пути; недостижимое остаётся доставаемым через `recall`
   (`docs/plans/archive/tier1_plan_ru.md` §5).
 - **Явный узел проверки (T1.3)** — `record_check` материализует узел `check`
   (команда, вердикт, свидетельство, `actor`) и ребро `verifies` `check → claim`;
@@ -173,6 +173,15 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `tests/sandbox/task.ts`). Живой повтор — `reward=1`, `stop=request_addressed` (первое
   позитивное закрытие в песочнице; израсходованы все 60 ходов). A/B транскрипта проведён и
   отклонён. Детали — `docs/benches/bench_report_ru.md` §4.8; промпт — `docs/system_prompt_ru.md`.
+
+- **Ревизия IR свёрнута (форма, операции, контекст; сделано).** Узел `item` заменил контейнер
+  `alternatives`; рёбра переименованы (`goal`/`unactionable`/`plan`/`stop`/`items`/`alts`/
+  `result`/`mutates`); `stop` — связь на цели (не пункт плана); `create_goal` сразу исполняет
+  первую команду; `apply` размещает команду по исходу текущего пункта, а неисполнение команды —
+  наблюдение с причиной (не отказ без узла); контекст — **лента сообщений**, собираемая из
+  дерева. Спек — `docs/ir_semantics_ru.md`; ход работ —
+  `docs/plans/ir_revision_implementation_plan_ru.md`. Прежние формулировки формы в этом
+  разделе — история.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
 live-гейт только при `SKEIN_LIVE=true`.

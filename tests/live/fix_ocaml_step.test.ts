@@ -42,10 +42,10 @@ const fixture = JSON.parse(
 ) as Fixture;
 
 function withInstruction(context: Context): Context {
-  const path = context.path.map((node, index) =>
-    index === 0 && node.kind === "request" ? { ...node, text: fixture.instruction } : node,
+  const history = context.history.map((message, index) =>
+    index === 0 && message.role === "user" ? { ...message, text: fixture.instruction } : message,
   );
-  return { ...context, path };
+  return { ...context, history };
 }
 
 describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {

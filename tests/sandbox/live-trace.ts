@@ -25,7 +25,8 @@ function brief(value: unknown, max = 240): string {
 async function main(): Promise<void> {
   const settings = loadSettings();
   const model = createChatModel(settings);
-  const rebuild = (maxTokens: number) => createChatModel({ ...settings, maxTokens });
+  const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
+    createChatModel({ ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = join("bench", "runs", `sandbox-live-${ts}-fix-ocaml-gc`);
   mkdirSync(dir, { recursive: true });
@@ -34,21 +35,39 @@ async function main(): Promise<void> {
   const turns: TurnMetric[] = [];
   let turn = 0;
   const propose = async (context: Context): Promise<Proposal> => {
+    // Log the full model-facing context content (rendered messages) alongside the raw inputs.
+    const messages = buildMessages(context);
+    const rendered = messages.map((message) => ({
+      type: message.getType(),
+      content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+    }));
     const chars = promptText(context).length;
-    writeFileSync(join(dir, "contexts.ndjson"), `${JSON.stringify({ turn, chars, context })}\n`, { flag: "a" });
+    writeFileSync(
+      join(dir, "contexts.ndjson"),
+      `${JSON.stringify({ turn, chars, situation: context.situation, constraints: context.constraints, history: context.history, messages: rendered })}\n`,
+      { flag: "a" },
+    );
+    mkdirSync(join(dir, "contexts"), { recursive: true });
+    writeFileSync(
+      join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`),
+      rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
+    );
     const before = snapshot(meter);
-    const proposal = await invokeTools(model, buildMessages(context), { settings, rebuild, callbacks: [meter] });
+    const proposal = await invokeTools(model, messages, { settings, rebuild, callbacks: [meter] });
     const usage = delta(snapshot(meter), before);
     const action = proposal.action;
     const tool = action.operator === "apply" ? action.action.tool : action.operator;
     turns.push({ turn, operator: action.operator, tool, chars, refused: false, ...usage });
-    const calls = (context.calls ?? []).slice(0, 12).map((c) => `${c.id ?? "?"} ${c.status} ${brief(c.action, 60)} :: ${brief(c.note, 80)}`);
+    const tools = context.history
+      .filter((message) => message.role === "tool")
+      .slice(-6)
+      .map((message) => brief(message.text, 100));
     console.info(`\n=== turn ${turn} ===`);
     console.info(`thought: ${proposal.thought}`);
     console.info(`action:  ${JSON.stringify(proposal.action)}`);
     console.info(`tokens:  in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} cacheR=${usage.cacheRead} cacheW=${usage.cacheWrite} llm=${usage.llmCalls} chars=${chars}`);
-    console.info(`applicable=${JSON.stringify(context.applicable)}`);
-    console.info(`calls:\n  ${calls.join("\n  ") || "(none)"}`);
+    console.info(`history=${context.history.length} situation=${context.situation}`);
+    console.info(`last tools:\n  ${tools.join("\n  ") || "(none)"}`);
     turn += 1;
     return proposal;
   };

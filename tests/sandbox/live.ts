@@ -35,20 +35,61 @@ export interface LiveTaskOptions {
 
 export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): Promise<LiveTaskResult> {
   const settings = loadSettings();
-  const model = createChatModel(settings);
-  const rebuild = (maxTokens: number) => createChatModel({ ...settings, maxTokens });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = options.dir ?? join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}`);
   mkdirSync(dir, { recursive: true });
+
+  // The provider's hidden reasoning text (`choices[0].message.reasoning`) is dropped by the
+  // parsed message; capture it turn by turn so a run stays debuggable.
+  let currentTurn = 0;
+  const captureReasoning = (body: unknown): void => {
+    const message = (body as { choices?: { message?: { reasoning?: unknown } }[] }).choices?.[0]?.message;
+    const reasoning = message?.reasoning;
+    if (typeof reasoning === "string" && reasoning !== "") {
+      writeFileSync(join(dir, "reasoning.ndjson"), `${JSON.stringify({ turn: currentTurn, reasoning })}\n`, { flag: "a" });
+    }
+  };
+  const model = createChatModel(settings, { onResponseBody: captureReasoning });
+  const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
+    createChatModel(
+      { ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
+      { onResponseBody: captureReasoning },
+    );
 
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
   let turn = 0;
   const propose = async (context: Context): Promise<Proposal> => {
+    currentTurn = turn;
+    // Log the full model-facing context: the rendered messages (system base + node
+    // instruction + constraints + the tape), plus the raw projection inputs.
+    const messages = buildMessages(context);
+    const rendered = messages.map((message) => ({
+      type: message.getType(),
+      content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+    }));
     const chars = promptText(context).length;
-    writeFileSync(join(dir, "contexts.ndjson"), `${JSON.stringify({ turn, chars, context })}\n`, { flag: "a" });
+    writeFileSync(
+      join(dir, "contexts.ndjson"),
+      `${JSON.stringify({ turn, chars, situation: context.situation, constraints: context.constraints, history: context.history, messages: rendered })}\n`,
+      { flag: "a" },
+    );
+    mkdirSync(join(dir, "contexts"), { recursive: true });
+    writeFileSync(
+      join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`),
+      rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
+    );
     const before = snapshot(meter);
-    const proposal = await invokeTools(model, buildMessages(context), { settings, rebuild, callbacks: [meter] });
+    const proposal = await invokeTools(model, messages, {
+      settings,
+      rebuild,
+      callbacks: [meter],
+      // Surface every thrown call (including ones a retry recovers from) so provider
+      // instability is visible in the run log instead of only on the final give-up.
+      onError: (error) => {
+        console.error(`[${task.id}] llm call failed: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    });
     const usage = delta(snapshot(meter), before);
     const action = proposal.action;
     const tool = action.operator === "apply" ? action.action.tool : action.operator;
@@ -74,11 +115,20 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   writeFileSync(join(dir, "reward.txt"), `${run.reward}\n`);
   writeFileSync(
     join(dir, "metrics.json"),
-    JSON.stringify({ task: task.id, reward: run.reward, stopReason: run.result.stopReason, turns: turns.length, ...summary, perTurn: turns }, null, 2),
+    JSON.stringify({ task: task.id, reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
   );
   writeFileSync(
     join(dir, "result.json"),
-    JSON.stringify({ stopReason: run.result.stopReason, reward: run.reward, check: run.check, events: run.result.events }, null, 2),
+    JSON.stringify({ stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, reward: run.reward, check: run.check, events: run.result.events }, null, 2),
   );
-  return { task: task.id, reward: run.reward, stopReason: run.result.stopReason, turns: turns.length, summary, elapsedMs, dir };
+  return {
+    task: task.id,
+    reward: run.reward,
+    stopReason: run.result.stopReason,
+    turns: turns.length,
+    summary,
+    elapsedMs,
+    dir,
+    ...(run.result.stopText != null ? { error: run.result.stopText } : {}),
+  };
 }

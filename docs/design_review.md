@@ -1,5 +1,9 @@
 # Skein — triage of the design critique
 
+> **Note (historical).** This triage predates the IR revision; its risks/questions (index
+> blow-up, the working set, the criterion) refer to the earlier model. Current shape,
+> operations and context — `docs/ir_semantics.md`; as-built — `docs/ir.md`.
+
 > Russian mirror — `docs/design_review_ru.md`.
 
 Status: working note and record of outcomes. Source: an external model's critique
@@ -168,7 +172,7 @@ the behaviour, the agent is deceived: the context says "settled".
 - **Verdict:** Reframed; partly applied.
 - **Why:** an **LLM** summary in the projection is explicitly a listed risk
   (`docs/concepts.md`: the savings vanish). Part D1/D2 is the deterministic
-  version for command output: mechanical head+tail excerpt plus a pointer. Any
+  version for command output: mechanical head (inspection) / tail (command) excerpt plus a pointer. Any
   compaction must stay deterministic and keep the graph links.
 - **Action:** if pursued, aggregate deterministically (e.g. group old
   observations), never LLM-summarize.
