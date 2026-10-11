@@ -25,7 +25,7 @@ transcript. The model's context is a fresh projection each turn, not a message t
 **Doxa and logos.** The conceptual frame is the split between *doxa* and *logos*:
 
 - **doxa** is the language model. It invents well but is not responsible for the truth of
-  what it invents, so it only *proposes* exactly one move per turn;
+  what it invents, so it only *proposes* one or more moves per turn (a batch);
 - **logos** is the deterministic engine together with the tools and the environment. It
   runs commands, records their results in the journal, recomputes the derived facts and
   builds the projection. Logos does not invent content — it decides whether a proposed
@@ -68,7 +68,7 @@ code identifiers; they are not translated.
 
 | Term | Meaning |
 |---|---|
-| **doxa** | the language model; it proposes exactly one move per turn |
+| **doxa** | the language model; it proposes one or more moves per turn (a batch) |
 | **logos** | the deterministic engine: it runs commands, keeps the journal, recomputes the facts, builds the projection |
 | **arbiter** | the external authority: it sets the first request and accepts the final result from outside |
 
@@ -151,7 +151,7 @@ projection.
                     append-only        pure              pure
   doxa proposal ─▶ journal (Event[]) ──fold──▶ State ──project──▶ Context ──▶ doxa
         ▲                                                              │
-        └──── one operator per turn, chosen from the admissible moves ──┘
+        └──── one or more operators per turn, chosen from the admissible moves ──┘
 ```
 
 - **Journal** — `Event[]`, the only truth (`add_node`, `add_edge`, `descend`, `return`,
@@ -161,7 +161,7 @@ projection.
 - **Context** — `project(state)`: the traversal branch (`path`) with its containers, the
   global constraints, the latest full result, the working set, the call summary, the
   admissible moves, the budget.
-- **Doxa** — reads the `Context` and proposes exactly one operator (`create_goal` /
+- **Doxa** — reads the `Context` and proposes one or more operators (a batch) (`create_goal` /
   `apply` / `stop` / `decline`; `recall`/`search` are read-only addressing).
 
 Nothing doxa "thinks" is stored. The plan is a note to self; the trace is the tree.
@@ -257,7 +257,7 @@ the admissible moves. Everything else is one `recall`/`search` away.
   goal `I` is stopped (`request_addressed`). Acceptance of the request stays external — the
   arbiter does it.
 - **Nothing happens "by itself".** The engine does not run the plan, does not close goals
-  on an exit code, and does not pick steps — each turn exactly one move is made by doxa.
+  on an exit code, and does not pick steps — each turn one or more moves are made by doxa.
 
 ### 4.3 How the tree is arranged: plan, alternatives and `stop`
 

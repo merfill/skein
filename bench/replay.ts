@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { loadSettings } from "../src/config/settings";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
-import type { Action, Proposal } from "../src/llm/schemas";
+import type { Action, Proposals } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
 import { buildMessages } from "../src/loop/propose";
 import { TurnMeter } from "./metrics";
@@ -114,7 +114,7 @@ for (const turn of turns) {
   const meter = new TurnMeter();
   let lastFinish: string | undefined;
   try {
-    const proposal: Proposal = await invokeTools(model, buildMessages(turn.context), {
+    const proposal: Proposals = await invokeTools(model, buildMessages(turn.context), {
       callbacks: [meter],
       settings,
       rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens, model: modelName }),
@@ -126,7 +126,7 @@ for (const turn of turns) {
     ok += 1;
     outputTokens += meter.outputTokens;
     maxOut = Math.max(maxOut, meter.outputTokens);
-    const got = summaryOf(proposal.action);
+    const got = summaryOf(proposal.actions[0]);
     const same = turn.operator !== undefined && got.operator === turn.operator && got.tool === turn.tool;
     if (turn.operator !== undefined) {
       if (same) match += 1;
@@ -137,7 +137,7 @@ for (const turn of turns) {
     console.log(
       `t${turn.turn} OK op=${gotText} rec=${recText} ${same ? "=" : "≠"} th=${proposal.thought.length} out=${meter.outputTokens} finish=${lastFinish ?? "?"}`,
     );
-    if (full) console.log(`    ${JSON.stringify(proposal.action).slice(0, 1400)}`);
+    if (full) console.log(`    ${JSON.stringify(proposal.actions).slice(0, 1400)}`);
   } catch (error) {
     fail += 1;
     console.log(`t${turn.turn} FAIL out=${meter.outputTokens} finish=${lastFinish ?? "?"} ${(error as Error).message.slice(0, 140)}`);

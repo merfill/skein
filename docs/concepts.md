@@ -31,19 +31,20 @@ A request is interpreted **once** as a goal (`has_goal`); the interpretation is 
 now. A non-actionable request is **declined** instead (`no_goal` → `unactionable`).
 
 **The arm is ReAct in place.** Within one level — an arm — a goal is proposed whose
-plan materializes exactly one item (a command); that item is executed on its own turn;
-its result is recorded (`observation`/`mutate`) and shown to the doxa; the doxa
-then either adds the next node or stops. This is the ReAct loop unchanged: one step per
-turn, the next chosen from the result. What ReAct cannot do is *keep* it — here every
+plan gains one item per command; each command is executed, its result recorded
+(`observation`/`mutate`) and shown to the doxa; the doxa then either adds the next node or
+stops. This is the ReAct loop unchanged: the next move is chosen from the results (a turn
+may carry several independent commands). What ReAct cannot do is *keep* it — here every
 step is an event in the append-only journal. An arm stops being flat only when a step
 **branches**: the doxa proposes an alternative to that step (another command) or
 decomposes it into a composite sub-goal — and each branch is still an arm, i.e. ReAct
 again, one level down. In this sense the tree is "ReAct unwound": not a different
 policy, but ReAct plus explicit memory, branching, and a termination criterion.
 
-- Only the goal's first step is materialized as a plan item; later steps are chosen one at
+- Only the goal's first step is materialized as a plan item; later steps are chosen a turn at
   a time. The plan's `item` edges append in order, and
-  the **last** is the current step. The tree grows one node per turn.
+  the **last** is the current step. A turn appends one item per command (a batch may append
+  several).
 - With no alternatives, the tree is a flat, typed, addressable list — exactly the
   ReAct limit, no worse.
 - The tree buys what a tape cannot: an explicit **termination criterion** (the
@@ -76,7 +77,7 @@ Three consequences used throughout:
 
 The frame comes from the doxa/logos distinction (Ankyra, `doxa_and_logos.tex`):
 
-- **Doxa** is the LLM. It only *proposes*: exactly one operator per turn
+- **Doxa** is the LLM. It only *proposes*: one or more operators per turn (a batch)
   (`create_goal`, `apply`, `stop`, `decline`; `recall`/`search` are read-only addressing). Its
   thought is narrative and stays out of the IR. A proposed goal enters `open`; it is
   never at once closed.
@@ -131,13 +132,13 @@ project → propose → classify → execute → progress
 ```
 
 1. `project` builds the context (a slice of the tree).
-2. `propose` asks doxa for exactly one operator.
+2. `propose` asks doxa for one or more operators (a batch).
 3. `classify` gates it (the logos decides admissibility).
 4. `execute` applies it deterministically, appending events.
 5. `progress` stops when the request's goal is stopped (the run ends), on no progress, or
    on the budget.
 
-One proposal per turn, so every turn leaves a verifiable trace.
+One move per turn (one or more independent calls), so every turn leaves a verifiable trace.
 
 ## Traversal: the spine and the arms
 

@@ -21,6 +21,8 @@ export interface TurnMetric {
   turn: number;
   operator: string;
   tool: string;
+  // All tools of the turn's move (a batch); absent or single for a one-call turn.
+  tools?: string[];
   chars: number;
   refused: boolean;
   llmCalls: number;
@@ -103,9 +105,9 @@ export function summarize(turns: TurnMetric[]): MetricsSummary {
   const totals: MetricTotals = {
     turns: turns.length,
     llmCalls: 0,
-    // Each turn is exactly one proposed tool call (tool_choice is "required"); retries
-    // within a turn add LLM calls, not tool calls. A refused proposal is still a call.
-    toolCalls: turns.length,
+    // A turn is one doxa move: one or more tool calls (tool_choice is "required"; a batch
+    // may carry several). Retries within a turn add LLM calls, not tool calls.
+    toolCalls: 0,
     accepted: 0,
     refused: 0,
     inputTokens: 0,
@@ -136,8 +138,20 @@ export function summarize(turns: TurnMetric[]): MetricsSummary {
       cost += turn.cost;
       costSeen = true;
     }
-    bump((byTool[turn.tool] ??= { calls: 0, input: 0, output: 0, reasoning: 0 }), turn);
     bump((byOperator[turn.operator] ??= { calls: 0, input: 0, output: 0, reasoning: 0 }), turn);
+    // Every tool of the move counts as a call; the turn's tokens are attributed once (to the
+    // first tool) so a batch's shared usage is not multiplied.
+    const tools = turn.tools ?? [turn.tool];
+    totals.toolCalls += tools.length;
+    tools.forEach((tool, index) => {
+      const bucket = (byTool[tool] ??= { calls: 0, input: 0, output: 0, reasoning: 0 });
+      bucket.calls += 1;
+      if (index === 0) {
+        bucket.input += turn.inputTokens;
+        bucket.output += turn.outputTokens;
+        bucket.reasoning += turn.reasoningTokens;
+      }
+    });
   }
   totals.freshInput = totals.inputTokens - totals.cacheRead;
   totals.visibleOutput = totals.outputTokens - totals.reasoningTokens;

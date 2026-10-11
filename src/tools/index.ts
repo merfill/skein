@@ -770,7 +770,7 @@ export function executeAction(
         space: "work",
         kind: "action",
         label: label ?? command,
-        payload: { command, ...(extra ?? {}) },
+        payload: { command, turn, ...(extra ?? {}) },
         seq: actionSeq,
       },
     });

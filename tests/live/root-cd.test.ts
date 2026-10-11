@@ -72,12 +72,12 @@ describe.skipIf(!settings.live)("workspace-root criterion (live)", () => {
     it(`${testCase.name}: done_when runs the criterion from the workspace root`, async () => {
       const model = createChatModel(settings);
       const proposal = await invokeTools(model, buildMessages(requestContext(testCase.request)));
-      console.info(`[${testCase.name}] ${JSON.stringify(proposal.action).slice(0, 300)}`);
+      console.info(`[${testCase.name}] ${JSON.stringify(proposal.actions[0]!).slice(0, 300)}`);
 
-      expect(proposal.action.operator, "an open request is interpreted").toBe("create_goal");
-      if (proposal.action.operator !== "create_goal") return;
+      expect(proposal.actions[0]!.operator, "an open request is interpreted").toBe("create_goal");
+      if (proposal.actions[0]!.operator !== "create_goal") return;
 
-      const command = proposal.action.command.trim();
+      const command = proposal.actions[0]!.command.trim();
       expect(command, "the first plan command keeps the criterion command").toContain(testCase.command);
       if (testCase.subdir === null) {
         expect(command, "a root-level criterion needs no cd prefix").not.toMatch(/^cd\s/);

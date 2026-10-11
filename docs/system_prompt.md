@@ -1,10 +1,8 @@
 # Skein — system prompt: behavior and blocks
 
-> **Note (IR revision folded; a next stage).** The prompt is now split into a stable **base**
-> and **node instructions** (request/goal) — see `src/loop/prompt/blocks.ts` and
-> `docs/ir_semantics.md` §6–7. The per-block detail below predates that split and the message
-> tape; the composite base/node prompt is the following stage, so this document is expected to
-> change.
+> **Note.** The prompt is split into a stable **base** and **node instructions** (request/goal)
+> — see `src/loop/prompt/blocks.ts` and `docs/ir_semantics.md` §6–7. A block's text is a system
+> message; the tool contract is separate (`PROPOSAL_TOOLS` → the request's `tools` field).
 
 > Russian mirror — `docs/system_prompt_ru.md`.
 
@@ -32,19 +30,25 @@ L2 is under the gate, L3 is acceptance.
 
 ## 1. Assembly model
 
-- The prompt is assembled in `src/loop/prompt/index.ts` from `PROMPT_BLOCKS`
-  (`src/loop/prompt/blocks.ts`): `SYSTEM_PROMPT = PROMPT_BLOCKS.map(b => b.text).join("\n\n")`.
+- The prompt has a stable **base** (`BASE_PROMPT`, true on any move) and per-situation **node
+  instructions** (`NODE_INSTRUCTIONS`, keyed by `Situation`: `request` / `goal`), assembled in
+  `src/loop/prompt/blocks.ts` (re-exported by `src/loop/prompt/index.ts`): each is its blocks'
+  texts joined with `\n\n`.
 - A block is `{ id: string; text: string }`; the IDs are stable (B1…).
-- `src/loop/propose.ts` re-exports `SYSTEM_PROMPT` (keeps the tests' import path).
-- The technical tool contract is **generated from the registry** `PROPOSAL_TOOLS`
-  (`src/llm/tools.ts`), not copied into the text (Phase 2).
+- `src/loop/propose.ts` puts `BASE_PROMPT` then the situation's instruction into the message
+  list (`docs/ir_semantics.md` §6).
+- The tool contract (names, parameters, descriptions) is **not** copied into the prompt text:
+  it is sent as the request's `tools` field (native function-calling), generated from the
+  single registry `PROPOSAL_TOOLS` (`src/llm/tools.ts`). The prompt only tells the model to
+  call the available tools.
 
 **Assembly invariants:**
 
 1. one block = one behavior; no duplication between blocks;
 2. every behavior has an ID and a §2 entry;
 3. the assembled prompt equals the concatenation of blocks (checked by L1);
-4. the tool names match the registry (checked by L1).
+4. the prompt does **not** repeat the tool descriptions — they ship in the request's `tools`
+   (checked by L1).
 
 ## 2. Blocks
 
@@ -54,51 +58,59 @@ Current blocks:
 
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
-| B1 | Frame: the doxa proposes exactly one operator, the logos decides; the context is a message tape rebuilt each turn | `ir_semantics` §1, §7 | in code |
-| B2 | Capabilities from `FRAGMENT`; anything else is outside the fragment | `src/ir/fragment.ts` | in code |
-| B6 | Goal from the request: literal commands verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
-| B7 | Work one command per turn; `apply` follows the outcome; a sub-goal decomposes a step; `stop` closes the goal (no criterion); a large result body is addressed by id with `recall`/`search` | `ir_semantics` §4.1 | in code |
-| B12 | Tool contract: flat names generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
-| B13 | Output discipline: `thought` ≤1 sentence, exactly one call; output+reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning | `tests/prompt.test.ts` | in code |
-| B14 | Streams: stdout/stderr separate (avoid `2>&1`/`&>`); a pipe hides the exit code — add `set -o pipefail` when it matters | `tools` §4.3 | in code |
-| B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read | `ir_semantics` §9 | in code (trimmed) |
+| B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls); the context is a message tape rebuilt each turn | `ir_semantics` §1, §7 | in code |
+| B2 | Capabilities, listed as plain labels from `FRAGMENT` | `src/ir/fragment.ts` | in code |
+| B6 | Goal from the request: interpret once, literal command verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
+| B7 | Loop: search → implement → verify; batch independent reads; once the exact change is named, `edit` at once; build and run the tests, then `stop` on success. After each result the model chooses the next move, the engine only places it (success → new step, failure → alternative/sub-goal); `stop` closes the goal (no criterion) | `ir_semantics` §4.1 | in code |
+| B18 | Micro-examples of a move: recon in one batch; `edit` with the exact text; finish with `stop` | `tests/prompt.test.ts` | in code |
+| B13 | Output discipline: keep reasoning short; never reconstruct code from memory (use `read`/`grep`/`webfetch`); no code snippets in reasoning | `tests/prompt.test.ts` | in code |
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
-bullet in B7), **B17** (foreground — now in the `run` description). Also cut: **B10** (the
+bullet in B7), **B17** (foreground — now in the `bash` description). Also cut: **B10** (the
 failure-diagnosis playbook) and the localize→edit trigger from **B16**, and the
-diff/localization steering from the `fetch`/`grep` descriptions. The rationale: these were
+diff/localization steering from the `webfetch`/`grep` descriptions. The rationale: these were
 opinionated strategy heuristics; the prompt now keeps only the engine contract, and a generic
 coding model strategizes from the tape and the tool descriptions.
 
+Then (Phase 13) the prompt drops every tool mechanic and moves to the `tools` field: **B12**
+(the tool index — a verbatim copy of the `tools` descriptions), **B14** (stream discipline — in
+the `bash` description) and **B16** (constraints/stale-read — in the `edit`/`write` descriptions
+and enforced by the engine) are gone; **B1**/**B2**/**B13** are reworded as a plain coding
+agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contract.
+
 ### Per-block detail
 
-- **B1** sets the role: the doxa only proposes; refusals and tool failures are the only facts
-  the engine adds. The context is a message tape rebuilt from the tree each turn, not a
-  dialogue.
-- **B2** lists `FRAGMENT` (inspect/modify/execute/verify/abduce).
+- **B1** frames a plain coding agent with access to the files and directories on disk; it makes
+  one or more moves per turn, which the engine executes in order and records. The context is a
+  message tape rebuilt from the tree each turn, not a dialogue — nothing off the tape is known.
+  A batch must be independent: no call may depend on a sibling's result.
+- **B2** lists `FRAGMENT` as plain labels (read/search, edit/write, run commands, fetch a
+  reference, split work into steps).
 - **B6** forbids guessing a command; the first command is literal, from the workspace root,
   with a `cd <dir> &&` prefix in a subdirectory. If the request names no command, the first
   item is a discovery command (`ls`, `cat README.md`). The same rule is in the `create_goal`
-  `description` (B12) — the schema the model sees on every call.
-- **B7** fixes the loop: work ONE command per turn; `apply` follows the outcome of the current
-  step (a SUCCEEDED command is a new plan item, a FAILED one a new alternative marked
-  `alternative to step …`). `create_goal` while the goal is open decomposes the step into a
-  sub-goal. `stop` closes the goal and is the only way to finish it (no criterion gate). A
-  large result body is addressed by id: `recall { id, start?, end? }` re-reads a fragment,
-  `search { id, pattern }` finds a pattern inside it.
-- **B10** was removed: the failure→cause playbook (wrong-directory vs unbuilt-tree) was an
-  opinionated heuristic; the log on the tape and the tool descriptions carry it.
-- **B12** lists the tools; generated from `PROPOSAL_TOOLS`, so drift is impossible.
-- **B13** bounds `thought` (≤1 sentence; a decision, not analysis) and keeps output/reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning (to see code, `read`/`grep`/`webfetch`).
-- **B14** keeps stdout/stderr separate and warns that a pipe hides the exit code (add `set -o pipefail` when a failure must be seen); pipes themselves are allowed.
-- **B16** keeps only the unique safety rules (constraints, stale read); the localize→edit
-  trigger was removed as a strategy crutch.
+  `description` — the schema the model sees on every call.
+- **B7** fixes the loop **search → implement → verify**: search first and widely (a batch of
+  independent reads/greps), and once the exact change is named, `edit`/`write` at once; then
+  build and run the tests, and `stop` on success. After each result the model chooses the next
+  move; the engine only places it: a SUCCEEDED command becomes a new step, a FAILED/timed-out
+  one an alternative of the same step (another command, or `create_goal` to split it into a
+  sub-goal). `stop` closes the goal and is the only way to finish it (no criterion gate).
+- **B18** gives short micro-examples of a move (recon in one batch; `edit` with the exact text;
+  finish with `stop`) to anchor the form of a move.
+- **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
+  reasoning (to see code, `read`/`grep`/`webfetch`).
+- **B12/B14/B16** no longer exist as blocks: the tool names/parameters/descriptions, the
+  stdout/stderr + `pipefail` guidance and the constraints/stale-read rules live in the tool
+  `description`s (`src/llm/tools.ts`) and, where enforceable, in the engine (repeat and
+  `stale_base` refusals).
 
 ## 3. Cross-cutting invariants
 
 1. no contradictions between blocks (checked by review and L1 phrasings);
-2. every registry tool is named callably (L1, Phase 2);
+2. the prompt does not repeat the tool descriptions — they ship in the request's `tools`
+   (L1, Phase 13);
 3. the prompt's character budget is an **open question** (§6): no target is fixed and no
    test enforces one.
 
@@ -171,14 +183,30 @@ coding model strategizes from the tape and the tool descriptions.
   `toProposal`/`modelCall` translate both ways (`docs/ir_semantics.md` §7). `bash` gained
   `workdir`/`timeout` (`OP-AP-RUN-3`) and B14 was softened (pipes are allowed) — the hard
   pipe ban was a legacy of the old `run` that pushed the model into awkward commands.
+- **Phase 13 (2026-10-11).** Prompt-by-prompt trim + the **batch** contract. The engine now
+  accepts several tool calls in one doxa move (a batch): `invokeTools` maps every call,
+  `executeNode` runs them in order in one turn and a terminal move (`create_goal`/`stop`/
+  `decline`) ends the batch; the projection renders a batch as one `assistant` with N
+  `tool_calls` + N `tool` results (`docs/ir_semantics.md` §7). The prompt was rewritten for a
+  plain coding agent: **B1** drops the doxa/logos framing, **B2** is plain labels, **B13** drops
+  the discarded `thought` ritual, **B7** is trimmed to the situational contract, and **B12**/
+  **B14**/**B16** are removed (their content lives in the tool descriptions / engine). Base
+  prompt 7728 → 973 characters.
+- **Phase 14 (2026-10-11).** Structural prompt rewrite (S1–S4): a stable base (contract +
+  capabilities + output discipline), the request situation (B6) and the goal situation (B7 +
+  micro-examples B18). Block **B12** (the tool index — a verbatim copy of the `tools`
+  descriptions) is removed for good: the descriptions ship only in the request's `tools`, as
+  invariant §1.4 requires. Motivated by a controlled A/B on `fix-ocaml-gc --net on` (see
+  `docs/benches/best_bench.md`): with the index the model read and diffed more, made one edit
+  and never stopped; without it — three edits, self-stop and half the cost.
 
 ## 5. Test map
 
 | Level | Where | What it checks |
 |---|---|---|
-| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; stream separation + `pipefail`; workspace root (prompt + `create_goal` description) |
-| L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is named; no `apply {`/`{ tool:` |
-| L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7/B10/B16) |
+| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; the prompt does not repeat tool descriptions; stream separation + `pipefail` in the `bash` description; stale-read safeguard in `edit`/`write`; workspace root (prompt + `create_goal` description) |
+| L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is registered; no `apply {`/`{ tool:` |
+| L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7) |
 | L3 | `bench/`, `docs/benches/bench_report.md` | acceptance; the controlled experiment (Phase 5) |
 
 ## 6. Open questions

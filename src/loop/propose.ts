@@ -3,11 +3,11 @@ import type { BaseMessage } from "@langchain/core/messages";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 
 import type { Context, TapeMessage } from "../ir/project";
-import type { Proposal } from "../llm/schemas";
+import type { Proposals } from "../llm/schemas";
 import { invokeTools } from "../llm/structured";
 import { BASE_PROMPT, NODE_INSTRUCTIONS } from "./prompt";
 
-export type Proposer = (context: Context) => Promise<Proposal>;
+export type Proposer = (context: Context) => Promise<Proposals>;
 
 export { BASE_PROMPT };
 
@@ -19,12 +19,12 @@ const messageText = (message: BaseMessage): string =>
 // it. Only the request is a `user` turn — no result is ever smuggled in as a user message.
 function toMessage(message: TapeMessage): BaseMessage {
   if (message.role === "assistant") {
-    if (message.call !== undefined) {
+    const calls =
+      message.calls ?? (message.call !== undefined ? [message.call] : []);
+    if (calls.length > 0) {
       return new AIMessage({
         content: message.text,
-        tool_calls: [
-          { name: message.call.name, args: message.call.args, id: message.call.id, type: "tool_call" },
-        ],
+        tool_calls: calls.map((call) => ({ name: call.name, args: call.args, id: call.id, type: "tool_call" })),
       });
     }
     return new AIMessage(message.text);
@@ -62,7 +62,7 @@ export function promptText(context: Context): string {
   return buildMessages(context).map(messageText).join("\n\n");
 }
 
-export async function propose(model: BaseChatModel, context: Context): Promise<Proposal> {
+export async function propose(model: BaseChatModel, context: Context): Promise<Proposals> {
   return invokeTools(model, buildMessages(context));
 }
 

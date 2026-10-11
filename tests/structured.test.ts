@@ -234,7 +234,27 @@ describe("tool calling", () => {
     } as unknown as BaseChatModel;
     const proposal = await invokeTools(model, [new HumanMessage("go")]);
     expect(proposal.thought).toBe("do it");
-    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+  });
+
+  it("invokeTools maps every call of a batch move", async () => {
+    const model = {
+      bindTools: () => ({
+        invoke: async () => ({
+          content: "probe",
+          tool_calls: [
+            { name: "read", args: { filePath: "a" } },
+            { name: "bash", args: { command: "ls" } },
+          ],
+        }),
+      }),
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")]);
+    expect(proposal.thought).toBe("probe");
+    expect(proposal.actions).toEqual([
+      { operator: "apply", action: { tool: "read", path: "a" } },
+      { operator: "apply", action: { tool: "bash", command: "ls" } },
+    ]);
   });
 
   it("invokeTools repairs once when the model called no tool", async () => {
@@ -252,7 +272,7 @@ describe("tool calling", () => {
     } as unknown as BaseChatModel;
     const proposal = await invokeTools(model, [new HumanMessage("go")]);
     expect(calls).toBe(2);
-    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
   it("invokeTools disables reasoning on a truncated no-tool response", async () => {
@@ -279,7 +299,7 @@ describe("tool calling", () => {
     // rebuilds with reasoning disabled so the model must answer with a tool call.
     expect(rebuilds).toHaveLength(1);
     expect(rebuilds[0]?.reasoningOff).toBe(true);
-    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
   it("invokeTools bounds a truncation storm: one brevity retry, then throws", async () => {
@@ -314,7 +334,7 @@ describe("tool calling", () => {
       retryDelayMs: 0,
     });
     expect(calls).toBe(3);
-    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "list" } });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
   it("invokeTools gives up after the retries are exhausted", async () => {
@@ -350,7 +370,7 @@ describe("tool calling", () => {
     } as unknown as BaseChatModel;
     const proposal = await invokeTools(model, [new HumanMessage("go")]);
     expect(calls).toBe(2);
-    expect(proposal.action).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
   });
 });
 

@@ -1,34 +1,38 @@
 import type { TapeMessage } from "../src/ir/project";
 
 // The tape invariant, independent of any hand-written expectation: an `assistant.tool_calls`
-// move is immediately answered by a `tool` message with the same id, every `tool` result
-// answers a call, and call ids are unique. A `stop`/`decline`/legacy assistant text (no call)
-// is terminal and allowed. Asserted on every projected tape (contract tests + random trees)
-// so a structural regression fails loudly, not in the provider.
+// move — a single `call` or a batch `calls` — is immediately answered by one `tool` message
+// per call, in the same order; every `tool` result answers a call; call ids are unique. A
+// `stop`/`decline`/legacy assistant text (no call) is terminal and allowed. Asserted on every
+// projected tape (contract tests + random trees) so a structural regression fails loudly, not
+// in the provider.
 export function assertTapeContract(history: readonly TapeMessage[]): void {
   const answered = new Set<string>();
-  for (let i = 0; i < history.length; i += 1) {
+  let i = 0;
+  while (i < history.length) {
     const message = history[i]!;
-    if (message.role === "tool") {
-      if (message.callId === undefined) {
-        throw new Error(`tape invariant: tool turn #${i} has no callId`);
+    if (message.role !== "assistant") {
+      if (message.role === "tool") {
+        throw new Error(`tape invariant: tool result #${i} does not answer a preceding call`);
       }
-      const previous = history[i - 1];
-      if (previous?.role !== "assistant" || previous.call?.id !== message.callId) {
-        throw new Error(
-          `tape invariant: tool result #${i} (${message.callId}) does not answer the preceding call`,
-        );
-      }
-      answered.add(message.callId);
+      i += 1;
+      continue;
     }
-    if (message.role === "assistant" && message.call !== undefined) {
-      if (answered.has(message.call.id)) {
-        throw new Error(`tape invariant: duplicate call id ${message.call.id}`);
-      }
-      const next = history[i + 1];
-      if (next?.role !== "tool" || next.callId !== message.call.id) {
-        throw new Error(`tape invariant: call ${message.call.id} (#${i}) has no tool result`);
-      }
+    const calls = message.calls ?? (message.call !== undefined ? [message.call] : []);
+    if (calls.length === 0) {
+      i += 1;
+      continue;
     }
+    for (const call of calls) {
+      if (answered.has(call.id)) throw new Error(`tape invariant: duplicate call id ${call.id}`);
+    }
+    for (let j = 0; j < calls.length; j += 1) {
+      const result = history[i + 1 + j];
+      if (result?.role !== "tool" || result.callId !== calls[j]!.id) {
+        throw new Error(`tape invariant: call ${calls[j]!.id} (#${i}) has no tool result in order`);
+      }
+      answered.add(calls[j]!.id);
+    }
+    i += 1 + calls.length;
   }
 }

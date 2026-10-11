@@ -189,6 +189,6 @@ describe("resolveBody", () => {
       },
     ]);
     const proposal = { thought: "t", action: { operator: "recall" as const, id: "o2" } };
-    expect(classify(proposal, state).accept).toBe(true);
+    expect(classify(proposal.action, state).accept).toBe(true);
   });
 });

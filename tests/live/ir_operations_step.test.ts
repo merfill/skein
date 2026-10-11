@@ -156,9 +156,9 @@ describe.skipIf(!settings.live)("IR operations steps (live)", () => {
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           const model = createChatModel(settings);
           const proposal = await invokeTools(model, buildMessages(step.context));
-          console.info(`[${step.name}] attempt ${attempt}: ${JSON.stringify(proposal.action).slice(0, 240)}`);
+          console.info(`[${step.name}] attempt ${attempt}: ${JSON.stringify(proposal.actions[0]!).slice(0, 240)}`);
           try {
-            step.expectMove(proposal.action);
+            step.expectMove(proposal.actions[0]!);
             return;
           } catch (error) {
             errors.push((error as Error).message.split("\n")[0] ?? String(error));

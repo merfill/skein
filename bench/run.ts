@@ -24,7 +24,7 @@ import { type State } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { currentGoalId, goalPayload } from "../src/ir/traversal";
 import { createChatModel } from "../src/llm/client";
-import type { Action, Proposal } from "../src/llm/schemas";
+import type { Action, Proposals } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, promptText } from "../src/loop/propose";
@@ -195,7 +195,7 @@ async function main(): Promise<void> {
   const contexts: { turn: number; chars: number; context: Context }[] = [];
   const chat = createChatModel({ ...settings, model });
 
-  const propose = async (context: Context): Promise<Proposal> => {
+  const propose = async (context: Context): Promise<Proposals> => {
     const contextChars = promptText(context).length;
     contexts.push({ turn: turns.length, chars: contextChars, context });
     const meter = new TurnMeter();
@@ -204,10 +204,10 @@ async function main(): Promise<void> {
       callbacks: [meter],
     });
     const elapsedMs = Date.now() - started;
-    proposals.push(proposal.action);
+    proposals.push(...proposal.actions);
     turns.push({
       turn: turns.length,
-      action: actionName(proposal.action),
+      action: proposal.actions.map(actionName).join(","),
       contextChars,
       inputTokens: meter.inputTokens,
       outputTokens: meter.outputTokens,

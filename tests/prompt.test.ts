@@ -33,12 +33,14 @@ describe("system prompt: base + node assembly", () => {
   });
 });
 
-// The tool contract is single-sourced from the registry: the base prompt names the flat
-// tools by name and must not drift back to the old nested `apply { action: { tool } }` form.
+// The tool contract is single-sourced from the registry: the base prompt must not repeat the
+// tool descriptions (they ship in the request's `tools`) nor drift back to the old nested
+// `apply { action: { tool } }` form.
 describe("system prompt: tool contract", () => {
-  it("names every registered tool by its callable name", () => {
+  it("does not repeat the tool descriptions (they ship in the request's `tools`)", () => {
     for (const tool of PROPOSAL_TOOLS) {
-      expect(BASE_PROMPT).toContain(tool.function.name);
+      expect(BASE_PROMPT).not.toContain(`- ${tool.function.name}: ${tool.function.description}`);
+      expect(BASE_PROMPT).not.toContain(tool.function.description);
     }
   });
 
@@ -47,14 +49,15 @@ describe("system prompt: tool contract", () => {
     expect(BASE_PROMPT).not.toContain("{ tool:");
   });
 
-  it("keeps stream discipline in its own block (B14)", () => {
-    const b14 = PROMPT_BLOCKS.find((block) => block.id === "B14");
-    expect(b14?.text).toMatch(/stdout and stderr SEPARATELY/i);
+  it("keeps stream discipline in the `bash` tool description (single source)", () => {
+    const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
+    expect(bash?.function.description).toMatch(/stdout and stderr are captured SEPARATELY/i);
+    expect(bash?.function.description).toMatch(/pipefail/i);
   });
 
   it("keeps the stop condition in the goal instruction (B7): a goal closes by stop, no criterion", () => {
     const b7 = PROMPT_BLOCKS.find((block) => block.id === "B7");
-    expect(b7?.text).toMatch(/stop \{ why\? \} closes the goal/i);
+    expect(b7?.text).toMatch(/stop closes the goal/i);
     expect(b7?.text).toMatch(/no criterion/i);
     expect(NODE_INSTRUCTIONS.goal).toContain(b7?.text ?? "");
   });
@@ -145,15 +148,17 @@ describe("tool surface: no drift to a removed tool", () => {
 });
 
 describe("system prompt: stream discipline", () => {
+  const bashDescription = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash")?.function
+    .description;
+
   it("tells the model to keep stdout and stderr separate", () => {
-    expect(BASE_PROMPT).toMatch(/SEPARATELY/);
-    expect(BASE_PROMPT).toContain("2>&1");
-    expect(BASE_PROMPT).toContain("&>");
+    expect(bashDescription).toMatch(/stdout and stderr are captured SEPARATELY/i);
+    expect(bashDescription).toContain("2>&1");
   });
 
   it("allows pipes but warns that a pipe hides the exit code", () => {
-    expect(BASE_PROMPT).toMatch(/pipefail/);
-    expect(BASE_PROMPT).toMatch(/hides the exit code/i);
+    expect(bashDescription).toMatch(/pipefail/);
+    expect(bashDescription).toMatch(/hides the left side's exit code/i);
   });
 
   it("requires objective commands to be runnable from the workspace root", () => {
@@ -173,9 +178,13 @@ describe("system prompt: stream discipline", () => {
     expect(NODE_INSTRUCTIONS.goal).not.toMatch(/From a failure to its cause/);
   });
 
-  it("keeps the stale-read safety but no localize->edit trigger", () => {
-    expect(NODE_INSTRUCTIONS.goal).toMatch(/never edit on top of a stale read/);
-    expect(NODE_INSTRUCTIONS.goal).not.toMatch(/LOCALIZED|NAMED SUSPECT/);
+  it("keeps the stale-read safeguard in the edit/write descriptions, no localize->edit trigger", () => {
+    const edit = PROPOSAL_TOOLS.find((tool) => tool.function.name === "edit")?.function.description;
+    const write = PROPOSAL_TOOLS.find((tool) => tool.function.name === "write")?.function.description;
+    expect(edit).toMatch(/stale_base/);
+    expect(write).toMatch(/stale_base/);
+    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.goal}`;
+    expect(prompt).not.toMatch(/LOCALIZED|NAMED SUSPECT/);
   });
 
   it("no longer carries the external-reference / diff playbook", () => {

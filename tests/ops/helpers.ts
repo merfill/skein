@@ -48,7 +48,7 @@ export function classification(
   held: readonly string[] = [],
   queried: readonly string[] = [],
 ): Classification {
-  return classify({ thought: "", action }, fold(events), held, queried);
+  return classify(action, fold(events), held, queried);
 }
 
 // Shorthand constructor. `command` is the first concrete plan item; without it the plan is

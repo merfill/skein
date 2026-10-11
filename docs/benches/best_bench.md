@@ -24,12 +24,12 @@ writes `opencode.txt`).
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
 | 3 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
 | 4 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748,329 | 15,834 (2,720 + 13,114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
-| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
-| 6 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2,139,649 | 94,123 (4,568 + 89,555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
-| 7 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1,076,441 | 108,811 (4,307 + 104,504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
-| 8 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † | **1** | 31 | 31 | 702,484 | 80,872 (2,930 + 77,942) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T07-02-41-446Z-fix-ocaml-gc` |
-| 9 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **current, best net off** | **1** | 32 | 32 | 560,230 | 61,389 (2,838 + 58,551) | 93% | — | `bench/runs/sandbox-tasks/2026-10-11T10-38-01-061Z-fix-ocaml-gc` |
-| 10 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **current** | **1** | 40 | 40 | 922,297 | 65,495 (3,057 + 62,438) | 93% | — | `bench/runs/sandbox-tasks/2026-10-11T10-25-39-226Z-fix-ocaml-gc` |
+| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **current, best Skein** | **1** | 33 | 33 | 702,152 | 23,003 (2,898 + 20,105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
+| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **current, best net off** | **1** | 45 | 45 | 981,165 | 81,294 (3,577 + 77,717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
+| 7 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
+| 8 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2,139,649 | 94,123 (4,568 + 89,555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
+| 9 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1,076,441 | 108,811 (4,307 + 104,504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
+| 10 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † | **1** | 31 | 31 | 702,484 | 80,872 (2,930 + 77,942) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T07-02-41-446Z-fix-ocaml-gc` |
 
 **Condition notes.** † — a run **after the oracle was removed**: the task verifier (including
 Harbor's `tests/test.sh`, which names the broken tag `tag_purposefully_broken_sweeping_changes`)
@@ -42,28 +42,54 @@ only the agent across a column.
 
 | | opencode | Skein |
 |---|---|---|
-| **net on** | 7,388 reasoning / 1,430,864 in / 33 steps (#3) | 54,999 / 908,678 / 35 (#5) |
-| **net off** | 13,114 / 748,329 / 24 (#4) | 58,551 / 560,230 / 32 (#9) |
+| **net on** | 7,388 reasoning / 1,430,864 in / 33 steps (#3) | 20,105 / 702,152 / 33 (#5) |
+| **net off** | 13,114 / 748,329 / 24 (#4) | 77,717 / 981,165 / 45 (#6) |
 
-Removing the network slightly raised reasoning for both (opencode 7,388→13,114, Skein
-54,999→58,551), but the gap persists: **offline, opencode 13,114 vs Skein 58,551 (≈4.5×)**. So
-Skein's cost does not reduce to oracle access.
+Removing the network barely moves opencode (7,388→13,114) but sharply raises Skein's reasoning
+(20,105→77,717, ×3.9) and steps (33→45): with no oracle (the upstream `webfetch` → 403) the model
+churns through `bash` and burns reasoning. Offline the gap is even wider: **opencode 13,114 vs
+Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
+its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
+pair.
 
-## Baseline (reference point, 2026-10-11)
+## New reference point and the tool-index A/B (B12), 2026-10-11
 
-Two fresh runs on the current working tree — the reference point for subsequent changes (rows
-**#9** net off and **#10** net on in the leaderboard). State
-at recording: the `list`↔`glob` rename was **reverted** (`list { path?, include?, from? }`); in
-place are the native tool surface, `bash workdir`/`timeout`, the seed-action `call` fix (no
-`human OBSERVATION`) and the crash rendering. Both reward 1, one `edit`, the same one-line fix
-`p += Whsize_hd(hd);` → `p += wh;`, clean `stop = request_addressed`.
+The new reference point is row **#5**: net on, reward 1, a **self-`stop`**, **33 steps / 2.93₽** —
+today's best Skein run. State at recording: the prompt was structurally rewritten (Phase 14,
+S1–S4 — contract, request situation, goal situation); block **B12** (the tool index) is removed;
+in place are the native tool surface, `bash workdir`/`timeout`, the seed-action `call` fix (no
+`human OBSERVATION`) and the crash rendering; the `list`↔`glob` rename is **reverted**
+(`list { path?, include?, from? }`). The one-line fix `p += Whsize_hd(hd);` → `p += wh;` in
+`pool_sweep`; the model called `stop` itself.
 
-| condition | steps | tool calls | in | out (vis + rea) | cache | cap-hits (retries) | cost | run dir |
-|---|---|---|---|---|---|---|---|---|
-| **net on** | 40 | 40 | 922,297 | 65,495 (3,057 + 62,438) | 93% | 25, 29, 30 (3) | 12.06₽ | `bench/runs/sandbox-tasks/2026-10-11T10-25-39-226Z-fix-ocaml-gc` |
-| **net off** | 32 | 32 | 560,230 | 61,389 (2,838 + 58,551) | 93% | 21 (1) | 10.43₽ | `bench/runs/sandbox-tasks/2026-10-11T10-38-01-061Z-fix-ocaml-gc` |
+**How it came about.** The hypothesis was that the model's drift into a `bash` storm was caused
+by removing the tool index. We ran a controlled A/B: two `--net on --turns 40` runs on the same
+tree, differing **only** in whether B12 is in the prompt.
 
-For contrast, the same day's **reward-0 runs** (kept for the record, not in the top-10):
+| B12 | steps | tool calls | `edit` | `stop` | in | out (vis + rea) | cache | cost | run dir |
+|---|---|---|---|---|---|---|---|---|---|
+| **on** | 40 | 40 | 1 | **max_turns** | 1,043,903 | 56,162 (3,314 + 52,848) | 95% | 6.44₽ | `bench/runs/sandbox-tasks/2026-10-11T13-06-44-848Z-fix-ocaml-gc` |
+| **off** (#5) | 33 | 33 | 3 | **request_addressed** | 702,152 | 23,003 (2,898 + 20,105) | 88% | 2.93₽ | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
+
+Both solved the task (reward 1) — the model finds the edit either way. But with the index it read
+and diffed more, made **one** edit and **never stopped** (hit `max_turns`, rea 52,848); without
+it — **three** edits, a clean `stop` and **half** the cost. The reason: the tool descriptions in
+the prompt act as (badly written) anchoring examples the model imitates. **Decision: B12 is
+removed**; the descriptions stay only in the request's `tools` (invariant §1.4 of
+`docs/system_prompt.md`). Caveat: one run per arm — the direction is clear, but it is not
+statistics.
+
+**The current net on/off pair (Phase 14).** `--net off` on the same prompt — row **#6**: reward 1,
+self-`stop` at t44, but **45 steps / 6.04₽** (rea **77,717**, vis 3,577; in 981,165, fresh 80,301,
+cache 92%). Offline the upstream `webfetch` goes through the host allowlist proxy and gets **403**
+— all **4** attempts failed (t13, t18, t23, t31); the model fell into a `bash` storm (**27** calls
+vs 16 with network) and made the edit only at **t39** (vs t20). Two cap-hits (t32, t39, 8,192 rea
+each) are **24%** of the cost; the top-8 turns by reasoning are 63%. Net: without the oracle,
+reasoning ×3.9 and cost ×2.1, at nearly the same fresh input.
+
+For the record — the previous reference point (same tree, but the prompt **before** Phase 14,
+without B12): `2026-10-11T10-38-01` (net off, 32 steps, 58,551 rea, 10.43₽) and
+`2026-10-11T10-25-39` (net on, 40 steps, 62,438 rea, 12.06₽). The same day's **reward-0 runs**:
 `2026-10-11T09-18-55` (60 turns, 142,270 rea, 25.46₽) and `2026-10-11T10-04-08`
 (the `glob` rename experiment: 60 turns, 154,361 rea, 27.16₽ — `glob` never called).
 
@@ -108,30 +134,38 @@ inside the task image; the task's own verifier scores the result (`check.code = 
 `PASS test_tests_output`). Model `routerai/~deepseek/deepseek-v4-flash-latest`,
 `SKEIN_REASONING_EFFORT=low`, task budget 60 turns.
 
-- **net on (#5, `05-13`).** 35 steps, 35 tool calls (all accepted), a clean
-  `stop = request_addressed`; 4.85₽ — the best Skein run. The first run after the native-role
+- **net on (#5, `13-21`) — new best.** 33 steps, 33 tool calls, `edit` 3×, a clean
+  `stop = request_addressed`; **2.93₽** (rea 20,105; ~2.3k-char starting context — no tool
+  index). Phase 14 prompt (S1–S4), **B12 removed** — see the A/B above. Same one-line edit
+  `p += Whsize_hd(hd);` → `p += wh;` in `pool_sweep`; the verifier passed.
+- **net off, † (#6, `13-50`) — current net off.** 45 steps, 45 tool calls, `edit` 1×, a clean
+  `stop = request_addressed` at t44; **6.04₽** (rea 77,717; `bash` 27, `fetch` 4 — all 403).
+  With no oracle the edit came only at t39, after two cap-hits (t32, t39). Phase 14 prompt (B12
+  removed), the same one-line `pool_sweep` edit; the verifier passed.
+- **net on (#7, `05-13`).** 35 steps, 35 tool calls (all accepted), a clean
+  `stop = request_addressed`; 4.85₽. The first run after the native-role
   and deduplication fixes: the alternative marker no longer re-inlines a failure body, and for
   native nodes there is no marker at all. Context peak fell from 352k to 94,450 chars (−73%),
   fresh input to 79,494 (−59%), reasoning to 54,999 (−39%), cost by half. Same one-line edit in
   `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); the verifier passed. Per-turn reasoning is
   in `reasoning.ndjson`.
-- **net on (#6, `18-30`).** 41 steps, 41 tool calls (all accepted). The trimmed prompt — no
+- **net on (#8, `18-30`).** 41 steps, 41 tool calls (all accepted). The trimmed prompt — no
   `sketch`/`why`, plus a short-reasoning / no-recall-code rule in B13 — cut reasoning to 89,555
   (from 104,504 below) and closed cleanly (`stop = request_addressed`); 12.68₽. Same one-line
   edit in `pool_sweep` (`p += Whsize_hd(hd);` → `p += wh;`); verifier passed. It still fetched
   the upstream twice (the diff-seeking persists) and the context grew to 352k chars (peak); one
   completion-cap turn recovered via the reasoning-off retry. Per-turn reasoning is in
   `reasoning.ndjson`.
-- **net on (#7, `08-40`).** 50 steps, 50 tool calls (48 ok / 2 refused). The first reward-1 run
+- **net on (#9, `08-40`).** 50 steps, 50 tool calls (48 ok / 2 refused). The first reward-1 run
   on the revised IR. It localized by reading (`read`/`grep` over `runtime/shared_heap.c`),
   fetched the upstream `shared_heap.c`, diffed it, and made the same edit; it ended on
   `llm_error` (a model failure), not a self-`stop` — the work was already done. Wall time was
   not recorded.
-- **net off, † (#8).** The honest "no oracle and no network": the host `fetch`/background `run`
+- **net off, † (#10).** The honest "no oracle and no network": the host `fetch`/background `run`
   go through an allowlist proxy (github → 403; `fetch` was called 2× and failed). 31 steps, 31
   tool calls (all accepted), a clean `stop = request_addressed`; 13.78₽. Reasoning rose to
   **77,942** (in 702,484, fresh 55,060, cache 92%; context peak 78,572) — higher than with the
-  network (#5): without an oracle Skein has to derive the line by hand. Same one-line edit
+  network (#7): without an oracle Skein has to derive the line by hand. Same one-line edit
   `p += Whsize_hd(hd);` → `p += wh;`.
 
 ## Next
@@ -140,5 +174,6 @@ inside the task image; the task's own verifier scores the result (`check.code = 
   above.
 - The `net off` pair (Skein and opencode, marker †) is **done**; the honest 2×2 is above.
   Implemented: `sandbox-run.ts --net off` (host `fetch`/background `run` via the allowlist proxy).
-- Next: work out **why** Skein spends ~6× the reasoning on the same task with no oracle, and add
-  other agents/tasks.
+- Next: work out **why** Skein spends ~3× the reasoning with network (#5: 20,105 vs opencode
+  7,388) and ~5.9× without (#6: 77,717 vs 13,114), and add other agents/tasks. Phase 14 and the
+  B12 removal narrowed the gap from ~6× to ~3× (net on).

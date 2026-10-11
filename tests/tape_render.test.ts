@@ -47,7 +47,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
   it("goal(create_goal) and action/observation -> assistant.call + tool pairs", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = exec(interpretation("do it", "true"), [request()], w);
-    const ctx = project(exec(read("src/sum.mjs"), first.events, w).state);
+    const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
     // The goal is a native call + its tool result; the seed and the read are each the same.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],

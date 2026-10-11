@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Context } from "../../src/ir/project";
 import { childrenOf, fold, goalOf, hasStopped, planOf } from "../../src/ir/graph";
 import { runAgent } from "../../src/loop/graph";
-import type { Action, Proposal } from "../../src/llm/schemas";
+import type { Action, Proposals } from "../../src/llm/schemas";
 import { executeAction } from "../../src/tools";
 import {
   DEFAULT_FILES,
@@ -18,8 +18,8 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-function proposal(action: Action): Proposal {
-  return { thought: "", action };
+function proposal(action: Action): Proposals {
+  return { thought: "", actions: [action] };
 }
 
 describe("stop", () => {
@@ -57,7 +57,7 @@ describe("stop", () => {
   it("OP-ST-3 the loop ends when the request's goal is stopped (request_addressed)", async () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let index = 0;
-    const propose = async (_context: Context): Promise<Proposal> => {
+    const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) return proposal(interpretation("make true pass", "true"));
       if (index === 2) return proposal(run("true"));

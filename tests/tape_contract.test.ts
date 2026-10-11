@@ -58,7 +58,9 @@ const opened = (w: Workspace) => exec(interpretation("do it", "true"), [request(
 function goalStep(op: Action, w: Workspace) {
   const first = opened(w);
   const before = project(first.state);
-  const res = exec(op, first.events, w);
+  // The seed command ran on turn 0 (inside create_goal); the op is the NEXT turn, so it is a
+  // separate move (a batch would share one turn).
+  const res = exec(op, first.events, w, 1);
   return { before, after: project(res.state), nodes: kinds(res), res };
 }
 
@@ -188,7 +190,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
   it("read repeat: the second read appends a refusal that names the stored id", async () => {
     const w = ws();
     const first = opened(w);
-    const r1 = exec(read("src/sum.mjs"), first.events, w);
+    const r1 = exec(read("src/sum.mjs"), first.events, w, 1);
     const before = await tapeOf(project(r1.state));
     expect(before.slice(-2)).toEqual([
       { role: "assistant", call: { name: "read", args: { filePath: "src/sum.mjs" } } },
@@ -198,7 +200,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
         tool_call_id: expect.stringMatching(/^w:action:\d+$/),
       },
     ]);
-    const r2 = exec(read("src/sum.mjs"), r1.events, w);
+    const r2 = exec(read("src/sum.mjs"), r1.events, w, 2);
     expect(await tapeOf(project(r2.state))).toEqual([
       ...before,
       { role: "assistant", call: { name: "read", args: { filePath: "src/sum.mjs" } } },
@@ -237,6 +239,25 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
         tool_call_id: expect.stringMatching(/^w:action:\d+$/),
       },
     ]);
+  });
+
+  it("batch — two calls in one turn — is one assistant message with both calls", async () => {
+    const w = ws();
+    const first = opened(w);
+    // Both calls run on the SAME turn, so they belong to one doxa move (a batch).
+    const r1 = exec(read("src/sum.mjs"), first.events, w, 1);
+    const r2 = exec(run("echo one"), r1.events, w, 1);
+    const history = project(r2.state).history;
+    assertTapeContract(history);
+    const batch = history.find((message) => message.calls !== undefined);
+    expect(batch?.calls?.map((call) => call.name)).toEqual(["read", "bash"]);
+    // On the wire: one assistant message with two tool_calls, then two tool results.
+    const wireMessages = await wire(buildMessages(project(r2.state)));
+    const assistant = wireMessages.find((message) => (message.tool_calls?.length ?? 0) > 1);
+    expect(assistant?.tool_calls?.map((call) => call.function.name)).toEqual(["read", "bash"]);
+    expect(wireMessages.filter((message) => message.role === "tool").length).toBe(
+      wireMessages.filter((message) => message.tool_calls !== undefined).flatMap((m) => m.tool_calls ?? []).length,
+    );
   });
 });
 
@@ -293,7 +314,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
       },
     };
     const first = opened(ok);
-    const res = exec(fetchUrl("http://x/y.c"), first.events, ok);
+    const res = exec(fetchUrl("http://x/y.c"), first.events, ok, 1);
     expect(kinds(res)).toEqual(["action", "item", "file", "observation"]);
     expect((await tapeOf(project(res.state))).slice(-2)).toEqual([
       { role: "assistant", call: { name: "webfetch", args: { url: "http://x/y.c" } } },
@@ -306,7 +327,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
 
     const fail = { ...ws(), fetchTo: () => { throw new Error("boom"); } };
     const ffirst = opened(fail);
-    const fr = exec(fetchUrl("http://x/y.c"), ffirst.events, fail);
+    const fr = exec(fetchUrl("http://x/y.c"), ffirst.events, fail, 1);
     expect((await tapeOf(project(fr.state))).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[obs:\d+\] fetch failed: boom$/),
@@ -358,9 +379,9 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
   it("a recall result is appended as an assistant call + tool, no node", async () => {
     const w = ws();
     const first = opened(w);
-    const r = exec(run("echo hi"), first.events, w);
+    const r = exec(run("echo hi"), first.events, w, 1);
     const obs = r.outcome.turn.nodeId as string;
-    const rec = exec(recall(obs), r.events, w);
+    const rec = exec(recall(obs), r.events, w, 2);
     expect(rec.outcome.events.filter((e) => e.type === "add_node")).toHaveLength(0);
     const before = project(r.state);
     const retrieval = {
@@ -414,7 +435,7 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
   it("a refused structural move is appended as an assistant call + tool reason", async () => {
     const w = ws();
     const first = opened(w);
-    const r = exec(run("echo hi"), first.events, w);
+    const r = exec(run("echo hi"), first.events, w, 1);
     const obs = r.outcome.turn.nodeId as string;
     const action = recall(obs);
     const cls = classification(action, r.events, [obs]);

@@ -5,7 +5,7 @@ import { actionExecuted, childrenOf, currentVersion, fold, goalOf, hasStopped, l
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
-import type { Action, Proposal } from "../llm/schemas";
+import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
@@ -26,6 +26,10 @@ import { LoopState, type HeldEntry, type LoopStateType } from "./state";
 // (docs/benches/bench_report.md §4.4).
 const HELD_TURNS = 6;
 const MAX_HELD = 5;
+
+// A move that changes the focus or ends the run: it must be the last call of a batch, so
+// everything the model emitted after it is dropped (the state it reasoned from is gone).
+const TERMINAL = new Set<Action["operator"]>(["create_goal", "stop", "decline"]);
 
 // Upsert the fetched ids into the working set, each held for `turns` turns and refreshed
 // on every fetch. Level results do not go through here — they are kept structurally.
@@ -183,9 +187,9 @@ export function compileGraph(deps: AgentDeps) {
 
   const proposeNode = async (state: LoopStateType) => {
     const context = state.context ?? project(fold(state.events));
-    let proposal: Proposal;
+    let proposals: Proposals;
     try {
-      proposal = await deps.propose(context);
+      proposals = await deps.propose(context);
     } catch (error) {
       // A persistent model failure (e.g. the provider keeps truncating) must not crash
       // the run: stop gracefully with `llm_error` so the partial work is kept. The message
@@ -193,7 +197,7 @@ export function compileGraph(deps: AgentDeps) {
       const text = `llm_error: ${error instanceof Error ? error.message : String(error)}`;
       return {
         context,
-        proposal: null,
+        proposals: null,
         done: true,
         stopReason: "llm_error",
         stopText: text,
@@ -202,29 +206,14 @@ export function compileGraph(deps: AgentDeps) {
     }
     return {
       context,
-      proposal,
-      recent: [{ seq: state.turn, kind: "proposal" as const, text: proposal.thought }],
+      proposals,
+      recent: [{ seq: state.turn, kind: "proposal" as const, text: proposals.thought }],
     };
   };
 
-  const classifyNode = (state: LoopStateType) => {
-    if (!state.proposal) return { classification: null };
-    // The working set is engine-owned: the projection keeps the branch levels' results,
-    // and only `recall {id}` (execute) pins a body from elsewhere. The model does not
-    // declare what to show.
-    const classification = classify(
-      state.proposal,
-      fold(state.events),
-      state.held.map((entry) => entry.id),
-      state.queried.map((entry) => entry.id),
-    );
-    return { classification };
-  };
-
   const executeNode = (state: LoopStateType) => {
-    const classification = state.classification;
-    const proposal = state.proposal;
-    if (!proposal || !classification) {
+    const proposals = state.proposals;
+    if (!proposals || proposals.actions.length === 0) {
       return {
         turn: state.turn + 1,
         recent: [
@@ -232,63 +221,75 @@ export function compileGraph(deps: AgentDeps) {
         ],
       };
     }
-    if (!classification.accept) {
-      const reason = classification.reason ?? "rejected";
-      const text = `rejected ${describeTarget(proposal.action)}: ${reason}`;
-      const call = modelCall(proposal.action);
-      return {
-        events: [
-          {
-            type: "record_rejection" as const,
-            tool: proposal.action.operator,
-            target: describeTarget(proposal.action),
-            reason,
-            ...(classification.constraintId !== undefined
-              ? { constraintId: classification.constraintId }
-              : {}),
-            turn: state.turn,
-          },
-        ],
-        turn: state.turn + 1,
-        recent: [{ seq: state.turn, kind: "proposal" as const, text }],
-        rejection: { text, name: call.name, args: call.args },
-      };
+    // The batch is a single doxa move: one thought, N calls. The engine decides and runs
+    // each call in order against the state the previous calls left; a terminal move
+    // (create_goal/stop/decline) ends the batch (the rest of the message is dropped).
+    const events: Event[] = [];
+    const recent: LoopStateType["recent"] = [];
+    const moveKeys: string[] = [];
+    let held = state.held;
+    let queried = state.queried;
+    let rejection: LoopStateType["rejection"] = null;
+    let done = false;
+    let stopReason: string | null = null;
+    for (const action of proposals.actions) {
+      const current = fold([...state.events, ...events]);
+      const classification = classify(
+        action,
+        current,
+        held.map((entry) => entry.id),
+        queried.map((entry) => entry.id),
+      );
+      if (!classification.accept) {
+        const reason = classification.reason ?? "rejected";
+        const text = `rejected ${describeTarget(action)}: ${reason}`;
+        const call = modelCall(action);
+        events.push({
+          type: "record_rejection" as const,
+          tool: action.operator,
+          target: describeTarget(action),
+          reason,
+          ...(classification.constraintId !== undefined
+            ? { constraintId: classification.constraintId }
+            : {}),
+          turn: state.turn,
+        });
+        recent.push({ seq: state.turn, kind: "proposal" as const, text });
+        rejection = { text, name: call.name, args: call.args };
+        if (TERMINAL.has(action.operator)) break;
+        continue;
+      }
+      const outcome = executeAction(action, current, deps.workspace, state.turn);
+      events.push(...outcome.events);
+      recent.push(outcome.turn);
+      // `recall {id}` pins the fetched body; a tool may also ask to pin a result it produced
+      // (e.g. the materialized content of a failed edit), so the next move does not re-read.
+      const recallId = action.operator === "recall" ? action.id : undefined;
+      const pinIds = [...(recallId !== undefined ? [recallId] : []), ...(outcome.pin ?? [])];
+      if (pinIds.length > 0) held = pinHeld(held, pinIds, state.turn, heldTurns);
+      if (recallId !== undefined) queried = pinHeld(queried, [recallId], state.turn, heldTurns);
+      // An accepted `recall`/`search` adds no node, so its signature is the only progress
+      // signal (§2.8).
+      if (action.operator === "recall") {
+        moveKeys.push(`recall:${action.id}:${action.start ?? ""}:${action.end ?? ""}`);
+      } else if (action.operator === "search") {
+        moveKeys.push(`search:${action.id}:${action.pattern}`);
+      }
+      done = outcome.done;
+      if (outcome.stopReason !== null) stopReason = outcome.stopReason;
+      if (done) break;
+      if (TERMINAL.has(action.operator)) break;
     }
-    const outcome = executeAction(
-      proposal.action,
-      fold(state.events),
-      deps.workspace,
-      state.turn,
-    );
-    // `recall {id}` pins the fetched body; a tool may also ask to pin a result it produced
-    // (e.g. the materialized content of a failed edit), so the next move does not re-read.
-    const recallId =
-      proposal.action.operator === "recall" ? proposal.action.id : undefined;
-    const pinIds = [...(recallId !== undefined ? [recallId] : []), ...(outcome.pin ?? [])];
-    const held =
-      pinIds.length > 0 ? pinHeld(state.held, pinIds, state.turn, heldTurns) : state.held;
-    const queried =
-      recallId !== undefined
-        ? pinHeld(state.queried, [recallId], state.turn, heldTurns)
-        : state.queried;
-    // An accepted `recall`/`search` adds no node, so its signature is the only progress
-    // signal (§2.8).
-    const moveKey =
-      proposal.action.operator === "recall"
-        ? `recall:${proposal.action.id}:${proposal.action.start ?? ""}:${proposal.action.end ?? ""}`
-        : proposal.action.operator === "search"
-          ? `search:${proposal.action.id}:${proposal.action.pattern}`
-          : "";
     return {
-      events: outcome.events,
-      recent: [outcome.turn],
+      events,
+      recent,
       turn: state.turn + 1,
-      done: outcome.done,
-      stopReason: outcome.stopReason,
+      done,
+      stopReason,
       held,
       queried,
-      rejection: null,
-      moveKey,
+      rejection,
+      moveKey: moveKeys.join("|"),
     };
   };
 
@@ -328,13 +329,11 @@ export function compileGraph(deps: AgentDeps) {
   return new StateGraph(LoopState)
     .addNode("project", projectNode)
     .addNode("propose", proposeNode)
-    .addNode("classify", classifyNode)
     .addNode("execute", executeNode)
     .addNode("progress", progressNode)
     .addEdge(START, "project")
     .addEdge("project", "propose")
-    .addEdge("propose", "classify")
-    .addEdge("classify", "execute")
+    .addEdge("propose", "execute")
     .addEdge("execute", "progress")
     .addConditionalEdges("progress", route)
     .compile();

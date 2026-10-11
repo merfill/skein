@@ -2,8 +2,7 @@ import { Annotation } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
 import type { Context } from "../ir/project";
-import type { Proposal } from "../llm/schemas";
-import type { Classification } from "./classify";
+import type { Proposals } from "../llm/schemas";
 
 // One move rendered as a role-tagged turn, kept in loop state (not IR): a proposal (the
 // doxa's move) or a tool result. `nodeId` is the result node a tool turn produced, absent
@@ -37,8 +36,7 @@ export const LoopState = Annotation.Root({
     default: () => [],
   }),
   context: Annotation<Context | null>(last<Context | null>(null)),
-  proposal: Annotation<Proposal | null>(last<Proposal | null>(null)),
-  classification: Annotation<Classification | null>(last<Classification | null>(null)),
+  proposals: Annotation<Proposals | null>(last<Proposals | null>(null)),
   turn: Annotation<number>(last(0)),
   done: Annotation<boolean>(last(false)),
   stopReason: Annotation<string | null>(last<string | null>(null)),

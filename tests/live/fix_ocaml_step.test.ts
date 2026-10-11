@@ -53,15 +53,15 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
     it(`${step.name}: reacts to the error/refusal without merging streams`, async () => {
       const model = createChatModel(settings);
       const proposal = await invokeTools(model, buildMessages(withInstruction(step.context)));
-      console.info(`[${step.name}] ${JSON.stringify(proposal.action).slice(0, 400)}`);
+      console.info(`[${step.name}] ${JSON.stringify(proposal.actions[0]!).slice(0, 400)}`);
 
-      if (proposal.action.operator === "apply" && proposal.action.action.tool === "bash") {
-        const command = proposal.action.action.command ?? "";
+      if (proposal.actions[0]!.operator === "apply" && proposal.actions[0]!.action.tool === "bash") {
+        const command = proposal.actions[0]!.action.command ?? "";
         expect(command, "a proposed run must not merge stdout and stderr").not.toMatch(/2>&1|&>/);
       }
 
-      if (step.cwdReaction === true && proposal.action.operator === "create_goal") {
-        const command = proposal.action.command;
+      if (step.cwdReaction === true && proposal.actions[0]!.operator === "create_goal") {
+        const command = proposal.actions[0]!.command;
         expect(
           command.trim(),
           "a revised command must not repeat the bare workspace-root command",

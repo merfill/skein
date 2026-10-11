@@ -111,7 +111,7 @@ The process has two important properties:
   *monotone*. But the final answer may change when new information arrives. Every
   such change is recorded by a separate record (`Revision`) stating what was revised
   and why. In other words: knowledge changes, but the trace of it is not lost.
-- **one step at a time.** One cycle of consulting the doxa is exactly one proposal.
+- **one step at a time.** One cycle of consulting the doxa is one move (one or more calls).
   So every step is checkable: it is always visible at which step and why the state
   changed. The cycle stops when a decisive answer is obtained, when two consecutive
   steps changed nothing (`no_progress`), when the budget is exhausted, or when
@@ -532,7 +532,7 @@ context. The journal is the protocol by which every step can be checked.
 Between "proposed" and "accepted" stands a queue. A proposal goes there and waits for
 the logos' decision: the accepted one goes into the base, the rejected one is recorded
 as a refusal, the undecided one may wait for the next step. In the current cycle there
-is exactly one proposal per step, so the queue is effectively one-element; but as a
+is one move (one or more calls) per step, so the queue is effectively one-element; but as a
 concept it is needed — it is what separates a doxa proposal from a base fact.
 
 ### 5.4 The traversal stack — where we are in the tree

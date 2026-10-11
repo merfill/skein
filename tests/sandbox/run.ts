@@ -1,6 +1,6 @@
 import type { Event } from "../../src/ir/events";
 import type { State } from "../../src/ir/graph";
-import type { Action, Proposal } from "../../src/llm/schemas";
+import type { Action, Proposals } from "../../src/llm/schemas";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { Workspace } from "../../src/tools/workspace";
@@ -51,10 +51,10 @@ export async function runSandbox(
 // are plain `Action` values, so a test reads as the trajectory it exercises.
 export function scripted(steps: readonly Action[], fallback?: Action): Proposer {
   let index = 0;
-  return async (): Promise<Proposal> => {
+  return async (): Promise<Proposals> => {
     const action = index < steps.length ? steps[index] : fallback;
     index += 1;
     if (action === undefined) throw new Error("scripted proposer ran out of actions");
-    return { thought: "", action };
+    return { thought: "", actions: [action] };
   };
 }

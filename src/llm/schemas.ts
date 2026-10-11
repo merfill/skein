@@ -192,3 +192,11 @@ export const proposalSchema = z.object({
 });
 
 export type Proposal = z.infer<typeof proposalSchema>;
+
+// A doxa move: ONE thought (the assistant message text) plus one or more tool calls. The
+// engine decides and executes each call in order (a batch); a single call is the common case.
+// Calls sharing a move render as one `assistant.tool_calls` message with N calls + N results.
+export interface Proposals {
+  thought: string;
+  actions: Action[];
+}

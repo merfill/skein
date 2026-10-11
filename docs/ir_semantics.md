@@ -52,7 +52,7 @@ approach (alternative goals/commands) and deepens where a goal is worked by a pl
 
 | Role | Who | What it does | What it does not |
 |---|---|---|---|
-| **Doxa** | the LLM | proposes exactly one operator per turn | does not decide, does not derive |
+| **Doxa** | the LLM | proposes one or more operators per turn (a batch) | does not decide, does not derive |
 | **Logos** | the deterministic engine, **including the environment and tools** | runs the commands; places the nodes and relations by the outcome; recomputes the derived view; builds the projection | does not infer truth; does not choose between equal options |
 | **Arbiter** | external (a human; objectively, a toolchain) | the first request; the final acceptance of the run; the choice between equal hypotheses | does not produce content |
 
@@ -382,7 +382,9 @@ accumulating transcript. The same events always give the same tape.
 **Roles:** `system` (the base prompt plus the current node's instruction and the
 constraints), `user` (the request), `assistant` (the doxa's moves), `tool` (command results).
 The tape is rendered with the **native tool-calling contract**: a move is an `assistant` with
-`tool_calls` (the tool name and arguments), a result is a `tool` with `tool_call_id`. `user`
+`tool_calls` (the tool name and arguments), a result is a `tool` with `tool_call_id`. A move may
+carry several calls — a **batch**: one `assistant` with N `tool_calls`, then the N `tool` results
+in order. `user`
 is the request only. The names and arguments are the model-facing **native** ones (`read`
 `edit` `write` `grep` `list` `bash` `webfetch` `apply_patch` `create_goal` `recall` `search`
 `stop` `decline`) — `modelCall` renders the IR `apply` back into them and `toProposal` maps
@@ -401,7 +403,8 @@ the reverse, so the tape and the callable schema share one vocabulary (the IR ke
   with the reason (`rejected <move>: <reason>`, next turn; no node); a `recall`/`search`
   result is likewise a transient `assistant` (its arguments) + `tool` pair.
 
-So every plan item is a pair `assistant` (the call) + `tool` (the result), while creating and
+So a move is one `assistant` message (a single `call`, or a batch of `calls`) followed by one
+`tool` per call, while creating and
 closing a goal are separate `assistant` messages. Alternative commands carry a marker
 (`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one line**
 referencing the observation (`see [obsId]`), never an inlined body. Each message exposes the
@@ -429,10 +432,10 @@ identifier, not by path: read a fragment with `recall { id, start, end }`, searc
 nonzero exit.
 
 **The system part** is assembled from the current node's intent, not as a monolith: the base
-prompt holds only what is true on any move (role, contract, answer form, tool index, stream
-discipline); the node instruction holds the admissible moves and the rules of the current
-situation (a fresh request / an open goal); constraints are added there. This split is the
-subject of a following stage (the composite system prompt).
+prompt holds only what is true on any move (the role, the contract, the answer form); the node
+instruction holds the admissible moves and the rules of the current situation (a fresh request /
+an open goal); constraints are added there. The tool names/parameters/descriptions are **not**
+in the prompt — they ship in the request's `tools` field.
 
 ---
 

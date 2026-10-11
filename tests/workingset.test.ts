@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
-import type { Proposal } from "../src/llm/schemas";
+import type { Proposals } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
 
@@ -35,17 +35,17 @@ describe("the message tape under a long horizon", () => {
     const lengths: number[] = [];
     let call = 0;
 
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       lengths.push(context.history.length);
       call += 1;
       const n = call;
       if (n === 1) {
         return {
           thought: "",
-          action: { operator: "create_goal", what: "green", command: "true" },
+          actions: [{ operator: "create_goal", what: "green", command: "true" }],
         };
       }
-      return { thought: "", action: { operator: "apply", action: { tool: "bash", command: `echo step${n}` } } };
+      return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: `echo step${n}` } }] };
     };
 
     await runAgent(
@@ -65,27 +65,27 @@ describe("the message tape under a long horizon", () => {
     const contexts: Context[] = [];
     let call = 0;
 
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       call += 1;
       if (call === 1) {
         // Interpret the request; the first command fails, leaving the item unfulfilled.
         return {
           thought: "",
-          action: { operator: "create_goal", what: "A", command: "false" },
+          actions: [{ operator: "create_goal", what: "A", command: "false" }],
         };
       }
       if (call === 2) {
         // Decompose A's current item into a sub-goal G.
         return {
           thought: "",
-          action: { operator: "create_goal", what: "G", command: "true" },
+          actions: [{ operator: "create_goal", what: "G", command: "true" }],
         };
       }
       if (call === 3) {
-        return { thought: "", action: { operator: "stop", why: "G is done" } };
+        return { thought: "", actions: [{ operator: "stop", why: "G is done" }] };
       }
-      return { thought: "", action: { operator: "apply", action: { tool: "bash", command: `echo step${call}` } } };
+      return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: `echo step${call}` } }] };
     };
 
     await runAgent(

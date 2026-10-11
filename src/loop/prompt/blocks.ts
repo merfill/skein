@@ -1,6 +1,5 @@
 import { FRAGMENT } from "../../ir/fragment";
 import type { Situation } from "../../ir/project";
-import { PROPOSAL_TOOLS } from "../../llm/tools";
 
 export interface PromptBlock {
   id: string;
@@ -8,40 +7,27 @@ export interface PromptBlock {
 }
 
 // Model-facing capabilities, derived from the declared fragment (docs/system_prompt_ru.md B2).
-const CAPABILITIES = FRAGMENT.map((capability) => `${capability.id} (${capability.label})`).join("; ");
+const CAPABILITIES = FRAGMENT.map((capability) => capability.label).join("; ");
 
-// The tool index is generated from the native tool registry, so the prompt cannot drift from
-// the tools the model actually calls (docs/system_prompt_ru.md B12).
-const TOOL_INDEX = PROPOSAL_TOOLS.map(
-  (tool) => `- ${tool.function.name}: ${tool.function.description}`,
-).join("\n");
-
-// The base prompt holds only what is true on any move — the role, the contract, the answer
-// form, the tool index and the stream discipline. It is stable, so it is also a good cache
-// prefix (docs/ir_revision.md §6). Node-scoped instructions are in NODE_INSTRUCTIONS.
-//
-// The tone is deliberately plain (like a generic coding agent): the model is told what the
-// engine requires, not how to think. Strategy lives in the tool descriptions and the tape.
+// S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
+// tool descriptions — those ship in the request's `tools` field (the single source is the
+// registry, `PROPOSAL_TOOLS`). Stable, so a good cache prefix.
 export const BASE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B1",
-    text: `You are the proposing part of a coding agent (doxa). Propose exactly one operator per turn; a deterministic engine (logos) executes it and records the result. The context is a message tape rebuilt from the tree each turn: user = the request, assistant = your moves, tool = command results. Nothing off the tape is known to you.`,
+    text: `You are a coding agent with access to the files and directories on disk. Each turn you reply with tool calls; the engine executes them in order and records every result on the tape — your whole context. Nothing off the tape is known to you. Batch calls whose arguments do not depend on a sibling's result.`,
   },
   {
     id: "B2",
-    text: `Capabilities you have: ${CAPABILITIES}. Anything else is outside your fragment.`,
+    text: `What you can do: ${CAPABILITIES}.`,
   },
   {
     id: "B13",
-    text: `Reply with a "thought" of AT MOST one short sentence (about 200 characters; shown but not stored) in the message text — it states the decision and nothing else. Keep your output and your reasoning SHORT: do not reason for long. NEVER attempt to recall, reconstruct, or guess source code from memory — your memory of exact syntax, variable names, pointer arithmetic, or macro expansions is unreliable and will lead to hallucinations; if you need to see code (upstream, local, or otherwise), you MUST use read, grep, or fetch. Do not write code snippets in your reasoning. Then call exactly one tool by name:`,
-  },
-  { id: "B12", text: `${TOOL_INDEX}` },
-  {
-    id: "B14",
-    text: `Streams: the engine captures stdout and stderr SEPARATELY, so avoid merging them (\`2>&1\`, \`&>\`) when you need to tell which stream carried a failure. A pipe hides the exit code of the left side, so when a build or test must not be masked, keep it bare or add \`set -o pipefail\`; either way the engine keeps the full stream and its result id.`,
+    text: `Keep replies short: one line of intent, then the calls — do not narrate. NEVER reconstruct code from memory — exact syntax, names, pointer arithmetic and macros are unreliable: read the real code with read, grep or webfetch.`,
   },
 ];
 
+// S2 — the request scenario (a fresh request, not yet interpreted).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B6",
@@ -53,18 +39,23 @@ const REQUEST_BLOCKS: readonly PromptBlock[] = [
   },
 ];
 
+// S3 — the goal scenario: search, implement, verify, stop; and S4 — a few full micro-scenarios
+// that anchor the form of a move.
 const GOAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
-    text: `The goal is open. Work ONE command per turn: propose the command to run now, read its observation, then choose the next from what you learned. The engine does NOT run your plan for you.
-- apply follows the outcome of the current step (the tape shows it): a command that SUCCEEDED becomes a new plan item; a command that FAILED or timed out becomes a new ALTERNATIVE of the same step.
-- create_goal while the goal is open DECOMPOSES the current step into a sub-goal: it becomes the step's newest alternative and the focus descends into it.
-- stop { why? } closes the goal and is the ONLY way to finish it — there is no criterion and no check; do not stop while you can still name a testable next step.
-- The tape is your whole memory. A large result body is kept by the engine and addressed by id: call recall { id, start?, end? } to re-read a fragment of a past result, or search { id, pattern } to find a pattern inside it (stdout or stderr). Do not re-run a command just to see its body again.`,
+    text: `The goal is open. Work in a loop: SEARCH, then IMPLEMENT, then VERIFY.
+- Search first and widely: batch independent reads and greps to see the code and data around the goal, instead of acting on a guess.
+- Once you can name the exact change, make it with \`edit\` (or \`write\`) — do not keep reading or diffing.
+- Then build and run the project's tests. When the request's command succeeds, call \`stop\` — do not re-verify what already passed.
+- After each result YOU choose the next move: the next step's command; or, if the last command failed, a different approach — another command, or \`create_goal\` to split the step (an alternative can be a goal or a command); or \`stop\` — stop closes the goal and is the only closure (no criterion, no check). Never repeat the same command.`,
   },
   {
-    id: "B16",
-    text: `Safety: never edit a file a constraint forbids, directly or through a run; never edit on top of a stale read — re-read first.`,
+    id: "B18",
+    text: `Examples of a move:
+- Reconnaissance, one batch: read { filePath } and grep { pattern } together, then use both results.
+- Fix: edit { filePath, oldString, newString } with the exact text, as soon as you have it.
+- Finish: run the request's command; when it succeeds, stop { why }.`,
   },
 ];
 

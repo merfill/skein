@@ -4,7 +4,7 @@ import { HumanMessage } from "@langchain/core/messages";
 import { z } from "zod";
 
 import { loadSettings, type Settings } from "../config/settings";
-import type { Proposal } from "./schemas";
+import type { Proposals } from "./schemas";
 import { PROPOSAL_TOOLS, toProposal } from "./tools";
 
 // Structured output as plain JSON: the JSON schema is spelled out in the prompt and the
@@ -320,7 +320,7 @@ export async function invokeTools(
   model: BaseChatModel,
   messages: BaseMessage[],
   options: ToolsOptions = {},
-): Promise<Proposal> {
+): Promise<Proposals> {
   const settings = options.settings ?? loadSettings();
   const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
   const retries = options.retries ?? settings.llmRetries;
@@ -349,16 +349,18 @@ export async function invokeTools(
       options.onError,
     );
     options.onResponse?.(response);
-    const first = toolCallsOf(response)[0];
-    if (first !== undefined) {
+    const calls = toolCallsOf(response);
+    if (calls.length > 0) {
       try {
-        return toProposal(first.name, first.args, messageText(response));
+        // Every call in the message is a move; the engine decides and runs them in order.
+        const actions = calls.map((call) => toProposal(call.name, call.args, "").action);
+        return { thought: messageText(response), actions };
       } catch (error) {
         // A malformed call (unknown tool, args that fail the schema) gets one repair round,
         // as the JSON path does, instead of sinking the whole run as `llm_error`.
         if (repair !== undefined) throw error;
         repair = new HumanMessage(
-          `Your tool call was invalid (${error instanceof Error ? error.message : String(error)}). Call exactly one tool with valid arguments matching its schema.`,
+          `Your tool call was invalid (${error instanceof Error ? error.message : String(error)}). Call one or more tools with valid arguments matching their schemas.`,
         );
         continue;
       }
@@ -373,7 +375,7 @@ export async function invokeTools(
         raised = 1;
         reasoningOff = true;
         repair = new HumanMessage(
-          "Your last reply was cut off by the length limit — that is excessive reasoning. Call exactly one tool now, with minimal reasoning; do not restate analysis.",
+          "Your last reply was cut off by the length limit — that is excessive reasoning. Call one or more tools now, with minimal reasoning; do not restate analysis.",
         );
         continue;
       }
@@ -381,7 +383,7 @@ export async function invokeTools(
     }
     if (repair !== undefined) throw new Error("model returned no tool call");
     repair = new HumanMessage(
-      "You did not call a tool. Call exactly one of the provided tools; put a one-sentence thought in the message text first.",
+      "You did not call a tool. Call one or more of the provided tools.",
     );
   }
 }

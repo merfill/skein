@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import type { Proposal } from "../../src/llm/schemas";
+import type { Proposals } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages, promptText } from "../../src/loop/propose";
 import { runSandbox } from "./run";
@@ -28,9 +28,9 @@ describe.skipIf(!settings.live)("fix-ocaml-gc sandbox (live model)", () => {
     createChatModel({ ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) });
       const trajectory: { turn: number; action: string; chars: number }[] = [];
 
-      const propose = async (context: Context): Promise<Proposal> => {
+      const propose = async (context: Context): Promise<Proposals> => {
         const proposal = await invokeTools(model, buildMessages(context), { settings, rebuild });
-        const a = proposal.action;
+        const a = proposal.actions[0]!;
         const label =
           a.operator === "apply" ? `apply:${a.action.tool}` : a.operator;
         trajectory.push({ turn: trajectory.length, action: label, chars: promptText(context).length });

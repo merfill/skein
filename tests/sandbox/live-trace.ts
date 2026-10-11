@@ -5,7 +5,7 @@ import { TurnMeter } from "../../bench/metrics";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import type { Proposal } from "../../src/llm/schemas";
+import type { Proposals } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages, promptText } from "../../src/loop/propose";
 import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
   let turn = 0;
-  const propose = async (context: Context): Promise<Proposal> => {
+  const propose = async (context: Context): Promise<Proposals> => {
     // Log the full model-facing context content (rendered messages) alongside the raw inputs.
     const messages = buildMessages(context);
     const rendered = messages.map((message) => ({
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
     const before = snapshot(meter);
     const proposal = await invokeTools(model, messages, { settings, rebuild, callbacks: [meter] });
     const usage = delta(snapshot(meter), before);
-    const action = proposal.action;
+    const action = proposal.actions[0]!;
     const tool = action.operator === "apply" ? action.action.tool : action.operator;
     turns.push({ turn, operator: action.operator, tool, chars, refused: false, ...usage });
     const tools = context.history
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
       .map((message) => brief(message.text, 100));
     console.info(`\n=== turn ${turn} ===`);
     console.info(`thought: ${proposal.thought}`);
-    console.info(`action:  ${JSON.stringify(proposal.action)}`);
+    console.info(`action:  ${JSON.stringify(proposal.actions[0]!)}`);
     console.info(`tokens:  in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} cacheR=${usage.cacheRead} cacheW=${usage.cacheWrite} llm=${usage.llmCalls} chars=${chars}`);
     console.info(`history=${context.history.length} situation=${context.situation}`);
     console.info(`last tools:\n  ${tools.join("\n  ") || "(none)"}`);

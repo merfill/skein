@@ -13,7 +13,7 @@ semantics — `docs/ir_semantics.md` (changed together with the code); the opera
                  append-only              pure            pure
   actions ─▶ journal (Event[]) ──fold──▶ State ──project──▶ Context ──▶ LLM
      ▲                                                             │
-     └─────────── proposal: exactly one operator per turn ◀────────┘
+     └─────────── proposal: one or more operators per turn (a batch) ◀────────┘
 ```
 
 1. **Journal** (`src/ir/events.ts`) — append-only, the single truth.

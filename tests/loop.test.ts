@@ -10,7 +10,7 @@ import { childrenOf, currentVersion, fold } from "../src/ir/graph";
 import { cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
-import type { Action, Proposal } from "../src/llm/schemas";
+import type { Action, Proposals } from "../src/llm/schemas";
 import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
 import { executeAction } from "../src/tools";
@@ -29,11 +29,11 @@ function setup(fixture: string): string {
 }
 
 function fixed(action: Action) {
-  return async (_context: Context): Promise<Proposal> => ({ thought: "loop", action });
+  return async (_context: Context): Promise<Proposals> => ({ thought: "loop", actions: [action] });
 }
 
-function proposal(action: Action): Proposal {
-  return { thought: "", action };
+function proposal(action: Action): Proposals {
+  return { thought: "", actions: [action] };
 }
 
 // The tape exposes node ids as a leading `[id]` on each assistant/tool message, so the model
@@ -190,7 +190,7 @@ describe("classify", () => {
         node: { id: "o1", space: "work", kind: "observation", label: "run", payload: { output: "x" }, seq: 1 },
       },
     ]);
-    const verdict = classify(proposal({ operator: "recall", id: "o1" }), state, ["o1"]);
+    const verdict = classify({ operator: "recall", id: "o1" }, state, ["o1"]);
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("recalled");
   });
@@ -220,20 +220,18 @@ describe("classify", () => {
     };
     const state = fold([req]);
     expect(
-      classify(
-        proposal({ operator: "create_goal", what: "locate", command: "node --test" }),
+      classify({ operator: "create_goal", what: "locate", command: "node --test" },
         state,
       ),
     ).toEqual({ accept: true });
     expect(
-      classify(proposal({ operator: "create_goal", what: "", command: "true" }), state).reason,
+      classify({ operator: "create_goal", what: "", command: "true" }, state).reason,
     ).toBe("empty_what");
     expect(
-      classify(proposal({ operator: "create_goal", what: "x", command: "" }), state).reason,
+      classify({ operator: "create_goal", what: "x", command: "" }, state).reason,
     ).toBe("empty_command");
     expect(
-      classify(
-        proposal({ operator: "create_goal", what: "x", command: "node --test" }),
+      classify({ operator: "create_goal", what: "x", command: "node --test" },
         fold([]),
       ).reason,
     ).toContain("no_current_goal");
@@ -270,9 +268,9 @@ describe("classify", () => {
       { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "llm" } } },
     ];
     // A timeout brought no knowledge: the same command may be retried.
-    expect(runApply(proposal(runAction).action, ranWith({ command: "true" })).failed).toBe(false);
+    expect(runApply(runAction, ranWith({ command: "true" })).failed).toBe(false);
     // A deterministic exit is a repeat: retrieve the body instead.
-    expect(runApply(proposal(runAction).action, ranWith({ command: "true", exitCode: 1 })).reason).toMatch(
+    expect(runApply(runAction, ranWith({ command: "true", exitCode: 1 })).reason).toMatch(
       /repeated_action/,
     );
   });
@@ -639,20 +637,20 @@ describe("recall by id (history index)", () => {
     const state = fold([goal]);
     const held = ["obs:30"];
 
-    const repeat = classify(proposal({ operator: "recall", id: "obs:30" }), state, held);
+    const repeat = classify({ operator: "recall", id: "obs:30" }, state, held);
     expect(repeat.accept).toBe(false);
     expect(repeat.reason).toContain("obs:30");
     expect(repeat.reason).toContain("repeated_action");
 
     // Another id is fine.
-    expect(classify(proposal({ operator: "recall", id: "obs:31" }), state, held)).toEqual({
+    expect(classify({ operator: "recall", id: "obs:31" }, state, held)).toEqual({
       accept: true,
     });
   });
 
   it("refuses a re-recall of a non-result id (e.g. an action node)", () => {
     const state = fold([goal]);
-    const verdict = classify(proposal({ operator: "recall", id: "w:action:77" }), state, [
+    const verdict = classify({ operator: "recall", id: "w:action:77" }, state, [
       "w:action:77",
     ]);
     expect(verdict.accept).toBe(false);
@@ -666,7 +664,7 @@ describe("the message tape", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const roles: string[][] = [];
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
@@ -694,11 +692,54 @@ describe("the message tape", () => {
     expect(roles[2]).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant", "tool"]);
   });
 
+  it("executes a batch in one turn and cuts it after a terminal move", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const contexts: Context[] = [];
+    let index = 0;
+    const propose = async (context: Context): Promise<Proposals> => {
+      contexts.push(context);
+      index += 1;
+      if (index === 1) return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+      if (index === 2) {
+        // One doxa move, two independent probes (a batch).
+        return {
+          thought: "probe",
+          actions: [
+            { operator: "apply", action: { tool: "read", path: "src/sum.mjs" } },
+            { operator: "apply", action: { tool: "bash", command: "echo one" } },
+          ],
+        };
+      }
+      // A terminal move ends the batch: the trailing apply is dropped.
+      return {
+        thought: "done",
+        actions: [
+          { operator: "stop", why: "done" },
+          { operator: "apply", action: { tool: "bash", command: "echo never" } },
+        ],
+      };
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 6, noProgress: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const commands = result.events
+      .filter((event) => event.type === "add_node" && event.node.kind === "action")
+      .map((event) => (event as { node: { payload: { command: string } } }).node.payload.command);
+    expect(commands).toEqual(["echo start", "read src/sum.mjs", "echo one"]);
+    expect(commands).not.toContain("echo never");
+    expect(result.stopReason).toBe("request_addressed");
+    // The batch renders as ONE assistant message with both calls, then two results.
+    const batch = contexts[2]?.history.find((message) => message.calls !== undefined);
+    expect(batch?.calls?.map((call) => call.name)).toEqual(["read", "bash"]);
+  });
+
   it("carries the read's body as a tool message", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
@@ -786,7 +827,7 @@ describe("runAgent", () => {
     const root = setup("off-by-one");
     const workspace = fsWorkspace(root);
     let index = 0;
-    const propose = async (_context: Context): Promise<Proposal> => {
+    const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({
@@ -818,7 +859,7 @@ describe("runAgent", () => {
   it("reports request_addressed, not max_turns, when the final allowed turn stops the goal", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
-    const propose = async (_context: Context): Promise<Proposal> => {
+    const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({
@@ -849,7 +890,7 @@ describe("runAgent", () => {
   it("stops with no_progress on a repeatedly refused command", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
-    const propose = async (): Promise<Proposal> => {
+    const propose = async (): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({
@@ -877,7 +918,7 @@ describe("runAgent", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
@@ -898,7 +939,7 @@ describe("runAgent", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
@@ -926,7 +967,7 @@ describe("runAgent", () => {
     const contexts: Context[] = [];
     let id: string | undefined;
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
@@ -976,7 +1017,7 @@ describe("runAgent", () => {
   it("refuses a repeated read and names the stored result", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
-    const propose = async (): Promise<Proposal> => {
+    const propose = async (): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({ operator: "create_goal", what: "green", command: "echo start" });
@@ -1013,7 +1054,7 @@ describe("runAgent", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let readId: string | undefined;
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({ operator: "create_goal", what: "green", command: "echo start" });
@@ -1039,7 +1080,7 @@ describe("runAgent", () => {
   it("refuses a repeated recall of a non-result node", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
         return proposal({
@@ -1067,7 +1108,7 @@ describe("failed edit materializes the file content", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const contexts: Context[] = [];
     let index = 0;
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
       if (index === 1) {

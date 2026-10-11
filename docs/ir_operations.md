@@ -119,6 +119,12 @@ already fulfilled (its current alternative succeeded) the command becomes a new 
 sub-goal (`create_goal` on an open goal) always becomes a new alternative. The engine never
 moves into the action.
 
+**A move may be a batch.** The engine accepts one or more calls per move and applies each in
+order in the same turn (same `payload.turn`); a terminal move (`create_goal`/`stop`/`decline`)
+ends the batch, so anything the model emitted after it is dropped (`src/loop/graph.ts`
+`executeNode`). The projection renders a batch as one `assistant` with N `tool_calls` + N
+`tool` results (`docs/ir_semantics.md` §7).
+
 #### 2.2.1 `read` (`OP-AP-READ`)
 
 | Case | Pre | Effects | ID |

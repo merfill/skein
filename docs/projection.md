@@ -71,9 +71,9 @@ on the next turn.
 
 The system part is assembled from the current node's intent, not as a monolith:
 
-- the **base prompt** holds only what is true on any move — the role, the contract (one move;
-  the logos decides), the answer form, the tool index, the stream discipline. It is stable,
-  so it is a good cache prefix;
+- the **base prompt** holds only what is true on any move — the role and the contract. It is
+  stable, so it is a good cache prefix. The tool names/parameters/descriptions are **not** here:
+  they ship in the request's `tools` field;
 - the **node instruction** holds the admissible moves and the rules of the current situation
   (a fresh request / an open goal);
 - the **constraints** are added as separate `system` messages.

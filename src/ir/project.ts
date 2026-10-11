@@ -20,8 +20,11 @@ export interface ToolCall {
 export interface TapeMessage {
   role: "user" | "assistant" | "tool";
   text: string;
-  // An assistant turn that is a tool call (`[id] …` was the model's move this turn).
+  // An assistant turn that is a single tool call (`[id] …` was the model's move this turn).
   call?: ToolCall;
+  // An assistant turn that is a batch: the calls of one doxa move, in order. The following N
+  // `tool` messages answer them by id (docs/ir_semantics §7).
+  calls?: ToolCall[];
   // A tool result: the id of the assistant call it answers.
   callId?: string;
 }
@@ -201,6 +204,28 @@ function renderGoal(state: State, goalId: string, out: TapeMessage[]): void {
 
   const plan = planOf(state, goalId);
   if (plan === undefined) return;
+  // Calls a single doxa move made together (`payload.turn`) render as ONE assistant
+  // `tool_calls` message followed by their results, in order; a lone call keeps the plain
+  // `call` shape (docs/ir_semantics §7).
+  let pending: { id: string; name: string; args: Record<string, unknown>; text: string }[] = [];
+  let pendingTurn: number | undefined;
+  const flush = (): void => {
+    if (pending.length === 0) return;
+    if (pending.length === 1) {
+      const only = pending[0] as (typeof pending)[number];
+      out.push({ role: "assistant", text: "", call: { id: only.id, name: only.name, args: only.args } });
+      out.push({ role: "tool", text: only.text, callId: only.id });
+    } else {
+      out.push({
+        role: "assistant",
+        text: "",
+        calls: pending.map((call) => ({ id: call.id, name: call.name, args: call.args })),
+      });
+      for (const call of pending) out.push({ role: "tool", text: call.text, callId: call.id });
+    }
+    pending = [];
+    pendingTurn = undefined;
+  };
   childrenOf(state, plan).forEach((itemId) => {
     const alts = childrenOf(state, itemId);
     alts.forEach((altId, index) => {
@@ -209,20 +234,28 @@ function renderGoal(state: State, goalId: string, out: TapeMessage[]): void {
       if (alt.kind === "action") {
         const resultId = resultChild(state, altId)?.id ?? altId;
         const call = asCall(alt);
+        const text = `[${resultId}] ${actionResultText(state, altId)}`;
         const marker = index > 0 ? `${altMarker(state, itemId, alts[index - 1] as string)}\n` : "";
-        out.push({
-          role: "assistant",
-          // A native call keeps its content empty (the call is in `tool_calls`); only a
-          // legacy node (no recorded call) carries the rendered label and marker.
-          text: call !== undefined ? "" : `${marker}[${altId}] ${alt.label}`,
-          ...(call !== undefined ? { call: { id: altId, ...call } } : {}),
-        });
-        out.push({
-          role: "tool",
-          text: `[${resultId}] ${actionResultText(state, altId)}`,
-          ...(call !== undefined ? { callId: altId } : {}),
-        });
+        if (call === undefined) {
+          // A legacy node (no recorded call) carries the rendered label and marker as text.
+          flush();
+          out.push({ role: "assistant", text: `${marker}[${altId}] ${alt.label}` });
+          out.push({ role: "tool", text });
+          return;
+        }
+        const turn = nodePayload(alt)?.turn;
+        if (typeof turn !== "number") {
+          // No turn stamp: render as its own single call (the pre-batch shape).
+          flush();
+          out.push({ role: "assistant", text: "", call: { id: altId, ...call } });
+          out.push({ role: "tool", text, callId: altId });
+          return;
+        }
+        if (pending.length > 0 && pendingTurn !== turn) flush();
+        pendingTurn = turn;
+        pending.push({ id: altId, name: call.name, args: call.args, text });
       } else if (alt.kind === "goal") {
+        flush();
         if (index > 0 && asCall(alt) === undefined) {
           out.push({ role: "assistant", text: altMarker(state, itemId, alts[index - 1] as string) });
         }
@@ -230,6 +263,7 @@ function renderGoal(state: State, goalId: string, out: TapeMessage[]): void {
       }
     });
   });
+  flush();
 }
 
 function constraintsOf(state: State): { id: string; forbid: string[] }[] {

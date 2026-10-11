@@ -5,7 +5,7 @@ import { TurnMeter } from "../../bench/metrics";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import type { Proposal } from "../../src/llm/schemas";
+import type { Proposals } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages, promptText } from "../../src/loop/propose";
 import { runTask } from "./harness";
@@ -62,7 +62,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
   let turn = 0;
-  const propose = async (context: Context): Promise<Proposal> => {
+  const propose = async (context: Context): Promise<Proposals> => {
     currentTurn = turn;
     // Log the full model-facing context: the rendered messages (system base + node
     // instruction + constraints + the tape), plus the raw projection inputs.
@@ -113,11 +113,12 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
       },
     });
     const usage = delta(snapshot(meter), before);
-    const action = proposal.action;
-    const tool = action.operator === "apply" ? action.action.tool : action.operator;
-    turns.push({ turn, operator: action.operator, tool, chars, refused: false, ...usage });
+    const action = proposal.actions[0]!;
+    const tools = proposal.actions.map((a) => (a.operator === "apply" ? a.action.tool : a.operator));
+    const tool = tools[0] ?? (action.operator === "apply" ? action.action.tool : action.operator);
+    turns.push({ turn, operator: action.operator, tool, tools, chars, refused: false, ...usage });
     if (options.quiet !== true) {
-      console.info(`[${task.id}] t${turn} ${action.operator}/${tool} in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} chars=${chars}`);
+      console.info(`[${task.id}] t${turn} ${action.operator}/${tools.join("+")} in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} chars=${chars}`);
     }
     turn += 1;
     return proposal;

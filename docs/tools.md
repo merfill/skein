@@ -34,7 +34,7 @@ the current state (as-built), then the proposed changes.
 4. **No context budget for now.** We remove `SKEIN_CTX_TOTAL`: first let the tools
    work honestly, measure later. (Separately decide whether an emergency cap is
    needed.)
-5. **One operator per turn.** The model proposes exactly one action; the engine
+5. **A move is a batch.** The model proposes one or more actions in a turn; the engine
    decides to accept or refuse (see the semantics).
 
 ---
@@ -189,9 +189,9 @@ content. The model asks for 120 lines — it sees ~8.
 - **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
   The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
   is always kept on a failure. A command that runs `2>&1`/`&>` merges the streams before
-  the engine sees them; the prompt warns against it (B14) and says a pipe hides the exit
-  code (add `set -o pipefail`), but no longer forbids pipes: the engine, not the shell,
-  decides how the two streams are shown.
+  the engine sees them; the `bash` tool description says to keep them separate and that a
+  pipe hides the exit code (add `set -o pipefail`), but does not forbid pipes: the engine,
+  not the shell, decides how the two streams are shown.
 - Store both in the observation (already the case) for `recall`/`search`: a small body inline, a
   large one behind `outputRef`/`errorRef`, and `recall {id}` reads the full body, not the
   inline excerpt (the error stream stays the bounded inline tail).

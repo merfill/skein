@@ -1,6 +1,6 @@
 import { goalOf, unactionableOf, type State } from "../ir/graph";
 import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
-import type { Proposal } from "../llm/schemas";
+import type { Action } from "../llm/schemas";
 
 export interface Classification {
   accept: boolean;
@@ -41,12 +41,11 @@ function hasBody(state: State, id: string): boolean {
 // non-execution (a repeat, a stale base, a forbidden path, an empty command) is recorded by
 // the engine as an observation with a reason (docs/ir_revision.md §3.3, §4).
 export function classify(
-  proposal: Proposal,
+  action: Action,
   state: State,
   held: readonly string[] = [],
   queried: readonly string[] = [],
 ): Classification {
-  const action = proposal.action;
   const current = currentGoalId(state);
   const node = current !== undefined ? state.nodes.get(current) : undefined;
 

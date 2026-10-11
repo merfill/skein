@@ -9,7 +9,7 @@ import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
 import { currentGoalId, goalPayload } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
-import type { Action, Proposal } from "../../src/llm/schemas";
+import type { Action, Proposals } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import { buildMessages, promptText } from "../../src/loop/propose";
@@ -170,12 +170,12 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
 
   const model = createChatModel(settings);
   const turns: CapturedTurn[] = [];
-  const propose = async (context: Context): Promise<Proposal> => {
+  const propose = async (context: Context): Promise<Proposals> => {
     const contextChars = promptText(context).length;
     const proposal = await invokeTools(model, buildMessages(context));
     turns.push({
       turn: turns.length,
-      action: proposal.action,
+      action: proposal.actions[0]!,
       contextChars,
       context,
     });
