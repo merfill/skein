@@ -4,6 +4,7 @@ import type { Event } from "../../src/ir/events";
 import { actionExecuted, fold, hasStopped } from "../../src/ir/graph";
 import { project } from "../../src/ir/project";
 import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
+import { assertTapeContract } from "../tape_invariant";
 
 // A tiny deterministic PRNG (mulberry32) — no external dependency.
 function mulberry32(seed: number): () => number {
@@ -59,7 +60,10 @@ function generate(seed: number): Event[] {
         addNode(item, "item");
         addEdge(plan, item, "items");
         const action = `a${next()}`;
-        addNode(action, "action", { command: "make test" });
+        addNode(action, "action", {
+          command: "make test",
+          call: { name: "bash", args: { command: "make test" } },
+        });
         addEdge(item, action, "alts");
         if (depth > 1 && chance(0.4)) {
           const sub = buildGoal(depth - 1);
@@ -127,6 +131,13 @@ describe("IR properties (random legal trees)", () => {
       const ctxB = project(b);
       expect(JSON.stringify(ctxA), `seed ${seed}`).toBe(JSON.stringify(ctxB));
       expect(Array.isArray(ctxA.history)).toBe(true);
+    }
+  });
+
+  it("[tape] every projected tape satisfies the role/pairing contract, over 400 seeds", () => {
+    for (let seed = 1; seed <= 400; seed += 1) {
+      const ctx = project(fold(generate(seed)));
+      expect(() => assertTapeContract(ctx.history), `seed ${seed}`).not.toThrow();
     }
   });
 });

@@ -110,7 +110,7 @@ function toLoopEvent(action: Action): LoopEvent {
       return { tool: "read", input: { filePath: apply.path } };
     case "edit":
       return { tool: "edit", input: { filePath: apply.path } };
-    case "run":
+    case "bash":
       return { tool: "bash", input: { command: apply.command ?? "" } };
     default:
       return { tool: apply.tool, input: {} };

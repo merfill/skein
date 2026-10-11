@@ -6,6 +6,7 @@ import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { focusEvents } from "../ir/traversal";
 import type { Action, Proposal } from "../llm/schemas";
+import { modelCall } from "../llm/schemas";
 import { commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
@@ -159,13 +160,15 @@ export function compileGraph(deps: AgentDeps) {
       lastToolTurn !== undefined && lastToolTurn.nodeId === undefined && lastToolTurn.text !== ""
         ? {
             call: lastToolTurn.call ?? "retrieval",
+            name: lastToolTurn.callName ?? "recall",
+            args: lastToolTurn.callArgs ?? {},
             output: lastToolTurn.text,
             ...(lastToolTurn.error !== undefined ? { error: lastToolTurn.error } : {}),
           }
         : undefined;
     // A structural move (create_goal/stop/decline/recall/search) refused by `classify` creates no
-    // node, so — like the retrieval result — its reason is appended as a transient `tool`
-    // message for the next turn, so the doxa sees why its move was refused (§2.7).
+    // node, so — like the retrieval result — it is appended as a transient assistant call + `tool`
+    // reason for the next turn, so the doxa sees why its move was refused (§2.7).
     const rejection = state.rejection ?? undefined;
     return {
       events: [...external, ...drift, ...focusDrift],
@@ -232,6 +235,7 @@ export function compileGraph(deps: AgentDeps) {
     if (!classification.accept) {
       const reason = classification.reason ?? "rejected";
       const text = `rejected ${describeTarget(proposal.action)}: ${reason}`;
+      const call = modelCall(proposal.action);
       return {
         events: [
           {
@@ -247,7 +251,7 @@ export function compileGraph(deps: AgentDeps) {
         ],
         turn: state.turn + 1,
         recent: [{ seq: state.turn, kind: "proposal" as const, text }],
-        rejection: text,
+        rejection: { text, name: call.name, args: call.args },
       };
     }
     const outcome = executeAction(

@@ -175,14 +175,13 @@ describe("traversal and containers", () => {
     expect(childrenOf(next.state, plan)).toHaveLength(2);
   });
 
-  it("TR-9 marks the alternative command in the tape with its previous attempt", () => {
+  it("TR-9 renders an alternative command as its own native call/result pair", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const ran = exec(run("echo other"), goalWithItem("echo hi"), ws);
     const context = project(ran.state);
-    const call = context.history.find((message) => message.text.includes("echo other"));
+    const call = context.history.find((message) => message.call?.name === "bash");
     expect(call?.role).toBe("assistant");
-    expect(call?.text).toContain("alternative to step");
-    expect(call?.text).toContain("echo hi");
-    expect(context.history.some((message) => message.role === "tool")).toBe(true);
+    expect((call?.call?.args as { command?: string } | undefined)?.command).toBe("echo other");
+    expect(context.history.some((message) => message.role === "tool" && message.callId === call?.call?.id)).toBe(true);
   });
 });

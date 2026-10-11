@@ -23,7 +23,7 @@ const goal: Action = {
 const restore: Action = {
   operator: "apply",
   action: {
-    tool: "run",
+    tool: "bash",
     command:
       "cp /app/resources/patch_files/about.md /app/personal-site/_includes/about.md && " +
       "cp /app/resources/patch_files/default.html /app/personal-site/_layouts/default.html",

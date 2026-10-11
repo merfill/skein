@@ -223,7 +223,7 @@ export type Branch =
   | "read"
   | "edit"
   | "write"
-  | "run"
+  | "bash"
   | "fetch"
   | "apply_patch"
   | "revise"

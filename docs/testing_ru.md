@@ -237,8 +237,13 @@ SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts
 # тяжёлый rebuild-верификатор fix-ocaml-gc (минуты), по требованию
 SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -t fix-ocaml
 # один живой прогон задачи, с разрезом токенов (деньги)
-npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
+npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
+
+`--net off` (по умолчанию `on`) лишает интернета **хостовые** инструменты: `fetch` и фоновый
+`run` движка выполняются на хосте, а не в контейнере задачи (тот и так `--network none`),
+поэтому CLI гонит их `curl` через allowlist-прокси, разрешающий только API модели. Baseline
+для сравнения — прогон opencode с `--net off` (`opencode-run.ts`, §3.6).
 
 Прогон использует собственный `maxTurns` задачи, если он задан (build-heavy задача вроде
 `fix-ocaml-gc` ставит 60 — её критерий пересобирает весь компилятор, а каждый фоновый опрос
@@ -247,6 +252,21 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
 Вывод — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (проекция по ходам),
 `result.json` (`stopReason`, `reward`, результат верификатора, IR-журнал), `metrics.json`
 (те же итоги/разрезы, что в §3.5), `reward.txt` (оценка верификатора).
+
+Baseline opencode гоняет ту же задачу в том же образе (`npx tsx
+tests/sandbox/opencode-run.ts <task-id> [--net on|off]`). Кроме `opencode.txt` (сырой поток
+событий `--format json`) и `metrics.json`, его вызовы модели снимаются логирующим
+reverse-прокси на `baseURL` (`api-log-proxy.mjs`): пишутся сырые
+`api-requests.ndjson`/`api-responses.ndjson`, а из них — `contexts.ndjson` (точный контекст
+на вызов: messages + tools) и `reasoning.ndjson` (потоковый reasoning), аналоги артефактов
+Skein. `opencode run --format json` и сессионная БД opencode не отдают ни промпт, ни текст
+рассуждений.
+
+Верификатор задачи кладётся под `.skein/tests/` **после** хода агента (в обоих харнессах),
+никогда до: shell агента видит `.skein`, хотя файловые тулы его пропускают, а harbor-овский
+`test.sh` задачи пере-клонирует ровно ту ревизию с багом (то есть называет решение).
+Верификатор заново материализуется из кэша задачи в момент проверки, поэтому reward
+воспроизводим.
 
 **Верификатор.** `tests/test_outputs.py` запускается обёрткой без pytest; рядом кладётся
 шим `pytest`, чтобы `import pytest` резолвился без установки. `checkIn: "host"` гонит
@@ -361,8 +381,8 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | `MAX_GREP_MATCHES` | 100 | максимум совпадений в окне `grep`; продолжение — `next`/`from` |
 | `GREP_BEFORE_DEFAULT` / `GREP_AFTER_DEFAULT` | 3 / 3 | строк контекста вокруг совпадения `grep` |
 | `MAX_LIST_FILES` | 200 | максимум файлов в окне `list` |
-| `READ_LIMIT` | 65536 | байтовый предел (64K) окна `read` (по байтам, без лимита строк; резервирует место под трейлер `continue from`); большее тело держит голову и уходит за `outputRef` |
-| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | малый байтовый предел (8K) результата `grep`/`list`: указатель на кандидатов, не содержимое; лишние элементы отбрасываются целиком |
+| `READ_LIMIT` | 8192 | байтовый предел (8K) окна `read` (по байтам, без лимита строк; резервирует место под трейлер `continue from`); большее тело читается следующим окном или через `recall` |
+| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | малый байтовый предел (8K) результата `grep`/`list`: указатель на кандидатов, не содержимое; лишние совпадения/файлы отбрасываются целиком (у `grep` — трейлер `continue from`) |
 | `RUN_LIMIT` | 8192 | малый байтовый предел (8K) `run`; показывается хвост, полный поток — за `outputRef`/`errorRef` (stdout/stderr раздельно) |
 | `QUERY_BODY_LIMIT` | 65536 | предел окна тела `recall`; окно ужимается по строкам, чтобы JSON-результат остался валидным |
 | `SKEIN_CTX_ITEMS` | 20 | элементов в `plan`/`alternatives` проекции |

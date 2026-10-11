@@ -278,8 +278,8 @@ Interprets the request, or decomposes the current item into a sub-goal.
 **At the request (interpretation).** Create goal `G` and its plan `Q` with one item `I`
 whose sole alternative is the action `A` (the `command`); link `R.goal = G`, `G.plan = Q`,
 `Q.items = [I]`, `I.alts = [A]`. The logos **runs `A` at once** and records its outcome;
-the goal is born with its first item executed. The move renders as three messages
-(assistant goal, assistant call, tool observation). Focus descends into `G`. The
+the goal is born with its first item executed. The move renders as two native pairs: a call
+`create_goal { what, command }` + a confirmation, then a call `run { command }` + the command's observation. Focus descends into `G`. The
 interpretation is created once: a second `create_goal` at the request is refused
 (`interpreted`).
 
@@ -381,22 +381,31 @@ accumulating transcript. The same events always give the same tape.
 
 **Roles:** `system` (the base prompt plus the current node's instruction and the
 constraints), `user` (the request), `assistant` (the doxa's moves), `tool` (command results).
+The tape is rendered with the **native tool-calling contract**: a move is an `assistant` with
+`tool_calls` (the tool name and arguments), a result is a `tool` with `tool_call_id`. `user`
+is the request only. The names and arguments are the model-facing **native** ones (`read`
+`edit` `write` `grep` `list` `bash` `webfetch` `apply_patch` `create_goal` `recall` `search`
+`stop` `decline`) — `modelCall` renders the IR `apply` back into them and `toProposal` maps
+the reverse, so the tape and the callable schema share one vocabulary (the IR keeps
+`path`/`start`/`end`, `find`/`replace`, `fetch`).
 
 **Moves and their messages:**
 
-- `create_goal` — an `assistant` with the goal (`what`), then the first
-  command: `assistant` (the call) + `tool` (the observation);
-- `apply` — `assistant` (the call) + `tool` (the observation);
+- `create_goal` — a `create_goal { what, command }` call + a `tool` with a confirmation
+  (`goal created: <what>`), then the plan's first command as a separate `bash { command }` call +
+  a `tool` with its observation (the engine runs it at once);
+- `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the observation);
 - `stop` — `assistant` with the reason (`why`): the goal is closed;
 - `decline` — `assistant` with the reason (`why`): the request is declined;
-- a refused structural move — a `tool` with the reason (`rejected <move>: <reason>`),
-  transient for the next turn (no node); a `recall`/`search` result is likewise a transient
-  `assistant` (its arguments) + `tool` pair.
+- a refused structural move — a transient `assistant` (the call that was refused) + `tool`
+  with the reason (`rejected <move>: <reason>`, next turn; no node); a `recall`/`search`
+  result is likewise a transient `assistant` (its arguments) + `tool` pair.
 
-So every plan item is a pair `assistant` + `tool`, while creating and closing a goal are
-separate `assistant` messages. Alternative commands carry a marker
-(`alternative to step "…" (previous attempt: "…" — reason)`). Each message exposes the node
-id (`[id] …`) so a result can be addressed by id with `recall`/`search`.
+So every plan item is a pair `assistant` (the call) + `tool` (the result), while creating and
+closing a goal are separate `assistant` messages. Alternative commands carry a marker
+(`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one line**
+referencing the observation (`see [obsId]`), never an inlined body. Each message exposes the
+node id (`[id] …`) so a result can be addressed by id with `recall`/`search`.
 
 **The tape is not monotone.** As soon as a goal closes, its internal messages leave the tape;
 on its parent's arm only the closure message (`stop` with `why`) remains. Going up further —
@@ -406,13 +415,18 @@ the same. Only the view goes, not the data: the tree stays complete.
 the tape; its meaning lives in the `why` fields.
 
 **Working with data.** A result body is bounded by the tool itself, with a **per-tool** budget:
-`read` is the big one (64K; bounded by bytes, no line cap), while `grep`/`list`/`run` are kept
-small (8K) because they are pointers, not content. The `tool` message shows the tool's window
+the `read` window is 8K (bounded by bytes, no line cap), while `grep`/`list`/`bash` are kept
+small (8K) because they are pointers, not content; a larger fragment of a file comes back as a
+`read` window or via `recall` (a 64K budget). `grep` and `search` return **plain text with line
+numbers** (`path:line:match`, context `path-line-text`, like `grep -n`), not JSON: there is no
+structural scaffolding for the model to parse instead of code. The `tool` message shows the tool's window
 whole, never cutting its middle: an inspection result (`read`/`grep`/`list`) is consumed from
 the beginning, so its head is kept; a command's output matters at its end, so `run` keeps its
 tail. Only a body that still exceeds its tool's budget is bounded, with an omission note. The full body is stored as a file, and the node keeps an `outputRef`. Access is by
 identifier, not by path: read a fragment with `recall { id, start, end }`, search the body with
-`search { id, pattern }`.
+`search { id, pattern }`. A command killed by a **signal** renders `killed by <SIG> (core: …)`
+(or `no core: core_pattern …`) plus the backtrace, so a crash reaches the model, not just a
+nonzero exit.
 
 **The system part** is assembled from the current node's intent, not as a monolith: the base
 prompt holds only what is true on any move (role, contract, answer form, tool index, stream

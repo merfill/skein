@@ -38,7 +38,7 @@ export const BASE_BLOCKS: readonly PromptBlock[] = [
   { id: "B12", text: `${TOOL_INDEX}` },
   {
     id: "B14",
-    text: `Stream discipline: run build/test commands BARE — never pipe them through \`tail\`/\`head\`: the pipe hides the exit code, so a failed build looks like a success; if you need brevity, add \`set -o pipefail\` or fetch the stored result by id. NEVER merge the two streams (\`2>&1\`, \`&>\`, \`> file 2>&1\`): the engine captures stdout and stderr SEPARATELY, and a merged command hides which stream carried the failure.`,
+    text: `Streams: the engine captures stdout and stderr SEPARATELY, so avoid merging them (\`2>&1\`, \`&>\`) when you need to tell which stream carried a failure. A pipe hides the exit code of the left side, so when a build or test must not be masked, keep it bare or add \`set -o pipefail\`; either way the engine keeps the full stream and its result id.`,
   },
 ];
 
@@ -57,7 +57,7 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
     text: `The goal is open. Work ONE command per turn: propose the command to run now, read its observation, then choose the next from what you learned. The engine does NOT run your plan for you.
-- apply follows the outcome of the current step (the tape shows it): a command that SUCCEEDED becomes a new plan item; a command that FAILED or timed out becomes a new ALTERNATIVE of the same step (its message is marked \`alternative to step "…"\`).
+- apply follows the outcome of the current step (the tape shows it): a command that SUCCEEDED becomes a new plan item; a command that FAILED or timed out becomes a new ALTERNATIVE of the same step.
 - create_goal while the goal is open DECOMPOSES the current step into a sub-goal: it becomes the step's newest alternative and the focus descends into it.
 - stop { why? } closes the goal and is the ONLY way to finish it — there is no criterion and no check; do not stop while you can still name a testable next step.
 - The tape is your whole memory. A large result body is kept by the engine and addressed by id: call recall { id, start?, end? } to re-read a fragment of a past result, or search { id, pattern } to find a pattern inside it (stdout or stderr). Do not re-run a command just to see its body again.`,

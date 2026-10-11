@@ -136,11 +136,11 @@ moves into the action.
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
-| scoped search | `path`/`include`/`exclude` valid | action + observation (JSON windows) | `OP-AP-GREP-1` |
+| scoped search | `path`/`include`/`exclude` valid | action + observation (plain-text windows) | `OP-AP-GREP-1` |
 | paging | `from`/`count` | new action/observation; same-pattern repeat from a new `from` is new | `OP-AP-GREP-2` |
 | no hits / bad scope | — | empty result / fail observation | `OP-AP-GREP-3` |
 | repeat | identical scope+pattern, world unchanged | refused `repeated_action` | `OP-AP-GREP-4` |
-| byte budget | a match window would exceed the byte limit | whole trailing results are dropped so the JSON stays within the limit; `returned` is below the count window and `next` is set; a single huge result has its lines clipped | `OP-AP-GREP-5` |
+| byte budget | a match window would exceed the byte limit | whole trailing matches are dropped so the window fits the limit; a `[showing N of M matches; continue from K]` trailer points to the continuation; a single huge match has its lines clipped | `OP-AP-GREP-5` |
 | count caps | `count` absent or too large | the window is at most `GREP_COUNT_DEFAULT` (50), never more than `MAX_GREP_MATCHES` (100) | `OP-AP-GREP-6` |
 
 #### 2.2.3 `list` (`OP-AP-LIST`)
@@ -171,7 +171,12 @@ background-job machinery.
 |---|---|---|---|---|---|
 | command | `command` present | action + `observation` (`command` + `exitCode`); `mutate` per changed file | versions; older reads stale | `repeated_action` | `OP-AP-RUN-1` |
 | large output | a stream exceeds the byte limit | observation keeps the **tail** inline (the error and exit sit at the end) with an omission note; the full stream stays behind `outputRef`/`errorRef`, recalled via `recall` | — | — | `OP-AP-RUN-2` |
+| workdir | `workdir` names a path inside the workspace that exists | the command runs in that directory | — | fail observation (`workdir does not exist` / `path escapes workspace`) | `OP-AP-RUN-3` |
 
+- **`workdir`/`timeout`**: `workdir` runs the command in a workspace subdirectory (instead
+  of a `cd … &&` prefix); `timeout` caps this single command in milliseconds. Both are part
+  of the repeat signature, so the same text under a different directory or cap is a new
+  action.
 - **Projection** (`PRJ-AP`): the result node is `lastResult`; stdout (`output`) and
   stderr (`error`) are separate; a crash adds `signal`/`core`/`backtrace`; the `calls`
   entry carries the `id` for a later `recall`/`search`.
@@ -388,7 +393,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-AP-LIST-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | scenarios `stale-base`, `two-step-fix` |
 | `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | scenario `command-from-package` |
-| `OP-AP-RUN-1` | `tests/ops/apply.test.ts` | step `apply-next-action` |
+| `OP-AP-RUN-1..3` | `tests/ops/apply.test.ts` | step `apply-next-action` |
 | `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-RC-1..6` | `tests/ops/recall.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |

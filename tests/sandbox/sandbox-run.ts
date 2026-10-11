@@ -1,10 +1,12 @@
+import { loadSettings } from "../../src/config/settings";
 import { cleanupContainers } from "./docker";
 import { runLiveTask } from "./live";
+import { startAllowlistProxy, type AllowlistProxy } from "./proxy";
 import { TASKS } from "./tasks/registry";
 import { cleanupSandboxes } from "./workspace";
 
 // Live run of a ported terminal-bench task (no Harbor):
-//   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
+//   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>/ and prints the token breakdown.
 // For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/testing.md §3.6.
 
@@ -19,24 +21,43 @@ async function main(): Promise<void> {
   if (task === undefined) throw new Error(`unknown task ${id}; known: ${Object.keys(TASKS).join(", ")}`);
 
   const turns = arg("--turns", "");
-  // An explicit `--turns` wins; otherwise the task's own budget (a build-heavy task may
-  // need more than the 24-turn default), else 24.
-  const result = await runLiveTask(task, {
-    maxTurns: turns === "" ? (task.maxTurns ?? 24) : Number(turns),
-  });
-  const t = result.summary?.totals;
-  if (t === undefined) throw new Error(`no metrics for ${task.id}`);
-  console.info(
-    `\n=== ${task.id} ===\nreward=${result.reward} stop=${result.stopReason} turns=${t.turns} ` +
-      `llm=${t.llmCalls} toolcalls=${t.toolCalls} (ok ${t.accepted}/refused ${t.refused}) ` +
-      `in=${t.inputTokens} (fresh ${t.freshInput} + cacheR ${t.cacheRead}, hit ${((t.cacheHitRatio ?? 0) * 100).toFixed(0)}%) ` +
-      `out=${t.outputTokens} (visible ${t.visibleOutput} + reason ${t.reasoningTokens}) ` +
-      `cost=${t.costRub?.toFixed(3) ?? "n/a"}₽ chars ${t.contextChars.first}→${t.contextChars.last} (peak ${t.contextChars.peak})`,
-  );
-  if (result.error !== undefined) console.info(`error: ${result.error}`);
-  console.info(`trace: ${result.dir}`);
-  cleanupContainers();
-  cleanupSandboxes();
+  const net = arg("--net", "on") === "off" ? "off" : "on";
+  // `off` denies the HOST-side tools their internet: the engine's `fetch` and background
+  // `run` execute on the host (not in the task container, which is `--network none` anyway),
+  // so their `curl` is routed through an allowlist proxy that permits only the model API. The
+  // model call is permitted either way — undici ignores the env proxy or, if not, the host is
+  // allowlisted.
+  let proxy: AllowlistProxy | undefined;
+  if (net === "off") {
+    const apiHost = new URL(loadSettings().apiUrl).hostname;
+    proxy = await startAllowlistProxy([apiHost], "127.0.0.1");
+    process.env.HTTP_PROXY = proxy.url;
+    process.env.HTTPS_PROXY = proxy.url;
+    process.env.ALL_PROXY = proxy.url;
+  }
+  try {
+    // An explicit `--turns` wins; otherwise the task's own budget (a build-heavy task may
+    // need more than the 24-turn default), else 24.
+    const result = await runLiveTask(task, {
+      maxTurns: turns === "" ? (task.maxTurns ?? 24) : Number(turns),
+      network: net,
+    });
+    const t = result.summary?.totals;
+    if (t === undefined) throw new Error(`no metrics for ${task.id}`);
+    console.info(
+      `\n=== ${task.id} (net=${net}) ===\nreward=${result.reward} stop=${result.stopReason} turns=${t.turns} ` +
+        `llm=${t.llmCalls} toolcalls=${t.toolCalls} (ok ${t.accepted}/refused ${t.refused}) ` +
+        `in=${t.inputTokens} (fresh ${t.freshInput} + cacheR ${t.cacheRead}, hit ${((t.cacheHitRatio ?? 0) * 100).toFixed(0)}%) ` +
+        `out=${t.outputTokens} (visible ${t.visibleOutput} + reason ${t.reasoningTokens}) ` +
+        `cost=${t.costRub?.toFixed(3) ?? "n/a"}₽ chars ${t.contextChars.first}→${t.contextChars.last} (peak ${t.contextChars.peak})`,
+    );
+    if (result.error !== undefined) console.info(`error: ${result.error}`);
+    console.info(`trace: ${result.dir}`);
+  } finally {
+    await proxy?.close();
+    cleanupContainers();
+    cleanupSandboxes();
+  }
 }
 
 process.on("exit", () => cleanupContainers());

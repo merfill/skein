@@ -10,6 +10,7 @@ import { z } from "zod";
 import { loadSettings } from "../src/config/settings";
 import { createChatModel } from "../src/llm/client";
 import { invokeStructured, invokeTools } from "../src/llm/structured";
+import { modelCall } from "../src/llm/schemas";
 import { toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -185,15 +186,33 @@ describe("runAgent on a broken model", () => {
 // Native tool calling: the flat tool call is mapped into the IR Action (docs/testing_ru.md §8.1).
 describe("tool calling", () => {
   it("maps a flat tool call into the IR Action", () => {
-    expect(toProposal("write", { path: "a.txt", content: "hi" }, "t").action).toEqual({
+    expect(toProposal("write", { filePath: "a.txt", content: "hi" }, "t").action).toEqual({
       operator: "apply",
       action: { tool: "write", path: "a.txt", content: "hi" },
     });
-    expect(toProposal("run", { command: "node --test" }, "t").action).toEqual({
+    expect(toProposal("bash", { command: "node --test" }, "t").action).toEqual({
       operator: "apply",
-      action: { tool: "run", command: "node --test" },
+      action: { tool: "bash", command: "node --test" },
     });
-    expect(toProposal("fetch", { url: "http://x/y" }, "t").action).toEqual({
+    expect(
+      toProposal("bash", { command: "make", workdir: "ocaml", timeout: 1000 }, "t").action,
+    ).toEqual({
+      operator: "apply",
+      action: { tool: "bash", command: "make", workdir: "ocaml", timeout: 1000 },
+    });
+    expect(toProposal("read", { filePath: "a.txt", offset: 5, limit: 10 }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "read", path: "a.txt", start: 5, end: 14 },
+    });
+    expect(toProposal("read", { filePath: "a.txt" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "read", path: "a.txt" },
+    });
+    expect(toProposal("edit", { filePath: "a.txt", oldString: "a", newString: "b" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "edit", path: "a.txt", find: "a", replace: "b" },
+    });
+    expect(toProposal("webfetch", { url: "http://x/y" }, "t").action).toEqual({
       operator: "apply",
       action: { tool: "fetch", url: "http://x/y" },
     });
@@ -207,7 +226,7 @@ describe("tool calling", () => {
   it("invokeTools reads the first tool call and the message text", async () => {
     const model = {
       bindTools: () => ({
-        invoke: async () => ({ content: "do it", tool_calls: [{ name: "read", args: { path: "a" } }] }),
+        invoke: async () => ({ content: "do it", tool_calls: [{ name: "read", args: { filePath: "a" } }] }),
       }),
       invoke: async () => {
         throw new Error("must use the bound model");
@@ -321,8 +340,8 @@ describe("tool calling", () => {
         invoke: async () => {
           calls += 1;
           return calls === 1
-            ? { content: "", tool_calls: [{ name: "write", args: { path: "a" } }] }
-            : { content: "", tool_calls: [{ name: "read", args: { path: "a" } }] };
+            ? { content: "", tool_calls: [{ name: "write", args: { filePath: "a" } }] }
+            : { content: "", tool_calls: [{ name: "read", args: { filePath: "a" } }] };
         },
       }),
       invoke: async () => {
@@ -332,6 +351,34 @@ describe("tool calling", () => {
     const proposal = await invokeTools(model, [new HumanMessage("go")]);
     expect(calls).toBe(2);
     expect(proposal.action).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+  });
+});
+
+// modelCall is the reverse of toProposal (docs/ir_semantics §7): the tape shows the model
+// its own history in the native vocabulary it calls with.
+describe("modelCall: IR -> native call", () => {
+  it("renders read/edit/write/bash/webfetch with their native names and args", () => {
+    expect(modelCall({ operator: "apply", action: { tool: "read", path: "a", start: 5, end: 14 } })).toEqual({
+      name: "read",
+      args: { filePath: "a", offset: 5, limit: 10 },
+    });
+    expect(
+      modelCall({ operator: "apply", action: { tool: "edit", path: "a", find: "x", replace: "y" } }),
+    ).toEqual({ name: "edit", args: { filePath: "a", oldString: "x", newString: "y" } });
+    expect(modelCall({ operator: "apply", action: { tool: "write", path: "a", content: "c" } })).toEqual({
+      name: "write",
+      args: { filePath: "a", content: "c" },
+    });
+    expect(
+      modelCall({
+        operator: "apply",
+        action: { tool: "bash", command: "make", workdir: "ocaml", timeout: 1000 },
+      }),
+    ).toEqual({ name: "bash", args: { command: "make", workdir: "ocaml", timeout: 1000 } });
+    expect(modelCall({ operator: "apply", action: { tool: "fetch", url: "http://u" } })).toEqual({
+      name: "webfetch",
+      args: { url: "http://u" },
+    });
   });
 });
 

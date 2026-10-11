@@ -310,11 +310,18 @@ describe("the tape: transient retrieval and determinism", () => {
   it("appends a recall result as a transient assistant/tool pair", () => {
     const state = fold([request("do it"), goal("g1", "green", 1), { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) }]);
     const context = project(state, {
-      retrieval: { call: "recall { id: obs:5 }", output: "the stored body" },
+      retrieval: {
+        call: "recall { id: obs:5 }",
+        name: "recall",
+        args: { id: "obs:5" },
+        output: "the stored body",
+      },
     });
     expect(roles(context.history)).toEqual(["user", "assistant", "assistant", "tool"]);
     expect(context.history[2]?.text).toBe("recall { id: obs:5 }");
+    expect(context.history[2]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
     expect(context.history[3]?.text).toBe("the stored body");
+    expect(context.history[3]?.callId).toBe("call:retrieval");
   });
 
   it("is deterministic: same events, same tape", () => {

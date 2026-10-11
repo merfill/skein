@@ -151,7 +151,7 @@ describe("classify", () => {
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", payload: { command: "run build", exitCode: 0 }, seq: 2 } },
       { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "grep", pattern: "x" } } },
     ];
-    const verdict = runApply({ operator: "apply", action: { tool: "run", command: "run build" } }, events);
+    const verdict = runApply({ operator: "apply", action: { tool: "bash", command: "run build" } }, events);
     expect(verdict.failed).toBe(true);
     expect(verdict.reason).toContain("repeated_action");
     expect(verdict.reason).toContain("o1");
@@ -253,16 +253,16 @@ describe("classify", () => {
         },
       },
     ];
-    expect(runApply({ operator: "apply", action: { tool: "run" } }, events).reason).toContain(
-      "run needs a command",
+    expect(runApply({ operator: "apply", action: { tool: "bash" } }, events).reason).toContain(
+      "bash needs a command",
     );
-    expect(runApply({ operator: "apply", action: { tool: "run", command: "npm test" } }, events).failed).toBe(
+    expect(runApply({ operator: "apply", action: { tool: "bash", command: "npm test" } }, events).failed).toBe(
       false,
     );
   });
 
   it("allows a repeated run after a timeout (no exit code), refuses a deterministic one", () => {
-    const runAction = { operator: "apply" as const, action: { tool: "run" as const, command: "true" } };
+    const runAction = { operator: "apply" as const, action: { tool: "bash" as const, command: "true" } };
     const ranWith = (payload: { command: string; exitCode?: number }): Event[] => [
       goal,
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "true", payload: { command: "true", signature: "true\u0000" }, seq: 1 } },
@@ -377,7 +377,7 @@ describe("executeAction", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "go" }, seq: 0 } },
     ]);
     const outcome = executeAction(
-      { operator: "apply", action: { tool: "run", command: "kill -SEGV $$" } },
+      { operator: "apply", action: { tool: "bash", command: "kill -SEGV $$" } },
       state,
       workspace,
       1,
@@ -432,8 +432,8 @@ describe("executeAction", () => {
   it("reads a byte-bounded window and says where to continue", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-read-"));
     tempDirs.push(root);
-    // Long lines so the whole file exceeds 64K: the first read is a byte-bounded prefix and
-    // reports where to continue (there is no line cap).
+    // Long lines so the whole file far exceeds 8K: the first read is a byte-bounded prefix
+    // and reports where to continue (there is no line cap).
     const lines = Array.from(
       { length: 400 },
       (_, index) => `line ${index + 1} ${"x".repeat(200)}`,
@@ -461,8 +461,9 @@ describe("executeAction", () => {
       workspace,
       1,
     );
-    expect(next.turn.text).toContain("line 400 ");
-    expect(next.turn.text).not.toContain("continue from");
+    // The window advances and stays byte-bounded, so a far tail still pages on.
+    expect(next.turn.text).toContain(`line ${resume} `);
+    expect(next.turn.text).toMatch(/continue from \d+/);
   });
 
   it("branches the current plan item when the action differs, so the plan never blocks", () => {
@@ -476,7 +477,7 @@ describe("executeAction", () => {
     ]);
     expect(itemFulfilled(root, "a1")).toBe(false);
     const outcome = executeAction(
-      { operator: "apply", action: { tool: "run", command: "ls" } },
+      { operator: "apply", action: { tool: "bash", command: "ls" } },
       root,
       workspace,
       0,
@@ -486,7 +487,7 @@ describe("executeAction", () => {
     expect(cursorOf(state, "g1")).toBe(1);
   });
 
-  it("grep returns a JSON window with context", () => {
+  it("grep returns a plain-text window with context", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
     tempDirs.push(root);
     writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
@@ -500,23 +501,19 @@ describe("executeAction", () => {
       workspace,
       0,
     );
-    const result = JSON.parse(outcome.turn.text) as {
-      total: number;
-      returned: number;
-      results: { path: string; line: number; match: string; before: string[]; after: string[] }[];
-    };
-    expect(result.total).toBe(1);
-    expect(result.returned).toBe(1);
-    expect(result.results[0]).toMatchObject({
-      path: "code.txt",
-      line: 3,
-      match: "MATCH",
-      before: ["alpha", "beta"],
-      after: ["gamma", "delta", ""],
-    });
+    expect(outcome.turn.text).toBe(
+      [
+        "code.txt-1-alpha",
+        "code.txt-2-beta",
+        "code.txt:3:MATCH",
+        "code.txt-4-gamma",
+        "code.txt-5-delta",
+        "code.txt-6-",
+      ].join("\n"),
+    );
   });
 
-  it("grep pages over matches by from/count and reports next", () => {
+  it("grep pages over matches by from/count and reports the continuation", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-grep-"));
     tempDirs.push(root);
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\nMATCH three\n");
@@ -530,15 +527,9 @@ describe("executeAction", () => {
       workspace,
       0,
     );
-    const page1 = JSON.parse(first.turn.text) as {
-      total: number;
-      from: number;
-      returned: number;
-      next?: number;
-      results: { line: number }[];
-    };
-    expect(page1).toMatchObject({ total: 3, from: 1, returned: 2, next: 3 });
-    expect(page1.results.map((r) => r.line)).toEqual([1, 2]);
+    expect(first.turn.text).toContain("code.txt:1:MATCH one");
+    expect(first.turn.text).toContain("code.txt:2:MATCH two");
+    expect(first.turn.text).toContain("[showing 2 of 3 matches; continue from 3]");
 
     const state2 = fold(first.events, state);
     const second = executeAction(
@@ -547,9 +538,8 @@ describe("executeAction", () => {
       workspace,
       1,
     );
-    const page2 = JSON.parse(second.turn.text) as { from: number; returned: number; next?: number };
-    expect(page2).toMatchObject({ from: 3, returned: 1 });
-    expect(page2.next).toBeUndefined();
+    expect(second.turn.text).toContain("code.txt:3:MATCH three");
+    expect(second.turn.text).not.toContain("continue from");
   });
 
   it("list returns files as JSON and can be scoped by include", () => {
@@ -589,7 +579,7 @@ describe("executeAction", () => {
     const outcome = executeAction(
       {
         operator: "apply",
-        action: { tool: "run", command: "printf '// x\\n' > test/sum.test.mjs" },
+        action: { tool: "bash", command: "printf '// x\\n' > test/sum.test.mjs" },
       },
       before,
       workspace,
@@ -689,18 +679,19 @@ describe("the message tape", () => {
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: `echo step${index}` } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: `echo step${index}` } });
     };
     await runAgent(
       { propose, workspace, maxTurns: 6, noProgress: 10 },
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; create_goal adds the goal and its first command.
+    // A fresh request is a single user turn; create_goal is its own call + result, and the
+    // seeded first command is a separate run call + result.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "assistant", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
-    expect(roles[2]).toEqual(["user", "assistant", "assistant", "tool", "assistant", "tool"]);
+    expect(roles[2]).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant", "tool"]);
   });
 
   it("carries the read's body as a tool message", async () => {
@@ -716,7 +707,7 @@ describe("the message tape", () => {
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: "echo one" } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: "echo one" } });
     };
     await runAgent({ propose, workspace, maxTurns: 5, noProgress: 10 }, { request: { id: "r1", text: "green" } });
     // After the later run, the read's tool message is still in the tape (the tape is the
@@ -808,7 +799,7 @@ describe("runAgent", () => {
         return proposal({ operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } });
       }
       if (index === 3) {
-        return proposal({ operator: "apply", action: { tool: "run", command: "node --test" } });
+        return proposal({ operator: "apply", action: { tool: "bash", command: "node --test" } });
       }
       return proposal({ operator: "stop", why: "node --test passes" });
     };
@@ -867,7 +858,7 @@ describe("runAgent", () => {
           command: "echo hi",
         });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: "echo hi" } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: "echo hi" } });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 12, noProgress: 2 },
@@ -895,7 +886,7 @@ describe("runAgent", () => {
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
     };
     await runAgent({ propose, workspace, maxTurns: 5 }, { request: { id: "r1", text: "green" } });
     // After the later run, the read's tool message is still in the tape.
@@ -993,7 +984,7 @@ describe("runAgent", () => {
       if (index === 2 || index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: "true" } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 5, noProgress: 2 },
@@ -1095,7 +1086,7 @@ describe("failed edit materializes the file content", () => {
           action: { tool: "edit", path: "src/sum.mjs", find: "NONEXISTENT_PATTERN_XYZ", replace: "x" },
         });
       }
-      return proposal({ operator: "apply", action: { tool: "run", command: "echo done" } });
+      return proposal({ operator: "apply", action: { tool: "bash", command: "echo done" } });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 8, noProgress: 100 },

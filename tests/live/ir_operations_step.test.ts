@@ -69,8 +69,8 @@ function buildSteps(): Step[] {
       expectMove: (a) => {
         expect(a.operator).toBe("apply");
         if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("run");
-        if (a.action.tool !== "run") return;
+        expect(a.action.tool).toBe("bash");
+        if (a.action.tool !== "bash") return;
         expect(a.action.command, "the next plan action is applied verbatim").toBe("echo ready");
       },
     });

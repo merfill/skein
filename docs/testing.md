@@ -234,8 +234,13 @@ SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts
 # the slow fix-ocaml-gc rebuild verifier (minutes), on demand
 SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -t fix-ocaml
 # one live run of a task, with the token breakdown (money)
-npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N]
+npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
+
+`--net off` (default `on`) denies the HOST-side tools their internet: the engine's `fetch` and
+background `run` execute on the host, not in the task container (which is `--network none`
+regardless), so the CLI routes their `curl` through an allowlist proxy that permits only the
+model API. The platform baseline is the opencode `--net off` run (`opencode-run.ts`, §3.6).
 
 A run uses the task's own `maxTurns` when set (a build-heavy task like `fix-ocaml-gc`
 sets 60 — its criterion rebuilds the whole compiler and each background poll costs a
@@ -244,6 +249,21 @@ turn), else 24; an explicit `--turns N` overrides both.
 Output — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (the projection per
 turn), `result.json` (`stopReason`, `reward`, the verifier result, the IR journal),
 `metrics.json` (the same totals/splits as §3.5), `reward.txt` (the verifier's score).
+
+The opencode baseline runs the same task in the same image (`npx tsx
+tests/sandbox/opencode-run.ts <task-id> [--net on|off]`). Besides `opencode.txt` (the raw
+`--format json` event stream) and `metrics.json`, its model calls are captured through a
+logging reverse proxy on the `baseURL` (`api-log-proxy.mjs`): the raw
+`api-requests.ndjson`/`api-responses.ndjson` are written, and the derived `contexts.ndjson`
+(the exact context per call — messages + tools) and `reasoning.ndjson` (the streamed
+reasoning) are the analogues of Skein's artifacts. `opencode run --format json` and
+opencode's session DB expose neither the prompt nor the reasoning text.
+
+The task's verifier is staged under `.skein/tests/` **after** the agent has run (both
+harnesses), never before: the agent's shell can read `.skein` even though its file tools skip
+it, and the task's Harbor `test.sh` re-clones the exact revision to fix (it names the
+solution). The verifier is re-materialized from the task cache at check time, so the reward
+stays reproducible.
 
 **Verifier.** The task's `tests/test_outputs.py` is run by a pytest-free wrapper; a `pytest`
 shim is staged so `import pytest` resolves without installing it. `checkIn: "host"` runs the
@@ -358,8 +378,8 @@ limits, and the projection does not cut it (`docs/tools.md`).
 | `MAX_GREP_MATCHES` | 100 | maximum `grep` matches per window; continuation via `next`/`from` |
 | `GREP_BEFORE_DEFAULT` / `GREP_AFTER_DEFAULT` | 3 / 3 | `grep` context lines around each match |
 | `MAX_LIST_FILES` | 200 | maximum files per `list` window |
-| `READ_LIMIT` | 65536 | byte cap (64K) for a `read` window (bounded by bytes, no line cap; leaves room for the `continue from` trailer); a larger body keeps its head and is spilled behind `outputRef` |
-| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | small byte cap (8K) for a `grep`/`list` result: a localization pointer, not content; excess `grep`/`list` entries are dropped whole |
+| `READ_LIMIT` | 8192 | byte cap (8K) for a `read` window (bounded by bytes, no line cap; leaves room for the `continue from` trailer); a larger body is read as the next window or via `recall` |
+| `GREP_LIMIT` / `LIST_LIMIT` | 8192 | small byte cap (8K) for a `grep`/`list` result: a localization pointer, not content; excess `grep` matches / `list` entries are dropped whole (for `grep`, a `continue from` trailer) |
 | `RUN_LIMIT` | 8192 | small byte cap (8K) for `run`; the tail is shown, the full stream stays behind `outputRef`/`errorRef` (stdout/stderr separate) |
 | `QUERY_BODY_LIMIT` | 65536 | cap for a `recall` body window; the window is shrunk by lines so the JSON-escaped result stays valid |
 | `SKEIN_CTX_ITEMS` | 20 | items in the projection's `plan`/`alternatives` |

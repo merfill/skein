@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { fsWorkspace, type CommandResult, type Workspace } from "../../src/tools/workspace";
+import { fsWorkspace, type CommandResult, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
 // A hybrid sandbox workspace: the spec's files are materialized into a real temp dir, so
 // `run` executes a REAL shell (`ls`, `cat`, `grep`, `pwd`, `cd …` all work) and
@@ -50,7 +50,7 @@ export function sandboxWorkspace(spec: SandboxSpec): Workspace {
 
   const base = fsWorkspace(root);
   const commands = spec.commands ?? [];
-  const run = (command: string): CommandResult => {
+  const run = (command: string, options: RunOptions = {}): CommandResult => {
     for (const rule of commands) {
       rule.match.lastIndex = 0;
       if (!rule.match.test(command)) continue;
@@ -58,7 +58,7 @@ export function sandboxWorkspace(spec: SandboxSpec): Workspace {
         ? rule.result({ read: (path) => base.read(path), command })
         : rule.result;
     }
-    return base.run(command);
+    return base.run(command, options);
   };
 
   return { ...base, run };

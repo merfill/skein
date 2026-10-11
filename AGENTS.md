@@ -13,7 +13,13 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 ## Commands
 
 - `npm run typecheck` — `tsc --noEmit`
-- `SKEIN_LIVE=false npx vitest run` — offline tests (`.env` sets `SKEIN_LIVE=true`)
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — offline tests (`.env` sets
+  `SKEIN_LIVE=true`)
+- **NEVER run bare `npx vitest run`.** It collects `tests/sandbox/**`, which self-enable on any
+  machine with Docker + the task images + the Harbor cache and launch real containers and
+  verifiers (300 s timeouts, 120 s cleanup) — minutes of runtime and apparent hangs, not the
+  seconds an offline run should take. Always exclude `tests/sandbox/**`.
+- `SKEIN_LIVE=false npx vitest run tests/sandbox` — sandbox engine tests only, when intended.
 - see `docs/testing.md` for the live gate and benches
 
 ## Invariants (do not break)

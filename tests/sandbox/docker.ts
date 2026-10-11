@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-import { fsWorkspace, type CommandResult, type PathFilter, type Workspace } from "../../src/tools/workspace";
+import { fsWorkspace, type CommandResult, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
 // A real-execution workspace backed by Docker, for a ported terminal-bench task: the task's
 // own image already carries the exact environment (repo, toolchain), so there is nothing to
@@ -150,12 +150,12 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   const containerFilter = (filter: PathFilter): PathFilter =>
     filter.path === undefined ? filter : { ...filter, path: containerPath(filter.path) };
 
-  const exec = (command: string, execTimeoutMs = timeoutMs): CommandResult => {
+  const exec = (command: string, execTimeoutMs = timeoutMs, execWorkdir = workdir): CommandResult => {
     const result = spawnSync(
       "docker",
       // `umask 000` so files the agent creates inside (as root) are world-writable and the
       // host file tools can read/edit them (the two share the bind-mounted tree).
-      ["exec", "-w", workdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`],
+      ["exec", "-w", execWorkdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`],
       { encoding: "utf8", timeout: execTimeoutMs, maxBuffer: 64 * 1024 * 1024 },
     );
     const timedOut =
@@ -169,7 +169,13 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
       ...(result.signal !== undefined && result.signal !== null ? { signal: result.signal } : {}),
     };
   };
-  const run = (command: string): CommandResult => exec(command);
+  const run = (command: string, options: RunOptions = {}): CommandResult => {
+    // `docker exec -w` wants an absolute path in the container: resolve the workspace path
+    // under the mount so a relative `workdir` means the tree the agent sees.
+    const execWorkdir =
+      options.workdir !== undefined ? `${mount}/${containerPath(options.workdir)}` : workdir;
+    return exec(command, options.timeoutMs ?? timeoutMs, execWorkdir);
+  };
 
   return {
     ...base,

@@ -93,7 +93,7 @@ if (dirs.length === 0) {
 
 const runs = dirs.map(normalize);
 console.info(
-  `${column("run", 42)}${column("agent", 10)}${column("net", 6)}${column("rew", 5)}${column("steps", 7)}` +
+  `${column("bash", 42)}${column("agent", 10)}${column("net", 6)}${column("rew", 5)}${column("steps", 7)}` +
     `${column("calls", 7)}${column("input", 10)}${column("output", 10)}${column("reason", 10)}${column("visible", 9)}` +
     `${column("cacheR", 10)}${column("time", 7)}`,
 );

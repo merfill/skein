@@ -47,7 +47,7 @@ const goal = (what: string): Action => ({
   what,
   command: "pwd",
 });
-const solve: Action = { operator: "apply", action: { tool: "run", command: SOLUTION_COMMAND } };
+const solve: Action = { operator: "apply", action: { tool: "bash", command: SOLUTION_COMMAND } };
 const stop: Action = { operator: "stop", why: "done" };
 
 describe("ported image tasks (docker)", () => {

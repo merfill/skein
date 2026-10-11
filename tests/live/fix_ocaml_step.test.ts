@@ -55,7 +55,7 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
       const proposal = await invokeTools(model, buildMessages(withInstruction(step.context)));
       console.info(`[${step.name}] ${JSON.stringify(proposal.action).slice(0, 400)}`);
 
-      if (proposal.action.operator === "apply" && proposal.action.action.tool === "run") {
+      if (proposal.action.operator === "apply" && proposal.action.action.tool === "bash") {
         const command = proposal.action.action.command ?? "";
         expect(command, "a proposed run must not merge stdout and stderr").not.toMatch(/2>&1|&>/);
       }

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fold } from "../../src/ir/graph";
-import { READ_LIMIT } from "../../src/tools";
+import { QUERY_BODY_LIMIT } from "../../src/tools";
 import {
   DEFAULT_FILES,
   classification,
@@ -47,7 +47,7 @@ describe("recall", () => {
     const ran = exec(run("printf '%s\\n' {1..20000}"), [request()], ws);
     const id = ran.outcome.turn.nodeId!;
     const { outcome } = exec(recall(id), ran.events, ws);
-    expect(outcome.turn.text.length).toBeLessThanOrEqual(READ_LIMIT);
+    expect(outcome.turn.text.length).toBeLessThanOrEqual(QUERY_BODY_LIMIT);
     const body = JSON.parse(outcome.turn.text) as { output: string; end: number; total: number };
     expect(body.total).toBeGreaterThan(body.end); // a window, not the whole stream
     expect(body.output).toContain("1\n2\n3"); // the head is reachable

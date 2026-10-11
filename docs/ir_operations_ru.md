@@ -133,11 +133,11 @@
 
 | Случай | Pre | Effects | ID |
 |---|---|---|---|
-| поиск по scope | `path`/`include`/`exclude` валидны | действие + наблюдение (JSON-окна) | `OP-AP-GREP-1` |
+| поиск по scope | `path`/`include`/`exclude` валидны | действие + наблюдение (окна простым текстом) | `OP-AP-GREP-1` |
 | пагинация | `from`/`count` | новое действие/наблюдение; повтор того же паттерна с новым `from` — новое | `OP-AP-GREP-2` |
 | нет попаданий / плохой scope | — | пустой результат / fail-observation | `OP-AP-GREP-3` |
 | повтор | идентичные scope+паттерн, мир не менялся | отказ `repeated_action` | `OP-AP-GREP-4` |
-| байтовый бюджет | окно совпадений превысило бы байтовую границу | целые хвостовые результаты отбрасываются, чтобы JSON остался в границе; `returned` ниже окна count и `next` задан; отдельный огромный результат обрезается построчно | `OP-AP-GREP-5` |
+| байтовый бюджет | окно совпадений превысило бы байтовую границу | целые хвостовые совпадения отбрасываются, чтобы окно уложилось в границу; трейлер `[showing N of M matches; continue from K]` указывает продолжение; отдельное огромное совпадение обрезается построчно | `OP-AP-GREP-5` |
 | границы count | `count` отсутствует или слишком велик | окно не больше `GREP_COUNT_DEFAULT` (50), но никогда больше `MAX_GREP_MATCHES` (100) | `OP-AP-GREP-6` |
 
 #### 2.2.3 `list` (`OP-AP-LIST`)
@@ -168,7 +168,12 @@
 |---|---|---|---|---|---|
 | команда | есть `command` | действие + `observation` (`command` + `exitCode`); `mutate` на каждый изменённый файл | версии; старые чтения устаревают | `repeated_action` | `OP-AP-RUN-1` |
 | большой вывод | поток больше байтовой границы | наблюдение держит **хвост** inline (ошибка и exit в конце) с пометкой об усечении; полный поток — за `outputRef`/`errorRef`, достаётся `recall` | — | — | `OP-AP-RUN-2` |
+| workdir | `workdir` называет путь внутри workspace, который существует | команда выполняется в этом каталоге | — | fail-наблюдение (`workdir does not exist` / `path escapes workspace`) | `OP-AP-RUN-3` |
 
+- **`workdir`/`timeout`**: `workdir` запускает команду в подкаталоге workspace (вместо
+  префикса `cd … &&`); `timeout` ограничивает одну эту команду в миллисекундах. Оба входят
+  в сигнатуру повтора, поэтому один и тот же текст в другом каталоге или с другим лимитом
+  — новое действие.
 - **Projection** (`PRJ-AP`): узел результата — `lastResult`; stdout (`output`) и
   stderr (`error`) раздельны; крах добавляет `signal`/`core`/`backtrace`; запись в
   `calls` несёт `id` для последующего `recall`/`search`.
@@ -383,7 +388,7 @@ upstream-изменение, полученное через `fetch`.
 | `OP-AP-LIST-1..4` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-EDIT-1..5` | `tests/ops/apply.test.ts` | сценарии `stale-base`, `two-step-fix` |
 | `OP-AP-WRITE-1..6` | `tests/ops/apply.test.ts` | сценарий `command-from-package` |
-| `OP-AP-RUN-1` | `tests/ops/apply.test.ts` | шаг `apply-next-action` |
+| `OP-AP-RUN-1..3` | `tests/ops/apply.test.ts` | шаг `apply-next-action` |
 | `OP-AP-FETCH-1..3`, `REF-FETCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-AP-PATCH-1..2`, `REF-PATCH-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-RC-1..6` | `tests/ops/recall.test.ts` | сценарии `retrieve-at-scale`, `reproduce-then-read` |

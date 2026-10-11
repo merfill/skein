@@ -52,7 +52,14 @@ describe("create_goal", () => {
     const actionId = lastChild(state, items[0]!)!;
     const action = state.nodes.get(actionId);
     expect(action?.kind).toBe("action");
-    expect((action?.payload as { command?: string } | undefined)?.command).toBe("make test");
+    const payload = action?.payload as
+      | { command?: string; call?: { name?: string; args?: { command?: string } } }
+      | undefined;
+    expect(payload?.command).toBe("make test");
+    // The seeded command records the native `bash` call, so the tape renders a
+    // assistant.tool_calls + `tool` pair (never a text/OBSERVATION user turn).
+    expect(payload?.call?.name).toBe("bash");
+    expect(payload?.call?.args?.command).toBe("make test");
   });
 
   it("REF-CG-EMPTY rejects malformed fields", () => {

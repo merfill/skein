@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
-import { fsWorkspace, type CommandResult, type PathFilter, type Workspace } from "../../src/tools/workspace";
+import { fsWorkspace, type CommandResult, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
 // A real-execution workspace for a terminal-bench task, isolated with `bwrap` (bubblewrap)
 // instead of Docker: `run` executes a real shell inside a namespace where the workspace is
@@ -45,7 +45,8 @@ export function containerWorkspace(root: string, options: ContainerOptions = {})
   const containerFilter = (filter: PathFilter): PathFilter =>
     filter.path === undefined ? filter : { ...filter, path: containerPath(filter.path) };
 
-  const run = (command: string): CommandResult => {
+  const run = (command: string, options: RunOptions = {}): CommandResult => {
+    const cwd = options.workdir !== undefined ? `${mount}/${containerPath(options.workdir)}` : mount;
     const result = spawnSync(
       "bwrap",
       [
@@ -62,12 +63,12 @@ export function containerWorkspace(root: string, options: ContainerOptions = {})
         root,
         mount,
         "--chdir",
-        mount,
+        cwd,
         "/bin/bash",
         "-c",
         `set -o pipefail; ulimit -c unlimited 2>/dev/null; ${command}`,
       ],
-      { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
+      { encoding: "utf8", timeout: options.timeoutMs ?? timeoutMs, maxBuffer: 64 * 1024 * 1024 },
     );
     const timedOut =
       result.signal === "SIGTERM" ||

@@ -17,6 +17,9 @@ export interface Turn {
   // The rendered call of a move with no node (a `recall`/`search`), so the projection re-inserts the
   // arguments instead of a bare operator name.
   call?: string;
+  // The structured call behind `call`, so the projection emits a native `tool` result.
+  callName?: string;
+  callArgs?: Record<string, unknown>;
 }
 
 const last = <T>(fallback: T) => ({
@@ -44,10 +47,12 @@ export const LoopState = Annotation.Root({
   stopText: Annotation<string | null>(last<string | null>(null)),
   progressKey: Annotation<string>(last("")),
   stall: Annotation<number>(last(0)),
-  // The reason a structural move was just refused (classify created no node), rendered as a
-  // transient `tool` message on the next turn so the doxa sees why its move failed (§2.7).
-  // Reset to null on every accepted move.
-  rejection: Annotation<string | null>(last<string | null>(null)),
+  // The structural move just refused (classify created no node): its rendered reason and the
+  // call it corresponds to, so the next turn renders it as an assistant call + `tool` reason
+  // (the doxa sees why its move failed, §2.7). Reset to null on every accepted move.
+  rejection: Annotation<{ text: string; name: string; args: Record<string, unknown> } | null>(
+    last<{ text: string; name: string; args: Record<string, unknown> } | null>(null),
+  ),
   // A signature of the last accepted move when it leaves no node in the tree (recall/search):
   // retrieving a fragment is progress even though it adds no observation (§2.8).
   moveKey: Annotation<string>(last("")),

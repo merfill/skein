@@ -31,11 +31,11 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "reproduce-then-read",
-    expect: { solved: true, uses: ["run", "recall"] },
+    expect: { solved: true, uses: ["bash", "recall"] },
   },
   {
     name: "stale-base",
-    expect: { solved: true,     maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true,     maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "revise-hypothesis",
@@ -59,31 +59,31 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "fail-recover",
-    expect: { solved: true, addressed: true, uses: ["run"] },
+    expect: { solved: true, addressed: true, uses: ["bash"] },
   },
   {
     name: "tempting-wrong",
-    expect: { solved: true, maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true, maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "two-step-fix",
-    expect: { solved: true, maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true, maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "script-two-bugs",
-    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "make-command",
-    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "verbatim-flag",
-    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "run"] },
+    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["edit", "bash"] },
   },
   {
     name: "command-from-package",
-    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["run"] },
+    expect: { solved: true, addressed: true, maxRepeats: 5, uses: ["bash"] },
   },
   {
     name: "retrieve-at-scale",
@@ -93,7 +93,7 @@ export const scenarios: Scenario[] = [
     // A canonical copy sits in the workspace: if the model reaches for it, the localization
     // is a diff against it, not a line-by-line read. (No longer prompted — B9 removed.)
     name: "reference-diff",
-    expect: { solved: true, uses: ["run"], commands: [{ match: "diff", min: 1 }] },
+    expect: { solved: true, uses: ["bash"], commands: [{ match: "diff", min: 1 }] },
   },
   {
     // No `.git`; the request tempts a history probe. The run must fall back to files and

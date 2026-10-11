@@ -31,6 +31,9 @@ export interface LiveTaskOptions {
   maxTurns: number;
   dir?: string;
   quiet?: boolean;
+  // Recorded in `metrics.json` for traceability: "off" means the host-side tools (`fetch`,
+  // background `run`) were denied the internet by the CLI's allowlist proxy.
+  network?: "on" | "off";
 }
 
 export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): Promise<LiveTaskResult> {
@@ -64,10 +67,19 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     // Log the full model-facing context: the rendered messages (system base + node
     // instruction + constraints + the tape), plus the raw projection inputs.
     const messages = buildMessages(context);
-    const rendered = messages.map((message) => ({
-      type: message.getType(),
-      content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
-    }));
+    // A native move is an `assistant.tool_calls` message with an EMPTY content, so the call
+    // must be logged explicitly or the trace shows a blank `ai` turn (the command lives in
+    // `tool_calls`, the result in the following `tool` turn).
+    const rendered = messages.map((message) => {
+      const call = (message as { tool_calls?: { name: string; args: unknown; id: string }[] }).tool_calls;
+      const callId = (message as { tool_call_id?: string }).tool_call_id;
+      return {
+        type: message.getType(),
+        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
+        ...(call !== undefined ? { tool_calls: call } : {}),
+        ...(callId !== undefined ? { tool_call_id: callId } : {}),
+      };
+    });
     const chars = promptText(context).length;
     writeFileSync(
       join(dir, "contexts.ndjson"),
@@ -77,7 +89,17 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     mkdirSync(join(dir, "contexts"), { recursive: true });
     writeFileSync(
       join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`),
-      rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
+      rendered
+        .map((message) => {
+          const lines = [`===== ${message.type} =====`];
+          if (message.content !== "") lines.push(message.content);
+          for (const call of message.tool_calls ?? []) {
+            lines.push(`-> call ${call.name}(${JSON.stringify(call.args)}) [id ${call.id}]`);
+          }
+          if (message.tool_call_id !== undefined) lines.push(`(answers call ${message.tool_call_id})`);
+          return lines.join("\n");
+        })
+        .join("\n\n"),
     );
     const before = snapshot(meter);
     const proposal = await invokeTools(model, messages, {
@@ -115,7 +137,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   writeFileSync(join(dir, "reward.txt"), `${run.reward}\n`);
   writeFileSync(
     join(dir, "metrics.json"),
-    JSON.stringify({ task: task.id, reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
+    JSON.stringify({ task: task.id, network: options.network ?? "on", reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
   );
   writeFileSync(
     join(dir, "result.json"),

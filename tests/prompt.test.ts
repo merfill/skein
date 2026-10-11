@@ -1,4 +1,4 @@
-import { AIMessage, HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
@@ -49,7 +49,7 @@ describe("system prompt: tool contract", () => {
 
   it("keeps stream discipline in its own block (B14)", () => {
     const b14 = PROMPT_BLOCKS.find((block) => block.id === "B14");
-    expect(b14?.text).toMatch(/NEVER merge/);
+    expect(b14?.text).toMatch(/stdout and stderr SEPARATELY/i);
   });
 
   it("keeps the stop condition in the goal instruction (B7): a goal closes by stop, no criterion", () => {
@@ -61,8 +61,8 @@ describe("system prompt: tool contract", () => {
 
   // A live run backgrounded every build and then spent turns polling it; a foreground run
   // blocks and finishes in one turn. The run tool description says to run builds in the foreground.
-  it("tells the model to run builds in the foreground (in the run tool description)", () => {
-    const run = PROPOSAL_TOOLS.find((tool) => tool.function.name === "run");
+  it("tells the model to run builds in the foreground (in the bash tool description)", () => {
+    const run = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
     expect(run?.function.description).toMatch(/FOREGROUND/);
   });
 
@@ -109,12 +109,12 @@ describe("tool surface: no drift to a removed tool", () => {
         "create_goal",
         "decline",
         "edit",
-        "fetch",
+        "webfetch",
         "grep",
         "list",
         "read",
         "recall",
-        "run",
+        "bash",
         "search",
         "stop",
         "write",
@@ -122,10 +122,10 @@ describe("tool surface: no drift to a removed tool", () => {
     );
   });
 
-  it("keeps fetch a plain reference (no diff/localization steering)", () => {
-    const fetch = PROPOSAL_TOOLS.find((tool) => tool.function.name === "fetch");
-    const description = fetch?.function.description ?? "";
-    // fetch only acquires read-only reference evidence; the localization/diff playbook was
+  it("keeps webfetch a plain reference (no diff/localization steering)", () => {
+    const webfetch = PROPOSAL_TOOLS.find((tool) => tool.function.name === "webfetch");
+    const description = webfetch?.function.description ?? "";
+    // webfetch only acquires read-only reference evidence; the localization/diff playbook was
     // removed as a crutch that steered the model into a wrong-version whole-file diff.
     expect(description).toMatch(/reference evidence/i);
     expect(description).not.toMatch(/diff|localiz|same version|drift/i);
@@ -145,14 +145,15 @@ describe("tool surface: no drift to a removed tool", () => {
 });
 
 describe("system prompt: stream discipline", () => {
-  it("categorically forbids merging stdout and stderr", () => {
-    expect(BASE_PROMPT).toMatch(/NEVER merge/);
+  it("tells the model to keep stdout and stderr separate", () => {
+    expect(BASE_PROMPT).toMatch(/SEPARATELY/);
     expect(BASE_PROMPT).toContain("2>&1");
     expect(BASE_PROMPT).toContain("&>");
   });
 
-  it("keeps the no-pipe rule (the exit code must survive)", () => {
-    expect(BASE_PROMPT).toMatch(/never pipe them through `tail`\/`head`/i);
+  it("allows pipes but warns that a pipe hides the exit code", () => {
+    expect(BASE_PROMPT).toMatch(/pipefail/);
+    expect(BASE_PROMPT).toMatch(/hides the exit code/i);
   });
 
   it("requires objective commands to be runnable from the workspace root", () => {
@@ -190,8 +191,8 @@ describe("context format: tape", () => {
   const context: Context = {
     history: [
       { role: "user", text: "fix the failing test" },
-      { role: "assistant", text: "node --test" },
-      { role: "tool", text: "exit 1\nboom" },
+      { role: "assistant", text: "", call: { id: "c1", name: "bash", args: { command: "node --test" } } },
+      { role: "tool", text: "exit 1\nboom", callId: "c1" },
     ],
     situation: "goal",
     constraints: [{ id: "k1", forbid: ["secret"] }],
@@ -207,11 +208,19 @@ describe("context format: tape", () => {
     expect(String(messages[2]?.content)).toContain("k1");
     expect(messages[3]).toBeInstanceOf(HumanMessage);
     expect(String(messages[3]?.content)).toContain("fix the failing test");
+    // A move is a native `assistant.tool_calls`; its result is a `tool` message answering it —
+    // never a result smuggled in as a `user` turn (the old OBSERVATION hack, removed).
     expect(messages[4]).toBeInstanceOf(AIMessage);
-    expect(String(messages[4]?.content)).toContain("node --test");
-    expect(messages[5]).toBeInstanceOf(HumanMessage);
-    expect(String(messages[5]?.content)).toContain("OBSERVATION");
+    expect((messages[4] as AIMessage).tool_calls?.[0]?.name).toBe("bash");
+    expect(messages[5]).toBeInstanceOf(ToolMessage);
+    expect((messages[5] as ToolMessage).tool_call_id).toBe("c1");
     expect(String(messages[5]?.content)).toContain("boom");
+  });
+
+  it("rejects a tool turn without a callId instead of faking a user turn", () => {
+    expect(() => buildMessages({ ...context, history: [{ role: "tool", text: "x" }] })).toThrow(
+      /without a callId/,
+    );
   });
 
   it("prepends the request instruction on a fresh request", () => {

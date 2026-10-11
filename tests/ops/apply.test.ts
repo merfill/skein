@@ -71,7 +71,7 @@ describe("apply: read", () => {
   });
 
   it("OP-AP-READ-8 a window over the byte budget is bounded and continues via the trailer", () => {
-    // ~160 KB in 2000 lines, well over READ_LIMIT (64 KB).
+    // ~160 KB in 2000 lines, well over READ_LIMIT (8 KB).
     const lines = Array.from({ length: 2000 }, (_, i) => `line ${i + 1} ${"x".repeat(70)}`);
     const { ws } = makeWorkspace({ "src/huge.txt": `${lines.join("\n")}\n` });
     const first = exec(read("src/huge.txt"), [request()], ws);
@@ -154,17 +154,17 @@ describe("apply: grep", () => {
     expect(refusalText(grep("sum", "src"), first.events, ws)).toMatch(/repeated_action/);
   });
 
-  it("OP-AP-GREP-5 a match window over the byte budget drops whole trailing results", () => {
+  it("OP-AP-GREP-5 a match window over the byte budget drops whole trailing matches", () => {
     const lines = Array.from({ length: 400 }, (_, i) => `needle ${i + 1} ${"y".repeat(120)}`);
     const { ws } = makeWorkspace({ "src/noisy.txt": `${lines.join("\n")}\n` });
     const { outcome, state } = exec(grep("needle", "src/noisy.txt"), [request()], ws);
     const id = outcome.turn.nodeId as string;
     const body = (state.nodes.get(id)?.payload as { output?: string } | undefined)?.output ?? "";
     expect(body.length).toBeLessThanOrEqual(8192); // the grep budget holds (not the read budget)
-    const json = JSON.parse(body) as { total: number; returned: number; next?: number };
-    expect(json.total).toBe(400);
-    expect(json.returned).toBeLessThan(50); // the byte cap cuts below even the default count
-    expect(json.next).toBeDefined();
+    expect(body).toMatch(/of 400 matches/);
+    expect(body).toMatch(/continue from/);
+    const hits = body.split("\n").filter((line) => /^src\/noisy\.txt:\d+:/.test(line));
+    expect(hits.length).toBeLessThan(50); // the byte cap cuts below even the default count
   });
 
   it("OP-AP-GREP-6 default count is 50; a larger count is capped at 100", () => {
@@ -175,18 +175,13 @@ describe("apply: grep", () => {
       [request()],
       ws,
     );
-    const firstBody = JSON.parse(first.outcome.turn.text) as { total: number; returned: number; next?: number };
-    expect(firstBody.returned).toBe(50); // GREP_COUNT_DEFAULT
-    expect(firstBody.total).toBe(150);
-    expect(firstBody.next).toBeDefined();
+    expect(first.outcome.turn.text).toContain("[showing 50 of 150 matches; continue from 51]");
     const big = exec(
       applyTool({ tool: "grep", pattern: "needle", path: "a", before: 0, after: 0, count: 1000 }),
       first.events,
       ws,
     );
-    const bigBody = JSON.parse(big.outcome.turn.text) as { returned: number };
-    expect(bigBody.returned).toBeGreaterThan(50); // the window grew past the default
-    expect(bigBody.returned).toBeLessThanOrEqual(100); // but never past MAX_GREP_MATCHES
+    expect(big.outcome.turn.text).toContain("[showing 100 of 150 matches; continue from 101]");
   });
 });
 
@@ -445,6 +440,25 @@ describe("apply: run", () => {
     expect(refusalText(run("echo hello"), first.events, ws)).toMatch(/repeated_action/);
   });
 
+  it("OP-AP-RUN-3 runs a command in a workdir, and refuses a missing one", () => {
+    const { ws } = makeWorkspace({ ...DEFAULT_FILES, "sub/.keep": "" });
+    const { outcome } = exec(applyTool({ tool: "bash", command: "pwd", workdir: "sub" }), [request()], ws);
+    expect(outcome.turn.text).toContain(join(ws.root, "sub"));
+    const missing = exec(applyTool({ tool: "bash", command: "pwd", workdir: "nope" }), [request()], ws);
+    expect(missing.outcome.turn.text).toMatch(/workdir does not exist/);
+  });
+
+  it("REF-REPEAT treats the same command in a different workdir as a new action", () => {
+    const { ws } = makeWorkspace({ ...DEFAULT_FILES, "a/.keep": "", "b/.keep": "" });
+    const first = exec(applyTool({ tool: "bash", command: "pwd", workdir: "a" }), [request()], ws);
+    expect(
+      refusalText(applyTool({ tool: "bash", command: "pwd", workdir: "b" }), first.events, ws),
+    ).toBeUndefined();
+    expect(
+      refusalText(applyTool({ tool: "bash", command: "pwd", workdir: "a" }), first.events, ws),
+    ).toMatch(/repeated_action/);
+  });
+
   it("OP-AP-RUN-2 a large output keeps the tail inline and the full stream behind outputRef", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(run("printf '%s\\n' {1..20000}"), [request()], ws);
@@ -465,6 +479,6 @@ describe("apply: run", () => {
 
   it("REF-RUN-EMPTY rejects a run with no command", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    expect(refusalText(applyTool({ tool: "run" }), [request()], ws)).toMatch(/needs a command/);
+    expect(refusalText(applyTool({ tool: "bash" }), [request()], ws)).toMatch(/needs a command/);
   });
 });

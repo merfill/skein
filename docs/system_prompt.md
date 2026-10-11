@@ -60,7 +60,7 @@ Current blocks:
 | B7 | Work one command per turn; `apply` follows the outcome; a sub-goal decomposes a step; `stop` closes the goal (no criterion); a large result body is addressed by id with `recall`/`search` | `ir_semantics` §4.1 | in code |
 | B12 | Tool contract: flat names generated from `PROPOSAL_TOOLS` | `src/llm/tools.ts` | in code (generated) |
 | B13 | Output discipline: `thought` ≤1 sentence, exactly one call; output+reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning | `tests/prompt.test.ts` | in code |
-| B14 | Stream discipline: no `2>&1`/`&>`, no pipe through `tail`/`head` | `tools` §4.3 | in code |
+| B14 | Streams: stdout/stderr separate (avoid `2>&1`/`&>`); a pipe hides the exit code — add `set -o pipefail` when it matters | `tools` §4.3 | in code |
 | B16 | Constraints/safety: never violate a `constraint`, never edit on a stale read | `ir_semantics` §9 | in code (trimmed) |
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
@@ -90,8 +90,8 @@ coding model strategizes from the tape and the tool descriptions.
 - **B10** was removed: the failure→cause playbook (wrong-directory vs unbuilt-tree) was an
   opinionated heuristic; the log on the tape and the tool descriptions carry it.
 - **B12** lists the tools; generated from `PROPOSAL_TOOLS`, so drift is impossible.
-- **B13** bounds `thought` (≤1 sentence; a decision, not analysis) and keeps output/reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning (to see code, `read`/`grep`/`fetch`).
-- **B14** forbids `2>&1`/`&>` and pipes through `tail`/`head`.
+- **B13** bounds `thought` (≤1 sentence; a decision, not analysis) and keeps output/reasoning short — never recall/reconstruct code from memory, no code snippets in reasoning (to see code, `read`/`grep`/`webfetch`).
+- **B14** keeps stdout/stderr separate and warns that a pipe hides the exit code (add `set -o pipefail` when a failure must be seen); pipes themselves are allowed.
 - **B16** keeps only the unique safety rules (constraints, stale read); the localize→edit
   trigger was removed as a strategy crutch.
 
@@ -163,12 +163,20 @@ coding model strategizes from the tape and the tool descriptions.
   **B10** trimmed to the wrong-directory vs unbuilt-tree split; **B1/B6/B7/B13** reworded
   shorter. Motivated by the `fix-ocaml-gc` comparison: opencode's build prompt carries no
   diff/localization heuristics at all, yet localizes with the same model.
+- **Phase 12 (2026-10-11).** Opencode tool-surface alignment: the model-facing tool names and
+  params now match a coding model's priors (`read { filePath, offset, limit }`,
+  `edit { filePath, oldString, newString }`, `write { filePath, content }`,
+  `grep { pattern, path?, include?, from? }`, `fetch` → `webfetch`,
+  `bash { command, workdir?, timeout? }`); the IR (`applySchema`) is unchanged and
+  `toProposal`/`modelCall` translate both ways (`docs/ir_semantics.md` §7). `bash` gained
+  `workdir`/`timeout` (`OP-AP-RUN-3`) and B14 was softened (pipes are allowed) — the hard
+  pipe ban was a legacy of the old `run` that pushed the model into awkward commands.
 
 ## 5. Test map
 
 | Level | Where | What it checks |
 |---|---|---|
-| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; stream discipline; workspace root (prompt + `create_goal` description); wrong-directory reaction; setup (unbuilt tree) vs wrong directory |
+| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; stream separation + `pipefail`; workspace root (prompt + `create_goal` description) |
 | L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is named; no `apply {`/`{ tool:` |
 | L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7/B10/B16) |
 | L3 | `bench/`, `docs/benches/bench_report.md` | acceptance; the controlled experiment (Phase 5) |

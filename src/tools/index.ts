@@ -14,8 +14,9 @@ import {
 import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
 import type { EdgeKind, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
+import { modelCall } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
-import type { GrepMatch, Workspace } from "./workspace";
+import type { GrepMatch, RunOptions, Workspace } from "./workspace";
 
 export interface ExecOutcome {
   events: Event[];
@@ -28,6 +29,9 @@ export interface ExecOutcome {
     // The rendered call of a move that leaves no node (a `recall`/`search`), so the projection shows
     // what was asked rather than a bare operator name (the assistant's own history).
     call?: string;
+    // The structured call behind `call`, so the projection can emit a native `tool` result.
+    callName?: string;
+    callArgs?: Record<string, unknown>;
   };
   done: boolean;
   stopReason: string | null;
@@ -36,18 +40,19 @@ export interface ExecOutcome {
   pin?: string[];
 }
 
-// Per-tool inline budgets (docs/ir_semantics.md §7). `read` is the big one: a whole
-// file/function comes back in one go, bounded by bytes (no line cap). The rest are small,
-// because they are pointers, not content — a `grep`/`list` result names candidates, a `run`
-// result is a log tail — and a large inline body only floods the tape (no eviction yet). A
-// body still over its cap keeps its head (inspection) or tail (command) and is spilled
-// behind `outputRef`/`errorRef`.
-export const READ_LIMIT = 65536;
+// Per-tool inline budgets (docs/ir_semantics.md §7). The `read` window is small (8K) so one
+// read does not flood the tape with a window the model must hold in reasoning; a larger body
+// is paged with explicit `start`/`end` or pulled by `recall` (which keeps a big budget).
+// `grep`/`list`/`run` are small too, because they are pointers, not content. A body still over
+// its cap keeps its head (inspection) or tail (command) and is spilled behind
+// `outputRef`/`errorRef`.
+export const READ_LIMIT = 8192;
 const GREP_LIMIT = 8192;
 const LIST_LIMIT = 8192;
 const RUN_LIMIT = 8192;
-// A `recall` re-reads a stored body (often a `read`), so it shares the read budget.
-const QUERY_BODY_LIMIT = READ_LIMIT;
+// `recall` is the deliberate way to pull a large fragment of a stored body back (the `read`
+// window is small now), so it keeps a big budget of its own rather than sharing `READ_LIMIT`.
+export const QUERY_BODY_LIMIT = 65536;
 // The read window leaves room for its `continue from` trailer, so window + trailer still
 // fit the budget and the shown body is never cut a second time.
 const READ_CONTINUE_RESERVE = 96;
@@ -110,7 +115,7 @@ function tailExcerpt(text: string, ref: string, limit: number): string {
 
 // Bound a body for the projection without a reference (head+tail), so a copy-paste error
 // message stays small while the tail (usually what matters) survives.
-function bounded(text: string, limit = READ_LIMIT): string {
+function bounded(text: string, limit = QUERY_BODY_LIMIT): string {
   if (text.length <= limit) return text;
   const head = Math.floor(limit / 2);
   const omitted = text.length - limit;
@@ -221,12 +226,29 @@ function runRecall(
   return json;
 }
 
-interface SearchResultItem {
-  stream: "stdout" | "stderr";
+// A matched line with its context, rendered as plain text (grep -n -C style). `loc` is a file
+// path (grep) or a stream name (search inside a stored result).
+interface MatchWindow {
+  loc: string;
   line: number;
   match: string;
   before: string[];
   after: string[];
+}
+
+// Render match windows as plain text: `loc:line:match` for the hit and `loc-line-text` for
+// context, blocks separated by `--`. Fewer structural tokens than JSON for the model to parse.
+function renderMatchWindow(items: readonly MatchWindow[]): string {
+  const blocks: string[] = [];
+  for (const item of items) {
+    const lines: string[] = [];
+    const first = item.line - item.before.length;
+    item.before.forEach((text, i) => lines.push(`${item.loc}-${first + i}-${text}`));
+    lines.push(`${item.loc}:${item.line}:${item.match}`);
+    item.after.forEach((text, i) => lines.push(`${item.loc}-${item.line + 1 + i}-${text}`));
+    blocks.push(lines.join("\n"));
+  }
+  return blocks.join("\n--\n");
 }
 
 function sliceLines(lines: string[], from: number, to: number): string[] {
@@ -252,23 +274,23 @@ function runSearch(
   try {
     re = new RegExp(action.pattern);
   } catch {
-    return JSON.stringify({ id: action.id, pattern: action.pattern, error: "invalid pattern" }, null, 2);
+    return `(invalid pattern: ${action.pattern})`;
   }
   const before = action.before ?? GREP_BEFORE_DEFAULT;
   const after = action.after ?? GREP_AFTER_DEFAULT;
-  const streams: [SearchResultItem["stream"], string][] = [];
+  const streams: [string, string][] = [];
   if (body.output !== "") streams.push(["stdout", body.output]);
   if (body.error !== "") streams.push(["stderr", body.error]);
-  const results: SearchResultItem[] = [];
+  const results: MatchWindow[] = [];
   let total = 0;
-  for (const [stream, text] of streams) {
+  for (const [loc, text] of streams) {
     const lines = text.split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (!re.test(lines[i] ?? "")) continue;
       total += 1;
       if (results.length >= MAX_GREP_MATCHES) continue;
       results.push({
-        stream,
+        loc,
         line: i + 1,
         match: lines[i] ?? "",
         before: sliceLines(lines, i + 1 - before, i),
@@ -276,35 +298,25 @@ function runSearch(
       });
     }
   }
+  if (total === 0) return "(no matches)";
   const build = (kept: number): string =>
-    JSON.stringify(
-      {
-        id: action.id,
-        pattern: action.pattern,
-        context: { before, after },
-        total,
-        returned: kept,
-        results: results.slice(0, kept),
-        ...(kept < total ? { note: `showing ${kept} of ${total} matches; narrow the pattern` } : {}),
-      },
-      null,
-      2,
-    );
+    renderMatchWindow(results.slice(0, kept)) +
+    (kept < total ? `\n--\n[showing ${kept} of ${total} matches; narrow the pattern]` : "");
   let kept = results.length;
-  let json = build(kept);
-  while (kept > 1 && json.length > GREP_LIMIT) {
+  let text = build(kept);
+  while (kept > 1 && text.length > GREP_LIMIT) {
     kept -= 1;
-    json = build(kept);
+    text = build(kept);
   }
-  if (json.length > GREP_LIMIT && kept === 1) {
-    const item = results[0] as SearchResultItem;
+  if (text.length > GREP_LIMIT && kept === 1) {
+    const item = results[0] as MatchWindow;
     const perLine = Math.max(100, Math.floor(GREP_LIMIT / (item.before.length + item.after.length + 2)));
     item.match = clipLine(item.match, perLine);
     item.before = item.before.map((line) => clipLine(line, perLine));
     item.after = item.after.map((line) => clipLine(line, perLine));
-    json = build(kept);
+    text = build(kept);
   }
-  return json;
+  return text;
 }
 
 function signatureMap(workspace: Workspace): Map<string, string> {
@@ -405,6 +417,16 @@ function patchTargets(patch: string): string[] {
   return [...out];
 }
 
+// The repeat-guard signature of a bash command: the command plus (when present) its workdir
+// and timeout, so the same text in two directories (or with a different cap) is a distinct
+// action, while a plain command keeps the legacy `command\u0000` signature.
+function bashSignature(command: string, workdir?: string, timeout?: number): string {
+  let signature = `${command}\u0000`;
+  if (workdir !== undefined) signature += `wd:${workdir}\u0000`;
+  if (timeout !== undefined) signature += `t:${timeout}\u0000`;
+  return signature;
+}
+
 // The extra payload a tool keeps on its action node, so the calls index / repeat guard can
 // read it back (docs/ir_revision.md §4).
 function actionExtra(apply: Apply): Record<string, unknown> {
@@ -413,8 +435,8 @@ function actionExtra(apply: Apply): Record<string, unknown> {
       return { find: apply.find, replace: apply.replace };
     case "write":
       return { path: apply.path, bytes: apply.content.length };
-    case "run":
-      return { signature: `${apply.command ?? ""}\u0000` };
+    case "bash":
+      return { signature: bashSignature(apply.command ?? "", apply.workdir, apply.timeout) };
     case "fetch":
       return { url: apply.url, ...(apply.path !== undefined ? { path: apply.path } : {}) };
     case "apply_patch":
@@ -434,9 +456,9 @@ function commandRefusal(state: State, apply: Apply, command: string): string | u
       return `repeated_action: ${resultId(state, found.id)} already has it; retrieve it by id (recall), do not repeat`;
     }
   }
-  if (apply.tool === "run") {
-    if (command.trim() === "") return "run needs a command";
-    const found = latestAction(state, `${command}\u0000`);
+  if (apply.tool === "bash") {
+    if (command.trim() === "") return "bash needs a command";
+    const found = latestAction(state, bashSignature(apply.command ?? "", apply.workdir, apply.timeout));
     if (found !== undefined && state.lastMutationSeq < found.seq) {
       const prior = state.nodes.get(resultId(state, found.id));
       const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
@@ -524,7 +546,7 @@ export function commandOf(apply: Apply): string {
       return `fetch ${apply.url}${apply.path !== undefined ? ` ${apply.path}` : ""}`;
     case "apply_patch":
       return `apply_patch -p${apply.strip ?? 1}`;
-    case "run":
+    case "bash":
       return apply.command ?? "";
   }
 }
@@ -545,16 +567,8 @@ function searchCall(action: Extract<Action, { operator: "search" }>): string {
   return `search { ${parts.join(", ")} }`;
 }
 
-interface GrepResultItem {
-  path: string;
-  line: number;
-  match: string;
-  before: string[];
-  after: string[];
-}
-
 interface GrepWindow {
-  json: string;
+  text: string;
   total: number;
   returned: number;
 }
@@ -568,7 +582,7 @@ function grepItem(
   reader: (path: string) => string | undefined,
   before: number,
   after: number,
-): GrepResultItem | undefined {
+): MatchWindow | undefined {
   const content = reader(match.path);
   if (content === undefined) return undefined;
   const lines = content.split("\n");
@@ -581,7 +595,7 @@ function grepItem(
     afterLines.push(lines[i - 1] ?? "");
   }
   return {
-    path: match.path,
+    loc: match.path,
     line: match.line,
     match: lines[match.line - 1] ?? match.text,
     before: beforeLines,
@@ -589,15 +603,13 @@ function grepItem(
   };
 }
 
-// Build one window of grep results as JSON. The window is a range of matches (1-based
-// `from`, `count`); the byte limit drops whole trailing results so the JSON stays
-// valid. A single oversized result has its lines clipped as a last resort.
+// Build one window of grep matches as plain text (grep -n -C style). The window is a range of
+// matches (1-based `from`, `count`); the byte limit drops whole trailing matches so the window
+// is never cut mid-line. A single oversized match has its lines clipped as a last resort.
 function buildGrepWindow(
   matches: GrepMatch[],
   reader: (path: string) => string | undefined,
   options: {
-    pattern: string;
-    scope: { path?: string; include?: string; exclude?: string };
     before: number;
     after: number;
     from: number;
@@ -607,32 +619,25 @@ function buildGrepWindow(
   const total = matches.length;
   const start = Math.min(Math.max(options.from - 1, 0), total);
   const window = matches.slice(start, start + Math.min(options.count, MAX_GREP_MATCHES));
-  const results: GrepResultItem[] = [];
+  const results: MatchWindow[] = [];
   for (const match of window) {
     const item = grepItem(match, reader, options.before, options.after);
     if (item !== undefined) results.push(item);
   }
-  const build = (kept: number): string => {
-    const payload: Record<string, unknown> = {
-      pattern: options.pattern,
-      scope: options.scope,
-      context: { before: options.before, after: options.after },
-      total,
-      from: total === 0 ? 0 : start + 1,
-      returned: kept,
-      results: results.slice(0, kept),
-    };
-    if (start + kept < total) payload.next = start + kept + 1;
-    return JSON.stringify(payload, null, 2);
-  };
+  if (total === 0) return { text: "(no matches)", total, returned: 0 };
+  const build = (kept: number): string =>
+    renderMatchWindow(results.slice(0, kept)) +
+    (start + kept < total
+      ? `\n--\n[showing ${kept} of ${total} matches; continue from ${start + kept + 1}]`
+      : "");
   let kept = results.length;
-  let json = build(kept);
-  while (kept > 1 && json.length > GREP_LIMIT) {
+  let text = build(kept);
+  while (kept > 1 && text.length > GREP_LIMIT) {
     kept -= 1;
-    json = build(kept);
+    text = build(kept);
   }
-  if (json.length > GREP_LIMIT && kept === 1) {
-    const item = results[0] as GrepResultItem;
+  if (text.length > GREP_LIMIT && kept === 1) {
+    const item = results[0] as MatchWindow;
     const perLine = Math.max(
       100,
       Math.floor(GREP_LIMIT / (item.before.length + item.after.length + 2)),
@@ -640,9 +645,9 @@ function buildGrepWindow(
     item.match = clipLine(item.match, perLine);
     item.before = item.before.map((line) => clipLine(line, perLine));
     item.after = item.after.map((line) => clipLine(line, perLine));
-    json = build(kept);
+    text = build(kept);
   }
-  return { json, total, returned: kept };
+  return { text, total, returned: kept };
 }
 
 export function executeAction(
@@ -774,7 +779,7 @@ export function executeAction(
 
   // A goal is born with its plan: one item, seeded with the first command by the caller
   // (docs/ir_revision.md §2.3, §3.1).
-  const buildGoal = (spec: { what: string }): {
+  const buildGoal = (spec: { what: string; call?: unknown }): {
     goalId: string;
     itemId: string;
   } => {
@@ -789,6 +794,7 @@ export function executeAction(
         label: spec.what,
         payload: {
           what: spec.what,
+          ...(spec.call !== undefined ? { call: spec.call } : {}),
         },
         seq: goalSeq,
       },
@@ -816,7 +822,37 @@ export function executeAction(
   // One plain foreground shell command: recorded as an observation with its exit code,
   // stdout and stderr (docs/ir_revision.md §3.3, §4). A command that changes a forbidden
   // file is reverted and recorded as a violation.
-  const runShell = (command: string, actionId: string): ExecOutcome => {
+  const runShell = (command: string, actionId: string, options: RunOptions = {}): ExecOutcome => {
+    const shellFailure = (text: string): ExecOutcome => {
+      const seq = next();
+      const id = `obs:${seq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id,
+          space: "work",
+          kind: "observation",
+          label: text,
+          payload: { failed: true, refused: true, output: text },
+          seq,
+        },
+      });
+      addEdge({ kind: "llm" }, actionId, id, "result");
+      return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
+    };
+    // A workdir outside the workspace (or missing) is a recorded failure, not a crash:
+    // `exists` throws on escape, and a missing directory is a clear failure to fix.
+    if (options.workdir !== undefined) {
+      let present: boolean;
+      try {
+        present = workspace.exists(options.workdir);
+      } catch (error) {
+        return shellFailure(`bash failed: ${(error as Error).message}`);
+      }
+      if (!present) {
+        return shellFailure(`bash failed: workdir does not exist: ${options.workdir}`);
+      }
+    }
     const readIfPresent = (path: string): string | undefined => {
       try {
         return workspace.read(path);
@@ -835,7 +871,7 @@ export function executeAction(
 
     const before = signatureMap(workspace);
     const runStartedAt = Date.now();
-    const result = workspace.run(command);
+    const result = workspace.run(command, options);
     const crash =
       result.signal !== undefined && result.timedOut !== true
         ? crashReport(workspace, result.signal, runStartedAt)
@@ -894,7 +930,10 @@ export function executeAction(
     const diagnostic = crash?.backtrace !== undefined ? `\n${bounded(crash.backtrace, 2000)}` : "";
     const text = `${result.stdout === "" ? header : `${header}\n${outputShown}`}${diagnostic}`;
     const exitCode =
-      result.timedOut === true || typeof result.code !== "number" ? undefined : result.code;
+      // A crash carries the signal, never a bare nonzero exit; a timeout carries neither.
+      result.timedOut === true || result.signal !== undefined || typeof result.code !== "number"
+        ? undefined
+        : result.code;
     events.push({
       type: "add_node",
       node: {
@@ -934,13 +973,25 @@ export function executeAction(
     case "recall": {
       const text = runRecall(state, action, workspace);
       const turn = proposalTurn(clip(text));
-      return { events, turn: { ...turn, call: recallCall(action) }, done: false, stopReason: null };
+      const call = modelCall(action);
+      return {
+        events,
+        turn: { ...turn, call: recallCall(action), callName: call.name, callArgs: call.args },
+        done: false,
+        stopReason: null,
+      };
     }
 
     case "search": {
       const text = runSearch(state, action, workspace);
       const turn = proposalTurn(clip(text));
-      return { events, turn: { ...turn, call: searchCall(action) }, done: false, stopReason: null };
+      const call = modelCall(action);
+      return {
+        events,
+        turn: { ...turn, call: searchCall(action), callName: call.name, callArgs: call.args },
+        done: false,
+        stopReason: null,
+      };
     }
 
     case "create_goal": {
@@ -958,6 +1009,7 @@ export function executeAction(
       }
       const { goalId, itemId } = buildGoal({
         what: action.what,
+        call: modelCall(action),
       });
       if (atRequest) {
         // The request is interpreted as this goal (`goal` relation); the interpretation is fixed.
@@ -970,7 +1022,10 @@ export function executeAction(
       // with its first item executed. Messages: assistant(goal) + assistant(call) + tool(obs).
       const firstCommand = action.command;
       const actionId = buildActionItem(firstCommand, firstCommand, {
-        signature: `${firstCommand}\u0000`,
+        signature: bashSignature(firstCommand),
+        // The seeded command is a real move too: record its native `bash` call so the tape
+        // renders assistant.tool_calls + a `tool` result, never a text/OBSERVATION pair.
+        call: modelCall({ operator: "apply", action: { tool: "bash", command: firstCommand } }),
       });
       addEdge({ kind: "llm" }, itemId, actionId, "alts");
       return runShell(firstCommand, actionId);
@@ -1042,7 +1097,10 @@ export function executeAction(
       const command = commandOf(apply);
       // Every attempt leaves an action node (docs/ir_revision.md §4); it is placed by the
       // outcome of the current item (new alternative, or a new plan item when exhausted).
-      const actionId = buildActionItem(command, command, actionExtra(apply));
+      const actionId = buildActionItem(command, command, {
+        ...actionExtra(apply),
+        call: modelCall(action),
+      });
       placeAction(focus, actionId);
       const failed = (text: string): ExecOutcome => {
         const seq = next();
@@ -1146,14 +1204,12 @@ export function executeAction(
           return content;
         };
         const window = buildGrepWindow(matches, reader, {
-          pattern: apply.pattern,
-          scope,
           before,
           after,
           from,
           count,
         });
-        const shown = window.json;
+        const shown = window.text;
         const observationSeq = next();
         const observationId = `obs:${observationSeq}`;
         const more = window.returned > 0 && from - 1 + window.returned < window.total;
@@ -1304,7 +1360,7 @@ export function executeAction(
               space: "work",
               kind: "observation",
               label,
-              payload: { failed: true, ...storeOutput(observationId, full, READ_LIMIT) },
+              payload: { failed: true, ...storeOutput(observationId, full, QUERY_BODY_LIMIT) },
               seq: observationSeq,
             },
           });
@@ -1434,12 +1490,15 @@ export function executeAction(
         return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
-      // apply.tool === "run": one plain foreground command (docs/ir_revision.md §3.3).
+      // apply.tool === "bash": one plain foreground command (docs/ir_revision.md §3.3).
       const runCommand = apply.command;
       if (runCommand === undefined || runCommand.trim() === "") {
         return failed("run failed: no command");
       }
-      return runShell(runCommand, actionId);
+      return runShell(runCommand, actionId, {
+        ...(apply.workdir !== undefined ? { workdir: apply.workdir } : {}),
+        ...(apply.timeout !== undefined ? { timeoutMs: apply.timeout } : {}),
+      });
     }
   }
 }

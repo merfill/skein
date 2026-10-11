@@ -56,7 +56,7 @@ const repeats = Math.max(1, Number(process.env.SKEIN_SCENARIO_REPEATS ?? "1") ||
 
 function runCommandsOf(run: ScenarioRun): string[] {
   return run.turns.flatMap((turn) =>
-    turn.action.operator === "apply" && turn.action.action.tool === "run"
+    turn.action.operator === "apply" && turn.action.action.tool === "bash"
       ? [turn.action.action.command ?? ""]
       : [],
   );

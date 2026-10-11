@@ -317,3 +317,12 @@ removal of the upstream/diff wording.
 Reasoning is **not** to be turned off for this: the cut point is not predictable (a wrong
 early stop costs more than the tokens saved); the lever is observation size/format, not the
 reasoning budget.
+
+**Status (2026-10-11).** C1 and C2 were implemented at once, **without the A/B run** (owner's
+call): `READ_LIMIT` 65,536 → **8,192** (the `read` window), with `QUERY_BODY_LIMIT` split into
+its own constant and kept at **64K**, as is `bounded()` (the `edit failed`/`crash` bodies are
+not cut); `grep` and `search` return **plain text with line numbers** (`path:line:match`,
+context `path-line-text`, trailer `[showing N of M matches; continue from K]`) instead of JSON.
+`list` and `recall` stay JSON. Tests were updated (JSON parsing → text assertions), the offline
+suite is green. **The live A/B and the `fix-ocaml-gc` confirmation were not done** — step 4
+(stable effect at n ≥ 3) is unmet; a revert is two independent diffs.

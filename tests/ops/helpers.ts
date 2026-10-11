@@ -82,7 +82,7 @@ export function write(path: string, content: string): Action {
 }
 
 export function run(command: string): Action {
-  return applyTool({ tool: "run", command });
+  return applyTool({ tool: "bash", command });
 }
 
 export function fetchUrl(url: string, path?: string): Action {

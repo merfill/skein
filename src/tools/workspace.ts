@@ -85,6 +85,16 @@ export interface WorkspaceOptions {
   jobGraceMs?: number;
 }
 
+// Per-command overrides for `run` (the `bash` tool's `workdir`/`timeout`).
+export interface RunOptions {
+  // The working directory for the command: a path inside the workspace (a subdirectory,
+  // or an absolute path under the root). Defaults to the workspace root. Refused if it
+  // escapes the workspace or does not exist.
+  workdir?: string;
+  // Cap on THIS command in milliseconds; overrides the workspace's default run timeout.
+  timeoutMs?: number;
+}
+
 export interface Workspace {
   root: string;
   read(path: string): string;
@@ -95,7 +105,7 @@ export interface Workspace {
   list(): string[];
   grep(pattern: string, filter?: PathFilter): GrepMatch[];
   listFiles(filter?: PathFilter): string[];
-  run(command: string): CommandResult;
+  run(command: string, options?: RunOptions): CommandResult;
   startJob(command: string, options?: JobWaitOptions): JobHandle;
   pollJob(id: string, options?: JobWaitOptions): JobResult | undefined;
   // Download a URL into the workspace (read-only reference evidence). Throws on a path
@@ -339,14 +349,15 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
 
   const listFiles = (filter: PathFilter = {}): string[] => scopedFiles(filter);
 
-  const run = (command: string): CommandResult => {
+  const run = (command: string, options: RunOptions = {}): CommandResult => {
     // `spawnSync` returns stdout and stderr separately regardless of the exit code, so
     // an error stream is never lost and never concatenated into stdout. `pipefail` makes
     // a pipeline report the failing stage's exit code: `make | tail` must tell the truth.
+    const cwd = options.workdir !== undefined ? abs(options.workdir) : base;
     const result = spawnSync("/bin/bash", ["-c", `set -o pipefail; ulimit -c unlimited 2>/dev/null; ${command}`], {
-      cwd: base,
+      cwd,
       encoding: "utf8",
-      timeout: runTimeoutMs,
+      timeout: options.timeoutMs ?? runTimeoutMs,
       maxBuffer: 64 * 1024 * 1024,
     });
     const timedOut =

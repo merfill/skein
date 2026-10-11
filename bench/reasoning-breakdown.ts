@@ -31,7 +31,7 @@ function phaseOf(turn: TurnMetric): string {
   if (turn.operator === "create_goal") return turn.refused ? "plan(refused)" : "plan";
   if (turn.operator === "apply") {
     if (turn.tool === "edit" || turn.tool === "write" || turn.tool === "apply_patch") return "edit";
-    if (turn.tool === "run") return "run";
+    if (turn.tool === "bash") return "bash";
     if (turn.tool === "read" || turn.tool === "grep" || turn.tool === "list" || turn.tool === "fetch")
       return "explore";
     return turn.tool;
@@ -39,7 +39,7 @@ function phaseOf(turn: TurnMetric): string {
   return turn.operator;
 }
 
-const PHASE_ORDER = ["plan", "plan(refused)", "explore", "edit", "run", "query", "close"];
+const PHASE_ORDER = ["plan", "plan(refused)", "explore", "edit", "bash", "query", "close"];
 
 interface PhaseBucket {
   turns: number;
@@ -111,7 +111,7 @@ function report(dir: string): { name: string; total: number; byPhase: Map<string
     const after = perTurn.slice(firstEdit + 1);
     const afterReasoning = after.reduce((sum, turn) => sum + turn.reasoningTokens, 0);
     const afterGoals = after.filter((turn) => turn.operator === "create_goal").length;
-    const afterRuns = after.filter((turn) => turn.operator === "apply" && turn.tool === "run").length;
+    const afterRuns = after.filter((turn) => turn.operator === "apply" && turn.tool === "bash").length;
     console.info(
       `  after first edit (t${perTurn[firstEdit]?.turn}): ${after.length} turns, ` +
         `${afterReasoning} reasoning (${pct(afterReasoning, total)}), ${afterGoals} create_goal, ${afterRuns} run`,

@@ -45,7 +45,7 @@ describe("the message tape under a long horizon", () => {
           action: { operator: "create_goal", what: "green", command: "true" },
         };
       }
-      return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo step${n}` } } };
+      return { thought: "", action: { operator: "apply", action: { tool: "bash", command: `echo step${n}` } } };
     };
 
     await runAgent(
@@ -85,7 +85,7 @@ describe("the message tape under a long horizon", () => {
       if (call === 3) {
         return { thought: "", action: { operator: "stop", why: "G is done" } };
       }
-      return { thought: "", action: { operator: "apply", action: { tool: "run", command: `echo step${call}` } } };
+      return { thought: "", action: { operator: "apply", action: { tool: "bash", command: `echo step${call}` } } };
     };
 
     await runAgent(

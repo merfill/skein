@@ -48,7 +48,7 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 | Operator | Purpose |
 |---|---|
 | `create_goal` | introduce a goal (the request's interpretation — exactly once — or a subgoal) with a plan |
-| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `run` / `fetch` / `apply_patch` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch` |
 | `stop` | the sole closure: finish the focused goal (no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
@@ -70,16 +70,24 @@ plan item.
 
 ### 2.2 `apply { action }`
 
-| tool | Fields | Meaning |
-|---|---|---|
-| `read` | `{ path, start?, end? }` | read a file, or a window of its lines |
-| `grep` | `{ pattern, path?, include?, exclude?, before?, after?, from?, count? }` | search the workspace: scope, windows over matches, JSON (see §4.2) |
-| `list` | `{ path?, include?, from? }` | list files by mask, JSON (see §4.6); the engine also accepts `exclude`/`limit`, which the model tool does not expose |
-| `edit` | `{ path, find, replace }` | exact substring replacement |
-| `write` | `{ path, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
-| `fetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`), to read alongside the tree; refused on a path outside the workspace / already existing / forbidden / download failure |
-| `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `fetch` |
-| `run` | `{ command }` | one plain **foreground** shell command: an **observation** carrying `command` and `exitCode` (0 = pass, non-zero = fail, absent on a timeout) plus the output (stdout and stderr separate, §4.3) |
+The model calls one **flat tool per operation**; `toProposal` maps the native call into the
+IR `apply` (and `modelCall` renders the tape back with the same native names). The
+model-facing names/params match a coding model's priors, so the IR vocabulary stays
+internal: `read { filePath, offset?, limit? }`, `edit { filePath, oldString, newString }`,
+`write { filePath, content }`, `grep { pattern, path?, include?, from? }`,
+`list { path?, include?, from? }`, `bash { command, workdir?, timeout? }`,
+`webfetch { url, path? }`, `apply_patch { patch, strip? }`.
+
+| IR tool | Native tool | Fields (native) | Meaning |
+|---|---|---|---|
+| `read` | `read` | `{ filePath, offset?, limit? }` | read a file, or a window of lines (`offset` 1-indexed, `limit` lines) |
+| `grep` | `grep` | `{ pattern, path?, include?, from? }` | search the workspace, paginated over matches (`from`); plain text (see §4.2) |
+| `list` | `list` | `{ path?, include?, from? }` | list files by mask, JSON (see §4.6); the engine also accepts `exclude`/`limit`, which the model tool does not expose |
+| `edit` | `edit` | `{ filePath, oldString, newString }` | exact substring replacement (only the first occurrence) |
+| `write` | `write` | `{ filePath, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
+| `fetch` | `webfetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`), to read alongside the tree; refused on a path outside the workspace / already existing / forbidden / download failure |
+| `apply_patch` | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `webfetch` |
+| `bash` | `bash` | `{ command, workdir?, timeout? }` | one plain **foreground** shell command; `workdir` runs it in a workspace subdirectory, `timeout` caps it (ms). An **observation** carries `command` and `exitCode` (0 = pass, non-zero = fail, absent on a timeout) plus the output (stdout and stderr separate, §4.3) |
 
 ### 2.3 `recall { id, start?, end? }` and `search { id, pattern, before?, after? }`
 
@@ -134,8 +142,10 @@ content. The model asks for 120 lines — it sees ~8.
 - `read { path, start?, end? }`:
   - without `start/end` — from the start of the file;
   - with `start/end` — a window of lines (1-based, `end` inclusive).
-- The window is bounded by the **64K byte cap** (`READ_LIMIT`), declared in the tool
-  description: the model knows the limit in advance (there is no separate line cap).
+- The window is bounded by the **8K byte cap** (`READ_LIMIT`), declared in the tool
+  description: the model knows the limit in advance (there is no separate line cap). A body
+  longer than the window comes back as the next `read` window or via `recall` (budget
+  `QUERY_BODY_LIMIT` = 64K).
 - If more than the maximum is requested, or the file is longer than the window, the
   tool returns the maximum and **explicitly reports**: "showing lines 1–400 of 3000;
   continue from 401".
@@ -149,7 +159,7 @@ content. The model asks for 120 lines — it sees ~8.
   been read twice with no edit in between, a further read is `repeated_action` — the body is
   already addressable, so name the cause and edit; an edit resets the count (`OP-AP-READ-6`).
 
-### 4.2 `grep`: scope, windows over matches, JSON (decided)
+### 4.2 `grep`: scope, windows over matches (decided)
 
 - `grep { pattern, path?, include?, exclude?, before?, after?, from?, count? }`:
   - `path` — a file or a directory (the workspace root by default); the scope is part
@@ -160,14 +170,12 @@ content. The model asks for 120 lines — it sees ~8.
   - `before`/`after` — context lines above/below, **`3/3` by default**;
   - `from`/`count` — a window **over matches** (1-based, like lines in `read`);
     `count` defaults to `50`, maximum **`MAX_GREP_MATCHES = 100`**;
-- the result is **valid JSON**:
-  `{ pattern, scope, context, total, from, returned, next?, results:
-  [{ path, line, match, before: [], after: [] }] }`. Matches are structurally
-  separated from each other, the matched line (`match`) from the context
-  (`before`/`after`); the context of adjacent matches may duplicate;
+- the result is **plain text with line numbers** (like `grep -n`): the matched line is
+  `path:line:match`, context lines are `path-line-text`, match blocks separated by `--`.
+  There is no JSON scaffolding: the model reads lines, it does not parse fields;
 - byte limit (**`GREP_LIMIT = 8192`**, 8K: a localization pointer, not content): when
-  exceeded, whole trailing results are dropped, `returned` shrinks, `next` points to the
-  continuation; the JSON stays valid (the middle is never cut);
+  exceeded, whole trailing matches are dropped, and the trailer
+  `[showing N of M matches; continue from K]` points to the continuation (the middle is never cut);
 - pagination is the same `grep` with a new `from`: recomputation is deterministic (like
   re-reading a window in `read`); the window body is kept via `storeOutput`, so recall
   via `shown`/`recall {id}` works exactly as for `read`;
@@ -181,8 +189,9 @@ content. The model asks for 120 lines — it sees ~8.
 - **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
   The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
   is always kept on a failure. A command that runs `2>&1`/`&>` merges the streams before
-  the engine sees them, so the prompt forbids it: the engine, not the shell, decides
-  how the two are shown.
+  the engine sees them; the prompt warns against it (B14) and says a pipe hides the exit
+  code (add `set -o pipefail`), but no longer forbids pipes: the engine, not the shell,
+  decides how the two streams are shown.
 - Store both in the observation (already the case) for `recall`/`search`: a small body inline, a
   large one behind `outputRef`/`errorRef`, and `recall {id}` reads the full body, not the
   inline excerpt (the error stream stays the bounded inline tail).
@@ -205,7 +214,7 @@ content. The model asks for 120 lines — it sees ~8.
 **Folded into `docs/ir_semantics.md` §7 and `docs/projection.md`.** The `lastResult`/`calls`/
 `shown` blocks are gone: the context is a **message tape** rebuilt from the tree each turn. A
 result is addressed by id with `recall`/`search`; a body is shown whole up to its **per-tool**
-limit — `read` 64K, `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
+limit — `read` window 8K (`recall` 64K), `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
 **tail**; only a body beyond that is bounded (with an omission note), behind `outputRef`. A refused structural move is a
 transient `tool` reason on the next turn; a command's non-execution is an observation. There is
 no per-file read cap: distinct windows are new knowledge, only an identical window is a repeat.
@@ -232,13 +241,16 @@ bare recall of an id already in view is refused as redundant.
 - read-only and idempotent (a repeat is not a refusal); it gives the model visibility
   of extensions so it can set `include` for `grep` meaningfully.
 
-### 4.7 `run`: one plain foreground command (decided; reduced)
+### 4.7 `bash`: one plain foreground command (decided; reduced)
 
-- A `run` **blocks** until the command exits or the cap (`SKEIN_RUN_TIMEOUT_MS`, default
+- A `bash` **blocks** until the command exits or the cap (`SKEIN_RUN_TIMEOUT_MS`, default
   120 s) elapses; a timeout yields no `exitCode` (no verdict, just output). A build or a test
   suite is run this way: the turn waits for it, one turn for the whole command.
-- The model-facing `run` is `{ command }` only. `target` (a criterion check) and the
-  `background`/`job` machinery are **removed from the model path**
+- The model-facing `bash` is `{ command, workdir?, timeout? }`. `workdir` runs the command
+  in a workspace subdirectory (instead of a `cd <dir> &&` prefix) and `timeout` caps this
+  single command in milliseconds; both are part of the repeat signature, so the same text
+  under a different directory or cap is a new action (`OP-AP-RUN-3`). `target` (a criterion
+  check) and the `background`/`job` machinery are **removed from the model path**
   (`docs/plans/goal_reduction_plan.md` §4): there is no criterion to check and no job to
   poll. The `fsWorkspace` job API (`startJob`/`pollJob`, `.skein/jobs/<id>.{out,err,code}`)
   remains an engine/test seam but is not reachable from a proposal.

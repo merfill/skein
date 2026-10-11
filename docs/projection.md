@@ -51,8 +51,8 @@ its `tool` message reads `mutated <path>`.
 
 ## 5. Working with data
 
-A result body is bounded by the tool itself, with a **per-tool** budget (`read` 64K;
-`grep`/`list`/`run` 8K); the `tool` message shows the tool's window whole and never cuts its
+A result body is bounded by the tool itself, with a **per-tool** budget (`read` window 8K;
+`grep`/`list`/`run` 8K; `recall` 64K); the `tool` message shows the tool's window whole and never cuts its
 middle. An inspection result (`read`/`grep`/`list`) is consumed from the beginning, so its head
 is kept; a command's output matters at its end, so `run` keeps its tail. Only a body still
 exceeding its tool's budget is bounded (with an omission note). The full body is stored as a file and the node keeps a reference. Access is by

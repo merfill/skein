@@ -6,7 +6,9 @@ import { loadSettings } from "../../src/config/settings";
 import type { CommandResult } from "../../src/tools/workspace";
 import { containerWorkspace } from "./container";
 import { dockerWorkspace, type DockerWorkspace } from "./docker";
-import { materializeTask } from "./harness";
+import { materializeTask, stageVerifier } from "./harness";
+import { startApiLogProxy, type ApiLogProxy } from "./api-log-proxy";
+import { writeCapture } from "./opencode-capture";
 import { parseOpenCodeStream, type OpenCodeMetric } from "./opencode-metrics";
 import { startAllowlistProxy } from "./proxy";
 import type { SandboxTask } from "./task";
@@ -76,26 +78,34 @@ export async function runOpenCodeTask(
   writeFileSync(join(root, ".skein", "instruction.txt"), request);
 
   // opencode config (passed with OPENCODE_CONFIG, so the host's global config is ignored).
-  const config = {
+  // The warm-up run uses the real API; once it is done the baseURL is pointed at the logging
+  // proxy (below), so the agent's model calls are captured without gzip or a TLS tunnel.
+  const api = new URL(settings.apiUrl);
+  const apiPath = api.pathname.replace(/\/$/, "");
+  const configPath = join(root, ".skein", "opencode.json");
+  const buildConfig = (baseURL: string) => ({
     $schema: "https://opencode.ai/config.json",
     model,
     provider: {
       routerai: {
         npm: "@ai-sdk/openai-compatible",
         name: "RouterAI",
-        options: { baseURL: settings.apiUrl, apiKey: settings.apiKey },
+        options: { baseURL, apiKey: settings.apiKey },
         models: {
           [model.replace(/^routerai\//, "")]: { name: "DeepSeek V4 Flash", reasoningEffort: variant },
         },
       },
     },
-  };
-  writeFileSync(join(root, ".skein", "opencode.json"), JSON.stringify(config, null, 2));
+  });
+  writeFileSync(configPath, JSON.stringify(buildConfig(settings.apiUrl), null, 2));
 
+  // The logging proxy lives on `host.docker.internal` (below); allow it through the `off`
+  // allowlist too, so the API call reaches it whether or not opencode honors NO_PROXY.
   const proxy =
     options.network === "off"
-      ? await startAllowlistProxy([API_HOST], "host.docker.internal")
+      ? await startAllowlistProxy([API_HOST, "host.docker.internal"], "host.docker.internal")
       : undefined;
+  let logProxy: ApiLogProxy | undefined;
 
   const ws: DockerWorkspace = dockerWorkspace(root, {
     image: task.image,
@@ -121,6 +131,12 @@ export async function runOpenCodeTask(
     // npm provider package on first use, which the `off` proxy would otherwise block.
     ws.exec(`${configEnv} opencode run --format json -m ${model} "reply with: ready"`, 180_000);
 
+    // Point opencode at the logging proxy so every model call's context and reasoning are
+    // captured (contexts.ndjson / reasoning.ndjson). The warm-up above already installed the
+    // provider package, so the proxy never has to fetch it.
+    logProxy = await startApiLogProxy(api.origin, dir, "host.docker.internal");
+    writeFileSync(configPath, JSON.stringify(buildConfig(`${logProxy.url}${apiPath}`), null, 2));
+
     const proxyEnv =
       proxy === undefined
         ? ""
@@ -137,6 +153,10 @@ export async function runOpenCodeTask(
     writeFileSync(join(dir, "opencode.txt"), run.stdout);
     writeFileSync(join(dir, "opencode.err.txt"), run.stderr);
     const metric = parseOpenCodeStream(run.stdout);
+
+    // The verifier is staged only now — after the agent, before the check — so the agent's
+    // workspace never contained it.
+    stageVerifier(root, task);
 
     // The same pre-verifier rebuild and verifier as the engine harness.
     if (task.checkSetup !== undefined) ws.run(task.checkSetup);
@@ -163,5 +183,15 @@ export async function runOpenCodeTask(
     return { task: task.id, network: options.network, reward, check: checked, metric, elapsedMs, dir, run };
   } finally {
     await proxy?.close();
+    if (logProxy !== undefined) {
+      await logProxy.close();
+      const captured = writeCapture(dir);
+      if (options.quiet !== true) {
+        console.info(
+          `[${task.id}/opencode-${options.network}] captured ${captured.contexts.length} contexts, ` +
+            `${captured.reasoning.length} responses -> ${dir}`,
+        );
+      }
+    }
   }
 }

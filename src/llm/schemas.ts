@@ -38,8 +38,12 @@ export const applySchema = z.discriminatedUnion("tool", [
     content: z.string(),
   }),
   z.object({
-    tool: z.literal("run"),
+    tool: z.literal("bash"),
     command: z.string().optional(),
+    // Run the command in this workspace path instead of the workspace root.
+    workdir: z.string().optional(),
+    // Per-command cap in milliseconds (the workspace default applies when absent).
+    timeout: z.number().int().positive().optional(),
   }),
   z.object({
     // Fetch a URL into the workspace as read-only reference evidence, so it can be read
@@ -90,6 +94,97 @@ export const actionSchema = z.discriminatedUnion("operator", [
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
+
+// The native tool call a move corresponds to. The model emits one tool call per turn
+// (`PROPOSAL_TOOLS`), so the tape can render the assistant's own history as
+// `assistant.tool_calls` + `tool` messages instead of plain text (docs/ir_semantics §7).
+export interface ModelCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+// IR `Apply` → the native tool call the model emitted/expects. The reverse of `toProposal`
+// (docs/ir_semantics §7): the tape renders the model's own history with these names/args, so
+// it sees the same vocabulary it calls with (`filePath`/`offset`/`limit`, `webfetch`).
+function nativeApply(action: Apply): ModelCall {
+  switch (action.tool) {
+    case "read": {
+      const args: Record<string, unknown> = { filePath: action.path };
+      if (action.start !== undefined) args.offset = action.start;
+      if (action.end !== undefined) args.limit = action.end - (action.start ?? 1) + 1;
+      return { name: "read", args };
+    }
+    case "grep": {
+      const args: Record<string, unknown> = { pattern: action.pattern };
+      if (action.path !== undefined) args.path = action.path;
+      if (action.include !== undefined) args.include = action.include;
+      if (action.from !== undefined) args.from = action.from;
+      return { name: "grep", args };
+    }
+    case "list": {
+      const args: Record<string, unknown> = {};
+      if (action.path !== undefined) args.path = action.path;
+      if (action.include !== undefined) args.include = action.include;
+      if (action.from !== undefined) args.from = action.from;
+      return { name: "list", args };
+    }
+    case "edit":
+      return {
+        name: "edit",
+        args: { filePath: action.path, oldString: action.find, newString: action.replace },
+      };
+    case "write":
+      return { name: "write", args: { filePath: action.path, content: action.content } };
+    case "bash": {
+      const args: Record<string, unknown> = { command: action.command ?? "" };
+      if (action.workdir !== undefined) args.workdir = action.workdir;
+      if (action.timeout !== undefined) args.timeout = action.timeout;
+      return { name: "bash", args };
+    }
+    case "fetch":
+      return {
+        name: "webfetch",
+        args: { url: action.url, ...(action.path !== undefined ? { path: action.path } : {}) },
+      };
+    case "apply_patch":
+      return {
+        name: "apply_patch",
+        args: { patch: action.patch, ...(action.strip !== undefined ? { strip: action.strip } : {}) },
+      };
+  }
+}
+
+export function modelCall(action: Action): ModelCall {
+  switch (action.operator) {
+    case "create_goal":
+      return { name: "create_goal", args: { what: action.what, command: action.command } };
+    case "apply":
+      return nativeApply(action.action);
+    case "stop":
+      return { name: "stop", args: action.why !== undefined ? { why: action.why } : {} };
+    case "decline":
+      return { name: "decline", args: action.why !== undefined ? { why: action.why } : {} };
+    case "recall":
+      return {
+        name: "recall",
+        args: {
+          id: action.id,
+          ...(action.start !== undefined ? { start: action.start } : {}),
+          ...(action.end !== undefined ? { end: action.end } : {}),
+        },
+      };
+    case "search":
+      return {
+        name: "search",
+        args: {
+          id: action.id,
+          pattern: action.pattern,
+          ...(action.before !== undefined ? { before: action.before } : {}),
+          ...(action.after !== undefined ? { after: action.after } : {}),
+        },
+      };
+  }
+}
 
 export const proposalSchema = z.object({
   thought: z.string(),

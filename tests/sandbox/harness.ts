@@ -24,9 +24,9 @@ export interface TaskRun {
   request: string;
 }
 
-// The on-disk task root and its verifier: the environment's files, the task's own verifier
-// (under `.skein/`, hidden from the agent's file tools) and the pytest-free runner. Shared
-// by the engine harness (`runTask`) and the opencode adapter (`opencode.ts`).
+// The on-disk task root, its request and the verifier command. Shared by the engine harness
+// (`runTask`) and the opencode adapter (`opencode.ts`). The verifier's own files are staged
+// later (`stageVerifier`), after the agent has run — see its comment.
 export interface MaterializedTask {
   root: string;
   request: string;
@@ -47,14 +47,9 @@ export function materializeTask(
     writeFileSync(full, content);
   }
 
-  // The task's verifier, copied under `.skein/` (hidden from the agent's file tools, which
-  // skip SKIP_DIRS) together with the pytest-free runner.
-  const testsDst = join(root, ".skein", "tests");
-  mkdirSync(testsDst, { recursive: true });
-  cpSync(join(taskDir, "tests"), testsDst, { recursive: true });
-  writeFileSync(join(testsDst, "run.py"), VERIFIER_RUNNER);
-  // A `pytest` stand-in next to the runner, so `import pytest` resolves without installing it.
-  writeFileSync(join(testsDst, "pytest.py"), PYTEST_SHIM);
+  // The harness's own directory: the instruction/config and, after the agent, the verifier
+  // (`stageVerifier`). The engine's own outputs (`observations`, `jobs`, `ref`) mkdir on demand.
+  mkdirSync(join(root, ".skein"), { recursive: true });
 
   // Test-only: stage the task's solution for the offline harness check. For an offline task
   // (network "none") a no-op apt shim lets a solution that begins with `apt-get install`
@@ -73,6 +68,22 @@ export function materializeTask(
   const request = task.request ?? readFileSync(join(taskDir, "instruction.md"), "utf8");
   const check = task.check ?? DEFAULT_TASK_CHECK;
   return { root, request, check };
+}
+
+// Stage the task's verifier under `<root>/.skein/tests/`: the task's own pytest files plus the
+// pytest-free runner and shim. It is called AFTER the agent has run, never before: the agent's
+// workspace must not carry the verifier, whose Harbor `test.sh` can name the solution (it
+// re-clones the exact broken revision). The agent's file tools skip `.skein`, but its shell
+// does not, so "hidden" only holds if the files are simply absent during the agent phase. The
+// verifier is (re)materialized here from the task cache at check time, so the reward stays
+// reproducible.
+export function stageVerifier(root: string, task: SandboxTask): void {
+  const testsDst = join(root, ".skein", "tests");
+  mkdirSync(testsDst, { recursive: true });
+  cpSync(join(harborTaskDir(task.id), "tests"), testsDst, { recursive: true });
+  writeFileSync(join(testsDst, "run.py"), VERIFIER_RUNNER);
+  // A `pytest` stand-in next to the runner, so `import pytest` resolves without installing it.
+  writeFileSync(join(testsDst, "pytest.py"), PYTEST_SHIM);
 }
 
 export async function runTask(
@@ -114,6 +125,10 @@ export async function runTask(
       ...(options.constraints !== undefined ? { constraints: options.constraints } : {}),
     },
   );
+
+  // The verifier is staged only now — after the agent, before the check — so the agent's
+  // workspace never contained it.
+  stageVerifier(root, task);
 
   // A pre-verifier step in the task container (e.g. fix-ocaml-gc rebuilds and regenerates
   // the tests.txt the verifier reads); its exit code is left to the verifier to reflect.
