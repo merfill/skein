@@ -1,4 +1,6 @@
 import { childrenOf, goalOf, planOf, stopOf, unactionableOf, type State } from "./graph";
+import type { IslandId } from "./islands";
+import { currentGoalId, goalPayload } from "./traversal";
 import type { Node } from "./types";
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
@@ -34,6 +36,8 @@ export interface Context {
   history: TapeMessage[];
   // Which node instruction applies now: a fresh request or an open goal.
   situation: Situation;
+  // The island of the focused goal, when there is one (an authored label, §2.5).
+  island?: IslandId;
   constraints: { id: string; forbid: string[] }[];
 }
 
@@ -75,6 +79,7 @@ function goalText(node: Node): string {
   return [
     `[${node.id}] create_goal:`,
     `what: ${field("what", node.label)}`,
+    `state: ${field("state", "(none)")}`,
   ].join("\n");
 }
 
@@ -194,10 +199,15 @@ function renderGoal(state: State, goalId: string, out: TapeMessage[]): void {
   const goal = state.nodes.get(goalId);
   if (goal === undefined) return;
   const what = (payloadOf(state, goalId)?.what as string | undefined) ?? goal.label;
+  const island = (payloadOf(state, goalId)?.state as string | undefined) ?? "";
   const goalCall = asCall(goal);
   if (goalCall !== undefined) {
     out.push({ role: "assistant", text: "", call: { id: goalId, ...goalCall } });
-    out.push({ role: "tool", text: `[${goalId}] goal created: ${what}`, callId: goalId });
+    out.push({
+      role: "tool",
+      text: `[${goalId}] goal created: ${what}${island !== "" ? ` (state: ${island})` : ""}`,
+      callId: goalId,
+    });
   } else {
     out.push({ role: "assistant", text: goalText(goal) });
   }
@@ -285,6 +295,14 @@ export function situationOf(state: State): Situation {
   return interpreted ? "goal" : "request";
 }
 
+// The island of the focused goal (the top of the traversal stack), when it has one. An
+// authored label (docs/ir_semantics.md §2.5), never a gate.
+export function islandOf(state: State): IslandId | undefined {
+  const current = currentGoalId(state);
+  if (current === undefined) return undefined;
+  return goalPayload(state, current)?.state;
+}
+
 export function project(state: State, options: ProjectOptions = {}): Context {
   const history: TapeMessage[] = [];
   const rootId = state.rootId;
@@ -328,5 +346,5 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     });
     history.push({ role: "tool", text: options.rejection.text, callId });
   }
-  return { history, situation: situationOf(state), constraints: constraintsOf(state) };
+  return { history, situation: situationOf(state), island: islandOf(state), constraints: constraintsOf(state) };
 }

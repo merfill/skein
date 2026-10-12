@@ -31,6 +31,9 @@ original and a Russian mirror named with the `_ru` suffix.
 
 - [system_prompt.md](system_prompt.md) · [RU](system_prompt_ru.md) — the behavior blocks the
   system prompt is assembled from.
+- [prompt_state_machine_concept.md](prompt_state_machine_concept.md) ·
+  [RU](prompt_state_machine_concept_ru.md) — the agent's prompt as a state machine (states,
+  criteria, transitions, constraints); draft.
 - [context_design.md](context_design.md) · [RU](context_design_ru.md) — the design rationale
   for the projection (working memory, working set, alternatives).
 
@@ -49,6 +52,9 @@ original and a Russian mirror named with the `_ru` suffix.
   — context format and LLM-turn reduction (current work).
 - [plans/goal_reduction_plan.md](plans/goal_reduction_plan.md) · [RU](plans/goal_reduction_plan_ru.md)
   — reduce the goal to its minimal, monotone shape (planned).
+- [plans/state_transitions_plan.md](plans/state_transitions_plan.md) ·
+  [RU](plans/state_transitions_plan_ru.md) — make `create_goal` the state-change move
+  (unblock the transition; planned).
 - [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
   — observation of changes outside the engine (a/b done, c open).
 

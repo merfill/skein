@@ -1,3 +1,5 @@
+import type { IslandId } from "./islands";
+
 export type Space = "work" | "artifact";
 
 export const SPACES = ["work", "artifact"] as const;
@@ -53,7 +55,8 @@ export type Provenance =
 
 export interface GoalPayload {
   what: string;
-  // The first concrete plan item is materialized in the plan container; later ones are appended.
+  // The island of work the goal is entered in — an authored label (docs/ir_semantics.md §2.5).
+  state: IslandId;
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):

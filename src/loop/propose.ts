@@ -5,7 +5,7 @@ import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/
 import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools } from "../llm/structured";
-import { BASE_PROMPT, NODE_INSTRUCTIONS } from "./prompt";
+import { BASE_PROMPT, ISLAND_INSTRUCTIONS, NODE_INSTRUCTIONS } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
 
@@ -46,6 +46,10 @@ export function buildMessages(context: Context): BaseMessage[] {
     new SystemMessage(BASE_PROMPT),
     new SystemMessage(NODE_INSTRUCTIONS[context.situation]),
   ];
+  // On an open goal, highlight the focused island's relief (an authored label, §2.5).
+  if (context.situation === "goal" && context.island !== undefined) {
+    messages.push(new SystemMessage(ISLAND_INSTRUCTIONS[context.island]));
+  }
   for (const constraint of context.constraints) {
     messages.push(
       new SystemMessage(

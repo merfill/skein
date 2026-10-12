@@ -220,18 +220,18 @@ describe("classify", () => {
     };
     const state = fold([req]);
     expect(
-      classify({ operator: "create_goal", what: "locate", command: "node --test" },
+      classify({ operator: "create_goal", what: "locate", state: "reconnaissance", action: { tool: "bash", command: "node --test" } },
         state,
       ),
     ).toEqual({ accept: true });
     expect(
-      classify({ operator: "create_goal", what: "", command: "true" }, state).reason,
+      classify({ operator: "create_goal", what: "", state: "reconnaissance", action: { tool: "bash", command: "true" } }, state).reason,
     ).toBe("empty_what");
     expect(
-      classify({ operator: "create_goal", what: "x", command: "" }, state).reason,
+      classify({ operator: "create_goal", what: "x", state: "reconnaissance", action: { tool: "bash", command: "" } }, state).reason,
     ).toBe("empty_command");
     expect(
-      classify({ operator: "create_goal", what: "x", command: "node --test" },
+      classify({ operator: "create_goal", what: "x", state: "reconnaissance", action: { tool: "bash", command: "node --test" } },
         fold([]),
       ).reason,
     ).toContain("no_current_goal");
@@ -291,7 +291,7 @@ describe("executeAction", () => {
       {
         operator: "create_goal",
         what: "locate",
-        command: "node --test",
+        state: "reconnaissance", action: { tool: "bash", command: "node --test" },
       },
       root,
       workspace,
@@ -319,7 +319,7 @@ describe("executeAction", () => {
       { type: "descend", node: "g1" },
     ]);
     const outcome = executeAction(
-      { operator: "create_goal", what: "sub", command: "true" },
+      { operator: "create_goal", what: "sub", state: "reconnaissance", action: { tool: "bash", command: "true" } },
       root,
       workspace,
       0,
@@ -671,7 +671,7 @@ describe("the message tape", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          command: "echo start",
+          state: "reconnaissance", action: { tool: "bash", command: "echo start" },
         });
       }
       if (index === 2) {
@@ -699,7 +699,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+      if (index === 1) return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       if (index === 2) {
         // One doxa move, two independent probes (a batch).
         return {
@@ -743,7 +743,7 @@ describe("the message tape", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
@@ -833,7 +833,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "fix the off-by-one",
-          command: "echo start",
+          state: "reconnaissance", action: { tool: "bash", command: "echo start" },
         });
       }
       if (index === 2) {
@@ -865,7 +865,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "make the suite pass",
-          command: "true",
+          state: "reconnaissance", action: { tool: "bash", command: "true" },
         });
       }
       return proposal({ operator: "stop", why: "done" });
@@ -896,7 +896,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "interpret the request",
-          command: "echo hi",
+          state: "reconnaissance", action: { tool: "bash", command: "echo hi" },
         });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo hi" } });
@@ -922,7 +922,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
@@ -943,7 +943,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       // `decline` is valid only at the request; at the open goal it is a structural refusal.
       return proposal({ operator: "decline", why: "nothing to do" });
@@ -971,7 +971,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "read the long file", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "read the long file", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "big.txt" } });
@@ -1020,7 +1020,7 @@ describe("runAgent", () => {
     const propose = async (): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       if (index === 2 || index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
@@ -1057,7 +1057,7 @@ describe("runAgent", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", command: "echo start" });
+        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
@@ -1086,7 +1086,7 @@ describe("runAgent", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          command: "echo hi",
+          state: "reconnaissance", action: { tool: "bash", command: "echo hi" },
         });
       }
       // The goal id is exposed on the tape's create_goal message.
@@ -1115,7 +1115,7 @@ describe("failed edit materializes the file content", () => {
         return proposal({
           operator: "create_goal",
           what: "green",
-          command: "echo done",
+          state: "reconnaissance", action: { tool: "bash", command: "echo done" },
         });
       }
       if (index === 2) {

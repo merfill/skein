@@ -76,10 +76,10 @@ goal closes only through the doxa's `stop`.
 
 `src/llm/schemas.ts`, `src/tools/index.ts`, the gate `src/loop/classify.ts`:
 
-- **`create_goal`** `{ what, command }` — at the request (once): the
-  interpretation (`goal`; the plan is seeded with one item and the `command` is run at once;
-  refusals `interpreted`, empty fields). At an open goal: a sub-goal appended as the current
-  item's newest alternative; with no current item, refused.
+- **`create_goal`** `{ what, state, action }` — at the request (once): the
+  interpretation (`goal`; the plan is seeded with one item and the `action` — any tool — is run
+  at once; refusals `interpreted`, empty fields). At an open goal: a sub-goal appended as the
+  current item's newest alternative; with no current item, refused.
 - **`apply`** `{ action }` — the command runs; placement by the outcome of the current item
   (`OP-AP-PLACE`): a success → a new plan item, otherwise → a new alternative; non-execution
   (repeat/stale/forbidden/empty) is an observation with a reason.

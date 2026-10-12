@@ -97,7 +97,11 @@ export function classify(
 
   if (action.operator === "create_goal") {
     if (action.what.trim() === "") return reject("empty_what");
-    if (action.command.trim() === "") return reject("empty_command");
+    // A bash seed with no command is malformed; any other tool's required params are checked
+    // by the schema.
+    if (action.action.tool === "bash" && (action.action.command ?? "").trim() === "") {
+      return reject("empty_command");
+    }
     if (current === undefined) return reject("no_current_goal");
     // The interpretation is fixed: a request accepts one goal, created once.
     if (node?.kind === "request" && goalOf(state, current) !== undefined) {

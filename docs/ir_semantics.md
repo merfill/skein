@@ -24,9 +24,10 @@ that pins the invariant the change preserves. Without step 1, step 2 is not done
 
 **Status.** The doxa has **four operators** (`create_goal`, `apply`, `stop`, `decline`);
 `recall`/`search` are read-only addresses, not moves. The request is interpreted **once** as a goal
-(the `goal` relation) or declined (an `unactionable` node). A goal closes **only** through
-`stop`. A plan holds **items**; an item holds **alternatives**. The context is a **message
-tape** rebuilt from the tree. The doxa proposes; the logos executes and records.
+(the `goal` relation) or declined (an `unactionable` node). A goal carries an **authored
+`state`** (which island of work it is entered in — a label, not a derived status). A goal closes
+**only** through `stop`. A plan holds **items**; an item holds **alternatives**. The context is a
+**message tape** rebuilt from the tree. The doxa proposes; the logos executes and records.
 
 ---
 
@@ -84,7 +85,7 @@ Nodes fall into two spaces.
 | kind | meaning |
 |---|---|
 | `request` | the arbiter's request: raw motivation (the root); interpreted once as a goal or declined |
-| `goal` | a goal: what to achieve; carries `what` |
+| `goal` | a goal: what to achieve; carries `what` and `state` (the island it is entered in) |
 | `plan` | a goal's plan: an ordered list of items (≥1) |
 | `item` | a plan item: an ordered list of alternatives (≥1) |
 | `action` | a command; an alternative of an item |
@@ -135,16 +136,16 @@ Rules that follow:
   branching the element is exactly one and it is a command (`action`);
 - a goal appears in only two ways: as the request's interpretation (`request.goal`) or as an
   alternative of an item (`item.alts`). Nowhere else;
-- **`what`.** A goal carries `what` (what to achieve). The plan is a separate
-  `plan` node, seeded by `create_goal` with one item whose sole alternative is the first
-  command.
+- **`what`.** A goal carries `what` (what to achieve) and `state` (the island of work it is
+  entered in). The plan is a separate `plan` node, seeded by `create_goal` with one item whose
+  sole alternative is the first action.
 
 ### 2.4 The current node
 
 At any moment there is a **current node** — the focus of work; every doxa operator is
 relative to it. The focus is the top of the **traversal stack** (§2.6).
 
-### 2.5 State is derived
+### 2.5 Status is derived
 
 Nodes have **no stored status**; nodes are not edited, and there is no `stateOf`. The facts a
 decision needs are read from nodes/relations:
@@ -166,6 +167,10 @@ decision needs are read from nodes/relations:
 There are **no truth predicates** (`achieved`/`refuted`/`abandoned`) and **no criterion**.
 A run by itself settles nothing: a goal is closed only by the doxa's `stop`. These are
 `project`/read rules, not fields. Only the journal is monotone (§3).
+
+A goal's `state` is different in kind: it is **authored** by the doxa at `create_goal` (like
+`what`) and never changes. It records which island of work the goal is entered in. It is not a
+derived status and never a gate — closure stays with `stop` (§8).
 
 ### 2.6 The stack and traversal
 
@@ -222,7 +227,7 @@ command or goal):
 A **sub-goal** (`create_goal` on an open goal) always becomes a new alternative of the
 current item and the focus descends; with no current item it is refused.
 
-Bootstrap: `create_goal` seeds the goal's plan with one item and runs its first command at
+Bootstrap: `create_goal` seeds the goal's plan with one item and runs its first action at
 once (the logos); the goal is born with its first item executed. Every attempt leaves new
 nodes; an existing node is neither reused nor edited — the journal stays monotone.
 
@@ -240,8 +245,10 @@ cursor shift, **new knowledge** (a new observation or a new outcome, or a fragme
 by `recall`/`search`), or a closure. The
 layers are deterministic: a **repeat action** (the same command with the same inputs and an
 unchanged world) is refused and its observation names the existing result; **stagnation**
-(the cursor does not shift and there is no new knowledge for `K` turns) returns to the
-parent; **exhaustion** without progress at the root stops the run (`no_progress`).
+(the cursor does not shift, the `state` does not change, and there is no new knowledge for
+`K` turns) returns to the parent; **exhaustion** without progress
+at the root stops the run (`no_progress`). A change of `state` is progress, so a run that keeps
+entering new islands is not stalled.
 
 ---
 
@@ -270,21 +277,23 @@ input → action → focus → refusal.
 
 ### 4.1 `create_goal`
 
-Interprets the request, or decomposes the current item into a sub-goal.
+Interprets the request, or starts a sub-goal for the next state.
 
-**Input.** `{ what, command }`: `what` — what to achieve; `command` — the first plan item
-(a concrete command).
+**Input.** `{ what, state, action }`: `what` — what to achieve; `state` — the island of work
+this goal is entered in (one of the names the base prompt lists); `action` — the first plan
+item, **any tool** (the same union as `apply`, not only a shell command).
 
 **At the request (interpretation).** Create goal `G` and its plan `Q` with one item `I`
-whose sole alternative is the action `A` (the `command`); link `R.goal = G`, `G.plan = Q`,
+whose sole alternative is the action `A` (the `action`); link `R.goal = G`, `G.plan = Q`,
 `Q.items = [I]`, `I.alts = [A]`. The logos **runs `A` at once** and records its outcome;
 the goal is born with its first item executed. The move renders as two native pairs: a call
-`create_goal { what, command }` + a confirmation, then a call `run { command }` + the command's observation. Focus descends into `G`. The
+`create_goal { what, state, action }` + a confirmation, then the action's own native call +
+its observation. Focus descends into `G`. The
 interpretation is created once: a second `create_goal` at the request is refused
 (`interpreted`).
 
 **At an open goal (decomposition).** The sub-goal becomes the newest alternative of the
-current item (`I.alts += G`), with its own plan seeded by its `command` (also run at once);
+current item (`I.alts += G`), with its own plan seeded by its `action` (also run at once);
 focus descends. With no current item the move is refused.
 
 ### 4.2 `apply`
@@ -393,8 +402,8 @@ the reverse, so the tape and the callable schema share one vocabulary (the IR ke
 
 **Moves and their messages:**
 
-- `create_goal` — a `create_goal { what, command }` call + a `tool` with a confirmation
-  (`goal created: <what>`), then the plan's first command as a separate `bash { command }` call +
+- `create_goal` — a `create_goal { what, state, action }` call + a `tool` with a confirmation
+  (`goal created: <what>`), then the plan's first action as a separate native call (any tool) +
   a `tool` with its observation (the engine runs it at once);
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the observation);
 - `stop` — `assistant` with the reason (`why`): the goal is closed;
@@ -434,7 +443,8 @@ nonzero exit.
 **The system part** is assembled from the current node's intent, not as a monolith: the base
 prompt holds only what is true on any move (the role, the contract, the answer form); the node
 instruction holds the admissible moves and the rules of the current situation (a fresh request /
-an open goal); constraints are added there. The tool names/parameters/descriptions are **not**
+an open goal) and, on an open goal, the current island's relief; constraints are added there.
+The tool names/parameters/descriptions are **not**
 in the prompt — they ship in the request's `tools` field.
 
 ---
@@ -450,6 +460,8 @@ in the prompt — they ship in the request's `tools` field.
    or an item's alternative.
 7. `stop` is a relation on the goal, never a plan item.
 8. A closed goal's internals leave the tape (only its closure message remains).
+9. A goal's `state` is the doxa's authored label: it never gates a move and never closes a
+   goal (closure is `stop` alone).
 
 ---
 

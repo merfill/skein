@@ -45,7 +45,7 @@ const IMAGE_TASKS: SandboxTask[] = [
 const goal = (what: string): Action => ({
   operator: "create_goal",
   what,
-  command: "pwd",
+  state: "reconnaissance", action: { tool: "bash", command: "pwd" },
 });
 const solve: Action = { operator: "apply", action: { tool: "bash", command: SOLUTION_COMMAND } };
 const stop: Action = { operator: "stop", why: "done" };

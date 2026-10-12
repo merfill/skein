@@ -61,7 +61,8 @@ describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
       }
 
       if (step.cwdReaction === true && proposal.actions[0]!.operator === "create_goal") {
-        const command = proposal.actions[0]!.command;
+        const seed = proposal.actions[0]!.action;
+        const command = seed.tool === "bash" ? (seed.command ?? "") : "";
         expect(
           command.trim(),
           "a revised command must not repeat the bare workspace-root command",

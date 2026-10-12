@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { ISLAND_IDS } from "../ir/islands";
+
 export const applySchema = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("read"),
@@ -67,8 +69,10 @@ export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
     operator: z.literal("create_goal"),
     what: z.string(),
-    // The first plan item: the concrete command to run now.
-    command: z.string(),
+    // The island of work the goal is entered in (an authored label, never a gate).
+    state: z.enum(ISLAND_IDS),
+    // The first plan item: any tool, run at once as the goal's first item.
+    action: applySchema,
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),
@@ -157,7 +161,16 @@ function nativeApply(action: Apply): ModelCall {
 export function modelCall(action: Action): ModelCall {
   switch (action.operator) {
     case "create_goal":
-      return { name: "create_goal", args: { what: action.what, command: action.command } };
+      return {
+        name: "create_goal",
+        args: {
+          what: action.what,
+          state: action.state,
+          // The seed rendered in the same native vocabulary as a standalone tool call, so the
+          // tape shows the model its own nested `action` object back.
+          action: { tool: nativeApply(action.action).name, ...nativeApply(action.action).args },
+        },
+      };
     case "apply":
       return nativeApply(action.action);
     case "stop":

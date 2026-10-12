@@ -77,7 +77,9 @@ describe.skipIf(!settings.live)("workspace-root criterion (live)", () => {
       expect(proposal.actions[0]!.operator, "an open request is interpreted").toBe("create_goal");
       if (proposal.actions[0]!.operator !== "create_goal") return;
 
-      const command = proposal.actions[0]!.command.trim();
+      const seed = proposal.actions[0]!.action;
+      expect(seed.tool, "the first plan item is a command").toBe("bash");
+      const command = seed.tool === "bash" ? (seed.command ?? "").trim() : "";
       expect(command, "the first plan command keeps the criterion command").toContain(testCase.command);
       if (testCase.subdir === null) {
         expect(command, "a root-level criterion needs no cd prefix").not.toMatch(/^cd\s/);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { actionSchema, type Action, type Proposal } from "./schemas";
+import { ISLAND_IDS } from "../ir/islands";
+import { actionSchema, applySchema, type Action, type Apply, type Proposal } from "./schemas";
 
 // Structured output via native tool calls (docs/testing_ru.md §8.1). The provider does
 // not hold tool calling well when the schema is ONE deeply nested discriminated union
@@ -21,10 +22,6 @@ export interface OpenAITool {
 // they use the names a coding model already knows (`filePath`/`offset`/`limit`, not
 // `path`/`start`/`end`); the engine schema (`applySchema`) still accepts the full form and
 // `toProposal` maps the native call back into the IR.
-const createGoalParams = z.object({
-  what: z.string(),
-  command: z.string(),
-});
 const recallParams = z.object({
   id: z.string(),
   start: z.number().int().positive().optional(),
@@ -64,6 +61,23 @@ const patchParams = z.object({
   patch: z.string(),
   strip: z.number().int().nonnegative().optional(),
 });
+// The seed of a `create_goal`: the first plan item, any tool — the same native vocabulary the
+// standalone tools use, discriminated by `tool` (docs/ir_semantics.md §4.1).
+const goalActionParams = z.discriminatedUnion("tool", [
+  readParams.extend({ tool: z.literal("read") }),
+  grepParams.extend({ tool: z.literal("grep") }),
+  listParams.extend({ tool: z.literal("list") }),
+  editParams.extend({ tool: z.literal("edit") }),
+  writeParams.extend({ tool: z.literal("write") }),
+  bashParams.extend({ tool: z.literal("bash") }),
+  fetchParams.extend({ tool: z.literal("webfetch") }),
+  patchParams.extend({ tool: z.literal("apply_patch") }),
+]);
+const createGoalParams = z.object({
+  what: z.string(),
+  state: z.enum(ISLAND_IDS),
+  action: goalActionParams,
+});
 const stopParams = z.object({ why: z.string().optional() });
 const declineParams = z.object({ why: z.string().optional() });
 
@@ -73,7 +87,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "create_goal",
     description:
-      "Interpret the request (when the focus is the request; exactly once — the interpretation is FIXED) or add a sub-goal that branches the current plan item (when the focus is an open goal). Give what (the outcome) and command (the FIRST concrete action to run now). The engine executes that command from the WORKSPACE ROOT and returns its result; a plan item is any command, appended in order, one at a time — after each, decide the next from its result. If the project lives in a subdirectory (seen with list, or named in the request, e.g. `ocaml/`), the command MUST carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`), never the bare command. A sub-goal replaces the current plan item (its newest alternative); the focus descends into it. Refused if: what/command is empty; or the request already has an interpretation (interpreted).",
+      `Interpret the request (when the focus is the request; exactly once — the interpretation is FIXED) or add a sub-goal that moves the work to a new state or branches the current plan item (when the focus is an open goal). Give what (the outcome), state (the island of work this goal is entered in: one of ${ISLAND_IDS.join(", ")}), and action (the FIRST plan item — ANY tool: read/grep/list/edit/write/bash/webfetch/apply_patch). The engine executes that action at once and returns its result; a plan item is any action, appended in order, one at a time. If the project lives in a subdirectory (seen with list, or named in the request, e.g. \`ocaml/\`), a bash command MUST carry the \`cd <dir> &&\` prefix (\`cd ocaml && make -C testsuite one DIR=tests/basic\`), never the bare command; a bash command runs from the WORKSPACE ROOT. A sub-goal replaces the current plan item (its newest alternative); the focus descends into it. Refused if: what/action is empty; the state is unknown; or the request already has an interpretation (interpreted).`,
     schema: createGoalParams,
   },
   {
@@ -173,6 +187,65 @@ function parseArgs(args: unknown): Record<string, unknown> {
   return (args as Record<string, unknown>) ?? {};
 }
 
+// The native tool names that map to an IR `apply`. Shared by the standalone call and by the
+// nested `action` of `create_goal`.
+const APPLY_TOOL_NAMES = new Set([
+  "read",
+  "grep",
+  "list",
+  "edit",
+  "write",
+  "bash",
+  "webfetch",
+  "apply_patch",
+]);
+
+// Map a native tool call (`name` + `args`) into the IR `Apply`. One vocabulary for a
+// standalone tool call and for the seed carried inside `create_goal`.
+function toApply(name: string, a: Record<string, unknown>): Apply {
+  const present = (key: string): boolean => a[key] !== undefined;
+  const pick = (key: string): Record<string, unknown> => (present(key) ? { [key]: a[key] } : {});
+  let apply: unknown;
+  switch (name) {
+    case "read": {
+      // The native `offset`/`limit` window maps to the IR inclusive `start`/`end`.
+      const start = present("offset") ? (a.offset as number) : undefined;
+      const end = present("limit") ? (start ?? 1) + (a.limit as number) - 1 : undefined;
+      apply = {
+        tool: "read",
+        path: a.filePath,
+        ...(start !== undefined ? { start } : {}),
+        ...(end !== undefined ? { end } : {}),
+      };
+      break;
+    }
+    case "grep":
+      apply = { tool: "grep", pattern: a.pattern, ...pick("path"), ...pick("include"), ...pick("from") };
+      break;
+    case "list":
+      apply = { tool: "list", ...pick("path"), ...pick("include"), ...pick("from") };
+      break;
+    case "edit":
+      apply = { tool: "edit", path: a.filePath, find: a.oldString, replace: a.newString };
+      break;
+    case "write":
+      apply = { tool: "write", path: a.filePath, content: a.content };
+      break;
+    case "bash":
+      apply = { tool: "bash", command: a.command, ...pick("workdir"), ...pick("timeout") };
+      break;
+    case "webfetch":
+      apply = { tool: "fetch", url: a.url, ...pick("path") };
+      break;
+    case "apply_patch":
+      apply = { tool: "apply_patch", patch: a.patch, ...pick("strip") };
+      break;
+    default:
+      throw new Error(`unknown apply tool: ${name}`);
+  }
+  return applySchema.parse(apply) as Apply;
+}
+
 // Map a tool call (native name + arguments) into the IR Action; the engine (logos) still
 // decides. The native vocabulary differs from the IR: read/edit/write use the familiar
 // `filePath`/`offset`/`limit`/`oldString`/`newString` names, `webfetch` is the IR `fetch`,
@@ -183,9 +256,20 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
   const pick = (key: string): Record<string, unknown> => (present(key) ? { [key]: a[key] } : {});
   let action: unknown;
   switch (name) {
-    case "create_goal":
-      action = { operator: "create_goal", what: a.what, command: a.command };
+    case "create_goal": {
+      const seed = (typeof a.action === "object" && a.action !== null ? a.action : {}) as Record<
+        string,
+        unknown
+      >;
+      const tool = typeof seed.tool === "string" ? seed.tool : "";
+      action = {
+        operator: "create_goal",
+        what: a.what,
+        state: a.state,
+        action: toApply(tool, seed),
+      };
       break;
+    }
     case "recall":
       action = { operator: "recall", id: a.id, ...pick("start"), ...pick("end") };
       break;
@@ -198,59 +282,11 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
     case "decline":
       action = { operator: "decline", ...pick("why") };
       break;
-    case "read": {
-      // The native `offset`/`limit` window maps to the IR inclusive `start`/`end`.
-      const start = present("offset") ? (a.offset as number) : undefined;
-      const end =
-        present("limit") ? (start ?? 1) + (a.limit as number) - 1 : undefined;
-      action = {
-        operator: "apply",
-        action: {
-          tool: "read",
-          path: a.filePath,
-          ...(start !== undefined ? { start } : {}),
-          ...(end !== undefined ? { end } : {}),
-        },
-      };
-      break;
-    }
-    case "grep":
-      action = {
-        operator: "apply",
-        action: { tool: "grep", pattern: a.pattern, ...pick("path"), ...pick("include"), ...pick("from") },
-      };
-      break;
-    case "list":
-      action = {
-        operator: "apply",
-        action: { tool: "list", ...pick("path"), ...pick("include"), ...pick("from") },
-      };
-      break;
-    case "edit":
-      action = {
-        operator: "apply",
-        action: { tool: "edit", path: a.filePath, find: a.oldString, replace: a.newString },
-      };
-      break;
-    case "write":
-      action = {
-        operator: "apply",
-        action: { tool: "write", path: a.filePath, content: a.content },
-      };
-      break;
-    case "bash":
-      action = {
-        operator: "apply",
-        action: { tool: "bash", command: a.command, ...pick("workdir"), ...pick("timeout") },
-      };
-      break;
-    case "webfetch":
-      action = { operator: "apply", action: { tool: "fetch", url: a.url, ...pick("path") } };
-      break;
-    case "apply_patch":
-      action = { operator: "apply", action: { tool: "apply_patch", patch: a.patch, ...pick("strip") } };
-      break;
     default:
+      if (APPLY_TOOL_NAMES.has(name)) {
+        action = { operator: "apply", action: toApply(name, a) };
+        break;
+      }
       throw new Error(`unknown tool call: ${name}`);
   }
   return { thought, action: actionSchema.parse(action) as Action };

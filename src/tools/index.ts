@@ -7,10 +7,12 @@ import {
   actionSucceeded,
   childrenOf,
   currentVersion,
+  fold,
   itemOf,
   planOf,
   type State,
 } from "../ir/graph";
+import type { IslandId } from "../ir/islands";
 import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
 import type { EdgeKind, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
@@ -779,7 +781,7 @@ export function executeAction(
 
   // A goal is born with its plan: one item, seeded with the first command by the caller
   // (docs/ir_revision.md §2.3, §3.1).
-  const buildGoal = (spec: { what: string; call?: unknown }): {
+  const buildGoal = (spec: { what: string; state: IslandId; call?: unknown }): {
     goalId: string;
     itemId: string;
   } => {
@@ -794,6 +796,7 @@ export function executeAction(
         label: spec.what,
         payload: {
           what: spec.what,
+          state: spec.state,
           ...(spec.call !== undefined ? { call: spec.call } : {}),
         },
         seq: goalSeq,
@@ -1007,8 +1010,9 @@ export function executeAction(
           "create goal failed: no current plan item to decompose — a sub-goal can only replace an existing item; apply an action to add the next one",
         );
       }
-      const { goalId, itemId } = buildGoal({
+      const { goalId } = buildGoal({
         what: action.what,
+        state: action.state,
         call: modelCall(action),
       });
       if (atRequest) {
@@ -1018,17 +1022,18 @@ export function executeAction(
         addEdge({ kind: "llm" }, step as string, goalId, "alts");
       }
       events.push(...descendTo(state, current, goalId));
-      // The logos runs the first command at once (docs/ir_revision.md §3.1): the goal is born
-      // with its first item executed. Messages: assistant(goal) + assistant(call) + tool(obs).
-      const firstCommand = action.command;
-      const actionId = buildActionItem(firstCommand, firstCommand, {
-        signature: bashSignature(firstCommand),
-        // The seeded command is a real move too: record its native `bash` call so the tape
-        // renders assistant.tool_calls + a `tool` result, never a text/OBSERVATION pair.
-        call: modelCall({ operator: "apply", action: { tool: "bash", command: firstCommand } }),
-      });
-      addEdge({ kind: "llm" }, itemId, actionId, "alts");
-      return runShell(firstCommand, actionId);
+      // The first plan item — ANY tool, not only a shell command — runs at once as an
+      // alternative of the goal's first item, through the ordinary apply path
+      // (docs/ir_semantics.md §4.1). The nested call resumes numbering from the outer counter,
+      // so node ids are unchanged.
+      const after = fold(events, state);
+      const seed = executeAction(
+        { operator: "apply", action: action.action },
+        { ...after, seq: counter },
+        workspace,
+        turn,
+      );
+      return { ...seed, events: [...events, ...seed.events] };
     }
 
     case "decline": {

@@ -42,7 +42,7 @@ describe("the message tape under a long horizon", () => {
       if (n === 1) {
         return {
           thought: "",
-          actions: [{ operator: "create_goal", what: "green", command: "true" }],
+          actions: [{ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "true" } }],
         };
       }
       return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: `echo step${n}` } }] };
@@ -72,14 +72,14 @@ describe("the message tape under a long horizon", () => {
         // Interpret the request; the first command fails, leaving the item unfulfilled.
         return {
           thought: "",
-          actions: [{ operator: "create_goal", what: "A", command: "false" }],
+          actions: [{ operator: "create_goal", what: "A", state: "reconnaissance", action: { tool: "bash", command: "false" } }],
         };
       }
       if (call === 2) {
         // Decompose A's current item into a sub-goal G.
         return {
           thought: "",
-          actions: [{ operator: "create_goal", what: "G", command: "true" }],
+          actions: [{ operator: "create_goal", what: "G", state: "reconnaissance", action: { tool: "bash", command: "true" } }],
         };
       }
       if (call === 3) {

@@ -12,7 +12,7 @@ coverage matrix (filled). An ID is **stable**: a spec point may gain tests, but 
 meaning does not change.
 
 > **Reduced goal model** (`docs/plans/goal_reduction_plan.md`). A goal is `what` plus
-> a plan container seeded with the first command. Closure is
+> an authored `state` plus a plan container seeded with the first action. Closure is
 > dynamic: the doxa's `stop` closes a goal; there is no criterion, no exit-code gate,
 > no `done_when`/`step`/`revises`, and no `state` (`exitCode` is ordinary output).
 
@@ -97,16 +97,17 @@ node-event (`observation`/`stop`). A run's result is a plain `observation`; its
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| at the request (interpretation) | focus is `request` with no goal yet | add `goal` (`what`); `goal` relation request → goal; add a `plan` with one `item` whose sole alternative is `command`; the logos runs `command` at once; `descend` | the interpretation is fixed; the goal's first item is executed | `empty_what`, `empty_command`, `interpreted` | `OP-CG-1` |
-| decompose an open goal | focus is `goal` with a current item | add `goal`; append it as the current item's newest alternative (`alts`); add its plan/item with its first command (run at once); `descend` | the sub-goal is the item's newest alternative | as above; `no_current_item` | `OP-CG-2` |
-| plan + first command | any of the above, `command` present | add exactly one item whose sole alternative is `command` under a new `plan` | the item is current; the command is executed | `empty_command` | `OP-CG-3` |
-| one plan item | the seed is materialized as exactly one item | the plan holds one item (one command) | later moves append per the outcome (see `OP-AP-PLACE`) | — | `OP-CG-4` |
+| at the request (interpretation) | focus is `request` with no goal yet | add `goal` (`what`, `state`); `goal` relation request → goal; add a `plan` with one `item` whose sole alternative is `action` (any tool); the logos runs `action` at once; `descend` | the interpretation is fixed; the goal's first item is executed | `empty_what`, `empty_command`, `interpreted` | `OP-CG-1` |
+| decompose an open goal | focus is `goal` with a current item | add `goal`; append it as the current item's newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the sub-goal is the item's newest alternative | as above; `no_current_item` | `OP-CG-2` |
+| plan + first action | any of the above, `action` present | add exactly one item whose sole alternative is `action` under a new `plan` | the item is current; the action is executed | `empty_command` | `OP-CG-3` |
+| one plan item | the seed is materialized as exactly one item | the plan holds one item (one action) | later moves append per the outcome (see `OP-AP-PLACE`) | — | `OP-CG-4` |
 
 - **Projection** (`PRJ-CG`): the tape gains an `assistant` goal message; the goal carries
   its plan and its alternatives as history.
 - **Notes.** Decomposing an open goal requires a current item; with none the move is refused
-  (`no_current_item`). The first command is carried by `command` — it is not a special
-  `step`, and the logos runs it at once.
+  (`no_current_item`). The first action is carried by `action` — any tool, not a special
+  `step`, not only a shell command — and the logos runs it at once; the goal also carries the
+  authored `state` (the island it is entered in).
 
 ### 2.2 `apply` (`OP-AP`)
 

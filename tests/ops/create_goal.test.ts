@@ -65,11 +65,11 @@ describe("create_goal", () => {
   it("REF-CG-EMPTY rejects malformed fields", () => {
     const seeded = [request()];
     expect(
-      classification({ operator: "create_goal", what: "", command: "true" }, seeded)
+      classification({ operator: "create_goal", what: "", state: "reconnaissance", action: { tool: "bash", command: "true" } }, seeded)
         .reason,
     ).toBe("empty_what");
     expect(
-      classification({ operator: "create_goal", what: "g", command: "" }, seeded)
+      classification({ operator: "create_goal", what: "g", state: "reconnaissance", action: { tool: "bash", command: "" } }, seeded)
         .reason,
     ).toBe("empty_command");
   });

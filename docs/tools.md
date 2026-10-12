@@ -53,20 +53,23 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
 
-### 2.1 `create_goal { what, command }`
+### 2.1 `create_goal { what, state, action }`
 
 - `what` — what to achieve; non-empty.
-- `command` — the **first plan item**: the concrete command to run now, verbatim; the engine
-  runs exactly it **from the workspace root**. A project in a subdirectory takes a
-  `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is
-  stated in B6 and in the `create_goal` `description`.
+- `state` — the island of work the goal is entered in, one of the names the base prompt lists
+  (`reconnaissance`, `localization`, `patch`, `verification`, …); an authored label, never a
+  gate.
+- `action` — the **first plan item**: **any tool** (`read`/`grep`/`list`/`edit`/`write`/`bash`/
+  `webfetch`/`apply_patch`); the engine runs it now. A `bash` action runs **from the workspace
+  root** and takes a `cd <dir> &&` prefix in a subdirectory
+  (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is stated in B6 and in the
+  `create_goal` `description`.
 
 Instruction: at a request node it creates the interpretation — **exactly once**: the
 request's interpretation is FIXED (a `has_goal` edge), so the `what` must be chosen
 deliberately and can never be re-proposed or the request re-interpreted. At an open goal it
-decomposes the current plan item into a sub-goal (an alternative to that item). Give the first
-command. `command` is not a special "step" — it is simply the first
-plan item.
+starts a sub-goal for the next state (a new alternative); the focus descends into it. `action`
+is not a special "step" — it is simply the first plan item.
 
 ### 2.2 `apply { action }`
 

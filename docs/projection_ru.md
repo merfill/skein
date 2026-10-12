@@ -22,7 +22,7 @@
 
 | Ход | Сообщения |
 |---|---|
-| `create_goal` | `assistant` (цель, каждое поле с меткой `[id] create_goal:` / `what:`, отсутствующее поле — `(none)`), затем `assistant` (вызов первой команды) + `tool` (наблюдение) |
+| `create_goal` | `assistant` (цель, каждое поле с меткой `[id] create_goal:` / `what:` / `state:`, отсутствующее поле — `(none)`), затем `assistant` (вызов первого действия) + `tool` (его наблюдение) |
 | `apply` | `assistant` (вызов) + `tool` (наблюдение) |
 | `stop` | `assistant` (причина `why`): цель закрыта |
 | `decline` | `assistant` (причина `why`): запрос отклонён |

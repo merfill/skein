@@ -24,6 +24,12 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toBe(BASE_BLOCKS.map((block) => block.text).join("\n\n"));
   });
 
+  it("carries the state-machine preamble and the state graph", () => {
+    expect(BASE_PROMPT).toContain("implemented as a state machine");
+    expect(BASE_PROMPT).toContain("Reconnaissance");
+    expect(BASE_PROMPT).toContain("Verification");
+  });
+
   it("gives the request and goal situations their own instructions", () => {
     expect(NODE_INSTRUCTIONS.request.length).toBeGreaterThan(0);
     expect(NODE_INSTRUCTIONS.goal.length).toBeGreaterThan(0);

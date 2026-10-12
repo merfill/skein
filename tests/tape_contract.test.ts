@@ -45,7 +45,10 @@ afterEach(cleanupWorkspaces);
 
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
-  return compact(await wire(buildMessages(context))).slice(2 + context.constraints.length);
+  // Strip the system prefix: base + node instruction (+ the island instruction on an open
+  // goal) + one message per constraint.
+  const system = 2 + (context.situation === "goal" && context.island !== undefined ? 1 : 0);
+  return compact(await wire(buildMessages(context))).slice(system + context.constraints.length);
 }
 
 const kinds = (res: ReturnType<typeof exec>): (string | undefined)[] =>
@@ -70,10 +73,16 @@ const REQ = { role: "user", content: "solve the task" };
 // goal-level op starts from.
 const GOAL_PREFIX = [
   REQ,
-  { role: "assistant", call: { name: "create_goal", args: { what: "do it", command: "true" } } },
+  {
+    role: "assistant",
+    call: {
+      name: "create_goal",
+      args: { what: "do it", state: "reconnaissance", action: { tool: "bash", command: "true" } },
+    },
+  },
   {
     role: "tool",
-    content: expect.stringMatching(/^\[w:goal:\d+\] goal created: do it$/),
+    content: expect.stringMatching(/^\[w:goal:\d+\] goal created: do it \(state: reconnaissance\)$/),
     tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
   },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
@@ -97,10 +106,10 @@ describe("create_goal: before [request] -> delta goal/plan/item/action/observati
     expect(after.situation).toBe("goal");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      { role: "assistant", call: { name: "create_goal", args: { what: "green", command: "echo hi" } } },
+      { role: "assistant", call: { name: "create_goal", args: { what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo hi" } } } },
       {
         role: "tool",
-        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: green$/),
+        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: green \(state: reconnaissance\)$/),
         tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
       },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
@@ -136,10 +145,10 @@ describe("create_goal: before [request] -> delta goal/plan/item/action/observati
     expect(kinds(res)).toEqual(["goal", "plan", "item", "action", "observation"]);
     const after = await tapeOf(project(res.state));
     expect(after.slice(-4)).toEqual([
-      { role: "assistant", call: { name: "create_goal", args: { what: "sub", command: "echo sub" } } },
+      { role: "assistant", call: { name: "create_goal", args: { what: "sub", state: "reconnaissance", action: { tool: "bash", command: "echo sub" } } } },
       {
         role: "tool",
-        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: sub$/),
+        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: sub \(state: reconnaissance\)$/),
         tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
       },
       { role: "assistant", call: { name: "bash", args: { command: "echo sub" } } },
@@ -476,7 +485,7 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
         tool_call_id: "call:rejected",
       },
     ]);
-    const empty = { operator: "create_goal" as const, what: "", command: "true" };
+    const empty: Action = { operator: "create_goal", what: "", state: "reconnaissance", action: { tool: "bash", command: "true" } };
     const emptyCls = classification(empty, [req]);
     expect(emptyCls.accept).toBe(false);
     const emptyCall = modelCall(empty);

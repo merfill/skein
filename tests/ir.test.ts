@@ -36,7 +36,7 @@ function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: 
 const llm: Provenance = { kind: "llm" };
 
 function goal(id: string, what: string, seq: number): Event {
-  const payload: GoalPayload = { what };
+  const payload: GoalPayload = { what, state: "reconnaissance" };
   return { type: "add_node", node: workNode(id, "goal", what, seq, payload) };
 }
 

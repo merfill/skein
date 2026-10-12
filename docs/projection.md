@@ -22,7 +22,7 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 | Move | Messages |
 |---|---|
-| `create_goal` | `assistant` (the goal, each field labelled `[id] create_goal:` / `what:`, an absent field shown as `(none)`), then `assistant` (the first command call) + `tool` (the observation) |
+| `create_goal` | `assistant` (the goal, each field labelled `[id] create_goal:` / `what:` / `state:`, an absent field shown as `(none)`), then `assistant` (the first action's call) + `tool` (its observation) |
 | `apply` | `assistant` (the call) + `tool` (the observation) |
 | `stop` | `assistant` (the reason `why`): the goal is closed |
 | `decline` | `assistant` (the reason `why`): the request is declined |

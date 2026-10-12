@@ -57,7 +57,8 @@ export function interpretation(what: string, command?: string): Action {
   return {
     operator: "create_goal",
     what,
-    command: command ?? "true",
+    state: "reconnaissance",
+    action: { tool: "bash", command: command ?? "true" },
   };
 }
 

@@ -18,7 +18,7 @@ afterEach(() => {
 const goal: Action = {
   operator: "create_goal",
   what: "recover the lost personal-site changes and merge them into master",
-  command: "git log --oneline --all",
+  state: "reconnaissance", action: { tool: "bash", command: "git log --oneline --all" },
 };
 const restore: Action = {
   operator: "apply",

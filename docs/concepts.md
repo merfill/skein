@@ -117,9 +117,10 @@ not statuses.
 `record_rejection`. There is no `set_status` and no `record_check`: a state change is a
 new node-event (`observation`/`stop`).
 
-**Operators.** `create_goal { what, command }` interprets
-the request once, or decomposes the current item into a sub-goal (an alternative); the goal
-gets a plan container whose first item is the `command` (run at once). `apply { action }`
+**Operators.** `create_goal { what, state, action }` interprets
+the request once, or starts a sub-goal for the next state (a new alternative); `state` names
+the island of work the goal is entered in (an authored label), and the goal
+gets a plan container whose first item is the `action` — any tool — run at once. `apply { action }`
 runs/reads/edits the world. `decline { why? }`
 answers a non-actionable request (`unactionable`). `stop { why? }` is the sole closure: the
 doxa's `stop` closes the goal — there is no criterion and no check; the request has no

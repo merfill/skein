@@ -143,7 +143,7 @@ describe("message wrappers: the wire JSON of the tape", () => {
     };
     // Run create_goal for real: it seeds and executes the first command.
     const outcome = executeAction(
-      { operator: "create_goal", what: "green", command: "echo hi" },
+      { operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo hi" } },
       fold([req]),
       workspace,
       0,

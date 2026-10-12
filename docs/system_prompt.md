@@ -60,10 +60,16 @@ Current blocks:
 |---|---|---|---|
 | B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls); the context is a message tape rebuilt each turn | `ir_semantics` §1, §7 | in code |
 | B2 | Capabilities, listed as plain labels from `FRAGMENT` | `src/ir/fragment.ts` | in code |
+| B0 | Frame: a coding agent implemented as a state machine — states with exit criteria, transitions as preconditions | `prompt_state_machine_concept` | in code |
+| B4 | The state graph: the islands (label, exit criterion, next states), rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
 | B6 | Goal from the request: interpret once, literal command verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
 | B7 | Loop: search → implement → verify; batch independent reads; once the exact change is named, `edit` at once; build and run the tests, then `stop` on success. After each result the model chooses the next move, the engine only places it (success → new step, failure → alternative/sub-goal); `stop` closes the goal (no criterion) | `ir_semantics` §4.1 | in code |
 | B18 | Micro-examples of a move: recon in one batch; `edit` with the exact text; finish with `stop` | `tests/prompt.test.ts` | in code |
 | B13 | Output discipline: keep reasoning short; never reconstruct code from memory (use `read`/`grep`/`webfetch`); no code snippets in reasoning | `tests/prompt.test.ts` | in code |
+
+On an open goal, `NODE_INSTRUCTIONS.goal` is followed by `ISLAND_INSTRUCTIONS[state]` — the
+focused island's relief, keyed by the goal's authored `state` (`src/ir/islands.ts`,
+`docs/prompt_state_machine_concept.md`).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -87,10 +93,11 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   A batch must be independent: no call may depend on a sibling's result.
 - **B2** lists `FRAGMENT` as plain labels (read/search, edit/write, run commands, fetch a
   reference, split work into steps).
-- **B6** forbids guessing a command; the first command is literal, from the workspace root,
-  with a `cd <dir> &&` prefix in a subdirectory. If the request names no command, the first
-  item is a discovery command (`ls`, `cat README.md`). The same rule is in the `create_goal`
-  `description` — the schema the model sees on every call.
+- **B6** interprets the request once with `create_goal { what, state, action }`: `state` names
+  the island the goal starts in; `action` is the first plan item — any tool (a bash command
+  stays literal, from the workspace root, with a `cd <dir> &&` prefix in a subdirectory). If
+  the request names no command, the first action is a discovery one (`ls`, `cat README.md`).
+  The same rule is in the `create_goal` `description` — the schema the model sees on every call.
 - **B7** fixes the loop **search → implement → verify**: search first and widely (a batch of
   independent reads/greps), and once the exact change is named, `edit`/`write` at once; then
   build and run the tests, and `stop` on success. After each result the model chooses the next
