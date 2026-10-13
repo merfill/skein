@@ -250,6 +250,18 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
   return used;
 }
 
+// The distinct islands the goals were authored in, in first-seen order — the state-traversal
+// signal (a run that only ever sits in one state never crossed a bridge).
+export function statesOf(events: readonly Event[]): string[] {
+  const states: string[] = [];
+  for (const event of events) {
+    if (event.type !== "add_node" || event.node.kind !== "goal") continue;
+    const state = (event.node.payload as { state?: unknown } | undefined)?.state;
+    if (typeof state === "string" && !states.includes(state)) states.push(state);
+  }
+  return states;
+}
+
 export function repeatsOf(events: readonly Event[]): string[] {
   // Anti-thrash metric: distinct already-known results the model tried to re-access,
   // not the number of refusal events (a stubborn model may retry the same id several

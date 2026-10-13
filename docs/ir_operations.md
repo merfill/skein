@@ -98,16 +98,18 @@ node-event (`observation`/`stop`). A run's result is a plain `observation`; its
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
 | at the request (interpretation) | focus is `request` with no goal yet | add `goal` (`what`, `state`); `goal` relation request → goal; add a `plan` with one `item` whose sole alternative is `action` (any tool); the logos runs `action` at once; `descend` | the interpretation is fixed; the goal's first item is executed | `empty_what`, `empty_command`, `interpreted` | `OP-CG-1` |
-| decompose an open goal | focus is `goal` with a current item | add `goal`; append it as the current item's newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the sub-goal is the item's newest alternative | as above; `no_current_item` | `OP-CG-2` |
+| decompose an open goal | focus is `goal` with a current item | add `goal`; append it as the current item's newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the sub-goal is the item's newest alternative | as above | `OP-CG-2` |
+| transition (exhausted plan) | focus is `goal`, the plan is exhausted | add a plan `item`; append the `goal` as its newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the plan gains a current item whose newest alternative is the sub-goal | as above | `OP-CG-5` |
 | plan + first action | any of the above, `action` present | add exactly one item whose sole alternative is `action` under a new `plan` | the item is current; the action is executed | `empty_command` | `OP-CG-3` |
 | one plan item | the seed is materialized as exactly one item | the plan holds one item (one action) | later moves append per the outcome (see `OP-AP-PLACE`) | — | `OP-CG-4` |
 
 - **Projection** (`PRJ-CG`): the tape gains an `assistant` goal message; the goal carries
   its plan and its alternatives as history.
-- **Notes.** Decomposing an open goal requires a current item; with none the move is refused
-  (`no_current_item`). The first action is carried by `action` — any tool, not a special
-  `step`, not only a shell command — and the logos runs it at once; the goal also carries the
-  authored `state` (the island it is entered in).
+- **Notes.** A sub-goal at an open goal appends to the current item, or — when the plan is
+  exhausted — starts a new plan item (`OP-CG-5`, the sibling of `apply`'s success branch); an
+  exhausted plan never refuses it. The first action is carried by `action` — any tool, not a
+  special `step`, not only a shell command — and the logos runs it at once; the goal also
+  carries the authored `state` (the island it is entered in).
 
 ### 2.2 `apply` (`OP-AP`)
 
@@ -117,8 +119,8 @@ The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 outcome of the current (first unfulfilled) item (`docs/ir_semantics.md` §2.7): when that item is
 already fulfilled (its current alternative succeeded) the command becomes a new plan `item`
 (`OP-AP-PLACE-2`); otherwise it becomes a new alternative of that item (`OP-AP-PLACE-1`). A
-sub-goal (`create_goal` on an open goal) always becomes a new alternative. The engine never
-moves into the action.
+sub-goal (`create_goal` on an open goal) follows the same rule: a new alternative of the current
+item, or a new plan item when the plan is exhausted. The engine never moves into the action.
 
 **A move may be a batch.** The engine accepts one or more calls per move and applies each in
 order in the same turn (same `payload.turn`); a terminal move (`create_goal`/`stop`/`decline`)
@@ -394,7 +396,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 
 | Spec ID | Offline test | Live |
 |---|---|---|
-| `OP-CG-1..4` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
+| `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
 | `OP-AP-READ-1..8` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-GREP-1..6` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-LIST-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |

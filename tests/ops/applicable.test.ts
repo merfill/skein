@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
 import { fold } from "../../src/ir/graph";
-import { applicable } from "../../src/ir/traversal";
+import { applicable, currentGoalId } from "../../src/ir/traversal";
 import {
   classification,
   cleanupWorkspaces,
@@ -74,5 +74,19 @@ describe("frontier (applicable)", () => {
       stop: true,
       decline: false,
     });
+  });
+
+  it("OP-CG-5 an open goal with an exhausted plan still offers create_goal, and the gate accepts it", () => {
+    const { ws } = makeWorkspace({});
+    // A successful seed action fulfils the only item: the plan is exhausted.
+    const { events, state } = exec(interpretation("fix", "true"), [request()], ws);
+    const goal = currentGoalId(state)!;
+    expect(applicable(state, goal).createGoal).toBe(true);
+    expect(
+      classification(
+        { operator: "create_goal", what: "next state", state: "localization", action: { tool: "bash", command: "true" } },
+        events,
+      ),
+    ).toEqual({ accept: true });
   });
 });

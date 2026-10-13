@@ -52,9 +52,13 @@ original and a Russian mirror named with the `_ru` suffix.
   — context format and LLM-turn reduction (current work).
 - [plans/goal_reduction_plan.md](plans/goal_reduction_plan.md) · [RU](plans/goal_reduction_plan_ru.md)
   — reduce the goal to its minimal, monotone shape (planned).
+- [plans/state_protocol_plan.md](plans/state_protocol_plan.md) ·
+  [RU](plans/state_protocol_plan_ru.md) — **the state protocol redesign**: states as the
+  skeleton of the walk, `move` + `create_goal`, a flat plan, a forced transition on `stop`, a
+  terminal state (planned, next big work).
 - [plans/state_transitions_plan.md](plans/state_transitions_plan.md) ·
   [RU](plans/state_transitions_plan_ru.md) — make `create_goal` the state-change move
-  (unblock the transition; planned).
+  (superseded by the state protocol plan).
 - [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
   — observation of changes outside the engine (a/b done, c open).
 

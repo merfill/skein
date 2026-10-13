@@ -50,6 +50,10 @@ export function buildMessages(context: Context): BaseMessage[] {
   if (context.situation === "goal" && context.island !== undefined) {
     messages.push(new SystemMessage(ISLAND_INSTRUCTIONS[context.island]));
   }
+  // A soft attractor on a stalled goal: the projection nudges the doxa to decide (§2.8).
+  if (context.nudge !== undefined) {
+    messages.push(new SystemMessage(context.nudge));
+  }
   for (const constraint of context.constraints) {
     messages.push(
       new SystemMessage(

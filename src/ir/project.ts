@@ -1,5 +1,5 @@
 import { childrenOf, goalOf, planOf, stopOf, unactionableOf, type State } from "./graph";
-import type { IslandId } from "./islands";
+import { ISLANDS, type IslandId } from "./islands";
 import { currentGoalId, goalPayload } from "./traversal";
 import type { Node } from "./types";
 
@@ -39,6 +39,9 @@ export interface Context {
   // The island of the focused goal, when there is one (an authored label, §2.5).
   island?: IslandId;
   constraints: { id: string; forbid: string[] }[];
+  // A soft attractor: when the goal has made no progress for `stall` turns, the projection
+  // nudges the doxa to decide (an order is not dictated; §2.8, docs/testing.md).
+  nudge?: string;
 }
 
 export interface ProjectOptions {
@@ -54,6 +57,9 @@ export interface ProjectOptions {
   // A structural move the engine refused: appended as a transient assistant call + `tool`
   // reason for this turn only (the refused move creates no node; §2.7).
   rejection?: { text: string; name: string; args: Record<string, unknown> };
+  // The loop's stall counter (§2.8): after a turn with no progress it grows; the projection
+  // turns it into the soft nudge.
+  stall?: number;
 }
 
 function stripRef(ref: string): string {
@@ -346,5 +352,16 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     });
     history.push({ role: "tool", text: options.rejection.text, callId });
   }
-  return { history, situation: situationOf(state), island: islandOf(state), constraints: constraintsOf(state) };
+  const island = islandOf(state);
+  const nudge =
+    options.stall !== undefined && options.stall > 0 && island !== undefined
+      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Decide now: name the exact change and edit; move to another state with \`create_goal\`; or \`stop\`.`
+      : undefined;
+  return {
+    history,
+    situation: situationOf(state),
+    island,
+    constraints: constraintsOf(state),
+    ...(nudge !== undefined ? { nudge } : {}),
+  };
 }

@@ -27,9 +27,13 @@ describe("islands: the closed vocabulary", () => {
       const island = ISLANDS[id];
       expect(island.id).toBe(id);
       expect(island.label).not.toBe("");
+      expect(island.what).not.toBe("");
       expect(island.criterion).not.toBe("");
       expect(island.relief).not.toBe("");
-      for (const next of island.next) expect(isIsland(next)).toBe(true);
+      for (const edge of island.next) {
+        expect(isIsland(edge.to)).toBe(true);
+        expect(edge.when).not.toBe("");
+      }
     }
     expect(isIsland("atlantis")).toBe(false);
   });

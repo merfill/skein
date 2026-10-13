@@ -40,6 +40,23 @@ describe("create_goal", () => {
     expect(currentGoalId(staged.state)).toBe(sub);
   });
 
+  it("OP-CG-5 after a successful action starts a new plan item: the sub-goal is its newest alternative", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    // The first command succeeds, so the plan is exhausted and cannot be decomposed.
+    const opened = exec(interpretation("do it", "true"), [request()], ws);
+    const goal = currentGoalId(opened.state)!;
+    const itemsBefore = childrenOf(opened.state, planOf(opened.state, goal)!);
+
+    const staged = exec(interpretation("locate the cause"), opened.events, ws);
+    const itemsAfter = childrenOf(staged.state, planOf(staged.state, goal)!);
+    // A new plan item is appended (the plan was exhausted).
+    expect(itemsAfter).toHaveLength(itemsBefore.length + 1);
+    const newItem = itemsAfter[itemsAfter.length - 1]!;
+    const sub = lastChild(staged.state, newItem)!;
+    expect(staged.state.nodes.get(sub)?.kind).toBe("goal");
+    expect(currentGoalId(staged.state)).toBe(sub);
+  });
+
   it("OP-CG-3 seeds exactly one item and runs its command", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { state } = exec(interpretation("do it", "make test"), [request()], ws);

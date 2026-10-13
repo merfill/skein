@@ -19,7 +19,11 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
   machine with Docker + the task images + the Harbor cache and launch real containers and
   verifiers (300 s timeouts, 120 s cleanup) — minutes of runtime and apparent hangs, not the
   seconds an offline run should take. Always exclude `tests/sandbox/**`.
-- `SKEIN_LIVE=false npx vitest run tests/sandbox` — sandbox engine tests only, when intended.
+- **Heavy/live tests need the owner's explicit go-ahead — ask first, every time.** This covers
+  `tests/sandbox/**` (which self-enables on any machine with Docker + the task images + the
+  Harbor cache and launches real containers/verifiers, regardless of `SKEIN_LIVE`), any
+  `SKEIN_LIVE=true` run (gate, live scenarios, live step tests), `npm run bench*`, and Harbor.
+  They cost minutes and money — never start one on your own initiative.
 - see `docs/testing.md` for the live gate and benches
 
 ## Invariants (do not break)

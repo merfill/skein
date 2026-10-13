@@ -284,7 +284,7 @@ The state graph is distributed across three layers that already exist in Skein:
 1. **The prompt base (`BASE_PROMPT`) — the goal, the state graph and the preamble.** The prompt
    opens with a preamble: a coding agent implemented as a state machine; then the states with
    their criteria, the transitions, and the always-relevant constraints. Stable and cacheable.
-   This is a replacement/extension of the current B1/B2/B13.
+   This is a replacement/extension of the current B1/B13.
 2. **The situation instruction (`NODE_INSTRUCTIONS`) — highlighting the state.** The mapping
    "situation → admissible states": in `request` Interpretation/Decline dominate; in `goal`,
    Reconnaissance/Localization/…/Hand-off. Today it is `request`/`goal`; it extends without
@@ -298,10 +298,18 @@ list in the engine's code: from it the `state` enum of the `create_goal` schema 
 the IR controls the admissible values (an unknown name is a structural error, not a semantic
 gate).
 
+**Landed (2026-10).** The layers are in code: `B4` carries the mechanism (move on with
+`create_goal` when the criterion holds), the `Start` candidates and the conditioned transitions
+grouped by source; the per-state instruction renders `What / Done when / Constraints`; and the
+`state`/transitions are single-sourced from `src/ir/islands.ts` (`blocks.ts` and the `create_goal`
+`state` enum derive from it).
+
 **Attractors.** This is what is missing today: a static instruction does not change from turn
 to turn, while the tape grows. The graph must *highlight the position*: "localization closed →
 the next attractor is Patch", "the edit is made, the acceptance command has not passed yet →
-Verification". This is layer (3), not prompt text.
+Verification". This is layer (3), not prompt text. A first lever landed: a soft `nudge` in the
+projection when a goal stalls (`Context.nudge`, `src/ir/project.ts`); the position highlight
+proper is still open.
 
 **Invariant.** The state criteria are doxa's heuristic. The engine still does not gate on a
 criterion; closure is only `stop`.

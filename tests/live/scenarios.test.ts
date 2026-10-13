@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../../src/config/settings";
 import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
-import { branchesOf, mutationsOf, refutedChecks, repeatsOf, runScenario, type ScenarioRun } from "./harness";
+import { branchesOf, mutationsOf, refutedChecks, repeatsOf, runScenario, statesOf, type ScenarioRun } from "./harness";
 import { scenarios, type Scenario } from "./scenarios";
 import { workingSetStats } from "../workset";
 
@@ -46,6 +46,7 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
     `refuted=${refutedChecks(run.result.events).length}`,
     `mutations=${mutationsOf(run.result.events).length}`,
     `branches=[${used.join(",")}]`,
+    `states=[${statesOf(run.result.events).join(",")}]`,
   ];
   if (missing.length > 0) parts.push(`MISSING(soft)=[${missing.join(",")}]`);
   const tag = repeat > 0 ? `#${repeat + 1} ` : "";

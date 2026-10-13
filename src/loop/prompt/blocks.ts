@@ -1,4 +1,3 @@
-import { FRAGMENT } from "../../ir/fragment";
 import { ISLAND_ORDER, ISLANDS, type IslandId } from "../../ir/islands";
 import type { Situation } from "../../ir/project";
 
@@ -7,16 +6,36 @@ export interface PromptBlock {
   text: string;
 }
 
-// Model-facing capabilities, derived from the declared fragment (docs/system_prompt_ru.md B2).
-const CAPABILITIES = FRAGMENT.map((capability) => capability.label).join("; ");
+// The transitions, rendered from the single island list (src/ir/islands.ts): each state's
+// outgoing edges with their precondition, grouped by source. Branches are several lines; the
+// corrective cycle (verification → localization) and the floating env_triage are explicit
+// (docs/prompt_state_machine_concept.md §4.3).
+const TRANSITIONS = (() => {
+  const lines: string[] = [];
+  let n = 0;
+  for (const id of ISLAND_ORDER) {
+    const island = ISLANDS[id];
+    if (island.next.length === 0) continue;
+    lines.push(`${island.label} leads to:`);
+    for (const edge of island.next) {
+      n += 1;
+      lines.push(`  ${n}. ${ISLANDS[edge.to].label} — ${edge.when}.`);
+    }
+  }
+  lines.push(
+    "Any state leads to Environment triage when a command fails for environmental reasons; it returns to the state you came from.",
+    "Hand-off is terminal: call `stop`.",
+  );
+  return lines.join("\n");
+})();
 
-// The state graph, rendered from the single island list (src/ir/islands.ts), so the prompt and
-// the `create_goal` `state` enum cannot drift (docs/ir_semantics.md §2.5).
-const ISLAND_GRAPH = ISLAND_ORDER.map((id) => {
-  const island = ISLANDS[id];
-  const next = island.next.map((state) => ISLANDS[state].label).join(", ");
-  return `- ${island.label}: you are done when ${island.criterion}.${next !== "" ? ` → ${next}.` : ""}`;
-}).join("\n");
+// The candidate initial states: a goal starts where its work starts, not at a fixed first step.
+const START = `Start — a goal starts in the state whose criterion already holds:
+- Reconnaissance — the default: the entry point, the build/test commands and the touched files are not known yet.
+- Localization — the request already names the file and the exact change (a one-line fix).
+- Reproduction — the request hands a command that must first be seen to fail.
+- Design — the task is a feature or a multi-step change, not a defect.
+The state is named at \`create_goal\`; there is no fixed first step.`;
 
 // S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
 // tool descriptions — those ship in the request's `tools` field (the single source is the
@@ -28,17 +47,16 @@ export const BASE_BLOCKS: readonly PromptBlock[] = [
   },
   {
     id: "B1",
-    text: `You are a coding agent with access to the files and directories on disk. Each turn you reply with tool calls; the engine executes them in order and records every result on the tape — your whole context. Nothing off the tape is known to you. Batch calls whose arguments do not depend on a sibling's result.`,
-  },
-  {
-    id: "B2",
-    text: `What you can do: ${CAPABILITIES}.`,
+    text: `You are a coding agent with access to the files and directories on disk. Each turn you reply with tool calls; the engine executes them in order and returns the results. Batch calls whose arguments do not depend on a sibling's result.`,
   },
   {
     id: "B4",
-    text: `The states of the work, each with its exit criterion and the states it can lead to:
-${ISLAND_GRAPH}
-A state is a label you set by creating a goal whose \`state\` names it; a new state is a new goal, and the goal's plan carries the work. This map guides you, it is not a gate: move to the next state as soon as its work is needed. The moment you can name the exact change, create the Patch goal and make the edit — do not keep reading, diffing or re-deriving. A failed verification sends you back to Localization.`,
+    text: `You are always in exactly one state — the state of the goal you are focused on; its work, its closing criterion and its constraints are shown to you each turn. These are the only states. When the current state's work is done (its criterion holds), move on by calling \`create_goal\` with the next \`state\`. Moving is cheap: once a criterion is met, do not re-check it — move now.
+
+${START}
+
+Transitions — move as soon as the condition holds; the order is not fixed:
+${TRANSITIONS}`,
   },
   {
     id: "B13",
@@ -67,7 +85,7 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
 - Search first and widely: batch independent reads and greps to see the code and data around the goal, instead of acting on a guess.
 - Once you can name the exact change, make it with \`edit\` (or \`write\`) — do not keep reading or diffing.
 - Then build and run the project's tests. When the request's command succeeds, call \`stop\` — do not re-verify what already passed.
-- After each result YOU choose the next move: the next action; or, if the last one failed, a different approach — another action, or \`create_goal\` for the next state (the goal's \`state\` names it) or to split the step (an alternative can be a goal or an action); or \`stop\` — stop closes the goal and is the only closure (no criterion, no check). Never repeat the same action.`,
+- After each result YOU choose the next move: the next action; or, to move the work to the next state, \`create_goal\` whose \`state\` names it (no failure required); or, if the last one failed, a different approach; or \`stop\` — stop closes the goal and is the only closure (no criterion, no check). Never repeat the same action.`,
   },
   {
     id: "B18",
@@ -87,17 +105,17 @@ export const NODE_INSTRUCTIONS: Record<Situation, string> = {
   goal: assemble(GOAL_BLOCKS),
 };
 
-// Per-island relief: the focused goal's authored `state` highlights only its own constraints.
-// Same single source as the graph above (src/ir/islands.ts).
+// Per-state instruction: the focused goal's authored `state` shows its work, its closing
+// criterion and its relief. Same single source as the graph above (src/ir/islands.ts); the
+// routes live in B4, so a state does not repeat where it leads.
 export const ISLAND_INSTRUCTIONS: Record<IslandId, string> = Object.fromEntries(
   ISLAND_ORDER.map((id) => {
     const island = ISLANDS[id];
-    const next = island.next.map((state) => ISLANDS[state].label).join(", ");
     return [
       id,
-      `State: ${island.label} — done when ${island.criterion}.` +
-        `\nConstraints: ${island.relief}.` +
-        (next !== "" ? `\nWhen done, create the goal for the next state: ${next}.` : ""),
+      `State: ${island.label} — ${island.what}.` +
+        `\nDone when: ${island.criterion}.` +
+        `\nConstraints: ${island.relief}.`,
     ];
   }),
 ) as Record<IslandId, string>;

@@ -79,7 +79,7 @@ goal closes only through the doxa's `stop`.
 - **`create_goal`** `{ what, state, action }` — at the request (once): the
   interpretation (`goal`; the plan is seeded with one item and the `action` — any tool — is run
   at once; refusals `interpreted`, empty fields). At an open goal: a sub-goal appended as the
-  current item's newest alternative; with no current item, refused.
+  current item's newest alternative, or starting a new plan item when the plan is exhausted.
 - **`apply`** `{ action }` — the command runs; placement by the outcome of the current item
   (`OP-AP-PLACE`): a success → a new plan item, otherwise → a new alternative; non-execution
   (repeat/stale/forbidden/empty) is an observation with a reason.
@@ -89,7 +89,7 @@ goal closes only through the doxa's `stop`.
 - **`recall` / `search`** — read-only addressing of a stored result's body (window / pattern).
 
 The gate in `classify` handles only the structural moves (`not_addressed`, `not_request`,
-`interpreted`, empty fields, `no_current_item`); the command guards (`repeated_action`,
+`interpreted`, empty fields); the command guards (`repeated_action`,
 `stale_base`, `constraint_violation`, empty command) live in the engine and produce
 observations (`src/tools/index.ts`).
 

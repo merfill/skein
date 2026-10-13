@@ -1,5 +1,5 @@
 import { goalOf, unactionableOf, type State } from "../ir/graph";
-import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
+import { currentGoalId } from "../ir/traversal";
 import type { Action } from "../llm/schemas";
 
 export interface Classification {
@@ -109,10 +109,8 @@ export function classify(
         "interpreted: the request already has an interpretation; work it or stop instead of interpreting it again",
       );
     }
-    // Decomposing an open goal needs a current plan item to replace (docs/ir_revision.md §3.2).
-    if (node?.kind === "goal" && firstUnfulfilledItem(state, current) === undefined) {
-      return reject("no_current_item: the plan is already fulfilled; apply an action to add the next item");
-    }
+    // An open goal accepts a sub-goal at any time: it appends to the current item, or starts a
+    // new plan item when the plan is exhausted (docs/ir_semantics.md §2.7).
     return accept;
   }
 

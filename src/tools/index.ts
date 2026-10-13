@@ -808,18 +808,19 @@ export function executeAction(
     return { goalId: id, itemId };
   };
 
-  // Place a new action under the goal (docs/ir_revision.md §4): as a new alternative of the
-  // current (first unfulfilled) item, or as a new plan item when the plan is exhausted.
-  const placeAction = (goalId: string, actionId: string): void => {
+  // Place a move (an action or a sub-goal) under the goal (docs/ir_revision.md §4): as a new
+  // alternative of the current (first unfulfilled) item, or as a new plan item when the plan is
+  // exhausted.
+  const placeMove = (goalId: string, nodeId: string): void => {
     const item = firstUnfulfilledItem(state, goalId);
     if (item !== undefined) {
-      addEdge({ kind: "llm" }, item, actionId, "alts");
+      addEdge({ kind: "llm" }, item, nodeId, "alts");
       return;
     }
     const planId = ensurePlan(goalId);
     const itemId = buildItem(goalId);
     addEdge({ kind: "llm" }, planId, itemId, "items");
-    addEdge({ kind: "llm" }, itemId, actionId, "alts");
+    addEdge({ kind: "llm" }, itemId, nodeId, "alts");
   };
 
   // One plain foreground shell command: recorded as an observation with its exit code,
@@ -1002,14 +1003,6 @@ export function executeAction(
       if (current === undefined) return fail("create goal failed: no current goal");
       const currentNode = state.nodes.get(current);
       const atRequest = currentNode?.kind === "request";
-      // Decomposing an open goal (I6): the sub-goal becomes the current item's newest
-      // alternative, so there must be an item to decompose.
-      const step = atRequest ? undefined : firstUnfulfilledItem(state, current);
-      if (!atRequest && step === undefined) {
-        return fail(
-          "create goal failed: no current plan item to decompose — a sub-goal can only replace an existing item; apply an action to add the next one",
-        );
-      }
       const { goalId } = buildGoal({
         what: action.what,
         state: action.state,
@@ -1019,7 +1012,9 @@ export function executeAction(
         // The request is interpreted as this goal (`goal` relation); the interpretation is fixed.
         addEdge({ kind: "llm" }, current, goalId, "goal");
       } else {
-        addEdge({ kind: "llm" }, step as string, goalId, "alts");
+        // A sub-goal on an open goal (I6): the current item's newest alternative, or a new plan
+        // item when the plan is exhausted (docs/ir_revision.md §4).
+        placeMove(current, goalId);
       }
       events.push(...descendTo(state, current, goalId));
       // The first plan item — ANY tool, not only a shell command — runs at once as an
@@ -1106,7 +1101,7 @@ export function executeAction(
         ...actionExtra(apply),
         call: modelCall(action),
       });
-      placeAction(focus, actionId);
+      placeMove(focus, actionId);
       const failed = (text: string): ExecOutcome => {
         const seq = next();
         const id = `obs:${seq}`;

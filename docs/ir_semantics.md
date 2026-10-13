@@ -200,8 +200,8 @@ both the projection and `classify`.
 
 - `G` is the request with no goal yet → `create_goal` (interpret) or `decline`;
 - `G` is a closed goal → `return` (engine-internal);
-- otherwise (an open goal) → `apply` (a command), `create_goal` (a sub-goal decomposing the
-  current item), and `stop` (close the goal).
+- otherwise (an open goal) → `apply` (a command), `create_goal` (a sub-goal for the next state,
+  or a decomposition), and `stop` (close the goal).
 
 ### 2.7 How a command enters the tree
 
@@ -224,8 +224,9 @@ command or goal):
 - **otherwise** — as a **new alternative of the current item**; if the move is a goal, the
   focus descends into it.
 
-A **sub-goal** (`create_goal` on an open goal) always becomes a new alternative of the
-current item and the focus descends; with no current item it is refused.
+A **sub-goal** (`create_goal` on an open goal) becomes a new alternative of the current item,
+or — when the plan is exhausted — starts a **new plan item** (the sibling of `apply`'s success
+branch); the focus descends either way.
 
 Bootstrap: `create_goal` seeds the goal's plan with one item and runs its first action at
 once (the logos); the goal is born with its first item executed. Every attempt leaves new
@@ -292,9 +293,10 @@ its observation. Focus descends into `G`. The
 interpretation is created once: a second `create_goal` at the request is refused
 (`interpreted`).
 
-**At an open goal (decomposition).** The sub-goal becomes the newest alternative of the
-current item (`I.alts += G`), with its own plan seeded by its `action` (also run at once);
-focus descends. With no current item the move is refused.
+**At an open goal (decomposition or transition).** The sub-goal becomes the newest alternative
+of the current item (`I.alts += G`); when the plan is exhausted it starts a new plan item
+(`Q.items += I_new`, `I_new.alts += G`). Its own plan is seeded by its `action` (also run at
+once) and focus descends.
 
 ### 4.2 `apply`
 

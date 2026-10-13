@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, ISLAND_INSTRUCTIONS, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -28,6 +28,24 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toContain("implemented as a state machine");
     expect(BASE_PROMPT).toContain("Reconnaissance");
     expect(BASE_PROMPT).toContain("Verification");
+  });
+
+  it("states the state-change mechanism, Start and conditioned Transitions once in the base", () => {
+    expect(BASE_PROMPT).toMatch(/move on by calling `create_goal`/);
+    expect(BASE_PROMPT).toContain("Start —");
+    expect(BASE_PROMPT).toContain("Transitions —");
+    // A transition carries its precondition, not just a target.
+    expect(BASE_PROMPT).toMatch(/Localization — the cause is findable by reading/);
+    expect(BASE_PROMPT).toMatch(/Hand-off is terminal/);
+  });
+
+  it("renders each state as What / Done when / Constraints, without repeating the routes", () => {
+    for (const [id, text] of Object.entries(ISLAND_INSTRUCTIONS)) {
+      expect(text, `${id} states its work`).toMatch(/^State: .+ — .+\./);
+      expect(text, `${id} states its criterion`).toMatch(/\nDone when: .+\./);
+      expect(text, `${id} states its constraints`).toMatch(/\nConstraints: .+\./);
+      expect(text, `${id} does not repeat the route`).not.toContain("When done");
+    }
   });
 
   it("gives the request and goal situations their own instructions", () => {

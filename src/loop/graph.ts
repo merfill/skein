@@ -181,6 +181,7 @@ export function compileGraph(deps: AgentDeps) {
       context: project(current, {
         ...(retrieval !== undefined ? { retrieval } : {}),
         ...(rejection !== undefined ? { rejection } : {}),
+        stall: state.stall,
       }),
     };
   };

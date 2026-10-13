@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { childrenOf, currentVersion, fold } from "../src/ir/graph";
-import { cursorOf, itemFulfilled } from "../src/ir/traversal";
+import { childrenOf, currentVersion, fold, lastChild } from "../src/ir/graph";
+import { currentGoalId, cursorOf, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
@@ -310,7 +310,7 @@ describe("executeAction", () => {
     expect(childrenOf(state, planEdges[0]?.to as string)).toHaveLength(1);
   });
 
-  it("refuses to decompose an open goal with no current plan item", () => {
+  it("create_goal on an open goal with an exhausted plan starts a new plan item", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
       { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
@@ -319,17 +319,26 @@ describe("executeAction", () => {
       { type: "descend", node: "g1" },
     ]);
     const outcome = executeAction(
-      { operator: "create_goal", what: "sub", state: "reconnaissance", action: { tool: "bash", command: "true" } },
+      { operator: "create_goal", what: "sub", state: "localization", action: { tool: "bash", command: "true" } },
       root,
       workspace,
       0,
     );
+    const state = fold(outcome.events, root);
+    const sub = [...state.nodes.values()].find((node) => node.kind === "goal" && node.id !== "g1");
+    expect(sub).toBeDefined();
+    expect(currentGoalId(state)).toBe(sub?.id);
+    // The exhausted plan gains a new item whose newest alternative is the sub-goal.
+    const item = childrenOf(state, "p1").at(-1);
+    expect(item).toBeDefined();
+    expect(lastChild(state, item as string)).toBe(sub?.id);
+    // No refusal: the move is accepted.
     const failure = outcome.events.find(
       (event) =>
         event.type === "add_node" &&
         (event.node.payload as { failed?: boolean } | undefined)?.failed === true,
     );
-    expect(failure?.type === "add_node" ? failure.node.label : "").toMatch(/no current plan item/);
+    expect(failure).toBeUndefined();
   });
 
   it("edit mutates the file and records the new version", () => {

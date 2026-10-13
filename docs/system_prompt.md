@@ -58,18 +58,18 @@ Current blocks:
 
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
-| B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls); the context is a message tape rebuilt each turn | `ir_semantics` §1, §7 | in code |
-| B2 | Capabilities, listed as plain labels from `FRAGMENT` | `src/ir/fragment.ts` | in code |
+| B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls) | `ir_semantics` §1 | in code |
 | B0 | Frame: a coding agent implemented as a state machine — states with exit criteria, transitions as preconditions | `prompt_state_machine_concept` | in code |
-| B4 | The state graph: the islands (label, exit criterion, next states), rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
+| B4 | The state mechanism (move on with `create_goal` when the criterion holds); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
 | B6 | Goal from the request: interpret once, literal command verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
-| B7 | Loop: search → implement → verify; batch independent reads; once the exact change is named, `edit` at once; build and run the tests, then `stop` on success. After each result the model chooses the next move, the engine only places it (success → new step, failure → alternative/sub-goal); `stop` closes the goal (no criterion) | `ir_semantics` §4.1 | in code |
+| B7 | Loop: search → implement → verify; batch independent reads; once the exact change is named, `edit` at once; build and run the tests, then `stop` on success. After each result the model chooses the next move; to change state, `create_goal` (no failure needed); `stop` closes the goal (no criterion) | `ir_semantics` §4.1 | in code |
 | B18 | Micro-examples of a move: recon in one batch; `edit` with the exact text; finish with `stop` | `tests/prompt.test.ts` | in code |
 | B13 | Output discipline: keep reasoning short; never reconstruct code from memory (use `read`/`grep`/`webfetch`); no code snippets in reasoning | `tests/prompt.test.ts` | in code |
 
 On an open goal, `NODE_INSTRUCTIONS.goal` is followed by `ISLAND_INSTRUCTIONS[state]` — the
-focused island's relief, keyed by the goal's authored `state` (`src/ir/islands.ts`,
-`docs/prompt_state_machine_concept.md`).
+focused island's work, closing criterion and constraints (`What / Done when / Constraints`),
+keyed by the goal's authored `state` (`src/ir/islands.ts`, `docs/prompt_state_machine_concept.md`).
+A stalled goal also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -88,11 +88,9 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
 ### Per-block detail
 
 - **B1** frames a plain coding agent with access to the files and directories on disk; it makes
-  one or more moves per turn, which the engine executes in order and records. The context is a
-  message tape rebuilt from the tree each turn, not a dialogue — nothing off the tape is known.
-  A batch must be independent: no call may depend on a sibling's result.
-- **B2** lists `FRAGMENT` as plain labels (read/search, edit/write, run commands, fetch a
-  reference, split work into steps).
+  one or more moves per turn, which the engine executes in order and returns the results. A
+  batch must be independent: no call may depend on a sibling's result. The tape/projection is an
+  engine concern, not prompt text.
 - **B6** interprets the request once with `create_goal { what, state, action }`: `state` names
   the island the goal starts in; `action` is the first plan item — any tool (a bash command
   stays literal, from the workspace root, with a `cd <dir> &&` prefix in a subdirectory). If
@@ -101,9 +99,10 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
 - **B7** fixes the loop **search → implement → verify**: search first and widely (a batch of
   independent reads/greps), and once the exact change is named, `edit`/`write` at once; then
   build and run the tests, and `stop` on success. After each result the model chooses the next
-  move; the engine only places it: a SUCCEEDED command becomes a new step, a FAILED/timed-out
-  one an alternative of the same step (another command, or `create_goal` to split it into a
-  sub-goal). `stop` closes the goal and is the only way to finish it (no criterion gate).
+  move; to move the work to the next state it calls `create_goal` (no failure is needed), and
+  the engine places the sub-goal by the current item's outcome (a new alternative, or a new plan
+  item when the plan is exhausted). `stop` closes the goal and is the only way to finish it (no
+  criterion gate).
 - **B18** gives short micro-examples of a move (recon in one batch; `edit` with the exact text;
   finish with `stop`) to anchor the form of a move.
 - **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
