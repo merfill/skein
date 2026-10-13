@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../../src/config/settings";
-import type { Context } from "../../src/ir/project";
+import { project, type Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import { invokeTools } from "../../src/llm/structured";
 import { buildMessages } from "../../src/loop/propose";
+import { exec, makeWorkspace, request } from "../ops/helpers";
 
-// One live LLM call per layout: the request names a project subdirectory and the bare
-// criterion command. The interpretation's `done_when` must run that command FROM the
-// workspace root, i.e. carry a `cd <dir> &&` prefix; the control lives at the root and must
-// NOT be prefixed. This is the online layer for the rule in B6 and the `create_goal`
-// description (docs/tools.md §5.1). Run deliberately:
+// One live LLM sequence per layout: the request names a project subdirectory and the bare
+// criterion command. The state's first plan item must run that command FROM the workspace
+// root, i.e. carry a `cd <dir> &&` prefix; the control lives at the root and must
+// NOT be prefixed. This is the online layer for the rule in B6 and the `move` description
+// (docs/tools.md §5.1). Run deliberately:
 //   SKEIN_LIVE=true npx vitest run tests/live/root-cd.test.ts
 
 const settings = loadSettings();
@@ -57,8 +58,8 @@ const CASES: Case[] = [
   },
 ];
 
-// A fresh request: `create_goal` (or `decline`) is the only applicable move, so the first
-// and only call is the interpretation. The context is the tape: a single user turn.
+// A fresh request: `move` (or `decline`) is the only applicable move: the first call picks
+// the state. The context is the tape: a single user turn.
 function requestContext(text: string): Context {
   return {
     history: [{ role: "user", text }],
@@ -69,17 +70,26 @@ function requestContext(text: string): Context {
 
 describe.skipIf(!settings.live)("workspace-root criterion (live)", () => {
   for (const testCase of CASES) {
-    it(`${testCase.name}: done_when runs the criterion from the workspace root`, async () => {
+    it(`${testCase.name}: the first plan item runs the criterion from the workspace root`, async () => {
       const model = createChatModel(settings);
-      const proposal = await invokeTools(model, buildMessages(requestContext(testCase.request)));
-      console.info(`[${testCase.name}] ${JSON.stringify(proposal.actions[0]!).slice(0, 300)}`);
+      const first = await invokeTools(model, buildMessages(requestContext(testCase.request)));
+      console.info(`[${testCase.name}] ${JSON.stringify(first.actions[0]!).slice(0, 300)}`);
 
-      expect(proposal.actions[0]!.operator, "an open request is interpreted").toBe("create_goal");
-      if (proposal.actions[0]!.operator !== "create_goal") return;
+      expect(
+        first.actions[0]!.operator === "move" || first.actions[0]!.operator === "decline",
+        "an open request chooses a state",
+      ).toBe(true);
+      if (first.actions[0]!.operator !== "move") return;
 
-      const seed = proposal.actions[0]!.action;
-      expect(seed.tool, "the first plan item is a command").toBe("bash");
-      const command = seed.tool === "bash" ? (seed.command ?? "").trim() : "";
+      // Execute the declared state, then ask for its first plan item.
+      const ws = makeWorkspace({}).ws;
+      const moved = exec(first.actions[0]!, [request(testCase.request)], ws);
+      const second = await invokeTools(model, buildMessages(project(moved.state)));
+      const action = second.actions[0]!;
+      expect(action.operator, "the state's first plan item is a command").toBe("apply");
+      if (action.operator !== "apply" || action.action.tool !== "bash") return;
+
+      const command = (action.action.command ?? "").trim();
       expect(command, "the first plan command keeps the criterion command").toContain(testCase.command);
       if (testCase.subdir === null) {
         expect(command, "a root-level criterion needs no cd prefix").not.toMatch(/^cd\s/);

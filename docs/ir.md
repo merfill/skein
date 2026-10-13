@@ -28,13 +28,15 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
 
 ## 2. Nodes and relations
 
-**Nodes** (`src/ir/types.ts`). Work space: `request`, `goal`, `plan`, `item`, `action`,
+**Nodes** (`src/ir/types.ts`). Work space: `request`, `move`, `plan`, `item`, `action`,
 `observation`, `stop`, `unactionable`, `constraint`. Artifact space: `file` (also reserved
 `symbol`/`test`, not produced).
 
-- `request.payload = { text }` — raw motivation, the root. Interpreted **once** as a goal
-  (`goal`) or declined (`unactionable`); no plan, no `stop`;
-- `goal.payload = { what }` — the interpretation. The plan is a separate node;
+- `request.payload = { text }` — raw motivation, the root. Walked as a sequence of states;
+  declined (`unactionable`) if not actionable; no plan, no `stop`;
+- `move.payload = { state, what, note? }` — the declared state (island of work) AND the state's
+  own goal text (`what`; a state IS its goal, so the plan hangs directly off the `move`); a flat
+  child of the request; `note` summarizes the state just finished;
 - `plan`/`item` — containers; the order of children is the order of relation addition, and
   the **last** child is the current item/alternative;
 - `action.payload` carries the command (and, for an edit, `find`/`replace`; for a run, a
@@ -45,17 +47,17 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
   timeout); a failure carries `failed: true`, a non-execution `refused: true`;
 - `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`.
 
-**Relations** (`src/ir/types.ts`, no status field): `goal` (request → goal), `unactionable`
-(request → unactionable), `plan` (goal → plan), `stop` (goal → stop), `items` (plan → item),
-`alts` (item → action/goal), `result` (action → observation), `mutates` (action → file).
+**Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`
+(request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),
+`alts` (item → action), `result` (action → observation), `mutates` (action → file).
 
 ## 3. Events (closed vocabulary)
 
 `add_node`, `add_edge`, `descend`, `return`, `mutate`, `record_rejection`. No `set_status`, no
-`record_check`: a state change is a new node-event (`observation`, `mutate`, `stop`), not an
-edit. A run result is an ordinary `observation`; success/failure is read from its outcome,
+`record_check`: a state change is a new node-event (`move`, `observation`, `mutate`, `stop`), not
+an edit. A run result is an ordinary `observation`; success/failure is read from its outcome,
 not stored as a verdict. `record_rejection` is used only for a refused **structural** move
-(`create_goal`/`stop`/`decline`); a refused command is an observation with a reason.
+(`move`/`stop`/`decline`); a refused command is an observation with a reason.
 
 ## 4. Derived state (`src/ir/graph.ts`, `src/ir/traversal.ts`)
 
@@ -64,60 +66,66 @@ Nodes do not change; `fold` computes the facts and `graph.ts` reads them:
 - **`actionExecuted`** — an action produced a child (`result`/`mutates`);
 - **`actionSucceeded`** — it mutated a file, or its result observation is not a failure
   (`failed`, or a non-zero `exitCode`; a missing `exitCode` is a timeout);
-- **`hasStopped`/`stopOf`** — a goal's `stop` relation; **`goalOf`/`unactionableOf`**;
+- **`hasStopped`/`stopOf`** — a `stop` relation (on a `move`); **`unactionableOf`**;
+  **`currentMove`** — the last `move` child of the request; **`isMoveFinished`** — a stopped
+  `move` (the terminal state included);
 - **`lastChild`** — the current item/alternative; **`itemFulfilled`** — its current
-  alternative is an executed, succeeded action or a stopped goal; **`cursorOf`** — the first
+  alternative is an executed, succeeded action (actions only); **`cursorOf`** — the first
   unfulfilled item; the stack is a fold of `descend`/`return`.
 
 There are **no truth predicates** on nodes. A run's exit code is a fact the model reads; the
-goal closes only through the doxa's `stop`.
+state closes only through the doxa's `stop`.
 
 ## 5. Doxa operators
 
 `src/llm/schemas.ts`, `src/tools/index.ts`, the gate `src/loop/classify.ts`:
 
-- **`create_goal`** `{ what, state, action }` — at the request (once): the
-  interpretation (`goal`; the plan is seeded with one item and the `action` — any tool — is run
-  at once; refusals `interpreted`, empty fields). At an open goal: a sub-goal appended as the
-  current item's newest alternative, or starting a new plan item when the plan is exhausted.
+- **`move`** `{ state, what, note? }` — declares the state to work in (the automaton's
+  transition) AND the state's own goal text (`what`; required except for the terminal state); a
+  state IS its goal, so the plan hangs directly off the `move` and the first `apply` seeds it.
+  Legal at a fresh request or at a finished state; the states are flat children of the request.
 - **`apply`** `{ action }` — the command runs; placement by the outcome of the current item
   (`OP-AP-PLACE`): a success → a new plan item, otherwise → a new alternative; non-execution
   (repeat/stale/forbidden/empty) is an observation with a reason.
-- **`stop`** `{ why? }` — a `stop` node hung off the focus goal via the `stop` relation; the
-  request has no `stop`.
+- **`stop`** `{ why? }` — a `stop` node hung off the focus state's `move` via the `stop`
+  relation (at the terminal state it ends the request); there is no `stop` on the request.
 - **`decline`** `{ why? }` — an `unactionable` node under the request; only on a fresh request.
 - **`recall` / `search`** — read-only addressing of a stored result's body (window / pattern).
 
-The gate in `classify` handles only the structural moves (`not_addressed`, `not_request`,
-`interpreted`, empty fields); the command guards (`repeated_action`,
-`stale_base`, `constraint_violation`, empty command) live in the engine and produce
-observations (`src/tools/index.ts`).
+The gate in `classify` handles only the structural moves (`state_open`, `no_state`,
+`empty_state`, `empty_what`, `not_addressed`, `not_request`, `interpreted`, empty fields); the
+command guards (`repeated_action`, `stale_base`, `constraint_violation`, empty command) live in
+the engine and produce observations (`src/tools/index.ts`).
 
 ## 6. Traversal (logos)
 
-`src/ir/traversal.ts`: `focusEvents` descends from the request into its goal and into the
-current item's sub-goal alternative; it returns when a goal is **finished** (`stop`) or under
-a closed ancestor. `applicable` gives the doxa the admissible moves (`createGoal`/`apply`/
-`stop`/`decline`) from the same facts as the gate. The loop (`src/loop/graph.ts`):
-`project → propose → classify → execute → progress`; the run ends when the request's goal is
-stopped (`request_addressed`), or on `no_progress` / the budget (`maxTurns`).
+`src/ir/traversal.ts`: `focusEvents` descends from the request into the current `move` and
+returns out of a finished state. `applicable` gives the doxa the admissible moves
+(`move`/`apply`/`stop`/`decline`) from the same facts as the gate. The loop
+(`src/loop/graph.ts`): `project → propose → classify → execute → progress`; the run ends when
+the terminal state is stopped (`request_addressed`), or on `no_progress` / the budget
+(`maxTurns`).
 
 ## 7. Projection
 
 `Context` (`src/ir/project.ts`) is `{ history, situation, constraints }`: the tape of
 `user`/`assistant`/`tool` turns (rebuilt from the tree), the current situation
-(`request`/`goal`), and the constraints. `src/loop/propose.ts` assembles the model messages:
-the base prompt, the node instruction for the situation, the constraints, then the history.
-The `tool` messages carry the bounded inline body (an inspection result's head, a command's
-tail, when large); the full body is addressed by id via `recall`/`search`. A structural move refused by `classify` creates no node, so its
-reason is appended as a transient `tool` message for the next turn. The full specification is
-`docs/projection.md`.
+(`request`/`plan`/`working`/`transition`/`terminal`), and the constraints. `src/loop/propose.ts`
+assembles the model messages: the base prompt, the node instruction for the situation, the
+constraints, then the history. Right after a tool result inside an open state it appends an
+**observation instruction** (`Context.result`) last: read the result and decide. A finished
+state left behind is elided to a compaction line
+(`State <label>: finished — <summary>`), carried by the move that left it. The `tool` messages
+carry the bounded inline body (an inspection result's head, a command's tail, when large); the
+full body is addressed by id via `recall`/`search`. A structural move refused by `classify`
+creates no node, so its reason is appended as a transient `tool` message for the next turn. The
+full specification is `docs/projection.md`.
 
 ## 8. Honesty and boundaries
 
-- a goal closes **only** through `stop`; the engine never marks a goal "achieved";
-- the request is not closed in the IR: acceptance is external; the run ends when its goal is
-  stopped or on `decline`;
+- a state closes **only** through `stop`; the engine never marks a state "achieved";
+- the request is not closed in the IR: acceptance is external; the run ends when its terminal
+  state is stopped or on `decline`;
 - deferred: re-interpretation of the request, negative/give-up `stop`, `out_of_fragment`,
   witness precision (the whole workspace, `SKIP_DIRS`), `symbol`/`test`, and the composite
   system prompt (base/node boundary — the next stage).

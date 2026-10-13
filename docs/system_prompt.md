@@ -1,8 +1,9 @@
 # Skein — system prompt: behavior and blocks
 
-> **Note.** The prompt is split into a stable **base** and **node instructions** (request/goal)
-> — see `src/loop/prompt/blocks.ts` and `docs/ir_semantics.md` §6–7. A block's text is a system
-> message; the tool contract is separate (`PROPOSAL_TOOLS` → the request's `tools` field).
+> **Note.** The prompt is split into a stable **base** and **situation instructions**
+> (`request` / `plan` / `working` / `transition` / `terminal`) — see `src/loop/prompt/blocks.ts`
+> and `docs/ir_semantics.md` §6–7. A block's text is a system message; the tool contract is
+> separate (`PROPOSAL_TOOLS` → the request's `tools` field).
 
 > Russian mirror — `docs/system_prompt_ru.md`.
 
@@ -31,9 +32,9 @@ L2 is under the gate, L3 is acceptance.
 ## 1. Assembly model
 
 - The prompt has a stable **base** (`BASE_PROMPT`, true on any move) and per-situation **node
-  instructions** (`NODE_INSTRUCTIONS`, keyed by `Situation`: `request` / `goal`), assembled in
-  `src/loop/prompt/blocks.ts` (re-exported by `src/loop/prompt/index.ts`): each is its blocks'
-  texts joined with `\n\n`.
+  instructions** (`NODE_INSTRUCTIONS`, keyed by `Situation`: `request` / `plan` / `working` /
+  `transition` / `terminal`), assembled in `src/loop/prompt/blocks.ts` (re-exported by
+  `src/loop/prompt/index.ts`): each is its blocks' texts joined with `\n\n`.
 - A block is `{ id: string; text: string }`; the IDs are stable (B1…).
 - `src/loop/propose.ts` puts `BASE_PROMPT` then the situation's instruction into the message
   list (`docs/ir_semantics.md` §6).
@@ -60,16 +61,24 @@ Current blocks:
 |---|---|---|---|
 | B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls) | `ir_semantics` §1 | in code |
 | B0 | Frame: a coding agent implemented as a state machine — states with exit criteria, transitions as preconditions | `prompt_state_machine_concept` | in code |
-| B4 | The state mechanism (move on with `create_goal` when the criterion holds); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
-| B6 | Goal from the request: interpret once, literal command verbatim, workspace root, `cd <dir> &&`, do not guess a command | `tools` §5.1 | in code |
-| B7 | Loop: search → implement → verify; batch independent reads; once the exact change is named, `edit` at once; build and run the tests, then `stop` on success. After each result the model chooses the next move; to change state, `create_goal` (no failure needed); `stop` closes the goal (no criterion) | `ir_semantics` §4.1 | in code |
-| B18 | Micro-examples of a move: recon in one batch; `edit` with the exact text; finish with `stop` | `tests/prompt.test.ts` | in code |
+| B4 | The walk (`move { state, what }` declares the state AND its goal — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
+| B6 | Request situation: the first move is `move { state, what }` (choose the starting state and its goal) or `decline`; literal command / workspace root / `cd <dir> &&` | `tools` §5.1 | in code |
+| B7 | Plan situation: give the state's FIRST plan item — an ordinary tool call (`apply`); no sub-states | `ir_semantics` §4.2 | in code |
+| B8 | Working situation: search → implement; when the state's criterion holds, `stop` (no criterion gate); `move` while open is refused | `ir_semantics` §4.3–4.4 | in code |
+| B9 | Transition situation: the state is finished — `move { state, what }` to the next one, or `move { state: "handoff" }` to finish | `ir_semantics` §4.1 | in code |
+| B10 | Terminal situation: the hand-off state — call `stop` to finish the request | `ir_semantics` §4.4 | in code |
+| B18 | Micro-examples of a move: `move { state, what }`; recon/edit in a batch; `stop` a state; `move` a transition | `tests/prompt.test.ts` | in code |
 | B13 | Output discipline: keep reasoning short; never reconstruct code from memory (use `read`/`grep`/`webfetch`); no code snippets in reasoning | `tests/prompt.test.ts` | in code |
 
-On an open goal, `NODE_INSTRUCTIONS.goal` is followed by `ISLAND_INSTRUCTIONS[state]` — the
-focused island's work, closing criterion and constraints (`What / Done when / Constraints`),
-keyed by the goal's authored `state` (`src/ir/islands.ts`, `docs/prompt_state_machine_concept.md`).
-A stalled goal also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
+While a state is being worked (`plan` / `working`), `ISLAND_INSTRUCTIONS[state]` follows
+the node instruction — the state's work, closing criterion and constraints
+(`What / Done when / Constraints`), keyed by the `move`'s authored `state`
+(`src/ir/islands.ts`, `docs/prompt_state_machine_concept.md`). A finished state
+(`transition` / `terminal`) does **not** show them (the criterion is met). A stalled state also
+gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result
+inside an open state the projection appends an **observation instruction** as the last system
+message (`Context.result`, `src/ir/project.ts`): read the result and decide — criterion holds →
+`stop`; step worked, more needed → the next action; failed/wrong step → a different action.
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -91,20 +100,27 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   one or more moves per turn, which the engine executes in order and returns the results. A
   batch must be independent: no call may depend on a sibling's result. The tape/projection is an
   engine concern, not prompt text.
-- **B6** interprets the request once with `create_goal { what, state, action }`: `state` names
-  the island the goal starts in; `action` is the first plan item — any tool (a bash command
-  stays literal, from the workspace root, with a `cd <dir> &&` prefix in a subdirectory). If
-  the request names no command, the first action is a discovery one (`ls`, `cat README.md`).
-  The same rule is in the `create_goal` `description` — the schema the model sees on every call.
-- **B7** fixes the loop **search → implement → verify**: search first and widely (a batch of
-  independent reads/greps), and once the exact change is named, `edit`/`write` at once; then
-  build and run the tests, and `stop` on success. After each result the model chooses the next
-  move; to move the work to the next state it calls `create_goal` (no failure is needed), and
-  the engine places the sub-goal by the current item's outcome (a new alternative, or a new plan
-  item when the plan is exhausted). `stop` closes the goal and is the only way to finish it (no
-  criterion gate).
-- **B18** gives short micro-examples of a move (recon in one batch; `edit` with the exact text;
-  finish with `stop`) to anchor the form of a move.
+- **B4** states the walk: `move { state, what }` declares the state AND its goal (a state IS
+  its goal), the first `apply` seeds the plan, further `apply`s work it, `stop` finishes it and
+  forces the transition decision; a `move` while a state is open is refused. It renders the
+  candidate initial states (`Start`) and the conditioned transitions from `ISLANDS`.
+- **B6** (request) fixes the first move: `move { state, what }` chooses the starting state and
+  its goal (or `decline` for a non-actionable request). A bash command stays literal, from the
+  workspace root, with a `cd <dir> &&` prefix in a subdirectory; if the request names no command,
+  the state's first action is a discovery one (`ls`, `cat README.md`). The `cd` rule is echoed in
+  the `move` `description` — the schema the model sees on every call.
+- **B7** (plan situation) gives the declared state's FIRST plan item — an ordinary tool call
+  (`apply`): any tool, usually a bash command. The engine runs it at once and it seeds the
+  state's plan. There are no sub-states.
+- **B8** (working situation) fixes the loop **search → implement**: search first and widely (a
+  batch of independent reads/greps), and once the exact change is named, `edit`/`write` at once;
+  when the state's criterion holds, `stop` it (no criterion gate). A `move` while the state is
+  open is refused. `stop` closes the state and is the only closure.
+- **B9** (transition) is the forced decision after a `stop`: `move { state, what }` to the next
+  state (routes from B4), or `move { state: "handoff" }` when the work is done. Give `note` to
+  summarize the state being left.
+- **B10** (terminal) is the hand-off: call `stop` to finish the request.
+- **B18** gives short micro-examples of a move to anchor its form.
 - **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
   reasoning (to see code, `read`/`grep`/`webfetch`).
 - **B12/B14/B16** no longer exist as blocks: the tool names/parameters/descriptions, the
@@ -138,7 +154,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
 - **Phase 4 (2026-10-07).** Added the `fetch` tool (URL → workspace, read-only reference)
   and `apply_patch` (unified diff); `read`/`edit`/`write` no longer crash the run on a path
   outside the workspace — a refusal is recorded (like `grep`/`list`).
-- **Phase 5 (2026-10-08).** B3/B4/B11 and the `create_goal` description now state that the
+- **Phase 5 (2026-10-08).** B3/B4/B11 and the `move` description now state that the
   request's `alternatives` is the history of interpretations and that a `what` equal to a
   refuted option's label is refused `repeat_hypothesis`, even with `revises` (a live run
   re-proposed a refuted interpretation because B11 only spoke of the current goal).
@@ -164,7 +180,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   and spent 16 of 60 turns polling them (≈25% of the cost); a foreground run of the same
   builds finishes in one turn each (docs/tools.md §4.7).
 - **Phase 9 (2026-10-09).** The workspace-root/`cd <dir> &&` rule moved into the
-  `create_goal` tool `description` (B6 already had it, but the tool schema is what the model
+  `move` tool `description` (B6 already had it, but the tool schema is what the model
   attends to most). A live `fix-ocaml-gc` run interpreted the request — which named `ocaml/`
   and the bare `make -C testsuite one DIR=tests/basic` — with the bare command and only
   revised it late, turning most of the run into criterion churn. B7's interpretation bullet
@@ -173,7 +189,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   B7/B11/B15 lose the criterion vocabulary. A goal is `what` with a plan
   seeded by the first `command`; `stop` closes it with no criterion gate; `revises`/
   `repeat_hypothesis`/`check_not_run`/`checkReady`/`nextAction`/`state` are gone. The
-  `create_goal` and `run` tool `description`s are rewritten accordingly (`run` is one plain
+  `move` and `run` tool `description`s are rewritten accordingly (`run` is one plain
   foreground command — no `target`/`background`/`job`).
 - **Phase 11 (2026-10-10).** Opencode-style trim: the prompt states the engine contract, not
   strategy. Removed **B9** (external reference / diff playbook), **B8** (VCS), **B11** (revision
@@ -191,7 +207,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   pipe ban was a legacy of the old `run` that pushed the model into awkward commands.
 - **Phase 13 (2026-10-11).** Prompt-by-prompt trim + the **batch** contract. The engine now
   accepts several tool calls in one doxa move (a batch): `invokeTools` maps every call,
-  `executeNode` runs them in order in one turn and a terminal move (`create_goal`/`stop`/
+  `executeNode` runs them in order in one turn and a terminal move (`move`/`stop`/
   `decline`) ends the batch; the projection renders a batch as one `assistant` with N
   `tool_calls` + N `tool` results (`docs/ir_semantics.md` §7). The prompt was rewritten for a
   plain coding agent: **B1** drops the doxa/logos framing, **B2** is plain labels, **B13** drops
@@ -205,12 +221,25 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   invariant §1.4 requires. Motivated by a controlled A/B on `fix-ocaml-gc --net on` (see
   `docs/benches/best_bench.md`): with the index the model read and diffed more, made one edit
   and never stopped; without it — three edits, self-stop and half the cost.
+- **Phase 15 (2026-10-13).** State protocol (`docs/plans/state_protocol_plan.md`): the prompt
+  now teaches the walk — `move` declares the state, a second turn concretizes that state's
+  work (no sub-goals), `apply` works it, `stop` finishes it and forces the transition.
+  Situations split five ways, with new blocks B8, B9 (transition), B10 (terminal); B4/B6/B7/B18
+  reworded. The model declares the state and concretizes it in separate turns (a `move` ends the
+  batch).
+- **Phase 16 (2026-10-13).** Goal-into-move (`docs/plans/goal_into_move_plan.md`): the goal
+  node and the separate concretization operator are gone — a state IS its goal.
+  `move { state, what }` declares the state AND its goal; the plan hangs directly off the
+  `move` and is seeded by the state's first ordinary `apply`. Situations become `request` /
+  `plan` / `working` / `transition` / `terminal`; B4/B6/B7/B8/B9 reworded (B7 now gives the
+  first plan item, not a goal). The model surface offered each turn IS the frontier
+  (`Context.applicable`).
 
 ## 5. Test map
 
 | Level | Where | What it checks |
 |---|---|---|
-| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; the prompt does not repeat tool descriptions; stream separation + `pipefail` in the `bash` description; stale-read safeguard in `edit`/`write`; workspace root (prompt + `create_goal` description) |
+| L1 | `tests/prompt.test.ts` | assembly from blocks; unique IDs; the prompt does not repeat tool descriptions; stream separation + `pipefail` in the `bash` description; stale-read safeguard in `edit`/`write`; workspace root (prompt + `move` description) |
 | L1 (Phase 2) | `tests/prompt.test.ts` | every `PROPOSAL_TOOLS` tool is registered; no `apply {`/`{ tool:` |
 | L2 | `tests/live/scenarios.test.ts` | trajectory shape on a fixture (B7) |
 | L3 | `bench/`, `docs/benches/bench_report.md` | acceptance; the controlled experiment (Phase 5) |

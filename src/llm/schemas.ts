@@ -67,16 +67,19 @@ export type Apply = z.infer<typeof applySchema>;
 
 export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
-    operator: z.literal("create_goal"),
-    what: z.string(),
-    // The island of work the goal is entered in (an authored label, never a gate).
+    // Declare the state (island of work) the doxa will work in — the automaton's transition —
+    // AND the state's goal text (`what`); the state IS its goal (docs/ir_semantics.md §4.1,
+    // docs/plans/goal_into_move_plan.md). `what` is required except for the terminal
+    // hand-off, which has no plan. `note` is an optional one-line summary of the state just
+    // finished.
+    operator: z.literal("move"),
     state: z.enum(ISLAND_IDS),
-    // The first plan item: any tool, run at once as the goal's first item.
-    action: applySchema,
+    what: z.string(),
+    note: z.string().optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),
-  // Decline to formulate a goal: the request's intent is not actionable. Creates an
+  // Decline to formulate a state: the request's intent is not actionable. Creates an
   // `unactionable` node under the request and ends the run (docs/plans/request_goal_plan.md).
   z.object({ operator: z.literal("decline"), why: z.string().optional() }),
   z.object({
@@ -160,15 +163,13 @@ function nativeApply(action: Apply): ModelCall {
 
 export function modelCall(action: Action): ModelCall {
   switch (action.operator) {
-    case "create_goal":
+    case "move":
       return {
-        name: "create_goal",
+        name: "move",
         args: {
-          what: action.what,
           state: action.state,
-          // The seed rendered in the same native vocabulary as a standalone tool call, so the
-          // tape shows the model its own nested `action` object back.
-          action: { tool: nativeApply(action.action).name, ...nativeApply(action.action).args },
+          what: action.what,
+          ...(action.note !== undefined ? { note: action.note } : {}),
         },
       };
     case "apply":

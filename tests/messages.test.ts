@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project } from "../src/ir/project";
+import { focusEvents } from "../src/ir/traversal";
 import { buildMessages } from "../src/loop/propose";
 import { executeAction } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -34,24 +35,24 @@ const BIG = `edit failed: find not found in ocaml/x.c\n--- current content of oc
 function journal(): Event[] {
   return [
     { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 } },
-    node("g1", "goal", "green", 1, { what: "green", call: { name: "create_goal", args: { what: "green", command: "ls" } } }),
-    edge("eg", "r1", "g1", "goal"),
-    node("a1", "action", "ls", 2, { command: "ls", call: { name: "bash", args: { command: "ls" } } }),
-    node("o1", "observation", "ls", 3, { command: "ls", exitCode: 0, output: "ocaml\n" }),
-    edge("ro1", "a1", "o1", "result"),
-    node("p1", "plan", "plan", 4),
-    edge("hp", "g1", "p1", "plan"),
+    node("m1", "move", "reconnaissance", 1, { state: "reconnaissance", what: "green", call: { name: "move", args: { state: "reconnaissance", what: "green" } } }),
+    edge("em", "r1", "m1", "move"),
+    node("p1", "plan", "plan", 2),
+    edge("hp", "m1", "p1", "plan"),
     edge("it1", "p1", "i1", "items"),
     edge("it2", "p1", "i2", "items"),
-    node("i1", "item", "step", 5),
+    node("i1", "item", "step", 3),
+    node("a1", "action", "ls", 4, { command: "ls", call: { name: "bash", args: { command: "ls" } } }),
     edge("al1", "i1", "a1", "alts"),
+    node("o1", "observation", "ls", 5, { command: "ls", exitCode: 0, output: "ocaml\n" }),
+    edge("ro1", "a1", "o1", "result"),
     node("i2", "item", "step", 6),
-    edge("al2", "i2", "a2", "alts"),
-    edge("al3", "i2", "a3", "alts"),
     node("a2", "action", "edit ocaml/x.c", 7, { command: "edit ocaml/x.c", call: { name: "edit", args: { filePath: "ocaml/x.c", oldString: "a", newString: "b" } } }),
+    edge("al2", "i2", "a2", "alts"),
     node("o2", "observation", "edit failed", 8, { failed: true, output: BIG }),
     edge("ro2", "a2", "o2", "result"),
     node("a3", "action", "read ocaml/x.c", 9, { command: "read ocaml/x.c", call: { name: "read", args: { filePath: "ocaml/x.c" } } }),
+    edge("al3", "i2", "a3", "alts"),
     node("o3", "observation", "read", 10, { ref: "file:ocaml/x.c", version: "v1", bytes: 40, start: 1, end: 3, total: 100, output: "int x;\nint y;\n" }),
     edge("ro3", "a3", "o3", "result"),
   ];
@@ -59,14 +60,18 @@ function journal(): Event[] {
 
 describe("message wrappers: the wire JSON of the tape", () => {
   it("moves are assistant.tool_calls, results are tool messages, the request is user", async () => {
-    const msgs = await wire(buildMessages(project(fold(journal()))));
+    const base = fold(journal());
+    const drift = focusEvents(base);
+    const msgs = await wire(buildMessages(project(drift.length > 0 ? fold(drift, base) : base)));
 
     expect(msgs.map((m) => m.role)).toEqual([
-      "system", "system", "user",
-      "assistant", "tool", // create_goal
-      "assistant", "tool", // run (the seeded first command)
+      "system", "system", "system", // base + state instruction + island instruction
+      "user",
+      "assistant", "tool", // move
+      "assistant", "tool", // the first plan item (ls)
       "assistant", "tool", // edit
       "assistant", "tool", // read
+      "system", // the observation instruction (a tool result just returned)
     ]);
     // No `tool`-result is smuggled in as a `user` message (the old role bug).
     expect(msgs.every((m) => m.role !== "user" || m.content === "fix the bug")).toBe(true);
@@ -74,36 +79,38 @@ describe("message wrappers: the wire JSON of the tape", () => {
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);
 
-    expect(msgs[2]).toMatchObject({ role: "user", content: "fix the bug" });
+    expect(msgs[3]).toMatchObject({ role: "user", content: "fix the bug" });
 
-    // create_goal: its own native call and its own result.
-    expect(msgs[3]?.tool_calls?.[0]).toMatchObject({ id: "g1", type: "function" });
-    expect(msgs[3]?.tool_calls?.[0]?.function.name).toBe("create_goal");
-    expect(JSON.parse(msgs[3]?.tool_calls?.[0]?.function.arguments ?? "{}")).toEqual({ what: "green", command: "ls" });
-    expect(msgs[4]).toMatchObject({ role: "tool", tool_call_id: "g1" });
-    expect(String(msgs[4]?.content)).toContain("goal created: green");
+    // move: its own native call (carrying the goal text) and its own result.
+    expect(msgs[4]?.tool_calls?.[0]?.function.name).toBe("move");
+    expect(msgs[4]?.tool_calls?.[0]?.id).toBe("m1");
+    expect(JSON.parse(msgs[4]?.tool_calls?.[0]?.function.arguments ?? "{}")).toEqual({
+      state: "reconnaissance",
+      what: "green",
+    });
+    expect(msgs[5]).toMatchObject({ role: "tool", tool_call_id: "m1" });
 
-    // The seeded first command is a separate `run` call + its observation.
-    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("bash");
-    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a1");
-    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a1" });
-    expect(String(msgs[6]?.content)).toContain("[o1] exit 0");
+    // The state's first plan item is an ordinary `bash` call + its observation.
+    expect(msgs[6]?.tool_calls?.[0]?.function.name).toBe("bash");
+    expect(msgs[6]?.tool_calls?.[0]?.id).toBe("a1");
+    expect(msgs[7]).toMatchObject({ role: "tool", tool_call_id: "a1" });
+    expect(String(msgs[7]?.content)).toContain("[o1] exit 0");
 
     // A plain command move is its own tool call.
-    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("edit");
-    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a2");
-    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a2" });
-    expect(String(msgs[8]?.content)).toContain("edit failed: find not found");
+    expect(msgs[8]?.tool_calls?.[0]?.function.name).toBe("edit");
+    expect(msgs[8]?.tool_calls?.[0]?.id).toBe("a2");
+    expect(msgs[9]).toMatchObject({ role: "tool", tool_call_id: "a2" });
+    expect(String(msgs[9]?.content)).toContain("edit failed: find not found");
 
     // The alternative is a plain native call: no marker, and the failure body rides only in
     // its own `tool` result (never duplicated into an assistant message).
-    expect(msgs[9]?.tool_calls?.[0]?.function.name).toBe("read");
-    expect(msgs[9]?.tool_calls?.[0]?.id).toBe("a3");
-    const tape = msgs.slice(2);
+    expect(msgs[10]?.tool_calls?.[0]?.function.name).toBe("read");
+    expect(msgs[10]?.tool_calls?.[0]?.id).toBe("a3");
+    const tape = msgs.slice(3);
     const tapeText = tape.map((m) => String(m.content)).join("\n");
     expect(tapeText).not.toContain("alternative to step");
     expect(tapeText.split("--- current content of ocaml/x.c").length - 1).toBe(1);
-    expect(msgs[10]).toMatchObject({ role: "tool", tool_call_id: "a3" });
+    expect(msgs[11]).toMatchObject({ role: "tool", tool_call_id: "a3" });
   });
 
   it("a refused structural move is an assistant call + a tool reason", async () => {
@@ -135,25 +142,33 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(tail[1]?.tool_call_id).toBe(tail[0]?.tool_calls?.[0]?.id);
   });
 
-  it("a seeded first command is a native bash call + tool result (no OBSERVATION turn)", async () => {
+  it("a state's first command is a native bash call + tool result (no OBSERVATION turn)", async () => {
     const workspace = fsWorkspace(mkdtempSync(join(tmpdir(), "skein-seed-")));
     const req: Event = {
       type: "add_node",
       node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 },
     };
-    // Run create_goal for real: it seeds and executes the first command.
-    const outcome = executeAction(
-      { operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo hi" } },
+    // Run move + the first apply for real: the first command seeds the plan.
+    const moved = executeAction(
+      { operator: "move", state: "reconnaissance", what: "green" },
       fold([req]),
       workspace,
       0,
     );
-    const msgs = await wire(buildMessages(project(fold([req, ...outcome.events]))));
+    const outcome = executeAction(
+      { operator: "apply", action: { tool: "bash", command: "echo hi" } },
+      fold([req, ...moved.events]),
+      workspace,
+      0,
+    );
+    const msgs = await wire(
+      buildMessages(project(fold([req, ...moved.events, ...outcome.events]))),
+    );
     // No result is smuggled in as a user turn (the removed OBSERVATION hack).
     expect(msgs.some((m) => m.role === "user" && String(m.content).startsWith("OBSERVATION"))).toBe(
       false,
     );
-    // The seeded command is a native `bash` call whose result is a matching `tool` message.
+    // The command is a native `bash` call whose result is a matching `tool` message.
     const bash = msgs.find((m) => m.tool_calls?.[0]?.function.name === "bash");
     expect(bash).toBeDefined();
     const bashId = bash?.tool_calls?.[0]?.id;

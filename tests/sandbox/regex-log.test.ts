@@ -40,25 +40,27 @@ const GOOD_REGEX = String.raw`(?=.*(?:^|[^0-9A-Za-z])(?:(?:25[0-5]|2[0-4]\d|1?\d
 const BAD_REGEX = String.raw`\d{4}-\d{2}-\d{2}`;
 
 function proposerFor(regex: string) {
+  const toWork: Action = { operator: "move", state: "reconnaissance", what: "write a regex matching the last date on lines with an IPv4 address" };
   const goal: Action = {
-    operator: "create_goal",
-    what: "write a regex matching the last date on lines with an IPv4 address",
-    state: "reconnaissance", action: { tool: "bash", command: "pwd" },
+    operator: "apply",
+    action: { tool: "bash", command: "pwd" },
   };
   const write: Action = { operator: "apply", action: { tool: "write", path: "/app/regex.txt", content: regex } };
-  const stop: Action = { operator: "stop", why: "the regex is written" };
-  return scripted([goal, write], stop);
+  const stopState: Action = { operator: "stop", why: "the regex is written" };
+  const toEnd: Action = { operator: "move", state: "handoff", what: "" };
+  const stopRequest: Action = { operator: "stop", why: "the regex is written" };
+  return scripted([toWork, goal, write, stopState, toEnd, stopRequest], stopRequest);
 }
 
 describe.skipIf(!taskAvailable("regex-log"))("regex-log task (real container verifier)", () => {
   it("rewards a correct regex with 1", async () => {
-    const run = await runTask(regexLog, proposerFor(GOOD_REGEX), { maxTurns: 3 });
+    const run = await runTask(regexLog, proposerFor(GOOD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(1);
     expect(run.check.stdout).toContain("PASS test_regex_matches_dates");
   }, 60_000);
 
   it("rewards a wrong regex with 0", async () => {
-    const run = await runTask(regexLog, proposerFor(BAD_REGEX), { maxTurns: 3 });
+    const run = await runTask(regexLog, proposerFor(BAD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(0);
     expect(run.check.stdout).toContain("FAIL test_regex_matches_dates");
   }, 60_000);

@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
-import { childrenOf, currentVersion, fold, lastChild } from "../src/ir/graph";
-import { currentGoalId, cursorOf, itemFulfilled } from "../src/ir/traversal";
+import { childrenOf, currentFocus, currentVersion, fold, lastChild } from "../src/ir/graph";
+import { cursorOf, focusEvents, itemFulfilled } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
@@ -15,7 +15,7 @@ import { classify } from "../src/loop/classify";
 import { runAgent } from "../src/loop/graph";
 import { executeAction } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
-import { achievedWithoutCheck, structuralCycle, unboundGoals } from "./invariants";
+import { achievedWithoutCheck, structuralCycle } from "./invariants";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures", "bugfix");
 
@@ -47,11 +47,22 @@ function lastToolId(context: Context | undefined): string | undefined {
   return idFrom(tool?.text);
 }
 
-function goalIdOf(context: Context | undefined): string | undefined {
-  const goal = context?.history.find(
-    (message) => message.role === "assistant" && message.text.includes("create_goal"),
+function moveIdOf(context: Context | undefined): string | undefined {
+  const move = context?.history.find(
+    (message) => message.role === "assistant" && message.call?.name === "move",
   );
-  return idFrom(goal?.text);
+  return move?.call?.id;
+}
+
+// An open state: a request, the `move` that declares it (the state IS its goal, so `what`
+// rides the move), and a descend so the move is the current focus.
+function open(what = "green"): Event[] {
+  return [
+    { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
+    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: what, payload: { state: "reconnaissance", what }, seq: 1 } },
+    { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+    { type: "descend", node: "m1" },
+  ];
 }
 
 afterEach(() => {
@@ -84,11 +95,6 @@ describe("reasoning budget", () => {
 });
 
 describe("classify", () => {
-  const goal = {
-    type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green" } },
-  };
-
   const cmdDir = mkdtempSync(join(tmpdir(), "skein-cmd-"));
   tempDirs.push(cmdDir);
   const cmdWs = fsWorkspace(cmdDir);
@@ -106,7 +112,7 @@ describe("classify", () => {
 
   it("rejects an edit forbidden by a constraint (as a failed observation)", () => {
     const events: Event[] = [
-      goal,
+      ...open(),
       {
         type: "add_node",
         node: {
@@ -129,7 +135,7 @@ describe("classify", () => {
 
   it("refuses an edit on a stale read basis", () => {
     const events: Event[] = [
-      goal,
+      ...open(),
       { type: "add_node", node: { id: "file:src/a.ts", space: "artifact", kind: "file", label: "src/a.ts", seq: 1 } },
       {
         type: "add_node",
@@ -146,7 +152,7 @@ describe("classify", () => {
 
   it("refuses a repeated run with no change since it ran", () => {
     const events: Event[] = [
-      goal,
+      ...open(),
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build", signature: "run build\u0000" }, seq: 1 } },
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "run build", payload: { command: "run build", exitCode: 0 }, seq: 2 } },
       { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "grep", pattern: "x" } } },
@@ -162,7 +168,7 @@ describe("classify", () => {
     tempDirs.push(root);
     writeFileSync(join(root, "a.txt"), "one\ntwo\nthree\n");
     const workspace = fsWorkspace(root);
-    const first = runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, [goal], workspace);
+    const first = runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, open(), workspace);
     const obsId = [...first.state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
 
     const same = runApply({ operator: "apply", action: { tool: "read", path: "a.txt" } }, first.events, workspace);
@@ -184,7 +190,7 @@ describe("classify", () => {
 
   it("points a repeated recall at the result already held", () => {
     const state = fold([
-      goal,
+      ...open(),
       {
         type: "add_node",
         node: { id: "o1", space: "work", kind: "observation", label: "run", payload: { output: "x" }, seq: 1 },
@@ -200,7 +206,7 @@ describe("classify", () => {
     tempDirs.push(root);
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\n");
     const workspace = fsWorkspace(root);
-    const first = runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }, [goal], workspace);
+    const first = runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }, open(), workspace);
     const obsId = [...first.state.nodes.values()].find((node) => node.kind === "observation")?.id ?? "?";
 
     const same = runApply({ operator: "apply", action: { tool: "grep", pattern: "MATCH" } }, first.events, workspace);
@@ -213,44 +219,33 @@ describe("classify", () => {
     ).toBe(false);
   });
 
-  it("accepts a create_goal on a fresh request, and rejects empty content", () => {
+  it("accepts an apply at a declared state, and rejects a malformed move", () => {
     const req: Event = {
       type: "add_node",
       node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 },
     };
-    const state = fold([req]);
+    const moved = fold([
+      req,
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "reconnaissance", what: "locate" }, seq: 1 } },
+      { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+      { type: "descend", node: "m1" },
+    ]);
+    // Inside an open state the first plan item is a plain `apply`, so a bash call is accepted.
     expect(
-      classify({ operator: "create_goal", what: "locate", state: "reconnaissance", action: { tool: "bash", command: "node --test" } },
-        state,
-      ),
+      classify({ operator: "apply", action: { tool: "bash", command: "node --test" } }, moved),
     ).toEqual({ accept: true });
+    // A non-terminal move must name the state's goal in `what`.
     expect(
-      classify({ operator: "create_goal", what: "", state: "reconnaissance", action: { tool: "bash", command: "true" } }, state).reason,
-    ).toBe("empty_what");
+      classify({ operator: "move", state: "reconnaissance", what: " " }, fold([req])).reason,
+    ).toContain("empty_what");
+    // At the request there is no state yet: an apply outside a state is refused.
     expect(
-      classify({ operator: "create_goal", what: "x", state: "reconnaissance", action: { tool: "bash", command: "" } }, state).reason,
-    ).toBe("empty_command");
-    expect(
-      classify({ operator: "create_goal", what: "x", state: "reconnaissance", action: { tool: "bash", command: "node --test" } },
-        fold([]),
-      ).reason,
-    ).toContain("no_current_goal");
+      classify({ operator: "apply", action: { tool: "bash", command: "node --test" } }, fold([req])).reason,
+    ).toContain("no_state");
   });
 
   it("guards run: it needs a command", () => {
-    const events: Event[] = [
-      {
-        type: "add_node",
-        node: {
-          id: "g2",
-          space: "work",
-          kind: "goal",
-          label: "crit",
-          payload: { what: "crit" },
-          seq: 1,
-        },
-      },
-    ];
+    const events: Event[] = open();
     expect(runApply({ operator: "apply", action: { tool: "bash" } }, events).reason).toContain(
       "bash needs a command",
     );
@@ -262,7 +257,7 @@ describe("classify", () => {
   it("allows a repeated run after a timeout (no exit code), refuses a deterministic one", () => {
     const runAction = { operator: "apply" as const, action: { tool: "bash" as const, command: "true" } };
     const ranWith = (payload: { command: string; exitCode?: number }): Event[] => [
-      goal,
+      ...open(),
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "true", payload: { command: "true", signature: "true\u0000" }, seq: 1 } },
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "true", payload, seq: 2 } },
       { type: "add_edge", edge: { id: "e1", from: "a1", to: "o1", kind: "result", provenance: { kind: "llm" } } },
@@ -277,75 +272,62 @@ describe("classify", () => {
 });
 
 describe("executeAction", () => {
-  it("create_goal builds a goal, its plan and descends into it", () => {
+  it("apply seeds the state's plan under the declared move", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan for g1", seq: 1 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 2 } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "a1", kind: "items", provenance: { kind: "llm" } } },
-      { type: "descend", node: "g1" },
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "reconnaissance", what: "locate" }, seq: 1 } },
+      { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+      { type: "descend", node: "m1" },
     ]);
     const outcome = executeAction(
-      {
-        operator: "create_goal",
-        what: "locate",
-        state: "reconnaissance", action: { tool: "bash", command: "node --test" },
-      },
+      { operator: "apply", action: { tool: "bash", command: "node --test" } },
       root,
       workspace,
       0,
     );
     const state = fold(outcome.events, root);
-    const goals = [...state.nodes.values()].filter((node) => node.kind === "goal" && node.id !== "g1");
-    expect(goals).toHaveLength(1);
-    expect(state.branch[state.branch.length - 1]).toBe(goals[0]?.id);
-    const childGoal = goals[0];
-    expect(childGoal).toBeDefined();
+    // The plan hangs directly off the move (there is no goal node); its first item carries the
+    // action that seeded it.
     const planEdges = [...state.edges.values()].filter(
-      (edge) => edge.kind === "plan" && edge.from === childGoal?.id,
+      (edge) => edge.kind === "plan" && edge.from === "m1",
     );
     expect(planEdges).toHaveLength(1);
-    expect(childrenOf(state, planEdges[0]?.to as string)).toHaveLength(1);
+    const items = childrenOf(state, planEdges[0]?.to as string);
+    expect(items).toHaveLength(1);
+    const alts = childrenOf(state, items[0] as string);
+    expect(alts).toHaveLength(1);
+    expect(state.nodes.get(alts[0] as string)?.kind).toBe("action");
+    // The move is still the focus: the plan (not a goal) hangs off it.
+    expect(currentFocus(state)).toBe("m1");
   });
 
-  it("create_goal on an open goal with an exhausted plan starts a new plan item", () => {
+  it("move declares a flat child state of the request and descends into it", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
-      { type: "descend", node: "g1" },
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
     ]);
     const outcome = executeAction(
-      { operator: "create_goal", what: "sub", state: "localization", action: { tool: "bash", command: "true" } },
+      { operator: "move", state: "reconnaissance", what: "map" },
       root,
       workspace,
       0,
     );
     const state = fold(outcome.events, root);
-    const sub = [...state.nodes.values()].find((node) => node.kind === "goal" && node.id !== "g1");
-    expect(sub).toBeDefined();
-    expect(currentGoalId(state)).toBe(sub?.id);
-    // The exhausted plan gains a new item whose newest alternative is the sub-goal.
-    const item = childrenOf(state, "p1").at(-1);
-    expect(item).toBeDefined();
-    expect(lastChild(state, item as string)).toBe(sub?.id);
-    // No refusal: the move is accepted.
-    const failure = outcome.events.find(
-      (event) =>
-        event.type === "add_node" &&
-        (event.node.payload as { failed?: boolean } | undefined)?.failed === true,
-    );
-    expect(failure).toBeUndefined();
+    const moveNode = [...state.nodes.values()].find((node) => node.kind === "move");
+    expect(moveNode).toBeDefined();
+    expect((moveNode?.payload as { state?: string }).state).toBe("reconnaissance");
+    expect(currentFocus(state)).toBe(moveNode?.id);
+    const edge = [...state.edges.values()].find((edge) => edge.kind === "move");
+    expect(edge?.from).toBe("r1");
+    expect(edge?.to).toBe(moveNode?.id);
   });
 
   it("edit mutates the file and records the new version", () => {
     const root = setup("off-by-one");
     const workspace = fsWorkspace(root);
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } },
@@ -361,7 +343,7 @@ describe("executeAction", () => {
   it("refuses to create a file with edit (it only rewrites existing files)", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "edit", path: "package.json", find: "", replace: "{}" } },
@@ -448,7 +430,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "big.txt"), lines);
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "read", path: "big.txt" } },
@@ -476,9 +458,9 @@ describe("executeAction", () => {
   it("branches the current plan item when the action differs, so the plan never blocks", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "cat HACKING.adoc", payload: { command: "cat HACKING.adoc" }, seq: 2 } },
       { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "items", provenance: { kind: "llm" } } },
     ]);
@@ -491,7 +473,7 @@ describe("executeAction", () => {
     );
     const state = fold(outcome.events, root);
     expect(itemFulfilled(state, "a1")).toBe(true);
-    expect(cursorOf(state, "g1")).toBe(1);
+    expect(cursorOf(state, "m1")).toBe(1);
   });
 
   it("grep returns a plain-text window with context", () => {
@@ -500,7 +482,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "alpha\nbeta\nMATCH\ngamma\ndelta\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH" } },
@@ -526,7 +508,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, "code.txt"), "MATCH one\nMATCH two\nMATCH three\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const first = executeAction(
       { operator: "apply", action: { tool: "grep", pattern: "MATCH", count: 2 } },
@@ -559,7 +541,7 @@ describe("executeAction", () => {
     writeFileSync(join(root, ".depend"), "hidden\n");
     const workspace = fsWorkspace(root);
     const state = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
     ]);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "list", include: "**/*.c" } },
@@ -577,7 +559,7 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(root);
     const original = workspace.read("test/sum.test.mjs");
     const before = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 0 } },
+      ...open(),
       {
         type: "add_node",
         node: { id: "k1", space: "work", kind: "constraint", label: "no tests", payload: { forbid: ["\\.test\\.mjs$"] }, seq: 1 },
@@ -603,11 +585,6 @@ describe("executeAction", () => {
 });
 
 describe("recall by id (history index)", () => {
-  const goal = {
-    type: "add_node" as const,
-    node: { id: "g1", space: "work" as const, kind: "goal" as const, label: "green", seq: 0, payload: { what: "green" } },
-  };
-
   it("returns a stored body by id and windows a large one", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-recall-"));
     tempDirs.push(root);
@@ -615,7 +592,7 @@ describe("recall by id (history index)", () => {
     const big = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
     workspace.write(".skein/observations/o2.txt", big);
     const state = fold([
-      goal,
+      ...open(),
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "small", payload: { output: "hello" }, seq: 1 } },
       { type: "add_node", node: { id: "o2", space: "work", kind: "observation", label: "big", payload: { outputRef: ".skein/observations/o2.txt" }, seq: 2 } },
     ]);
@@ -643,7 +620,7 @@ describe("recall by id (history index)", () => {
   });
 
   it("refuses a recall for a result already in the working set", () => {
-    const state = fold([goal]);
+    const state = fold(open());
     const held = ["obs:30"];
 
     const repeat = classify({ operator: "recall", id: "obs:30" }, state, held);
@@ -658,7 +635,7 @@ describe("recall by id (history index)", () => {
   });
 
   it("refuses a re-recall of a non-result id (e.g. an action node)", () => {
-    const state = fold([goal]);
+    const state = fold(open());
     const verdict = classify({ operator: "recall", id: "w:action:77" }, state, [
       "w:action:77",
     ]);
@@ -677,28 +654,36 @@ describe("the message tape", () => {
       roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
-        return proposal({
-          operator: "create_goal",
-          what: "green",
-          state: "reconnaissance", action: { tool: "bash", command: "echo start" },
-        });
+        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
       }
       if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: `echo step${index}` } });
     };
     await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 10 },
+      { propose, workspace, maxTurns: 8, noProgress: 10 },
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; create_goal is its own call + result, and the
-    // seeded first command is a separate run call + result.
+    // A fresh request is a single user turn; move is its own call + result; the first apply
+    // seeds the plan as another call + result.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "assistant", "tool"]);
+    expect(roles[2]).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
-    expect(roles[2]).toEqual(["user", "assistant", "tool", "assistant", "tool", "assistant", "tool"]);
+    expect(roles[3]).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+    ]);
   });
 
   it("executes a batch in one turn and cuts it after a terminal move", async () => {
@@ -708,8 +693,9 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
-      if (index === 2) {
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      if (index === 3) {
         // One doxa move, two independent probes (a batch).
         return {
           thought: "probe",
@@ -719,17 +705,21 @@ describe("the message tape", () => {
           ],
         };
       }
-      // A terminal move ends the batch: the trailing apply is dropped.
-      return {
-        thought: "done",
-        actions: [
-          { operator: "stop", why: "done" },
-          { operator: "apply", action: { tool: "bash", command: "echo never" } },
-        ],
-      };
+      if (index === 4) {
+        // A terminal move ends the batch: the trailing apply is dropped.
+        return {
+          thought: "done",
+          actions: [
+            { operator: "stop", why: "state done" },
+            { operator: "apply", action: { tool: "bash", command: "echo never" } },
+          ],
+        };
+      }
+      if (index === 5) return proposal({ operator: "move", state: "handoff", what: "" });
+      return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 10 },
+      { propose, workspace, maxTurns: 8, noProgress: 10 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -740,7 +730,7 @@ describe("the message tape", () => {
     expect(commands).not.toContain("echo never");
     expect(result.stopReason).toBe("request_addressed");
     // The batch renders as ONE assistant message with both calls, then two results.
-    const batch = contexts[2]?.history.find((message) => message.calls !== undefined);
+    const batch = contexts[3]?.history.find((message) => message.calls !== undefined);
     expect(batch?.calls?.map((call) => call.name)).toEqual(["read", "bash"]);
   });
 
@@ -751,18 +741,19 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
-      }
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
       if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo one" } });
     };
-    await runAgent({ propose, workspace, maxTurns: 5, noProgress: 10 }, { request: { id: "r1", text: "green" } });
+    await runAgent({ propose, workspace, maxTurns: 6, noProgress: 10 }, { request: { id: "r1", text: "green" } });
     // After the later run, the read's tool message is still in the tape (the tape is the
     // tree's history, not a bounded working set).
-    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    const tape = contexts.at(-1)?.history.map((message) => message.text).join("\n") ?? "";
     expect(tape).toContain("sumTo");
   });
 });
@@ -839,51 +830,56 @@ describe("runAgent", () => {
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
-        return proposal({
-          operator: "create_goal",
-          what: "fix the off-by-one",
-          state: "reconnaissance", action: { tool: "bash", command: "echo start" },
-        });
+        return proposal({ operator: "move", state: "reconnaissance", what: "fix the off-by-one" });
       }
       if (index === 2) {
-        return proposal({ operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } });
+        return proposal({
+          operator: "apply",
+          action: { tool: "bash", command: "echo start" },
+        });
       }
       if (index === 3) {
+        return proposal({ operator: "apply", action: { tool: "edit", path: "src/sum.mjs", find: "i < n", replace: "i <= n" } });
+      }
+      if (index === 4) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "node --test" } });
       }
+      if (index === 5) return proposal({ operator: "stop", why: "node --test passes" });
+      if (index === 6) return proposal({ operator: "move", state: "handoff", what: "" });
       return proposal({ operator: "stop", why: "node --test passes" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 10 },
+      { propose, workspace, maxTurns: 12 },
       { request: { id: "r1", text: "make the suite pass" } },
     );
 
     expect(workspace.run("node --test").code).toBe(0);
     expect(achievedWithoutCheck(result.events)).toEqual([]);
-    expect(unboundGoals(result.events)).toEqual([]);
     expect(structuralCycle(result.events)).toBe(false);
     expect(result.stopReason).toBe("request_addressed");
   });
 
-  it("reports request_addressed, not max_turns, when the final allowed turn stops the goal", async () => {
+  it("reports request_addressed, not max_turns, when the final allowed turn closes the request", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) {
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "make the suite pass" });
+      if (index === 2) {
         return proposal({
-          operator: "create_goal",
-          what: "make the suite pass",
-          state: "reconnaissance", action: { tool: "bash", command: "true" },
+          operator: "apply",
+          action: { tool: "bash", command: "true" },
         });
       }
+      if (index === 3) return proposal({ operator: "stop", why: "state done" });
+      if (index === 4) return proposal({ operator: "move", state: "handoff", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 2 },
+      { propose, workspace, maxTurns: 5 },
       { request: { id: "r1", text: "green" } },
     );
-    expect(result.turns).toBe(2);
+    expect(result.turns).toBe(5);
     expect(result.stopReason).toBe("request_addressed");
   });
 
@@ -901,11 +897,11 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) {
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "interpret the request" });
+      if (index === 2) {
         return proposal({
-          operator: "create_goal",
-          what: "interpret the request",
-          state: "reconnaissance", action: { tool: "bash", command: "echo hi" },
+          operator: "apply",
+          action: { tool: "bash", command: "echo hi" },
         });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo hi" } });
@@ -931,16 +927,19 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
+        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
       }
       if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
     };
     await runAgent({ propose, workspace, maxTurns: 5 }, { request: { id: "r1", text: "green" } });
     // After the later run, the read's tool message is still in the tape.
-    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    const tape = contexts.at(-1)?.history.map((message) => message.text).join("\n") ?? "";
     expect(tape).toContain("sumTo");
   });
 
@@ -952,9 +951,12 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
+        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
       }
-      // `decline` is valid only at the request; at the open goal it is a structural refusal.
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      // `decline` is valid only at the request; at a state it is a structural refusal.
       return proposal({ operator: "decline", why: "nothing to do" });
     };
     await runAgent(
@@ -962,7 +964,7 @@ describe("runAgent", () => {
       { request: { id: "r1", text: "green" } },
     );
     // The refusal reason is on the tape the model sees next, so the loop is never blind.
-    const later = contexts[2]?.history.map((message) => message.text).join("\n") ?? "";
+    const later = contexts.at(-1)?.history.map((message) => message.text).join("\n") ?? "";
     expect(later).toContain("rejected");
     expect(later).toContain("not_request");
   });
@@ -980,47 +982,70 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "create_goal", what: "read the long file", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
+        return proposal({ operator: "move", state: "reconnaissance", what: "read the long file" });
       }
       if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "big.txt" } });
       }
       id = id ?? lastToolId(context);
-      if (index === 3) {
+      if (index === 4) {
         return proposal({ operator: "recall", id: id ?? "missing", start: 55, end: 65 });
       }
-      return proposal({ operator: "stop", why: "seen enough" });
+      if (index === 5) return proposal({ operator: "stop", why: "seen enough" });
+      if (index === 6) return proposal({ operator: "move", state: "handoff", what: "" });
+      return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 3 },
+      { propose, workspace, maxTurns: 8, noProgress: 3 },
       { request: { id: "r1", text: "read the long file" } },
     );
     // The windowed recall returned the middle fragment (line 60), not a refusal.
-    const after = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    const after = contexts[4]?.history.map((message) => message.text).join("\n") ?? "";
     expect(after).toContain("line 60");
     // The assistant's own history shows the call's arguments, not a bare `recall`.
     expect(after).toMatch(/recall \{ id: obs:\d+, start: 55, end: 65 \}/);
     expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
   });
 
-  it("renders the request's goal as a tape", () => {
+  it("renders the request's state and goal as a tape", () => {
     const state = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "green" }, seq: 0 } },
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green" }, seq: 1 } },
-      { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
-      { type: "add_edge", edge: { id: "e1", from: "g1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 3 } },
+      {
+        type: "add_node",
+        node: {
+          id: "m1",
+          space: "work",
+          kind: "move",
+          label: "green",
+          payload: {
+            state: "reconnaissance",
+            what: "green",
+            call: { name: "move", args: { state: "reconnaissance", what: "green" } },
+          },
+          seq: 1,
+        },
+      },
+      { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
+      { type: "add_edge", edge: { id: "e1", from: "m1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 4 } },
       { type: "add_edge", edge: { id: "e2", from: "p1", to: "i1", kind: "items", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build" }, seq: 4 } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build" }, seq: 5 } },
       { type: "add_edge", edge: { id: "e3", from: "i1", to: "a1", kind: "alts", provenance: { kind: "llm" } } },
     ]);
-    const context = project(state);
-    expect(context.situation).toBe("goal");
+    const context = project(fold(focusEvents(state), state));
+    expect(context.situation).toBe("working");
     expect(context.history[0]?.role).toBe("user");
     expect(context.history[0]?.text).toBe("green");
-    expect(context.history[1]?.text).toContain("create_goal");
-    expect(context.history[2]?.text).toContain("run build");
+    const texts = context.history.map((message) => message.text).join("\n");
+    expect(texts).toContain("moved to Reconnaissance");
+    expect(texts).toContain("run build");
+    // The state IS its goal: the move call carries the goal text (`what`), not a create_goal.
+    const moveCall = context.history.find((message) => message.call?.name === "move");
+    expect(moveCall?.call?.args).toMatchObject({ state: "reconnaissance", what: "green" });
   });
 
   it("refuses a repeated read and names the stored result", async () => {
@@ -1028,16 +1053,17 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
-      if (index === 2 || index === 3) {
+      if (index === 3 || index === 4) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 5, noProgress: 2 },
+      { propose, workspace, maxTurns: 6, noProgress: 2 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -1065,10 +1091,11 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) {
-        return proposal({ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo start" } });
-      }
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
       if (index === 2) {
+        return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
+      }
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
       // The read's result id is exposed on the tape's tool message; reuse it on every recall.
@@ -1091,15 +1118,15 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) {
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 2) {
         return proposal({
-          operator: "create_goal",
-          what: "green",
-          state: "reconnaissance", action: { tool: "bash", command: "echo hi" },
+          operator: "apply",
+          action: { tool: "bash", command: "echo hi" },
         });
       }
-      // The goal id is exposed on the tape's create_goal message.
-      return proposal({ operator: "recall", id: goalIdOf(context) ?? "missing" });
+      // The move id is exposed on the tape's move message (a non-result node).
+      return proposal({ operator: "recall", id: moveIdOf(context) ?? "missing" });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 6, noProgress: 2 },
@@ -1120,17 +1147,17 @@ describe("failed edit materializes the file content", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) {
+      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 2) {
         return proposal({
-          operator: "create_goal",
-          what: "green",
-          state: "reconnaissance", action: { tool: "bash", command: "echo done" },
+          operator: "apply",
+          action: { tool: "bash", command: "echo done" },
         });
       }
-      if (index === 2) {
+      if (index === 3) {
         return proposal({ operator: "apply", action: { tool: "read", path: "src/sum.mjs" } });
       }
-      if (index === 3) {
+      if (index === 4) {
         return proposal({
           operator: "apply",
           action: { tool: "edit", path: "src/sum.mjs", find: "NONEXISTENT_PATTERN_XYZ", replace: "x" },
@@ -1151,7 +1178,7 @@ describe("failed edit materializes the file content", () => {
     expect(output).toContain("sumTo");
 
     // The failed-edit observation is a tool message in the tape; its body is in view.
-    const tape = contexts[3]?.history.map((message) => message.text).join("\n") ?? "";
+    const tape = contexts[4]?.history.map((message) => message.text).join("\n") ?? "";
     expect(tape).toContain("current content");
   });
 });

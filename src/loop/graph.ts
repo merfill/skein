@@ -1,10 +1,11 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import type { Event } from "../ir/events";
-import { actionExecuted, childrenOf, currentVersion, fold, goalOf, hasStopped, lastChild, planOf, type State } from "../ir/graph";
+import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
+import { isTerminalIsland } from "../ir/islands";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
-import { focusEvents } from "../ir/traversal";
+import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/traversal";
 import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { commandOf, executeAction, resolveBody } from "../tools";
@@ -29,7 +30,7 @@ const MAX_HELD = 5;
 
 // A move that changes the focus or ends the run: it must be the last call of a batch, so
 // everything the model emitted after it is dropped (the state it reasoned from is gone).
-const TERMINAL = new Set<Action["operator"]>(["create_goal", "stop", "decline"]);
+const TERMINAL = new Set<Action["operator"]>(["move", "stop", "decline"]);
 
 // Upsert the fetched ids into the working set, each held for `turns` turns and refreshed
 // on every fetch. Level results do not go through here — they are kept structurally.
@@ -97,8 +98,8 @@ function describeTarget(action: Action): string {
     case "search":
       target = `${action.id}:${action.pattern}`;
       break;
-    case "create_goal":
-      target = `goal:${action.what}`;
+    case "move":
+      target = `state:${action.state}`;
       break;
     case "stop":
       target = "stop";
@@ -299,13 +300,17 @@ export function compileGraph(deps: AgentDeps) {
     const current = fold(state.events);
     const rootId = current.rootId;
     if (rootId !== undefined) {
-      const root = current.nodes.get(rootId);
-      if (root?.kind === "request") {
-        // The request ends when its goal is stopped (there is no `stop` on the request).
-        const goal = goalOf(current, rootId);
-        if (goal !== undefined && hasStopped(current, goal)) {
-          return { done: true, stopReason: "request_addressed" };
-        }
+      // The request ends when its terminal state (`handoff`) is stopped (there is no `stop`
+      // on the request).
+      const move = currentMove(current);
+      const island = move !== undefined ? moveIsland(current, move) : undefined;
+      if (
+        move !== undefined &&
+        island !== undefined &&
+        isTerminalIsland(island) &&
+        isMoveFinished(current, move)
+      ) {
+        return { done: true, stopReason: "request_addressed" };
       }
     }
     // Closure wins over the budget: if the last allowed turn closed the request, that is

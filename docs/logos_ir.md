@@ -9,10 +9,10 @@
 >
 > **Note.** This is a design/analysis document, not the as-built. Sections that describe
 > what is "absent" or "not yet" (e.g. §4.5, §7) reflect the state at the time of writing;
-> since then the operator model (three operators `create_goal`/`apply`/`stop` + read-only
+> since then the operator model (`move`/`apply`/`stop`/`decline` + read-only
 > `recall`/`search`), `no_progress` and the traversal stack have been implemented. The current
-> as-built is `docs/ir.md`; the superseded roadmap is
-> `docs/plans/archive/logos_roadmap_plan.md`.
+> as-built is `docs/ir.md`; the state protocol is `docs/plans/state_protocol_plan.md`; the
+> superseded roadmap is `docs/plans/archive/logos_roadmap_plan.md`.
 >
 > **Stop closure (later).** The `achieved`/`achieved_under`/`refuted`/`under` machinery
 > described below (a per-goal arbiter acceptance via `record_check`) has since been
@@ -211,9 +211,9 @@ branch is to step back. And since the backtracking from §1.2 already shows the 
 as a branch of the walk, the coding agent's context must likewise be a **slice of the
 walk of this tree**, not a budget window.
 
-Let us name Skein's difference from the Ankyra foundation right away: the doxa issues
-exactly **two operators** — create a goal (`create goal`) and execute a command
-(`apply`). Actions on the world (`read`/`grep`/`edit`/`run`) are
+Let us name Skein's difference from the Ankyra foundation right away: the doxa declares a
+state and its goal (`move`) and executes commands (`apply`). Actions on the world
+(`read`/`grep`/`edit`/`run`) are
 `apply`; there are no belief nodes or grounding quotes (the rationale is the `why`
 text, an assumption is an `under` reference to a goal); there is no preference operator
 (`o_spec`); the environment and tools are part of the **logos**, not a separate role.
@@ -430,8 +430,8 @@ requirement for the logos.
 In Skein the doxa makes exactly **one proposal** per step — one of the **two
 operators**:
 
-- **`create goal`** — create a subgoal and embed it as an item in the current goal's
-  plan; the new goal may have its own plan (subgoal/command items);
+- **`move`** — declare the state (island of work) to work in and its goal `what`; the
+  state's plan hangs off the `move` and its first item is the next ordinary `apply`;
 - **`apply`** — execute a command (this includes `read`/`grep`/`edit`/`run`).
 
 Actions on the world are a special case of `apply`, not separate operators. Both
@@ -482,7 +482,7 @@ Let us summarize the roles and their filling:
 
 | Role (Ankyra) | Meaning | In Skein | Status |
 |---|---|---|---|
-| abduction | propose new knowledge | `create goal` (subgoal/hypothesis) | present |
+| abduction | propose new knowledge | `move` (state + its goal) | present |
 | action on the world | change the world | `apply` (`read`/`edit`/`run`) | present (specific) |
 | revision | recompute on new information | `mutate` + actualness recomputation | present |
 | cancellation | withdraw a previous conclusion | `o_def`: failed check/withdrawn assumption | present |
@@ -888,7 +888,7 @@ In the spirit of §10: we do not rewrite silently. Relative to the first edition
 The terms and the operator model of this document have been brought to the source of
 truth — `docs/ir_semantics.md`. What changed:
 
-- **Two operators instead of a set of actions.** The doxa proposes `create goal` and
+- **Two operators instead of a set of actions.** The doxa proposes `move` and
   `apply`; `read`/`grep`/`edit`/`run` are special cases of `apply` (§4.1).
   The "mode selection" steps in §7 are renamed to *policy*.
 - **`W` is external.** The operator is chosen by the Arbiter (a human or a rule), not
@@ -931,7 +931,7 @@ will be assembled from this document.
 6. **The raw stream of outputs goes away.** Instead of dumps — a compressed summary and
    fetching details by identifier (§6).
 7. **The operator model is refined.** The doxa proposes two operators
-   (`create goal`/`apply`); `W` is an external Arbiter; routes are policy;
+   (`move`/`apply`); `W` is an external Arbiter; routes are policy;
    honesty is `achieved`/`achieved_under`; state is derived (§4.1, §7, §8).
 
 **What remains unchanged:** the doxa/logos distinction, the invariants (extended but not

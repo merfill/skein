@@ -39,7 +39,7 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "revise-hypothesis",
-    expect: { solved: true, uses: ["create_goal", "revise"] },
+    expect: { solved: true, uses: ["move", "revise"] },
   },
   {
     name: "two-outputs",
@@ -51,11 +51,11 @@ export const scenarios: Scenario[] = [
   },
   {
     name: "no-mutation-answer",
-    expect: { solved: false, noMutation: true, unchanged: [""], uses: ["create_goal"] },
+    expect: { solved: false, noMutation: true, unchanged: [""], uses: ["move"] },
   },
   {
     name: "multi-step-plan",
-    expect: { solved: true,     maxRepeats: 5, uses: ["create_goal"] },
+    expect: { solved: true,     maxRepeats: 5, uses: ["move"] },
   },
   {
     name: "fail-recover",

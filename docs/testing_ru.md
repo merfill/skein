@@ -39,10 +39,10 @@ SKEIN_LIVE=false npx vitest run
 
 ### Операции над IR
 
-Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-CG`,
+Операторы дерева специфицированы в `docs/ir_operations.md` (реестр ID: `OP-MV`, `OP-CG`,
 `OP-AP`, `OP-RC`, `OP-SR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ`). Их офлайн-тесты
-сгруппированы по оператору в `tests/ops/` (`create_goal`, `apply`, `recall`, `search`, `stop`,
-`applicable`, `traversal`, `derivation`); инварианты проверяются на 400 случайных легальных деревьях
+сгруппированы по оператору в `tests/ops/` (`move`, `apply`, `recall`, `search`,
+`stop`, `applicable`, `traversal`, `derivation`); инварианты проверяются на 400 случайных легальных деревьях
 (`tests/ops/ir_properties.test.ts`); `tests/coverage.test.ts` падает, если у ID реестра
 нет теста или тест ссылается на ID вне реестра.
 
@@ -82,12 +82,12 @@ SKEIN_SCENARIO_REPEATS=3 SKEIN_SCENARIOS=script-two-bugs SKEIN_LIVE=true npx vit
 `afterEach`-cleanup нет (он гонялся бы за ещё бегущие сценарии). Весь набор — ~3 минуты.
 
 Харнесс сценариев гоняет только `runAgent` (зеркалит `bench/run.ts`): программного
-арбитра нет. Запрос завершается на собственном `stop` доксы, с вратами по критерию
-выбранной интерпретации (проход или остановленная интерпретация) — поэтому запрос,
-не называющий литеральной команды, всё равно закрывается, как только модель исполняет
-и останавливает свою интерпретацию.
+арбитра нет. Запрос завершается на собственном `stop` доксы — `stop` терминального
+хода завершает запрос, гейта по критерию нет, — поэтому запрос, не называющий
+литеральной команды, всё равно закрывается, как только модель переходит в Hand-off
+и останавливается.
 
-Жёсткие проверки (падение теста): прошёл ли критерий, закрыт ли запрос
+Жёсткие проверки (падение теста): закрыт ли запрос
 (`stopReason=request_addressed`, если у сценария `expect.addressed`), целостность
 инвариантов (`tests/invariants.ts`), неизменность `test/` (и явных путей), число
 **различимых** повторно запрошенных результатов (`maxRepeats`; одна и та же цель,
@@ -361,7 +361,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 | `SKEIN_PROPOSAL` | предложенное действие (в т.ч. текст команд) |
 | `SKEIN_TURN` | на ход: токены/кэш/`contextChars`/время |
 | `SKEIN_LLM_ERROR` | ошибка вызова модели (с номером попытки) |
-| `SKEIN_EVENTS` | диагностика IR: цели, планы, альтернативы, `observations`, `mutates`, отказы |
+| `SKEIN_EVENTS` | диагностика IR: состояния, планы, альтернативы, `observations`, `mutates`, отказы |
 | `SKEIN_METRICS` | сводка: токены, `context` `first/last/peak/growth`, граф |
 
 `contextChars` считается из того же `promptText(context)`, что уходит в
@@ -390,7 +390,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 ### 8.1 Устойчивый structured output
 
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
-плоскому function-инструменту на операцию (`create_goal`, `recall`, `search`, `read`,
+плоскому function-инструменту на операцию (`move`, `recall`, `search`, `read`,
 `grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`), а `invokeTools` в `src/llm/structured.ts`
 биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила

@@ -5,19 +5,23 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { currentVersion } from "../../src/ir/graph";
+import { childrenOf, currentVersion, lastChild, planOf } from "../../src/ir/graph";
+import { currentMove } from "../../src/ir/traversal";
 import type { Action } from "../../src/llm/schemas";
 import { READ_LIMIT } from "../../src/tools";
 import type { Workspace } from "../../src/tools/workspace";
 import {
   DEFAULT_FILES,
   applyTool,
+  classification,
   cleanupWorkspaces,
   edit,
   exec,
+  execAll,
   fetchUrl,
   grep,
   makeWorkspace,
+  move,
   patch,
   recall,
   read,
@@ -27,6 +31,42 @@ import {
 } from "./helpers";
 
 afterEach(cleanupWorkspaces);
+
+describe("apply: the first plan item", () => {
+  it("OP-CG-1 the state's first apply creates the plan and its first item", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const moved = exec(move("localization", "find the bug"), [request()], ws);
+    const moveId = currentMove(moved.state)!;
+    expect(planOf(moved.state, moveId)).toBeUndefined();
+    const { state } = exec(run("make test"), moved.events, ws);
+    const plan = planOf(state, moveId)!;
+    expect(plan).toBeDefined();
+    const items = childrenOf(state, plan);
+    expect(items).toHaveLength(1);
+    const actionId = lastChild(state, items[0]!)!;
+    const action = state.nodes.get(actionId);
+    expect(action?.kind).toBe("action");
+    const payload = action?.payload as
+      | { command?: string; call?: { name?: string; args?: { command?: string } } }
+      | undefined;
+    expect(payload?.command).toBe("make test");
+    // The first plan item records the native `bash` call, so the tape renders an
+    // assistant.tool_calls + `tool` pair (never a text/OBSERVATION user turn).
+    expect(payload?.call?.name).toBe("bash");
+    expect(payload?.call?.args?.command).toBe("make test");
+  });
+
+  it("REF-AP-NO-STATE refuses apply at the request (declare a state first)", () => {
+    expect(classification(run("ls"), [request()]).reason).toContain("no_state");
+  });
+
+  it("REF-AP-NO-STATE refuses apply at a finished state (move first)", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const opened = execAll([move("localization", "find the bug"), run("true")], [request()], ws);
+    const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
+    expect(classification(run("ls"), stopped.events).reason).toContain("no_state");
+  });
+});
 
 // A command's non-execution is now an observation with a reason (docs/ir_revision.md §3.3,
 // §4): run it and return the reason, or undefined when it executed.

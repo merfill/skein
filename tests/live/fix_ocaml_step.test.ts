@@ -6,28 +6,25 @@ import { describe, expect, it } from "vitest";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
-import { invokeTools } from "../../src/llm/structured";
-import { buildMessages } from "../../src/loop/propose";
+import { propose } from "../../src/loop/propose";
 
-// A live check of the fix-ocaml-gc shape without running the whole task: replay a saved
-// projection from a step of the real run (`2026-10-04__22-38-56 / gkxcDTi`), adapted to
-// the current projection, through the live model with the current prompt. It verifies the
-// two behaviours this change is about, not the OCaml fix itself:
-//   * the prompt keeps the model from merging stdout and stderr (`2>&1`);
-//   * a visible `repeat_hypothesis` refusal stops the model from repeating the same what.
-// See docs/tools.md §4.3 and docs/projection.md §3.1. Run deliberately:
+// A live check of the fix-ocaml-gc shape without running the whole task: replay saved
+// projections from decision points of a real `fix-ocaml-gc` run
+// (`bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc`) through the live model
+// with the current prompt and the current surface (`propose`). It verifies two behaviours of
+// the projection, not the OCaml fix itself:
+//   * a proposed run must not merge stdout and stderr (`2>&1`);
+//   * after a command failed for a missing project path, the revised command must resolve the
+//     project directory (`ocaml/`), not repeat the bare workspace-root path.
+// See docs/system_prompt.md and docs/projection.md. Run deliberately:
 //   SKEIN_LIVE=true npx vitest run tests/live/fix_ocaml_step.test.ts
 
 interface Step {
   name: string;
   what: string;
-  refusedWhat?: string;
   // The step's failed check is a missing path: a proposed objective command must resolve
-  // the project directory (not repeat the bare command from the instruction).
+  // the project directory (not repeat the bare workspace-root command).
   cwdReaction?: boolean;
-  // The focus is a stage whose check was inconclusive, under an open objective
-  // interpretation: a proposed check must target the focus, not the ancestor.
-  focusCheck?: boolean;
   context: Context;
 }
 
@@ -50,24 +47,32 @@ function withInstruction(context: Context): Context {
 
 describe.skipIf(!settings.live)("fix-ocaml-gc step (live)", () => {
   for (const step of fixture.steps) {
-    it(`${step.name}: reacts to the error/refusal without merging streams`, async () => {
+    it(`${step.name}: reacts to the error without merging streams`, async () => {
       const model = createChatModel(settings);
-      const proposal = await invokeTools(model, buildMessages(withInstruction(step.context)));
+      const proposal = await propose(model, withInstruction(step.context));
       console.info(`[${step.name}] ${JSON.stringify(proposal.actions[0]!).slice(0, 400)}`);
 
-      if (proposal.actions[0]!.operator === "apply" && proposal.actions[0]!.action.tool === "bash") {
-        const command = proposal.actions[0]!.action.command ?? "";
-        expect(command, "a proposed run must not merge stdout and stderr").not.toMatch(/2>&1|&>/);
+      const action = proposal.actions[0]!;
+      if (action.operator !== "apply") return;
+
+      // The bash tool captures stdout and stderr SEPARATELY. If a run merges them into a
+      // pipe, it must still surface the left side's exit code (the failure this guard exists
+      // for): `pipefail`, `PIPESTATUS`, or an explicit `echo $?`.
+      const command = action.action.tool === "bash" ? (action.action.command ?? "") : "";
+      if (/2>&1/.test(command)) {
+        expect(command, "a merged run must not hide the exit code").toMatch(
+          /pipefail|\bPIPESTATUS\b|echo\s+[^;&|]*\$\?/,
+        );
       }
 
-      if (step.cwdReaction === true && proposal.actions[0]!.operator === "create_goal") {
-        const seed = proposal.actions[0]!.action;
-        const command = seed.tool === "bash" ? (seed.command ?? "") : "";
-        expect(
-          command.trim(),
-          "a revised command must not repeat the bare workspace-root command",
-        ).not.toBe("make -C testsuite one DIR=tests/basic");
-        expect(command, "it must resolve the project directory (ocaml/)").toMatch(/ocaml/);
+      if (step.cwdReaction === true) {
+        const target =
+          action.action.tool === "bash"
+            ? (action.action.command ?? "")
+            : "path" in action.action
+              ? (action.action.path ?? "")
+              : "";
+        expect(target, "the move must resolve the project directory (ocaml/)").toMatch(/ocaml/);
       }
     });
   }

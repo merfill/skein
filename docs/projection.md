@@ -22,25 +22,28 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 | Move | Messages |
 |---|---|
-| `create_goal` | `assistant` (the goal, each field labelled `[id] create_goal:` / `what:` / `state:`, an absent field shown as `(none)`), then `assistant` (the first action's call) + `tool` (its observation) |
-| `apply` | `assistant` (the call) + `tool` (the observation) |
-| `stop` | `assistant` (the reason `why`): the goal is closed |
+| `move` | `assistant` (the call `move { state, what, note? }`) + `tool` (the confirmation; when it leaves a finished state, the confirmation carries that state's compaction line `State <label>: finished — <summary>`) |
+| `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
+| `stop` | `assistant` (the reason `why`): the state is closed (or, at the terminal state, the request ends) |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
-Every plan item is a pair `assistant` + `tool`; creating and closing a goal are separate
-`assistant` messages. A command that ran and mutated a file (an edit) has no observation, so
-its `tool` message reads `mutated <path>`.
+Every plan item is a pair `assistant` + `tool`; moving and closing a state are separate
+`assistant` messages, and the first `apply` after a `move` seeds the state's plan. A command that
+ran and mutated a file (an edit) has no observation, so its `tool` message reads `mutated <path>`.
 
 ## 3. The tape is built by walking the tree
 
 - the request is the first `user` turn;
-- its goal renders its `create_goal` message and then its plan items and their alternatives,
-  in order; a sub-goal alternative renders inline (with an alternative marker);
-- **the tape is not monotone.** When a goal closes, its internal messages leave the tape; on
-  its parent's arm only the closure message (`stop` with `why`) remains. Only the view goes,
-  not the data: the tree stays complete. Going up further trims the same way;
+- its states (`move` children) render in order: a finished state that has been left behind is
+  elided to one compaction line (`State <label>: finished — <summary>`), carried by the `move`
+  that left it; the current state renders its `move` call and then its plan items in order (the
+  first `apply` seeds the plan). The current finished state (awaiting the transition) shows
+  its closure line;
+- **the tape is not monotone.** When a state is left behind, its `apply` turns
+  leave the tape; only its compaction line remains. Only the view goes, not the data: the tree
+  stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
-  the tape; its meaning lives in the `why` fields.
+  the tape; its meaning lives in the `why` fields and the `move` `note`.
 
 ## 4. Markers and addresses
 
@@ -75,8 +78,14 @@ The system part is assembled from the current node's intent, not as a monolith:
   stable, so it is a good cache prefix. The tool names/parameters/descriptions are **not** here:
   they ship in the request's `tools` field;
 - the **node instruction** holds the admissible moves and the rules of the current situation
-  (a fresh request / an open goal);
-- the **constraints** are added as separate `system` messages.
+  (a fresh request / a state awaiting its first plan item / an open state / a finished state
+  awaiting the transition / the terminal state); while a state is in focus, the state's
+  `What / Done when / Constraints` follow it;
+- the **constraints** are added as separate `system` messages;
+- right after a tool result inside an open state, an **observation instruction** is appended as
+  the last `system` message (`Context.result`): it restates the state's rule (`State` / `Goal` /
+  `Done when` / `Constraints`) and asks whether `Done when` already holds — yes → `stop`; a step
+  worked, more needed → the next action; failed/wrong step → a different action.
 
 The exact base/node boundary is the subject of the following stage (the composite system
 prompt).

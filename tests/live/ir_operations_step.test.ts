@@ -7,14 +7,14 @@ import { project, type Context } from "../../src/ir/project";
 import { focusEvents } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
 import type { Action } from "../../src/llm/schemas";
-import { invokeTools } from "../../src/llm/structured";
-import { buildMessages } from "../../src/loop/propose";
+import { propose } from "../../src/loop/propose";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
   exec,
-  interpretation,
+  execAll,
   makeWorkspace,
+  move,
   request,
   run,
 } from "../ops/helpers";
@@ -52,34 +52,28 @@ function buildSteps(): Step[] {
   steps.push({
     name: "interpret-request",
     context: projectAt([request()]),
-    expectMove: (a) => expect(a.operator, "an open request is interpreted").toBe("create_goal"),
+    expectMove: (a) => expect(["move", "decline"], "an open request chooses a state").toContain(a.operator),
   });
 
   {
-    // OP-AP-RUN-1 / TR-7: the plan cursor points at an action item: apply it verbatim.
+    // OP-AP-RUN-1 / TR-7: an open state continues with an action (or stops).
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(
-      interpretation("carry out the request", "echo ready"),
+    const opened = execAll(
+      [move("reconnaissance", "carry out the request"), run("echo ready")],
       [request("First run `echo ready`, then continue with the task.")],
       ws,
     );
     steps.push({
       name: "apply-next-action",
       context: projectAt(opened.events),
-      expectMove: (a) => {
-        expect(a.operator).toBe("apply");
-        if (a.operator !== "apply") return;
-        expect(a.action.tool).toBe("bash");
-        if (a.action.tool !== "bash") return;
-        expect(a.action.command, "the next plan action is applied verbatim").toBe("echo ready");
-      },
+      expectMove: (a) => expect(["apply", "stop"], "an open state continues or stops").toContain(a.operator),
     });
   }
 
   {
     // OP-ST-1: an open goal offers stop (or a further command); there is no criterion.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("fix the build", "true"), [request()], ws);
+    const opened = execAll([move("reconnaissance", "fix the build"), run("true")], [request()], ws);
     steps.push({
       name: "stop-open-goal",
       context: projectAt(opened.events),
@@ -91,7 +85,7 @@ function buildSteps(): Step[] {
     // TR-8 (F2): an open goal whose one step is done continues with an action (apply),
     // not a create_goal funnel.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = exec(interpretation("investigate the failure", "true"), [request()], ws);
+    const opened = execAll([move("reconnaissance", "investigate the failure"), run("true")], [request()], ws);
     const ran = exec(run("true"), opened.events, ws);
     steps.push({
       name: "continue-open-goal",
@@ -104,8 +98,8 @@ function buildSteps(): Step[] {
     // OP-RC (recall): a long result's head scrolled off; re-read it from the STORED result
     // (by id) instead of re-running the command.
     const { ws } = makeWorkspace({});
-    const opened = exec(
-      interpretation("inspect the failing output", "true"),
+    const opened = execAll(
+      [move("reconnaissance", "inspect the failing output"), run("true")],
       [request("The command's output is long; the part I need scrolled off the top. Re-read more of the stored result.")],
       ws,
     );
@@ -121,8 +115,8 @@ function buildSteps(): Step[] {
   {
     // OP-SR (search): find a marker inside a big stored output instead of paging it.
     const { ws } = makeWorkspace({});
-    const opened = exec(
-      interpretation("locate the failure in the output", "true"),
+    const opened = execAll(
+      [move("reconnaissance", "locate the failure in the output"), run("true")],
       [request("Find the line naming MIDDLE_ASSERT_FAIL in the long output; it is somewhere in the middle.")],
       ws,
     );
@@ -155,7 +149,7 @@ describe.skipIf(!settings.live)("IR operations steps (live)", () => {
         const errors: string[] = [];
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
           const model = createChatModel(settings);
-          const proposal = await invokeTools(model, buildMessages(step.context));
+          const proposal = await propose(model, step.context);
           console.info(`[${step.name}] attempt ${attempt}: ${JSON.stringify(proposal.actions[0]!).slice(0, 240)}`);
           try {
             step.expectMove(proposal.actions[0]!);

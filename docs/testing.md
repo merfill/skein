@@ -39,11 +39,11 @@ overwrite an already-set variable. Live tests are marked `describe.skipIf(!setti
 
 ### IR operations
 
-The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-CG`,
+The tree operators are specified in `docs/ir_operations.md` (a registry of `OP-MV`, `OP-CG`,
 `OP-AP`, `OP-RC`, `OP-SR`, `OP-ST`, `TR`, `DER`, `REF`, `PRJ` IDs). Their offline tests
-are grouped by operator under `tests/ops/` (`create_goal`, `apply`, `recall`, `search`, `stop`,
-`applicable`, `traversal`, `derivation`); the invariants are exercised on 400 random legal trees
-(`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
+are grouped by operator under `tests/ops/` (`move`, `apply`, `recall`, `search`,
+`stop`, `applicable`, `traversal`, `derivation`); the invariants are exercised on 400 random legal
+trees (`tests/ops/ir_properties.test.ts`); and `tests/coverage.test.ts` fails if any registry
 ID has no test or a test cites an ID outside the registry.
 
 ## 3. Live gate
@@ -82,11 +82,11 @@ shared `afterEach` cleanup (it would race the still-running scenarios). The whol
 ~3 minutes.
 
 The scenario harness drives `runAgent` alone (mirrors `bench/run.ts`): there is no
-program arbiter. A request ends at the doxa's own `stop`, gated by its chosen
-interpretation's criterion (a pass, or a stopped interpretation) — so a request that
-names no literal command still closes once the model runs and stops its interpretation.
+program arbiter. A request ends at the doxa's own `stop` — the terminal move's `stop`
+ends the request, with no criterion gate — so a request that names no literal command
+still closes once the model moves to Hand-off and stops.
 
-Hard checks (fail the test): whether the criterion passed, whether the request was
+Hard checks (fail the test): whether the request was
 settled (`stopReason=request_addressed` when the scenario sets `expect.addressed`), the
 invariants (`tests/invariants.ts`), that `test/` (and explicit paths) is unchanged, the
 number of **distinct** already-known results re-accessed (`maxRepeats`; one target,
@@ -358,7 +358,7 @@ Results land in the same place, outside the repository:
 | `SKEIN_PROPOSAL` | the proposed action (including command text) |
 | `SKEIN_TURN` | per turn: tokens/cache/`contextChars`/time |
 | `SKEIN_LLM_ERROR` | a model-call error (with the attempt number) |
-| `SKEIN_EVENTS` | IR diagnostics: goals, plans, alternatives, `observations`, `mutates`, rejections |
+| `SKEIN_EVENTS` | IR diagnostics: states, plans, alternatives, `observations`, `mutates`, rejections |
 | `SKEIN_METRICS` | summary: tokens, `context` `first/last/peak/growth`, graph |
 
 `contextChars` is computed from the same `promptText(context)` that goes into
@@ -387,7 +387,7 @@ limits, and the projection does not cut it (`docs/tools.md`).
 ### 8.1 Robust structured output
 
 The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
-function tool per operation (`create_goal`, `recall`, `search`, `read`, `grep`, `list`,
+function tool per operation (`move`, `recall`, `search`, `read`, `grep`, `list`,
 `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`) and `src/llm/structured.ts` `invokeTools` binds them with
 `tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
 per-operation schemas matter: one deeply nested discriminated union came back flat

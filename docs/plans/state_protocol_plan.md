@@ -1,17 +1,18 @@
 # Skein — state protocol plan (states as the skeleton of the walk)
 
 > English mirror of `docs/plans/state_protocol_plan_ru.md`.
-> Status: **planning — a large redesign, for a dedicated work session.** The concept (§2–§4) is
-> settled with the owner; the implementation ("how", §6–§7) is proposed and still has open
-> decisions (§13). No code until the owner signs off. This document is written to be
-> self-contained: work can start from it after a context reset.
+> Status: **in progress — Phase 0 (freeze the concept).** The concept (§2–§4) and all open
+> decisions (§13, incl. §4a) are **settled with the owner** (2026-10-13); the implementation
+> ("how", §6–§7) is fixed accordingly. Phase 0 lands the decisions in the semantics and the
+> operator registry before any code. This document is written to be self-contained: work can
+> start from it after a context reset.
 
 ## 0. How to read this plan
 
-The plan separates **concept** (settled: what the agent's walk *is*) from **how** (proposed:
-IR, traversal, prompt, migration). Read §1–§4a as binding (with two decisions still open in
-§4a), §6–§12 as a proposal, §13 as the decision list, §14 as the cost. Anything marked
-**(decision)** is not yet settled.
+The plan separates **concept** (settled: what the agent's walk *is*) from **how** (now fixed:
+IR, traversal, prompt, migration). Read §1–§4a as binding, §6–§12 as the fixed design, §13 as
+the resolved decisions, §14 as the cost. Nothing here is open any more; a future change goes
+through the normal semantics-first path.
 
 ## 1. Why — the evidence
 
@@ -147,12 +148,13 @@ of context).
   the traversal `return` out of the finished state, and the `move` result carries the
   description of the state it left: `State <label>: finished — <summary>`. The model sees a
   compact "what happened" instead of the raw turns.
-- **The summary's content (decision).** Candidates: the engine's mechanical closure (the state,
-  the `stop` reason, the files mutated) and/or a one-line `note` the model passes on `move`.
-  Recommended: an engine-derived base plus an optional model `note`.
-- **Retrievability (decision).** Once a state's turns are elided, their ids are gone from the
-  tape, so a `recall` of an elided result is impossible (as with a closed goal's internals
-  today). If a later state needs a fact, the summary (or a kept pointer) must carry it.
+- **The summary's content (settled).** An engine-derived base (the state, the `stop` reason,
+  the files mutated) **plus** an optional one-line `note` the model passes on `move`; the
+  `note`, when present, is appended to / overrides the base. Recommended at §13.
+- **Retrievability (settled).** The loss is accepted, as with a closed goal's internals today.
+  Once a state's turns are elided their ids are gone from the tape, so a `recall` of an elided
+  result is impossible; if a later state needs a fact, the summary (or a kept pointer) carries
+  it.
 
 ## 5. Impact map (what this touches)
 
@@ -172,9 +174,9 @@ of context).
 - **docs** — `ir_semantics{,_ru}`, `ir_operations{,_ru}`, `ir{,_ru}`, `system_prompt{,_ru}`,
   `walkthrough{,_ru}`, `concepts{,_ru}`, `projection{,_ru}`, `prompt_state_machine_concept{,_ru}`.
 
-## 6. IR design (proposed — decisions required)
+## 6. IR design (settled)
 
-The recommended shape (all of §6 is **(decision)**):
+The shape (all decisions resolved, §13):
 
 1. **A `move` node.** Add `"move"` to `WORK_KINDS` (`src/ir/types.ts`); payload `{ state:
    IslandId }`. It is a real tree node so: the tape shows the state change as an assistant
@@ -193,10 +195,10 @@ The recommended shape (all of §6 is **(decision)**):
    is a *succeeded action* only (no `goal` alternative).
 6. **`islandOf` = the state of the focus's governing `move`** (the last one on the path, since
    the journal stays append-only; the state is derived, never rewritten).
-7. **The terminal island.** Recommended: keep `handoff` as the terminal (optionally rename
-   `end`), rendered as **one sentence** (no `what`/`criterion`/`relief`/`next`), e.g. "End —
-   move here to finish the work; stop here and the request is complete." Whether the terminal
-   needs a goal of its own: **(decision)** — recommended no, it accepts `stop` directly.
+7. **The terminal island.** Keep `handoff` as the terminal (no rename), rendered as **one
+   sentence** (no `what`/`criterion`/`relief`/`next`), e.g. "End — move here to finish the
+   work; stop here and the request is complete." The terminal needs **no goal of its own**: it
+   accepts `stop` directly.
 8. **`GoalPayload`** — drop `state`; keep `what`. `state` moves to the `move` node.
 9. **`applicable`** — `request`: `{ move, decline }`; `move`: `{ create_goal }`; `goal`:
    `{ apply, stop }`; after `stop`/finished state: `{ move }`; terminal: `{ stop }`.
@@ -252,8 +254,8 @@ The working tree currently holds the (uncommitted) incremental changes from
 - `docs/plans/state_transitions_plan{,_ru}.md` is **superseded** by this plan; keep it as a
   historical record (or fold its P1–P5 evidence into §1).
 
-**(decision)** Commit the incremental work as a stepping stone, or revert it and start the
-redesign from a clean tree. Recommended: start clean (the redesign rewrites the same surfaces).
+**(resolved)** The incremental work was **committed as a stepping stone** (`6af64b7`), not
+reverted; the redesign builds on it on `main` (§13.9).
 
 ## 10. Implementation phases
 
@@ -303,30 +305,38 @@ Order per the repo rule (semantics → code → test). Each phase is one change,
   state**, `reward 1`, a clean close. Compare the pre-edit re-derivation window (t20–33 = 40k
   reasoning tokens) and the first-edit turn versus the baseline of §1.
 
-## 13. Open decisions
+## 13. Decisions (resolved 2026-10-13)
 
-Concept-level (needed before Phase 0/1):
+Concept-level (bind Phase 0/1):
 
-1. **Tree shape** — flat states under the request (recommended) vs a chain.
-2. **Terminal** — reuse `handoff` vs a new `end`; does it need a goal, or `stop` directly?
-3. **`move` node vs event** — a real node (recommended, visible/returnable) vs a bare event.
-4. **How the engine "asks for the transition"** — a projection directive after `stop`; exact
-   wording.
+1. **Tree shape** — **flat**: every state is a child of the request (a sibling of the previous
+   state). Rejected: a chain (corrective cycles would deepen the tree without bound).
+2. **Terminal** — keep **`handoff`**, no rename; it needs **no goal**, it accepts `stop`
+   directly.
+3. **`move` node vs event** — a real **tree node** (visible on the tape, `islandOf`-readable,
+   lets the engine count "turns since the last `move`").
+4. **How the engine asks for the transition** — after `stop` the projection focuses the finished
+   state, renders `applicable = { move }`, and emits an explicit directive, e.g.
+   `State <label> finished (<summary>) — move to the next state or to the terminal`.
 
-Concept-level, added (§4a):
+Concept-level (§4a):
 
-- **Summary of a finished state** — engine-derived base vs a model `note` on `move` vs both
-  (recommended both).
-- **Retrievability of elided ids** — accept the loss (as today), or keep a pointer/index so a
-  later state can recall a fact.
+- **Summary of a finished state** — **engine-derived base + an optional model `note`** on
+  `move`.
+- **Retrievability of elided ids** — **accept the loss** (as today); the summary carries what a
+  later state needs.
 
-How-level (Phase 2–5):
+How-level (bind Phase 2–5):
 
-5. Refusal set and reasons for protocol errors (§6.10).
-6. Whether `recall`/`search` remain universally available (recommended yes).
-7. The attractor's threshold and wording.
-8. Decomposition — confirmed **gone** (flat steps); a too-big step is more steps or a more
-   specific state.
+5. Refusal set and reasons for protocol errors — as §6.10 (`move` with an open goal;
+   `create_goal` without a `move`; `apply` at a `move`).
+6. `recall`/`search` remain **universally available** (read-only, not moves).
+7. The attractor's threshold — turns since the last `move` exceed N (default to be tuned in
+   Phase 5 against the synthetic gate).
+8. Decomposition — **gone** (flat steps); a too-big step is more steps or a more specific
+   state.
+9. **Working tree** (§9) — the incremental work was **committed as a stepping stone**
+   (`6af64b7`), not reverted; the redesign builds on it on `main`.
 
 ## 14. Risks and cost
 

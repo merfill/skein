@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadSettings } from "../../src/config/settings";
-import { achievedWithoutCheck, structuralCycle, unboundGoals } from "../invariants";
+import { achievedWithoutCheck, structuralCycle } from "../invariants";
 import { branchesOf, mutationsOf, refutedChecks, repeatsOf, runScenario, statesOf, type ScenarioRun } from "./harness";
 import { scenarios, type Scenario } from "./scenarios";
 import { workingSetStats } from "../workset";
@@ -103,7 +103,6 @@ function assertRun(scenario: Scenario, run: ScenarioRun, repeat: number): void {
   }
   assertUnchanged(run, scenario.expect.unchanged ?? prefixOf(run, scenario.expect.noMutation === true));
   expect(achievedWithoutCheck(run.result.events), `${scenario.name}${where}`).toEqual([]);
-  expect(unboundGoals(run.result.events), `${scenario.name}${where}`).toEqual([]);
   expect(structuralCycle(run.result.events), `${scenario.name}${where}`).toBe(false);
 }
 

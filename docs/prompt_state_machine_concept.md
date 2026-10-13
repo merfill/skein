@@ -7,7 +7,7 @@
 > Related documents: `docs/system_prompt.md` (the prompt's current shape),
 > `src/loop/prompt/blocks.ts` (assembly), `docs/ir_semantics.md` §6–7 (situations),
 > `src/ir/project.ts` (the projection), `docs/benches/best_bench.md` (live runs),
-> `docs/plans/goal_reduction_plan.md` (invariant: only `stop` closes a goal).
+> `docs/plans/goal_reduction_plan.md` (invariant: only `stop` closes a state).
 
 ## 0. The problem and the thesis
 
@@ -47,7 +47,7 @@ to it. The target state defines:
   if one is named or derived).
 
 In Skein's terms the target state is the request and its acceptance sign; in the engine's
-terms it is a closed goal (closed only by `stop`, `docs/plans/goal_reduction_plan.md`).
+terms it is a state closed only by `stop` (`docs/plans/goal_reduction_plan.md`).
 
 ### 1.2 State
 
@@ -233,14 +233,15 @@ Interpretation/Reconnaissance.
 
 - **What:** close the work.
 - **Entry:** Verification (success).
-- **Criterion:** `stop` with a reason — the only way to close the goal.
+- **Criterion:** `stop` with a reason — the only way to close the state.
 - **Exit:** → the target state.
 - **Constraints:** "do not close before verification".
 
 #### Service states
 
-- **Decline:** the request is not workable → record it and finish, without inventing a goal.
-- **Decomposition:** a plan item is too large → break it into a sub-goal.
+- **Decline:** the request is not workable → record it and finish, without inventing a state.
+- **Decomposition:** gone. A state is one goal; a step too large is **more steps** or a
+  **more specific state**, never a sub-state.
 
 ### 4.3 Transitions (a sketch of the graph)
 
@@ -286,22 +287,23 @@ The state graph is distributed across three layers that already exist in Skein:
    their criteria, the transitions, and the always-relevant constraints. Stable and cacheable.
    This is a replacement/extension of the current B1/B13.
 2. **The situation instruction (`NODE_INSTRUCTIONS`) — highlighting the state.** The mapping
-   "situation → admissible states": in `request` Interpretation/Decline dominate; in `goal`,
-   Reconnaissance/Localization/…/Hand-off. Today it is `request`/`goal`; it extends without
-   breaking.
+   "situation → admissible moves": in `request` the first `move`/`decline` dominate; in `plan`
+   the first plan item; in `working` the work (continue/`stop`); in `transition` the next
+   `move`; in `terminal` `stop`. Today the situations are
+   `request`/`plan`/`working`/`transition`/`terminal`.
 3. **The projection (`src/ir/project.ts`) — the model's position.** Which state is passed,
    which is current, what remains to the goal (a plan item, the finishing command, whether the
    edit is made). Here too are the "attractors" the model is pulled toward.
 
 **The source of names.** The state descriptions live in the prompt, while the names are one
-list in the engine's code: from it the `state` enum of the `create_goal` schema is expanded, so
+list in the engine's code: from it the `state` enum of the `move` schema is expanded, so
 the IR controls the admissible values (an unknown name is a structural error, not a semantic
 gate).
 
-**Landed (2026-10).** The layers are in code: `B4` carries the mechanism (move on with
-`create_goal` when the criterion holds), the `Start` candidates and the conditioned transitions
-grouped by source; the per-state instruction renders `What / Done when / Constraints`; and the
-`state`/transitions are single-sourced from `src/ir/islands.ts` (`blocks.ts` and the `create_goal`
+**Landed (2026-10).** The layers are in code: `B4` carries the walk (the `move`/`apply`/`stop`
+mechanism, the `Start` candidates and the conditioned transitions grouped by source); the
+per-state instruction renders `What / Done when / Constraints`; and the `state`/transitions are
+single-sourced from `src/ir/islands.ts` (`blocks.ts` and the `move`
 `state` enum derive from it).
 
 **Attractors.** This is what is missing today: a static instruction does not change from turn

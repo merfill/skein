@@ -22,12 +22,16 @@ This is the **source of truth about the semantics of the IR**. Code follows it, 
 other way around. A behavior change goes: (1) the semantics here; (2) the code; (3) a test
 that pins the invariant the change preserves. Without step 1, step 2 is not done.
 
-**Status.** The doxa has **four operators** (`create_goal`, `apply`, `stop`, `decline`);
-`recall`/`search` are read-only addresses, not moves. The request is interpreted **once** as a goal
-(the `goal` relation) or declined (an `unactionable` node). A goal carries an **authored
-`state`** (which island of work it is entered in — a label, not a derived status). A goal closes
-**only** through `stop`. A plan holds **items**; an item holds **alternatives**. The context is a
-**message tape** rebuilt from the tree. The doxa proposes; the logos executes and records.
+**Status.** The doxa has **four operators** (`move`, `apply`, `stop`, `decline`);
+`recall`/`search` are read-only addresses, not moves. A request is walked as a
+**state machine over islands**: the doxa `move`s to a state (an island of work), declaring both
+the island (`state`) and the state's goal text (`what`) — a state **is** its own goal — then
+works it with `apply` (the first `apply` seeds the plan), and `stop`s it — which forces the next
+transition decision. The states are the request's **flat children** (the `move` relation), each
+carrying its own `what`; the plan hangs directly off the `move`. A state closes **only** through
+`stop`. A plan holds **items**; an item holds **actions** (alternatives), never goals. The
+context is a **message tape** rebuilt from the tree. The doxa proposes; the logos executes and
+records. (docs/plans/goal_into_move_plan.md.)
 
 ---
 
@@ -45,7 +49,7 @@ This applies to the doxa's moves and to the logos's reactions alike. New behavio
 operation described by this template, never an edit of state around the journal.
 
 The tree is not a given but the trace of operations. It branches where the agent picks an
-approach (alternative goals/commands) and deepens where a goal is worked by a plan.
+approach (alternative commands) and deepens where a state is worked by a plan.
 
 ---
 
@@ -63,14 +67,14 @@ logos. The logos's internal operators are `o_rev` (recount on change), `o_def`
 
 Key consequences:
 
-- **the doxa only proposes.** A proposal enters as a proposal (a goal is open, a command has
+- **the doxa only proposes.** A proposal enters as a proposal (a state is open, a command has
   no result yet), never as an established fact;
 - **the choice is from the admissible.** The logos deterministically offers the admissible
   moves at the current point; the doxa chooses one and fills it in;
 - **a run is output, not a verdict.** A command's exit code is ordinary output the model
-  reads; nothing is gated on it — the doxa closes the goal with `stop`;
-- **the request is not a goal.** It is raw, unstructured motivation, the root; the doxa
-  interprets it once as a goal or declines it; acceptance stays external.
+  reads; nothing is gated on it — the doxa closes the state with `stop`;
+- **the request is not a goal.** It is raw, unstructured motivation, the root; the doxa walks
+  it as a sequence of states (`move`) or declines it; acceptance stays external.
 
 ---
 
@@ -84,13 +88,13 @@ Nodes fall into two spaces.
 
 | kind | meaning |
 |---|---|
-| `request` | the arbiter's request: raw motivation (the root); interpreted once as a goal or declined |
-| `goal` | a goal: what to achieve; carries `what` and `state` (the island it is entered in) |
-| `plan` | a goal's plan: an ordered list of items (≥1) |
+| `request` | the arbiter's request: raw motivation (the root); walked as a sequence of states |
+| `move` | the doxa's declaration of the state it will work in AND the state's goal text `what`; carries `state` (the island) and `what` (the state's goal), plus an optional `note`; a child of the request; owns the plan |
+| `plan` | a state's plan: an ordered list of items (≥1) |
 | `item` | a plan item: an ordered list of alternatives (≥1) |
-| `action` | a command; an alternative of an item |
+| `action` | a command; an alternative of an item (never a state) |
 | `observation` | a command's result (a read window, run output + exit code) |
-| `stop` | the mark that a goal is closed |
+| `stop` | the mark that a state is closed |
 | `unactionable` | the mark that the request has no actionable task |
 | `constraint` | a restriction (payload `forbid`: regex paths) |
 
@@ -107,38 +111,37 @@ plays for its owner. Each node kind has a fixed set of admissible relations:
 
 | Owner | Relation | To | Card. |
 |---|---|---|---|
-| `request` | `goal` | `goal` | 0 or 1 |
+| `request` | `move` | `move` | 0 or more, in order (the LAST is the current state) |
 | `request` | `unactionable` | `unactionable` | 0 or 1 |
-| `goal` | `plan` | `plan` | exactly 1 |
-| `goal` | `stop` | `stop` | 0 or 1 |
+| `move` | `plan` | `plan` | 0 or 1 (seeded by the first `apply`) |
+| `move` | `stop` | `stop` | 0 or 1 (the state's closure) |
 | `plan` | `items` | `item` | 1 or more, in order |
-| `item` | `alts` | `action` or `goal` | 1 or more, in order |
+| `item` | `alts` | `action` | 1 or more, in order |
 | `action` | `result` | `observation` | 0 or 1 |
 | `action` | `mutates` | `file` | 0 or more |
 
 The order of children is the order of addition; the current (chosen) child is the **last**
 one. Two consequences:
 
-- a goal's closure lives on the goal, in the relation `goal.stop`; it is no longer a plan
-  item;
+- a state's closure lives on its `move`, in the relation `move.stop`;
 - a `file` is the only node several actions may point at (`action.mutates`): a file has many
   owners, every other node has one.
 
 ### 2.3 The general shape
 
 ```
-goal --plan--> plan --items--> item --alts--> action | goal
+request --move--> move --plan--> plan --items--> item --alts--> action
 ```
 
 Rules that follow:
 
 - a plan item is **always** a list of alternatives with at least one element; with no
   branching the element is exactly one and it is a command (`action`);
-- a goal appears in only two ways: as the request's interpretation (`request.goal`) or as an
-  alternative of an item (`item.alts`). Nowhere else;
-- **`what`.** A goal carries `what` (what to achieve) and `state` (the island of work it is
-  entered in). The plan is a separate `plan` node, seeded by `create_goal` with one item whose
-  sole alternative is the first action.
+- a state appears in only one way: the work hangs off the `move` (`move.plan`). A state is
+  never an item's alternative, and the request has no goal of its own;
+- **`what`.** A `move` carries `what` (the state's goal text). The **state** and its goal live
+  together on the `move`. The plan is a separate `plan` node, seeded by the first `apply` with
+  one item whose sole alternative is that first action.
 
 ### 2.4 The current node
 
@@ -155,53 +158,60 @@ decision needs are read from nodes/relations:
 - an action **succeeded** ⇔ it mutated a file, or its result observation is not a failure
   (a `failed` reason, or a non-zero `exitCode`; a missing `exitCode` is a timeout — no
   verdict);
-- a goal is **closed** ⇔ it has a `stop` relation to a `stop` node; otherwise open. A
-  request is **finished** ⇔ its goal is closed or it has an `unactionable` node; the request
-  is never closed by `stop`;
-- **`goalOf(request)`** — the goal via `goal`; **`unactionableOf(request)`** — the node via
-  `unactionable`; **`stopOf(goal)`** — the stop node via `stop`;
+- a state is **closed** ⇔ its `move` has a `stop` relation to a `stop` node; otherwise open;
+- a `move` is **finished** ⇔ it has a `stop` relation to a `stop` node (the terminal state has
+  no plan but is closed the same way); otherwise open;
+- the request is **finished** ⇔ it has an `unactionable` node, or its current (last) `move` is
+  the terminal state and is finished; the request is never closed by `stop`;
+- **`movesOf(request)`** — the `move` children in order; **`currentMove(request)`** — the last;
+  **`planOf(move)`** — the state's plan via `plan`; **`unactionableOf(request)`** — the node via
+  `unactionable`; **`stopOf(move)`** — the stop node via `stop`;
 - **`lastChild(container)`** — the current item/alternative (the last child);
-- an item is **fulfilled** ⇔ its current (last) alternative is an executed, succeeded action
-  or a stopped goal; the **cursor** is the first unfulfilled item.
+- an item is **fulfilled** ⇔ its current (last) alternative is an executed, succeeded action;
+  the **cursor** is the first unfulfilled item. (An item's alternatives are actions only; a
+  nested state alternative no longer exists.)
 
 There are **no truth predicates** (`achieved`/`refuted`/`abandoned`) and **no criterion**.
-A run by itself settles nothing: a goal is closed only by the doxa's `stop`. These are
+A run by itself settles nothing: a state is closed only by the doxa's `stop`. These are
 `project`/read rules, not fields. Only the journal is monotone (§3).
 
-A goal's `state` is different in kind: it is **authored** by the doxa at `create_goal` (like
-`what`) and never changes. It records which island of work the goal is entered in. It is not a
-derived status and never a gate — closure stays with `stop` (§8).
+A `move`'s `state`, `what` and optional `note` are different in kind: they are **authored** by
+the doxa at `move` and never change. They record which island of work the state is entered in
+and its goal text. They are not a derived status and never a gate — closure stays with `stop`
+(§8).
 
 ### 2.6 The stack and traversal
 
 Traversal is the deterministic part of the logos. It does **not** choose what to do; it
 computes the *admissible* moves at the current point; the doxa chooses among them.
 
-**The stack** `S = [R, G₀ … G_k]` is the path from the root request to the current goal.
-**The cursor** of `G` is the index of the first unfulfilled item of `G`'s plan. Neither is
-stored: the stack is a fold of the focus events (`descend`/`return`, journal append-only);
-the cursor is computed from the plan.
+**The stack** `S = [R, M]`: the root request and the current `move` (the state in focus, which
+is its own goal). **The cursor** is the index of the first unfulfilled item of the `move`'s
+plan. Neither is stored: the stack is a fold of the focus events (`descend`/`return`, journal
+append-only); the cursor is computed from the plan.
 
 Deterministic movement:
 
-- **advance** — executing an action item changes nothing about the stack; the cursor moves
-  on its own;
-- **descend** `G → H` — push `H`, focus → `H`; the doxa descends into the request's goal
-  (`goal`) or into a sub-goal just created as the newest alternative of an item (`alts`);
-- **return** — pop, focus → the parent. It happens when the current goal is **finished**
-  (`stop`) or by a `W` decision. A closed goal does not hold the focus on its descendants:
-  the branch is trimmed under a closed ancestor, not only when the top closes.
+- **descend** `R → M` — on `move`, push the `move`; focus → `M`. The states are **flat**
+  children of the request: a new `move` after a finished state is a new child (a sibling of the
+  previous state), never nested under it;
+- **advance** — executing an action item changes nothing about the stack; the cursor moves on
+  its own;
+- **return** `M → R` — when the next `move` is emitted, the finished state is left behind (a
+  sibling is pushed in its place).
 
-The engine hands the doxa **the whole arm** (the ordered neighbouring alternatives of the
-focus) and the cursor marks the current node. One computation of the admissible moves feeds
-both the projection and `classify`.
+The engine hands the doxa **the admissible moves at the focus**. One computation feeds both the
+projection and `classify`.
 
-**The admissible moves at `G`:**
+**The admissible moves:**
 
-- `G` is the request with no goal yet → `create_goal` (interpret) or `decline`;
-- `G` is a closed goal → `return` (engine-internal);
-- otherwise (an open goal) → `apply` (a command), `create_goal` (a sub-goal for the next state,
-  or a decomposition), and `stop` (close the goal).
+| Focus | Admissible | Meaning |
+|---|---|---|
+| request with no `move` yet | `move`, `decline` | choose the first state (or decline) |
+| an open state (no plan yet: `plan`) | `apply`, `stop` | give the first plan item — the first `apply` seeds the plan |
+| an open state (plan has items: `working`) | `apply`, `stop` | continue the work; `stop` closes the state |
+| a finished state (`transition`) | `move` | the forced transition decision |
+| the terminal state (`handoff`, `terminal`) | `stop` | the request is complete |
 
 ### 2.7 How a command enters the tree
 
@@ -209,47 +219,41 @@ both the projection and `classify`.
 observation; the doxa reads the observation and chooses the next move; the logos only places
 the incoming move.
 
-The **outcome of the current item** is read from its current alternative:
-
-- the alternative is a **command**: its observation carries a result (**success**), or a
-  reason (**failure**: the tool could not run, the admissibility check failed it, or the run
-  returned a non-zero code, or a timeout — **no verdict**);
-- the alternative is a **goal**: no observation; the outcome is its `stop`; a closed goal is
-  a **success**.
+The **outcome of the current item** is read from its current alternative, which is always a
+**command**: its observation carries a result (**success**), or a reason (**failure**: the tool
+could not run, the admissibility check failed it, or the run returned a non-zero code, or a
+timeout — **no verdict**).
 
 **Where the next move goes** (the logos places it by that outcome; the doxa chooses the
-command or goal):
+command):
 
 - after **success** — as a **new plan item**;
-- **otherwise** — as a **new alternative of the current item**; if the move is a goal, the
-  focus descends into it.
+- **otherwise** — as a **new alternative of the current item**.
 
-A **sub-goal** (`create_goal` on an open goal) becomes a new alternative of the current item,
-or — when the plan is exhausted — starts a **new plan item** (the sibling of `apply`'s success
-branch); the focus descends either way.
+Bootstrap: `move` declares the state and its goal; the first `apply` seeds the state's plan
+with one item and runs its action at once (the logos); the state is born with its first item
+executed. Every attempt leaves new nodes; an existing node is neither reused nor edited — the
+journal stays monotone.
 
-Bootstrap: `create_goal` seeds the goal's plan with one item and runs its first action at
-once (the logos); the goal is born with its first item executed. Every attempt leaves new
-nodes; an existing node is neither reused nor edited — the journal stays monotone.
-
-**Structural moves.** `create_goal`, `stop` and `decline` are not a command execution but a
-change of the tree. If such a move is inadmissible, it is **refused**: no node is created, and
-the reason reaches the doxa as a message on the tape next turn (`rejected <move>: <reason>`).
-So is a **bare** addressed `recall` refused as redundant. A command has no such refusal: its
-non-execution (a repeat, a stale base, a forbidden path, an empty command) arrives as an
-**observation with a reason**.
+**Structural moves.** `move`, `stop` and `decline` are not a command execution
+but a change of the tree. If such a move is inadmissible, it is **refused**: no node is created,
+and the reason reaches the doxa as a message on the tape next turn (`rejected <move>:
+<reason>`). So is a **bare** addressed `recall` refused as redundant. A command has no such
+refusal: its non-execution (a repeat, a stale base, a forbidden path, an empty command) arrives
+as an **observation with a reason**.
 
 ### 2.8 Loop detection
 
 Looping is not a separate sensor but an **absence of progress**. Progress at a point is a
 cursor shift, **new knowledge** (a new observation or a new outcome, or a fragment retrieved
-by `recall`/`search`), or a closure. The
+by `recall`/`search`), a closure, or a **new `move`** (a change of state). The
 layers are deterministic: a **repeat action** (the same command with the same inputs and an
 unchanged world) is refused and its observation names the existing result; **stagnation**
-(the cursor does not shift, the `state` does not change, and there is no new knowledge for
+(the cursor does not shift, the `move` does not change, and there is no new knowledge for
 `K` turns) returns to the parent; **exhaustion** without progress
-at the root stops the run (`no_progress`). A change of `state` is progress, so a run that keeps
-entering new islands is not stalled.
+at the root stops the run (`no_progress`). A change of state is progress, so a run that keeps
+entering new islands is not stalled. The projection can also carry a soft attractor keyed to
+the **turns since the last `move`** (§7, docs/plans/state_protocol_plan.md §4a).
 
 ---
 
@@ -260,10 +264,10 @@ entering new islands is not stalled.
 - **Projection** — `project(state)`, derived; exactly what the model sees.
 
 The event vocabulary is closed: `add_node`, `add_edge`, `descend`, `return`, `mutate`,
-`record_rejection`. A state change is a **new event** (an `observation`, `mutate`, `stop`),
-never an edit; there is no `set_status` and no `record_check`. A command's failure is never
-forgotten: it materializes as an observation flagged `failed` (and, for a non-execution,
-`refused`).
+`record_rejection`. A state change is a **new event** (a `move` node, an `observation`,
+`mutate`, `stop`), never an edit; there is no `set_status` and no `record_check`. A command's
+failure is never forgotten: it materializes as an observation flagged `failed` (and, for a
+non-execution, `refused`).
 
 Determinism: the same events and parameters give one state and one projection. The only
 external source is file changes; they enter through `mutate`.
@@ -272,62 +276,63 @@ external source is file changes; they enter through `mutate`.
 
 ## 4. Doxa operators
 
-The doxa has **four operators** (`create_goal`, `apply`, `stop`, `decline`); `recall` and
-`search` are read-only addresses, not moves. Each is described by one template: purpose → applies to →
-input → action → focus → refusal.
+The doxa has **four operators** (`move`, `apply`, `stop`, `decline`); `recall`
+and `search` are read-only addresses, not moves. Each is described by one template: purpose →
+applies to → input → action → focus → refusal.
 
-### 4.1 `create_goal`
+### 4.1 `move`
 
-Interprets the request, or starts a sub-goal for the next state.
+Declares the state (the island of work) the doxa will work in — the automaton's transition.
 
-**Input.** `{ what, state, action }`: `what` — what to achieve; `state` — the island of work
-this goal is entered in (one of the names the base prompt lists); `action` — the first plan
-item, **any tool** (the same union as `apply`, not only a shell command).
+**Input.** `{ state, what, note? }`: `state` — one of the island names the base prompt lists
+(the **first** move picks the opening state; later moves the next one); `what` — the concrete
+goal of **this state** (required except for the terminal `handoff`, which has no plan); `note?`
+— an optional one-line summary of the state just finished (carried into the tape, §2.7 / §7).
 
-**At the request (interpretation).** Create goal `G` and its plan `Q` with one item `I`
-whose sole alternative is the action `A` (the `action`); link `R.goal = G`, `G.plan = Q`,
-`Q.items = [I]`, `I.alts = [A]`. The logos **runs `A` at once** and records its outcome;
-the goal is born with its first item executed. The move renders as two native pairs: a call
-`create_goal { what, state, action }` + a confirmation, then the action's own native call +
-its observation. Focus descends into `G`. The
-interpretation is created once: a second `create_goal` at the request is refused
-(`interpreted`).
+**Action.** Create a `move` node `M` with payload `{ state, what, note? }`; link it as the
+request's newest `move` child (`R.move += M`); emit `descend` `R → M`. Focus moves to `M`. The
+move declares the state AND its goal: the plan hangs directly off `M`. The move is legal at a
+**fresh request** (no `move` yet) or at a **finished state** (a `move` with a `stop`). It is
+refused while a state is still open (`state_open`), with a bad state name (`empty_state`), or
+with no goal text on a non-terminal state (`empty_what`).
 
-**At an open goal (decomposition or transition).** The sub-goal becomes the newest alternative
-of the current item (`I.alts += G`); when the plan is exhausted it starts a new plan item
-(`Q.items += I_new`, `I_new.alts += G`). Its own plan is seeded by its `action` (also run at
-once) and focus descends.
+**Focus.** The focus becomes `M`; the next admissible moves are `apply` (the first call seeds
+the plan) and `stop`; at the terminal state (`handoff`, no plan) only `stop`.
 
 ### 4.2 `apply`
 
-Runs one command in the current goal.
+Runs one command in the current state.
 
 **Input.** `{ tool, … }`, where `tool` is one of `read`/`grep`/`list`/`edit`/`write`/`run`/
 `fetch`/`apply_patch`, plus the tool's parameters.
 
 **Action.** The command runs; the outcome is recorded as `A.result = observation` (read,
 grep, list, run) or `A.mutates += file` (an edit) — or, when it did not run, an observation
-with a reason. Placement is by the outcome of the current item (§2.7). Focus does not move.
+with a reason. Placement is by the outcome of the current item (§2.7). The **first** `apply` in
+an open state seeds the state's plan: it creates the `plan` and its first `item`, of which the
+command is the sole alternative. Focus does not move. `apply` is admissible only inside an open
+state; elsewhere it is refused (`no_state`).
 
 ### 4.3 `stop`
 
-Closes the goal — the only way to finish it.
+Closes a state — the only way to finish it.
 
 **Input.** `{ why? }` — the reason.
 
-**Action.** Create a `stop` node `S`; link `C.stop = S`. Focus is on the goal; the next
-projection returns to the parent. If the root request's goal is closed, the run ends. There
-is **no criterion gate**: the doxa closes the goal while working. `stop` on the request is
-refused (`not_addressed`).
+**Action.** If the focus is an open **state** (a `move` not yet stopped), create a `stop` node
+`S` and link `M.stop = S`: the state is finished; the next decision is the transition (§4.1).
+If the focus is the **terminal state** (`handoff`, which has no plan), the same `stop` ends the
+request (`request_addressed`). There is **no criterion gate**: the doxa closes the state while
+working. `stop` at the request (or at an already-finished state) is refused (`not_addressed`).
 
 ### 4.4 `decline`
 
-Finishes a request whose intent is not actionable, inventing no goal.
+Finishes a request whose intent is not actionable, inventing no state.
 
 **Input.** `{ why? }` — the reason. **Applies to.** A fresh request.
 
-**Action.** Create an `unactionable` node `U`; link `R.unactionable = U`. No goal or plan is
-created. Focus ends the run (`request_unactionable`). On a goal — `not_request`; on an
+**Action.** Create an `unactionable` node `U`; link `R.unactionable = U`. No `move` or plan is
+created. Focus ends the run (`request_unactionable`). On a `move` — `not_request`; on an
 already interpreted request — `interpreted`; on an already declined one — `repeated_action`.
 
 ### 4.5 `recall` and `search`
@@ -371,12 +376,13 @@ hypothesis) is new records; only the derived view is recomputed.
 
 | Condition | Closed by | Derived state |
 |---|---|---|
-| an open goal | `stop` (no gate) | closed; the `stop` relation leads goal → stop |
-| the request (root) | ends when its goal is closed (`request_addressed`) or on `decline` (`request_unactionable`); the request has no `stop` | the run ends |
+| an open state | `stop` (no gate) | closed; the `stop` relation leads move → stop; the state is finished, focus stays on its `move` |
+| the terminal state (`handoff`) | `stop` (no gate) | closed; the `stop` relation leads move → stop; the request ends (`request_addressed`) |
+| the request (root) | ends when the terminal state is stopped (`request_addressed`) or on `decline` (`request_unactionable`); the request has no `stop` | the run ends |
 
 **The request is not closed in the IR.** There is no "accepted" node: the user's silence is
 agreement, and an objective harness judges the run from outside. The request ends when its
-goal is stopped or when the doxa declines it.
+terminal state is stopped or when the doxa declines it.
 
 **Honesty.** The strength of a conclusion does not exceed the strength of its premises: a
 run's `exitCode` is ordinary output; the request is never marked "achieved"; no hypothesis
@@ -397,33 +403,38 @@ The tape is rendered with the **native tool-calling contract**: a move is an `as
 carry several calls — a **batch**: one `assistant` with N `tool_calls`, then the N `tool` results
 in order. `user`
 is the request only. The names and arguments are the model-facing **native** ones (`read`
-`edit` `write` `grep` `list` `bash` `webfetch` `apply_patch` `create_goal` `recall` `search`
-`stop` `decline`) — `modelCall` renders the IR `apply` back into them and `toProposal` maps
-the reverse, so the tape and the callable schema share one vocabulary (the IR keeps
+`edit` `write` `grep` `list` `bash` `webfetch` `apply_patch` `move` `recall`
+`search` `stop` `decline`) — `modelCall` renders the IR `apply` back into them and `toProposal`
+maps the reverse, so the tape and the callable schema share one vocabulary (the IR keeps
 `path`/`start`/`end`, `find`/`replace`, `fetch`).
 
 **Moves and their messages:**
 
-- `create_goal` — a `create_goal { what, state, action }` call + a `tool` with a confirmation
-  (`goal created: <what>`), then the plan's first action as a separate native call (any tool) +
-  a `tool` with its observation (the engine runs it at once);
-- `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the observation);
-- `stop` — `assistant` with the reason (`why`): the goal is closed;
+- `move` — an `assistant` call `move { state, what, note? }` + a `tool` confirmation. When it
+  leaves a finished state, the result carries that state's compaction line (`State <label>:
+  finished — <summary>`, §4a of the plan);
+- `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
+  observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
+  `item`), so the first plan item is an ordinary tool call;
+- `stop` — `assistant` with the reason (`why`): the state is closed; at the terminal state
+  it ends the request;
 - `decline` — `assistant` with the reason (`why`): the request is declined;
 - a refused structural move — a transient `assistant` (the call that was refused) + `tool`
   with the reason (`rejected <move>: <reason>`, next turn; no node); a `recall`/`search`
   result is likewise a transient `assistant` (its arguments) + `tool` pair.
 
 So a move is one `assistant` message (a single `call`, or a batch of `calls`) followed by one
-`tool` per call, while creating and
-closing a goal are separate `assistant` messages. Alternative commands carry a marker
+`tool` per call, while moving and closing a state are separate `assistant` messages.
+Alternative commands carry a marker
 (`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one line**
 referencing the observation (`see [obsId]`), never an inlined body. Each message exposes the
 node id (`[id] …`) so a result can be addressed by id with `recall`/`search`.
 
-**The tape is not monotone.** As soon as a goal closes, its internal messages leave the tape;
-on its parent's arm only the closure message (`stop` with `why`) remains. Going up further —
-the same. Only the view goes, not the data: the tree stays complete.
+**The tape is not monotone.** As soon as a state closes, its internal messages leave the tape;
+only the `move` call and its closure line (`stop` with `why`) remain. When a `move` leaves a
+finished state behind, that whole state's turns (its `apply` calls and their observations)
+leave the tape, and only the compaction line (`State <label>: finished — <summary>`) remains.
+Only the view goes, not the data: the tree stays complete.
 
 **The doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
 the tape; its meaning lives in the `why` fields.
@@ -443,10 +454,15 @@ identifier, not by path: read a fragment with `recall { id, start, end }`, searc
 nonzero exit.
 
 **The system part** is assembled from the current node's intent, not as a monolith: the base
-prompt holds only what is true on any move (the role, the contract, the answer form); the node
-instruction holds the admissible moves and the rules of the current situation (a fresh request /
-an open goal) and, on an open goal, the current island's relief; constraints are added there.
-The tool names/parameters/descriptions are **not**
+prompt holds only what is true on any move (the role, the contract, the walk, the answer form);
+the node instruction holds the **admissible moves for the current focus** (§2.6) and the rules
+of the current situation (`request` / `plan` (a state declared, no plan yet) / `working` (the
+state has a plan) / `transition` (the state is finished, must `move`) / `terminal`) and, on an
+open state, the current island's `What / Done when / Constraints`; constraints are added there.
+Right after a tool result inside an open state, an **observation instruction** is appended as
+the last system
+message: read the result and decide (`stop` / the next action / a different action). The tool
+names/parameters/descriptions are **not**
 in the prompt — they ship in the request's `tools` field.
 
 ---
@@ -455,15 +471,20 @@ in the prompt — they ship in the request's `tools` field.
 
 1. The journal only grows; nodes are not rewritten — only what we show changes.
 2. The projection is deterministic: the same events give one context.
-3. A goal is closed only through `stop`.
+3. A state is closed only through `stop` (the terminal state included).
 4. The doxa only proposes; the logos decides.
 5. A command's exit code is ordinary output, not a closure verdict.
-6. Every action is an alternative of exactly one item; a goal is a request's interpretation
-   or an item's alternative.
-7. `stop` is a relation on the goal, never a plan item.
-8. A closed goal's internals leave the tape (only its closure message remains).
-9. A goal's `state` is the doxa's authored label: it never gates a move and never closes a
-   goal (closure is `stop` alone).
+6. Every `move` is a child of the request and carries its own goal (`what`); the plan hangs off
+   the `move`; every action is an alternative of exactly one item. A state is never an item's
+   alternative, and the request has no goal of its own.
+7. `stop` is a relation on the `move`, never a plan item.
+8. A closed state's internals leave the tape (only the `move` call and its closure message
+   remain); when a state is left behind, its whole subtree is elided and only its compaction
+   line remains (§7).
+9. A `move`'s `state` is the doxa's authored label: it never gates a move and never closes a
+   state (closure is `stop` alone).
+10. The request ends when the terminal state (`handoff`) is stopped, or when it is declined;
+    there is no `stop` on the request.
 
 ---
 

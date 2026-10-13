@@ -1,44 +1,28 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { fold } from "../../src/ir/graph";
-import { applicable, currentGoalId } from "../../src/ir/traversal";
+import { currentFocus, fold } from "../../src/ir/graph";
+import { applicable, focusEvents } from "../../src/ir/traversal";
 import {
   classification,
   cleanupWorkspaces,
   exec,
-  interpretation,
+  execAll,
   makeWorkspace,
+  move,
   request,
+  run,
+  withGoal,
 } from "./helpers";
 
 afterEach(cleanupWorkspaces);
 
-function goalNode(id: string, what: string, seq: number): Event {
-  return {
-    type: "add_node",
-    node: { id, space: "work", kind: "goal", label: what, payload: { what }, seq },
-  };
-}
-
-// A request already interpreted: it has a goal via a `goal` relation.
-function addressedRequest(): Event[] {
-  return [
-    request(),
-    goalNode("g1", "approach", 1),
-    {
-      type: "add_edge",
-      edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } },
-    },
-  ];
-}
-
 describe("frontier (applicable)", () => {
-  it("TR-8 a fresh request offers create_goal and decline (OP-DC-1)", () => {
+  it("TR-8 a fresh request offers move and decline", () => {
     const open = applicable(fold([request()]), "r1");
     expect(open).toEqual({
-      goalId: "r1",
-      createGoal: true,
+      focus: "r1",
+      move: true,
       apply: false,
       return: false,
       stop: false,
@@ -46,47 +30,55 @@ describe("frontier (applicable)", () => {
     });
   });
 
-  it("TR-8 once interpreted, the request offers nothing (the goal is the focus)", () => {
-    const done = applicable(fold(addressedRequest()), "r1");
-    expect(done).toEqual({
-      goalId: "r1",
-      createGoal: false,
-      apply: false,
-      return: false,
-      stop: false,
-      decline: false,
+  it("a declared state offers apply and stop (work it; no criterion gate)", () => {
+    const { ws } = makeWorkspace({});
+    const moved = exec(move("reconnaissance", "map the repo"), [request()], ws);
+    const moveId = currentFocus(moved.state)!;
+    expect(moved.state.nodes.get(moveId)?.kind).toBe("move");
+    expect(applicable(moved.state, moveId)).toMatchObject({
+      apply: true,
+      stop: true,
+      move: false,
     });
   });
 
-  it("REF-INTERPRETED refuses a second interpretation of the request", () => {
-    const events = addressedRequest();
-    expect(classification(interpretation("another"), events).reason).toContain("interpreted");
-  });
-
-  it("TR-8 an open goal offers apply, create_goal and stop (no criterion gate)", () => {
+  it("TR-8 an open state offers apply and stop (no criterion gate)", () => {
     const { ws } = makeWorkspace({});
-    const { events } = exec(interpretation("fix", "true"), [request()], ws);
-    const state = fold(events);
-    const goal = state.branch[state.branch.length - 1]!;
-    expect(applicable(state, goal)).toMatchObject({
-      createGoal: true,
+    const { events, state } = execAll(withGoal("fix", "true"), [request()], ws);
+    const moveId = currentFocus(state)!;
+    expect(applicable(state, moveId)).toMatchObject({
       apply: true,
       stop: true,
       decline: false,
     });
+    expect(events.length).toBeGreaterThan(0);
   });
 
-  it("OP-CG-5 an open goal with an exhausted plan still offers create_goal, and the gate accepts it", () => {
+  it("a finished state offers the transition move", () => {
     const { ws } = makeWorkspace({});
-    // A successful seed action fulfils the only item: the plan is exhausted.
-    const { events, state } = exec(interpretation("fix", "true"), [request()], ws);
-    const goal = currentGoalId(state)!;
-    expect(applicable(state, goal).createGoal).toBe(true);
-    expect(
-      classification(
-        { operator: "create_goal", what: "next state", state: "localization", action: { tool: "bash", command: "true" } },
-        events,
-      ),
-    ).toEqual({ accept: true });
+    const opened = execAll(withGoal("find", "true", "localization"), [request()], ws);
+    const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
+    const focused = fold(focusEvents(stopped.state), stopped.state);
+    const moveId = currentFocus(focused)!;
+    expect(focused.nodes.get(moveId)?.kind).toBe("move");
+    expect(applicable(focused, moveId)).toMatchObject({ move: true, apply: false, stop: false });
+  });
+
+  it("the terminal state offers stop", () => {
+    const { ws } = makeWorkspace({});
+    const moved = exec(move("handoff"), [request()], ws);
+    const moveId = currentFocus(moved.state)!;
+    expect(applicable(moved.state, moveId)).toMatchObject({ stop: true, move: false, apply: false });
+  });
+
+  it("REF-NO-STATE refuses apply at the request (declare a state first)", () => {
+    const events: Event[] = [request()];
+    expect(classification(run("ls"), events).reason).toContain("no_state");
+  });
+
+  it("REF-STATE-OPEN refuses a move while the state is still open", () => {
+    const { ws } = makeWorkspace({});
+    const opened = execAll(withGoal("fix", "false"), [request()], ws);
+    expect(classification(move("patch"), opened.events).reason).toContain("state_open");
   });
 });

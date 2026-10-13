@@ -8,8 +8,8 @@ import {
   classification,
   cleanupWorkspaces,
   exec,
-  interpretation,
   makeWorkspace,
+  move,
   request,
 } from "./helpers";
 
@@ -19,22 +19,15 @@ function decline(why?: string): Action {
   return { operator: "decline", ...(why !== undefined ? { why } : {}) };
 }
 
-// A request already interpreted as a goal (the interpretation is fixed).
-function interpretedRequest(): Event[] {
+// A request that has started (a state was declared).
+function startedRequest(): Event[] {
   return [
     request(),
     {
       type: "add_node",
-      node: {
-        id: "g1",
-        space: "work",
-        kind: "goal",
-        label: "approach",
-        payload: { what: "approach" },
-        seq: 1,
-      },
+      node: { id: "m1", space: "work", kind: "move", label: "reconnaissance", payload: { state: "reconnaissance" }, seq: 1 },
     },
-    { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: { kind: "llm" } } },
+    { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
   ];
 }
 
@@ -54,14 +47,14 @@ describe("decline", () => {
 
   it("REF-DC-NOTREQ refuses decline when the focus is not the request (OP-DC-1)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { events } = exec(interpretation("fix it"), [request()], ws, 0);
+    const { events } = exec(move("reconnaissance"), [request()], ws, 0);
     const verdict = classification(decline("nah"), events);
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("not_request");
   });
 
-  it("REF-DC-ADDR refuses decline once the request has an interpretation (OP-DC-1)", () => {
-    const verdict = classification(decline("nah"), interpretedRequest());
+  it("REF-DC-ADDR refuses decline once the request has started (OP-DC-1)", () => {
+    const verdict = classification(decline("nah"), startedRequest());
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("interpreted");
   });

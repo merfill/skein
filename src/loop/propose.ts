@@ -5,6 +5,7 @@ import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/
 import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools } from "../llm/structured";
+import { toolNamesFor } from "../llm/tools";
 import { BASE_PROMPT, ISLAND_INSTRUCTIONS, NODE_INSTRUCTIONS } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
@@ -46,8 +47,13 @@ export function buildMessages(context: Context): BaseMessage[] {
     new SystemMessage(BASE_PROMPT),
     new SystemMessage(NODE_INSTRUCTIONS[context.situation]),
   ];
-  // On an open goal, highlight the focused island's relief (an authored label, §2.5).
-  if (context.situation === "goal" && context.island !== undefined) {
+  // While a state is being worked (a fresh plan or an open one), highlight its work /
+  // criterion / constraints (an authored label, §2.5). A finished state (transition/terminal)
+  // does NOT show them: the criterion is already met, and re-showing it is noise.
+  if (
+    (context.situation === "plan" || context.situation === "working") &&
+    context.island !== undefined
+  ) {
     messages.push(new SystemMessage(ISLAND_INSTRUCTIONS[context.island]));
   }
   // A soft attractor on a stalled goal: the projection nudges the doxa to decide (§2.8).
@@ -62,6 +68,8 @@ export function buildMessages(context: Context): BaseMessage[] {
     );
   }
   for (const message of context.history) messages.push(toMessage(message));
+  // The observation step: right after a tool result, tell the model to read it and decide.
+  if (context.result !== undefined) messages.push(new SystemMessage(context.result));
   return messages;
 }
 
@@ -71,7 +79,13 @@ export function promptText(context: Context): string {
 }
 
 export async function propose(model: BaseChatModel, context: Context): Promise<Proposals> {
-  return invokeTools(model, buildMessages(context));
+  const allowedTools =
+    context.applicable !== undefined ? toolNamesFor(context.applicable) : undefined;
+  return invokeTools(
+    model,
+    buildMessages(context),
+    allowedTools !== undefined ? { allowedTools } : {},
+  );
 }
 
 export function modelProposer(model: BaseChatModel): Proposer {

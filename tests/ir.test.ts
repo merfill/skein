@@ -9,7 +9,6 @@ import type {
   ArtifactKind,
   Edge,
   EdgeKind,
-  GoalPayload,
   Node,
   NodeKind,
   Provenance,
@@ -35,16 +34,19 @@ function edge(id: string, from: string, to: string, kind: EdgeKind, provenance: 
 
 const llm: Provenance = { kind: "llm" };
 
-function goal(id: string, what: string, seq: number): Event {
-  const payload: GoalPayload = { what, state: "reconnaissance" };
-  return { type: "add_node", node: workNode(id, "goal", what, seq, payload) };
+function request(id: string, text: string, seq: number): Event {
+  return { type: "add_node", node: workNode(id, "request", text, seq, { text }) };
 }
 
-// A plan (`plan` relation from its goal) with the given item ids, in order (`items`).
-function plan(id: string, goalId: string, itemIds: string[], seq: number): Event[] {
+function move(id: string, state: string, what: string, seq: number): Event {
+  return { type: "add_node", node: workNode(id, "move", state, seq, { state, what }) };
+}
+
+// A plan (`plan` relation from its state) with the given item ids, in order (`items`).
+function plan(id: string, moveId: string, itemIds: string[], seq: number): Event[] {
   const events: Event[] = [
-    { type: "add_node", node: workNode(id, "plan", `plan for ${goalId}`, seq) },
-    { type: "add_edge", edge: edge(`hp:${id}`, goalId, id, "plan", llm) },
+    { type: "add_node", node: workNode(id, "plan", `plan for ${moveId}`, seq) },
+    { type: "add_edge", edge: edge(`hp:${id}`, moveId, id, "plan", llm) },
   ];
   itemIds.forEach((item, index) => {
     events.push({ type: "add_edge", edge: edge(`it:${id}:${index}`, id, item, "items", llm) });
@@ -52,10 +54,10 @@ function plan(id: string, goalId: string, itemIds: string[], seq: number): Event
   return events;
 }
 
-// A plan item (`item` node) whose ordered alternatives (action/goal) hang off it via `alts`.
-function item(id: string, goalId: string, seq: number, alts: string[]): Event[] {
+// A plan item (`item` node) whose ordered alternatives (actions) hang off it via `alts`.
+function item(id: string, moveId: string, seq: number, alts: string[]): Event[] {
   const events: Event[] = [
-    { type: "add_node", node: workNode(id, "item", `item for ${goalId}`, seq) },
+    { type: "add_node", node: workNode(id, "item", `item for ${moveId}`, seq) },
   ];
   alts.forEach((alt, index) => {
     events.push({ type: "add_edge", edge: edge(`al:${id}:${index}`, id, alt, "alts", llm) });
@@ -64,8 +66,8 @@ function item(id: string, goalId: string, seq: number, alts: string[]): Event[] 
 }
 
 describe("events", () => {
-  it("accepts a valid goal node", () => {
-    const event = goal("g1", "make test green", 0);
+  it("accepts a valid move node", () => {
+    const event = move("m1", "reconnaissance", "make test green", 0);
     expect(eventSchema.safeParse(event).success).toBe(true);
   });
 
@@ -78,7 +80,7 @@ describe("events", () => {
   });
 
   it("rejects the removed set_status event", () => {
-    expect(eventSchema.safeParse({ type: "set_status", id: "g1", status: "open" }).success).toBe(
+    expect(eventSchema.safeParse({ type: "set_status", id: "m1", status: "open" }).success).toBe(
       false,
     );
   });
@@ -98,9 +100,10 @@ describe("events", () => {
 
 describe("fold", () => {
   const events: Event[] = [
-    goal("g1", "make test green", 0),
-    { type: "add_node", node: workNode("a1", "action", "read src/a.ts", 1) },
-    { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 2) },
+    request("r1", "do it", 0),
+    move("m1", "reconnaissance", "make test green", 1),
+    { type: "add_node", node: workNode("a1", "action", "read src/a.ts", 2) },
+    { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 3) },
   ];
 
   it("is deterministic: same events, same state", () => {
@@ -111,21 +114,22 @@ describe("fold", () => {
     const base = emptyState();
     const next = fold(events, base);
     expect(base.nodes.size).toBe(0);
-    expect(next.nodes.size).toBe(3);
+    expect(next.nodes.size).toBe(4);
   });
 
-  it("records the root goal; it is open until stopped", () => {
+  it("records the root request; the state is open until stopped", () => {
     const state = fold(events);
-    expect(state.rootId).toBe("g1");
-    expect(hasStopped(state, "g1")).toBe(false);
+    expect(state.rootId).toBe("r1");
+    expect(hasStopped(state, "m1")).toBe(false);
     expect(actionExecuted(state, "a1")).toBe(false);
   });
 
   it("derives executed for an action with a produced child", () => {
     const state = fold([
-      goal("g1", "make test green", 0),
-      { type: "add_node", node: workNode("a1", "action", "read", 1) },
-      { type: "add_node", node: workNode("o1", "observation", "read", 2) },
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "make test green", 1),
+      { type: "add_node", node: workNode("a1", "action", "read", 2) },
+      { type: "add_node", node: workNode("o1", "observation", "read", 3) },
       { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "read", ref: "file:x", version: "v1" }) },
     ]);
     expect(actionExecuted(state, "a1")).toBe(true);
@@ -133,132 +137,137 @@ describe("fold", () => {
 
   it("keeps plan item order from the items edge order", () => {
     const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("i1", "item", "one", 1) },
-      { type: "add_node", node: workNode("i2", "item", "two", 2) },
-      ...plan("p1", "g1", ["i2", "i1"], 3),
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      { type: "add_node", node: workNode("i1", "item", "one", 2) },
+      { type: "add_node", node: workNode("i2", "item", "two", 3) },
+      ...plan("p1", "m1", ["i2", "i1"], 4),
     ]);
     expect(childrenOf(state, "p1")).toEqual(["i2", "i1"]);
   });
 });
 
 describe("closure", () => {
-  it("a goal is closed by a stop: a `stop` relation to the stop node", () => {
-    const base: Event[] = [goal("g1", "make test green", 0)];
-    expect(hasStopped(fold(base), "g1")).toBe(false);
+  it("a state is closed by a stop: a `stop` relation to the stop node", () => {
+    const base: Event[] = [request("r1", "do it", 0), move("m1", "reconnaissance", "green", 1)];
+    expect(hasStopped(fold(base), "m1")).toBe(false);
     const stopped = fold([
       ...base,
-      { type: "add_node", node: workNode("s1", "stop", "done", 1) },
-      { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
+      { type: "add_node", node: workNode("s1", "stop", "done", 2) },
+      { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
     ]);
-    expect(hasStopped(stopped, "g1")).toBe(true);
+    expect(hasStopped(stopped, "m1")).toBe(true);
   });
 });
 
 describe("projection (the message tape)", () => {
-  const requestNode = (seq: number): Event => ({
-    type: "add_node",
-    node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "do it" }, seq },
-  });
-
-  it("renders the request, the goal and the first command as a tape", () => {
+  it("renders the request, the state and the first command as a tape", () => {
     const state = fold([
-      requestNode(0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      { type: "add_node", node: workNode("a1", "action", "make test", 2, { command: "make test" }) },
-      { type: "add_node", node: workNode("o1", "observation", "make test", 3, { command: "make test", exitCode: 1, output: "boom" }) },
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
+      { type: "add_node", node: workNode("a1", "action", "make test", 3, { command: "make test" }) },
+      { type: "add_node", node: workNode("o1", "observation", "make test", 4, { command: "make test", exitCode: 1, output: "boom" }) },
       { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
-      ...plan("p1", "g1", ["i1"], 4),
-      ...item("i1", "g1", 5, ["a1"]),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", "m1", 6, ["a1"]),
     ]);
-    const context = project(state);
-    expect(context.situation).toBe("goal");
+    const context = project(fold(focusEvents(state), state));
+    expect(context.situation).toBe("working");
     expect(context.history.map((message) => message.role)).toEqual([
       "user",
       "assistant",
+      "tool",
       "assistant",
       "tool",
     ]);
     expect(context.history[0]?.text).toBe("do it");
-    expect(context.history[1]?.text).toContain("what: green");
-    expect(context.history[2]?.text).toContain("make test");
-    expect(context.history[3]?.text).toContain("exit 1");
-    expect(context.history[3]?.text).toContain("boom");
+    expect(context.history[2]?.text).toContain("Reconnaissance");
+    const texts = context.history.map((message) => message.text);
+    expect(texts.some((text) => text.includes("make test"))).toBe(true);
+    expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);
   });
 
-  it("reports the request situation and the constraints before interpretation", () => {
+  it("reports the request situation and the constraints before a move", () => {
     const state = fold([
-      requestNode(0),
+      request("r1", "do it", 0),
       { type: "add_node", node: workNode("k1", "constraint", "no tests", 1, { forbid: ["\\.test\\.mjs$"] }) },
     ]);
-    const context = project(state);
+    const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("request");
     expect(context.constraints).toEqual([{ id: "k1", forbid: ["\\.test\\.mjs$"] }]);
   });
 
-  it("cuts a closed goal's internals to a single closure message", () => {
+  it("elides a finished state's turns and carries its compaction line on the next move", () => {
     const state = fold([
-      requestNode(0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      { type: "add_node", node: workNode("a1", "action", "make test", 2, { command: "make test" }) },
-      { type: "add_node", node: workNode("o1", "observation", "make test", 3, { command: "make test", exitCode: 1 }) },
+      request("r1", "do it", 0),
+      move("m1", "localization", "find the cause", 1),
+      { type: "add_edge", edge: edge("em1", "r1", "m1", "move", llm) },
+      { type: "add_node", node: workNode("a1", "action", "grep p", 3, { command: "grep p" }) },
+      { type: "add_node", node: workNode("o1", "observation", "p at line 3", 4, { command: "grep p", output: "p at line 3" }) },
       { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
-      goal("g2", "sub", 4),
-      ...plan("p1", "g1", ["i1"], 5),
-      ...item("i1", "g1", 6, ["a1", "g2"]),
-      { type: "add_node", node: workNode("s1", "stop", "done", 7, { why: "the sub-goal is done" }) },
-      { type: "add_edge", edge: edge("es", "g2", "s1", "stop", llm) },
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", "m1", 6, ["a1"]),
+      { type: "add_node", node: workNode("s1", "stop", "named the line", 7, { why: "named the line" }) },
+      { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
+      move("m2", "patch", "apply the fix", 8),
+      { type: "add_edge", edge: edge("em2", "r1", "m2", "move", llm) },
     ]);
-    const context = project(state);
+    const context = project(fold(focusEvents(state), state));
     const texts = context.history.map((message) => message.text);
-    expect(texts.some((text) => text.includes("what: sub"))).toBe(false);
-    expect(texts[texts.length - 1]).toBe("stopped: the sub-goal is done");
+    // The finished state's internals leave the tape...
+    expect(texts.some((text) => text.includes("p at line 3"))).toBe(false);
+    expect(texts.some((text) => text.includes("grep p"))).toBe(false);
+    // ...only its compaction line remains, carried by the move that left it.
+    expect(texts.some((text) => text.includes("State Localization: finished"))).toBe(true);
+    expect(context.situation).toBe("plan");
   });
 
   it("marks an alternative command with its previous attempt", () => {
     const state = fold([
-      requestNode(0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      { type: "add_node", node: workNode("a1", "action", "run one", 2, { command: "run one" }) },
-      { type: "add_node", node: workNode("o1", "observation", "run one", 3, { command: "run one", exitCode: 1 }) },
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
+      { type: "add_node", node: workNode("a1", "action", "run one", 3, { command: "run one" }) },
+      { type: "add_node", node: workNode("o1", "observation", "run one", 4, { command: "run one", exitCode: 1 }) },
       { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "llm" }) },
-      { type: "add_node", node: workNode("a2", "action", "run two", 4, { command: "run two" }) },
-      { type: "add_node", node: workNode("o2", "observation", "run two", 5, { command: "run two", exitCode: 0 }) },
+      { type: "add_node", node: workNode("a2", "action", "run two", 5, { command: "run two" }) },
+      { type: "add_node", node: workNode("o2", "observation", "run two", 6, { command: "run two", exitCode: 0 }) },
       { type: "add_edge", edge: edge("e2", "a2", "o2", "result", { kind: "llm" }) },
-      ...plan("p1", "g1", ["i1"], 6),
-      ...item("i1", "g1", 7, ["a1", "a2"]),
+      ...plan("p1", "m1", ["i1"], 7),
+      ...item("i1", "m1", 8, ["a1", "a2"]),
     ]);
-    const context = project(state);
+    const context = project(fold(focusEvents(state), state));
     const call = context.history.find((message) => message.text.includes("run two"));
     expect(call?.text).toContain("alternative to step");
     expect(call?.text).toContain("previous attempt");
     expect(call?.text).toContain("run one");
   });
 
-  it("reports the applicable operators at the current point", () => {
+  it("reports the frontier at the current point", () => {
     const state = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("a1", "action", "run build", 1) },
-      { type: "add_node", node: workNode("o1", "observation", "done", 2) },
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
+      { type: "add_node", node: workNode("a1", "action", "run build", 2) },
+      { type: "add_node", node: workNode("o1", "observation", "done", 3) },
       { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "grep", pattern: "x" }) },
-      ...plan("p1", "g1", ["i1"], 3),
-      ...item("i1", "g1", 4, ["a1"]),
+      ...plan("p1", "m1", ["i1"], 4),
+      ...item("i1", "m1", 5, ["a1"]),
     ]);
-    const app = applicable(state, "g1");
-    // An open goal always offers apply, create_goal and stop (no criterion gate).
-    expect(app.createGoal).toBe(true);
+    const app = applicable(state, "m1");
+    // An open state always offers apply and stop (no criterion gate).
     expect(app.apply).toBe(true);
     expect(app.stop).toBe(true);
+    expect(app.move).toBe(false);
   });
 });
 
 describe("record_rejection", () => {
   const base: Event[] = [
-    goal("g1", "green", 0),
-    { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 1) },
+    request("r1", "do it", 0),
+    move("m1", "reconnaissance", "green", 1),
+    { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 2) },
   ];
   const refusal = (turn: number): Event => ({
     type: "record_rejection",
@@ -276,8 +285,8 @@ describe("record_rejection", () => {
       refusal(5),
       {
         type: "record_rejection",
-        tool: "create_goal",
-        target: "goal",
+        tool: "move",
+        target: "state:patch",
         reason: "empty_what",
         turn: 6,
       },
@@ -287,15 +296,20 @@ describe("record_rejection", () => {
 });
 
 describe("progress key", () => {
-  it("changes when a goal is added and when a goal is stopped", () => {
-    const base = fold([goal("g1", "green", 0)]);
-    const withGoal = fold([goal("g1", "green", 0), goal("g2", "locate", 1)]);
-    expect(knowledgeKey(withGoal)).not.toBe(knowledgeKey(base));
+  it("changes when a state is added and when it is stopped", () => {
+    const base = fold([request("r1", "do it", 0), move("m1", "reconnaissance", "green", 1)]);
+    const withState = fold([
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      move("m2", "localization", "locate", 2),
+    ]);
+    expect(knowledgeKey(withState)).not.toBe(knowledgeKey(base));
 
     const stopped = fold([
-      goal("g1", "green", 0),
-      { type: "add_node", node: workNode("s1", "stop", "done", 1) },
-      { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      { type: "add_node", node: workNode("s1", "stop", "done", 2) },
+      { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
     ]);
     expect(knowledgeKey(stopped)).not.toBe(knowledgeKey(base));
   });
@@ -305,17 +319,19 @@ describe("progress key", () => {
       type: "add_node",
       node: workNode(`o${seq}`, "observation", command, seq, { command, verdict: "fail", output }),
     });
-    const once = fold([goal("g1", "green", 0), failure("git status", "fatal: no repo", 1)]);
+    const once = fold([request("r1", "do it", 0), move("m1", "reconnaissance", "green", 1), failure("git status", "fatal: no repo", 2)]);
     const twice = fold([
-      goal("g1", "green", 0),
-      failure("git status", "fatal: no repo", 1),
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
       failure("git status", "fatal: no repo", 2),
+      failure("git status", "fatal: no repo", 3),
     ]);
     expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
     const other = fold([
-      goal("g1", "green", 0),
-      failure("git status", "fatal: no repo", 1),
-      failure("git log", "fatal: no repo", 2),
+      request("r1", "do it", 0),
+      move("m1", "reconnaissance", "green", 1),
+      failure("git status", "fatal: no repo", 2),
+      failure("git log", "fatal: no repo", 3),
     ]);
     expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
   });
@@ -328,46 +344,42 @@ describe("progress key", () => {
       reason: "repeated_action",
       turn,
     });
-    const once = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1)]);
-    const twice = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1), refusal("/app/a", 2, 2)]);
+    const base = [request("r1", "do it", 0), move("m1", "reconnaissance", "green", 1)];
+    const once = fold([...base, refusal("/app/a", 1, 1)]);
+    const twice = fold([...base, refusal("/app/a", 1, 1), refusal("/app/a", 2, 2)]);
     expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
-    const other = fold([goal("g1", "green", 0), refusal("/app/a", 1, 1), refusal("/app/b", 2, 2)]);
+    const other = fold([...base, refusal("/app/a", 1, 1), refusal("/app/b", 2, 2)]);
     expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
   });
 });
 
 describe("traversal focus", () => {
-  const interpreted = (extra?: Event[]): Event[] => [
-    { type: "add_node", node: workNode("r1", "request", "task", 0, { text: "go" }) },
-    goal("g1", "interp", 1),
-    { type: "add_edge", edge: edge("ea", "r1", "g1", "goal", llm) },
-    ...plan("p1", "g1", ["i1"], 3),
-    { type: "add_node", node: workNode("a1", "action", "run", 4, { command: "run" }) },
-    goal("g2", "stage", 5),
-    ...item("i1", "g1", 6, ["a1", "g2"]),
-    { type: "descend", node: "g1" },
-    { type: "descend", node: "g2" },
-    ...(extra ?? []),
+  const stateWith = (extra: Event[] = []): Event[] => [
+    request("r1", "go", 0),
+    move("m1", "reconnaissance", "interp", 1),
+    { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
+    { type: "descend", node: "m1" },
+    ...extra,
   ];
 
-  it("trims the branch under a stopped ancestor, not only when the top stops", () => {
-    const state = fold(
-      interpreted([
-        { type: "add_node", node: workNode("s1", "stop", "done", 99) },
-        { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
-      ]),
-    );
-    expect(state.branch).toEqual(["r1", "g1", "g2"]);
-    const trimmed = fold(focusEvents(state), state);
-    expect(trimmed.branch).toEqual(["r1"]);
-    // The request's goal exists (and is stopped), so the request offers no new operator;
-    // the run ends (the loop detects the stopped goal).
-    expect(applicable(trimmed, "r1")).toMatchObject({ createGoal: false, return: false });
+  it("stays on the move while the state is open", () => {
+    const state = fold(stateWith());
+    expect(hasStopped(state, "m1")).toBe(false);
+    expect(state.branch).toEqual(["r1", "m1"]);
+    expect(focusEvents(state)).toEqual([]);
   });
 
-  it("does not trim while every ancestor is still open", () => {
-    const state = fold(interpreted());
-    expect(hasStopped(state, "g1")).toBe(false);
-    expect(focusEvents(state)).toEqual([]);
+  it("returns out of a finished state and offers the transition move", () => {
+    const state = fold(
+      stateWith([
+        { type: "add_node", node: workNode("s1", "stop", "done", 99) },
+        { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
+      ]),
+    );
+    expect(state.branch).toEqual(["r1", "m1"]);
+    const trimmed = fold(focusEvents(state), state);
+    expect(trimmed.branch).toEqual(["r1", "m1"]);
+    // The finished state offers the transition move.
+    expect(applicable(trimmed, "m1")).toMatchObject({ move: true, apply: false, stop: false });
   });
 });

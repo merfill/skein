@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { Event } from "../../src/ir/events";
 import { fold, type State } from "../../src/ir/graph";
+import type { IslandId } from "../../src/ir/islands";
 import type { Action } from "../../src/llm/schemas";
 import { classify, type Classification } from "../../src/loop/classify";
 import { executeAction, type ExecOutcome } from "../../src/tools";
@@ -42,6 +43,24 @@ export function exec(action: Action, events: readonly Event[], workspace: Worksp
   return { events: all, state: fold(all), outcome };
 }
 
+// Execute a batch of moves in order (the engine's turn semantics: each against the state the
+// previous left), returning the last outcome and the full journal.
+export function execAll(
+  actions: readonly Action[],
+  events: readonly Event[],
+  workspace: Workspace,
+  turn = 0,
+): Executed {
+  let acc: Event[] = [...events];
+  let last: Executed | undefined;
+  for (const action of actions) {
+    last = exec(action, acc, workspace, turn);
+    acc = last.events;
+  }
+  if (last === undefined) throw new Error("execAll needs at least one action");
+  return last;
+}
+
 export function classification(
   action: Action,
   events: readonly Event[],
@@ -51,15 +70,15 @@ export function classification(
   return classify(action, fold(events), held, queried);
 }
 
-// Shorthand constructor. `command` is the first concrete plan item; without it the plan is
-// seeded with `true`, so a goal always carries a plan (I1).
-export function interpretation(what: string, command?: string): Action {
-  return {
-    operator: "create_goal",
-    what,
-    state: "reconnaissance",
-    action: { tool: "bash", command: command ?? "true" },
-  };
+// Declare a state (the transition) with its goal text.
+export function move(state: IslandId = "reconnaissance", what = "do it"): Action {
+  return { operator: "move", state, what };
+}
+
+// A state plus its first plan item, as one turn pair (the move, then the first `apply` that
+// seeds the plan).
+export function withGoal(what: string, command?: string, state: IslandId = "reconnaissance"): Action[] {
+  return [move(state, what), run(command ?? "true")];
 }
 
 export function applyTool(action: Extract<Action, { operator: "apply" }>["action"]): Action {

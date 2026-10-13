@@ -7,14 +7,18 @@ operational reference and the coverage contract, not a second formalism),
 `docs/projection.md`, `docs/tools.md`, `docs/ir.md`, `docs/walkthrough.md`,
 `docs/testing.md`.
 
-Status: **Implemented.** §1–§4 specify the model and every operator; §5 is the
-coverage matrix (filled). An ID is **stable**: a spec point may gain tests, but its
+Status: **Specified (state protocol) — implementation in progress.** §1–§4 specify the model and
+every operator; §5 is the coverage matrix (to be refilled as the state protocol lands,
+`docs/plans/state_protocol_plan.md`). An ID is **stable**: a spec point may gain tests, but its
 meaning does not change.
 
-> **Reduced goal model** (`docs/plans/goal_reduction_plan.md`). A goal is `what` plus
-> an authored `state` plus a plan container seeded with the first action. Closure is
-> dynamic: the doxa's `stop` closes a goal; there is no criterion, no exit-code gate,
-> no `done_when`/`step`/`revises`, and no `state` (`exitCode` is ordinary output).
+> **State protocol** (`docs/plans/state_protocol_plan.md`). The walk is a state machine over
+> islands: `move` declares the state AND its goal text (a `move` node, a flat child of the request; the state IS its goal), the first `apply`
+> concretizes that state's work (`what` + a plan seeded with the first action), `apply` works it,
+> and `stop` closes it and forces the transition. A goal carries `what` only — the `state`
+> lives on its `move`. Closure is dynamic: the doxa's `stop` closes a goal/state; there is no
+> criterion, no exit-code gate, no `done_when`/`step`/`revises`, and no `state` on a goal
+> (`exitCode` is ordinary output).
 
 ---
 
@@ -30,8 +34,8 @@ Every operator is specified as:
 - **Projection** — how the result is seen in the next context (§ projection).
 - **ID** — a stable identifier; a test cites it as the `ID` token in its title.
 
-ID families: `OP-CG` create_goal, `OP-AP-READ|GREP|LIST|EDIT|WRITE|RUN|FETCH|PATCH` apply
-sub-tools, `OP-AP-PLACE` how an `apply` lands in the tree, `OP-ST` stop, `OP-DC`
+ID families: `OP-MV` move, `OP-CG` a state's first plan item (its first `apply`), `OP-AP-READ|GREP|LIST|EDIT|WRITE|RUN|FETCH|PATCH`
+apply sub-tools, `OP-AP-PLACE` how an `apply` lands in the tree, `OP-ST` stop, `OP-DC`
 decline, `OP-RC`/`OP-SR` recall/search, `TR` traversal/containers, `DER` derived facts/predicates, `REF`
 refusals (the catalogue), `PRJ` projection points (referenced).
 
@@ -43,13 +47,14 @@ refusals (the catalogue), `PRJ` projection points (referenced).
 
 | Kind | Payload | Role |
 |---|---|---|
-| `request` | `{text}` | raw motivation; the root; interpreted once (`goal`) or declined (`unactionable`); it ends when its goal is stopped |
-| `goal` | `{what}` | the request's interpretation or a sub-goal |
+| `request` | `{text}` | raw motivation; the root; walked as a sequence of states; it ends when the terminal state is stopped |
+| `move` | `{state, note?}` | the doxa's declared state (island); a flat child of the request |
+| `goal` | `{what}` | the concrete work of one state (`move.goal`) |
 | `plan` | — | ordered container of a goal's items (`items`); the LAST item is current |
-| `item` | — | ordered container of a step's alternatives (`alts`: actions or sub-goals); the LAST is current |
+| `item` | — | ordered container of a step's alternatives (`alts`: actions); the LAST is current |
 | `action` | `{command, ...}` | a single tool run; an alternative of an item |
 | `observation` | `{ref?, version?, command?, exitCode?, output/error/...}` | a tool result body; `exitCode` is ordinary output, not a closure oracle |
-| `stop` | `{why?}` | closes the focused goal; a `stop` relation from the goal |
+| `stop` | `{why?}` | closes the focused goal (goal stop), or the terminal state (move stop) |
 | `unactionable` | `{why?}` | the request's intent is not actionable; the doxa declines to formulate a goal (`unactionable` relation) |
 | `constraint` | `{forbid: string[]}` | invariant; seeded at run start |
 | `file` (artifact) | — | a referenced file; produced by `mutates` |
@@ -58,12 +63,14 @@ refusals (the catalogue), `PRJ` projection points (referenced).
 
 | Relation | From → To | Meaning |
 |---|---|---|
-| `goal` | request → goal | the request's single interpretation (fixed) |
+| `move` | request → move | the request's states, in order (the LAST is current) |
 | `unactionable` | request → unactionable | the doxa declined to formulate a goal for the request |
+| `goal` | move → goal | the state's work |
+| `stop` | move → stop | the terminal state was closed by the doxa |
 | `plan` | goal → plan | the goal's plan container |
 | `stop` | goal → stop | the goal was closed by the doxa |
 | `items` | plan → item | ordered membership (order = sequence; the LAST item is current) |
-| `alts` | item → action/goal | an item's ordered alternatives (the LAST is current) |
+| `alts` | item → action | an item's ordered alternatives (the LAST is current) |
 | `result` | action → observation | the action's result body |
 | `mutates` | action → file | the action changed the file |
 
@@ -72,63 +79,81 @@ refusals (the catalogue), `PRJ` projection points (referenced).
 `add_node`, `add_edge`, `descend`, `return`, `mutate`, `record_rejection`. `fold`
 applies them in order; state (`children`, `branch`, `focusOf`, versions) is **derived**,
 never stored. There is no `record_check` and no `set_status`: a state change is a new
-node-event (`observation`/`stop`). A run's result is a plain `observation`; its
+node-event (`move`/`observation`/`stop`). A run's result is a plain `observation`; its
 `exitCode` is output, not a verdict.
 
 ### 1.4 Containers and traversal
 
-- **branch** — the stack of goals from the request root to the focus; `descend`
-  pushes, `return` pops (`TR-1`).
+- **branch** — the stack of state frames (`move` → `goal`) from the request root to the focus;
+  `descend` pushes, `return` pops (`TR-1`).
 - **focus** — `branch[last]`, else the root (`TR-1`).
 - **plan** — the `plan` relation target; **items** — `items` edges in insertion order; the
   **last** item is the current one.
 - **alternatives** — an item's children (`alts`); the **current** alternative is the last
   child (there is no `chosen` edge).
 - **frontier** — the admissible moves at the focus, computed **once** and shared by the
-  projection and `classify` (`TR-8`). The doxa is handed the whole **arm** (the level's
-  siblings) with the **cursor** on the current node only; the engine does not dictate a
-  single next move.
+  projection and `classify` (`TR-8`). The engine does not dictate a single next move.
 
 ---
 
 ## 2. Operators
 
-### 2.1 `create_goal` (`OP-CG`)
+### 2.1 `move` (`OP-MV`)
+
+Declares the state (the island of work) the doxa will work in AND the state's goal text
+(`what`) — the state **IS** its goal (docs/plans/goal_into_move_plan.md); the plan hangs
+directly off the `move`. The states are the request's **flat children** (`move` relation): a new
+`move` after a finished state is a new child of the request (a sibling of the previous state),
+never nested under it.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| at the request (interpretation) | focus is `request` with no goal yet | add `goal` (`what`, `state`); `goal` relation request → goal; add a `plan` with one `item` whose sole alternative is `action` (any tool); the logos runs `action` at once; `descend` | the interpretation is fixed; the goal's first item is executed | `empty_what`, `empty_command`, `interpreted` | `OP-CG-1` |
-| decompose an open goal | focus is `goal` with a current item | add `goal`; append it as the current item's newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the sub-goal is the item's newest alternative | as above | `OP-CG-2` |
-| transition (exhausted plan) | focus is `goal`, the plan is exhausted | add a plan `item`; append the `goal` as its newest alternative (`alts`); add its plan/item with its first action (run at once); `descend` | the plan gains a current item whose newest alternative is the sub-goal | as above | `OP-CG-5` |
-| plan + first action | any of the above, `action` present | add exactly one item whose sole alternative is `action` under a new `plan` | the item is current; the action is executed | `empty_command` | `OP-CG-3` |
-| one plan item | the seed is materialized as exactly one item | the plan holds one item (one action) | later moves append per the outcome (see `OP-AP-PLACE`) | — | `OP-CG-4` |
+| open a state | focus is the request with no `move` yet | add `move` (`state`, `what`, `note?`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state`, `empty_what` | `OP-MV-1` |
+| transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `empty_what`, `state_open` | `OP-MV-2` |
+| terminal | the state is `handoff` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
+| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the compaction line of the state being left (§4a of the plan) | the finished state's turns are elided, its line remains | — | `OP-MV-4` |
 
-- **Projection** (`PRJ-CG`): the tape gains an `assistant` goal message; the goal carries
-  its plan and its alternatives as history.
-- **Notes.** A sub-goal at an open goal appends to the current item, or — when the plan is
-  exhausted — starts a new plan item (`OP-CG-5`, the sibling of `apply`'s success branch); an
-  exhausted plan never refuses it. The first action is carried by `action` — any tool, not a
-  special `step`, not only a shell command — and the logos runs it at once; the goal also
-  carries the authored `state` (the island it is entered in).
+- **Projection** (`PRJ-MV`): the tape gains an `assistant` call `move { state, what, note? }` + a
+  `tool` confirmation. Leaving a finished state, the result carries the compaction line
+  (`State <label>: finished — <summary>`); the finished state's own turns are elided (§7 of the
+  semantics).
+- **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
+  **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
+  it) and where to go next. `what` is required except for the terminal `handoff`.
 
-### 2.2 `apply` (`OP-AP`)
+### 2.2 the state's first plan item (`OP-CG`)
+
+The concrete work of a state is its plan, hung directly off the `move` (there is **no goal
+node**). The first plan item is an ordinary `apply` — the first tool call the doxa makes after
+the `move` seeds the plan (docs/plans/goal_into_move_plan.md §3).
+
+| Case | Pre | Effects | Derived | Refuses | ID |
+|---|---|---|---|---|---|
+| first plan item | focus is a non-terminal `move` with no plan | the `apply` builds the `plan` with one `item` whose sole alternative is the `action` (any tool); the engine runs it at once | the state gains its plan; the first item is executed | — (a bash with no command is a fail observation, `REF-RUN-EMPTY`) | `OP-CG-1` |
+
+- **Projection** (`PRJ-CG`): the tape gains the `apply`'s native call + its `tool` result, under
+  the state's `move` call; the plan's items and alternatives follow as history.
+- **Notes.** The `action` is any tool (the same union as `apply`). There are no sub-states: one
+  state holds one plan.
+
+### 2.3 `apply` (`OP-AP`)
 
 The dispatch of one tool under the focus (`src/tools/index.ts`, `OP-AP-*`).
 
 **How an `apply` lands in the plan** — the engine places the incoming command by the
 outcome of the current (first unfulfilled) item (`docs/ir_semantics.md` §2.7): when that item is
 already fulfilled (its current alternative succeeded) the command becomes a new plan `item`
-(`OP-AP-PLACE-2`); otherwise it becomes a new alternative of that item (`OP-AP-PLACE-1`). A
-sub-goal (`create_goal` on an open goal) follows the same rule: a new alternative of the current
-item, or a new plan item when the plan is exhausted. The engine never moves into the action.
+(`OP-AP-PLACE-2`); otherwise it becomes a new alternative of that item (`OP-AP-PLACE-1`). An
+item's alternatives are **actions only** (a sub-goal alternative no longer exists). The engine
+never moves into the action.
 
 **A move may be a batch.** The engine accepts one or more calls per move and applies each in
-order in the same turn (same `payload.turn`); a terminal move (`create_goal`/`stop`/`decline`)
-ends the batch, so anything the model emitted after it is dropped (`src/loop/graph.ts`
+order in the same turn (same `payload.turn`); a terminal move (`move`/`stop`/
+`decline`) ends the batch, so anything the model emitted after it is dropped (`src/loop/graph.ts`
 `executeNode`). The projection renders a batch as one `assistant` with N `tool_calls` + N
 `tool` results (`docs/ir_semantics.md` §7).
 
-#### 2.2.1 `read` (`OP-AP-READ`)
+#### 2.3.1 `read` (`OP-AP-READ`)
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
@@ -141,7 +166,7 @@ ends the batch, so anything the model emitted after it is dropped (`src/loop/gra
 | large window | the requested window exceeds the byte limit | observation shows the window whole (the middle is never dropped); only a single over-long line is clipped, and the full window stays behind `outputRef`, recalled via `recall` | `OP-AP-READ-7` |
 | read budget | the file is longer than the byte budget | the window is cut at whole lines to `READ_LIMIT`; a `continue from N` trailer points at the next window | `OP-AP-READ-8` |
 
-#### 2.2.2 `grep` (`OP-AP-GREP`)
+#### 2.3.2 `grep` (`OP-AP-GREP`)
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
@@ -152,7 +177,7 @@ ends the batch, so anything the model emitted after it is dropped (`src/loop/gra
 | byte budget | a match window would exceed the byte limit | whole trailing matches are dropped so the window fits the limit; a `[showing N of M matches; continue from K]` trailer points to the continuation; a single huge match has its lines clipped | `OP-AP-GREP-5` |
 | count caps | `count` absent or too large | the window is at most `GREP_COUNT_DEFAULT` (50), never more than `MAX_GREP_MATCHES` (100) | `OP-AP-GREP-6` |
 
-#### 2.2.3 `list` (`OP-AP-LIST`)
+#### 2.3.3 `list` (`OP-AP-LIST`)
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
@@ -161,7 +186,7 @@ ends the batch, so anything the model emitted after it is dropped (`src/loop/gra
 | byte budget | a page would exceed the byte limit | whole trailing files are dropped so the JSON stays within the limit; `returned` is below the page and `next` is set | `OP-AP-LIST-3` |
 | limit caps | `limit` absent or too large | the page is at most `LIST_LIMIT_DEFAULT` (100), never more than `MAX_LIST_FILES` (200) | `OP-AP-LIST-4` |
 
-#### 2.2.4 `edit` (`OP-AP-EDIT`)
+#### 2.3.4 `edit` (`OP-AP-EDIT`)
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
@@ -171,7 +196,7 @@ ends the batch, so anything the model emitted after it is dropped (`src/loop/gra
 | stale base | file changed after the last read | — | — | `stale_base` | `OP-AP-EDIT-4` |
 | path outside the workspace | — | fail observation (recorded refusal, no crash) | — | — | `OP-AP-EDIT-5` |
 
-#### 2.2.5 `run` (`OP-AP-RUN`)
+#### 2.3.5 `run` (`OP-AP-RUN`)
 
 `run` is one plain **foreground** command. There is no criterion, no `target`, and no
 background-job machinery.
@@ -190,7 +215,7 @@ background-job machinery.
   stderr (`error`) are separate; a crash adds `signal`/`core`/`backtrace`; the `calls`
   entry carries the `id` for a later `recall`/`search`.
 
-#### 2.2.6 `write` (`OP-AP-WRITE`)
+#### 2.3.6 `write` (`OP-AP-WRITE`)
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
@@ -204,7 +229,7 @@ background-job machinery.
 - **Projection** (`PRJ-AP`): an executed `action` node with a `mutates` edge and a
   `mutate` event carrying the new version.
 
-#### 2.2.7 `fetch` (`OP-AP-FETCH`)
+#### 2.3.7 `fetch` (`OP-AP-FETCH`)
 
 Obtains external reference evidence (an upstream/published/sibling copy) into the
 workspace, so it can be read and diffed (B9, `docs/system_prompt.md`).
@@ -219,7 +244,7 @@ workspace, so it can be read and diffed (B9, `docs/system_prompt.md`).
 The default target is engine-owned (`refPathFor`, `.skein/ref/<hash>-<slug>`), so only an
 explicit `path` is constraint-checked.
 
-#### 2.2.8 `apply_patch` (`OP-AP-PATCH`)
+#### 2.3.8 `apply_patch` (`OP-AP-PATCH`)
 
 Applies a unified diff in the workspace root (`patch -p<strip>`, default 1), e.g. an
 upstream change obtained with `fetch`.
@@ -230,43 +255,44 @@ upstream change obtained with `fetch`.
 | does not apply | conflicting/already-applied hunk | fail observation | — | — (fail) | `OP-AP-PATCH-2` |
 | forbidden target | a constraint forbids a `---`/`+++` path | — | — | `constraint_violation:<pattern>` | `REF-PATCH-CONSTRAINT` |
 
-### 2.3 `decline` (`OP-DC`)
+### 2.4 `decline` (`OP-DC`)
 
 The doxa proposes that the request's intent is **not actionable** (chit-chat, no task) and
-declines to formulate a goal — instead of inventing a goal. Available
-only while the request has no interpretation yet; it records an `unactionable` node under
+declines to formulate a goal — instead of inventing one. Available
+only while the request has no `move` yet; it records an `unactionable` node under
 the request (`unactionable` relation) and ends the run
 (`docs/plans/archive/request_goal_plan.md`).
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| decline the request | the focus is the request with no interpretation and no `unactionable` node | add an `unactionable` node and an `unactionable` relation from the request; the run ends | the request is terminal (`request_unactionable`) | — | `OP-DC-1` |
-| not at the request | the focus is a goal | — | — | `not_request` | `REF-DC-NOTREQ` |
-| already interpreted | the request already has an interpretation | — | — | `interpreted` | `REF-DC-ADDR` |
+| decline the request | the focus is the request with no `move` and no `unactionable` node | add an `unactionable` node and an `unactionable` relation from the request; the run ends | the request is terminal (`request_unactionable`) | — | `OP-DC-1` |
+| not at the request | the focus is a `move` or a goal | — | — | `not_request` | `REF-DC-NOTREQ` |
+| already started | the request already has a `move` | — | — | `interpreted` | `REF-DC-ADDR` |
 
 - **Projection** (`PRJ-DC`): the option `decline` is offered at a fresh request alongside
-  `create_goal`.
+  `move`.
 
-### 2.4 `stop` (`OP-ST`)
+### 2.5 `stop` (`OP-ST`)
 
-The doxa's terminal move and the **sole closure**. On a **goal** it finishes the frame
-(the engine returns to the parent on the next projection and continues); on the
-**request** it ends the run. There is no criterion and no check: the doxa decides while
-working.
+The doxa's terminal move and the **sole closure**. On an open **goal** it finishes the state's
+work (the engine returns to the governing `move` and forces the transition decision); on the
+**terminal state** (`handoff`, which has no goal) it ends the run. There is no criterion and no
+check: the doxa decides while working.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| finish an open goal | the focus is a goal | add a `stop` node and a `stop` relation from the goal | the goal is closed; the engine returns | — | `OP-ST-1` |
+| finish a state's work | the focus is an open goal | add a `stop` node and a `stop` relation from the goal | the state is finished; focus returns to its `move` | — | `OP-ST-1` |
 | closure recorded on the goal | a goal | the `stop` node is hung off the goal (no plan item); the reason lives in its `why` | the closure and its reason sit on the goal | — | `OP-ST-2` |
-| the request ends | the request's goal has a `stop` relation | the run ends | stopReason `request_addressed` | — | `OP-ST-3` |
-| not at a goal | the focus is the request | — | — | `not_addressed` | `REF-ST-STATE` |
+| the request ends | the focus is the terminal state (`handoff`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
+| not at a closeable state | the focus is the request, or a non-terminal `move` with no goal | — | — | `not_addressed` | `REF-ST-STATE` |
 
 - **Projection** (`PRJ-STOP`): the tape shows the closure message `stopped: <why>`; a closed
   goal's internals leave the tape.
-- A goal is closed only by `stop` (a `stop` relation). There is no `stop` on the request; the
-  request ends when its goal is stopped.
+- A goal is closed only by `stop` (a `stop` relation); the terminal state is closed by a `stop`
+  relation on its `move`. There is no `stop` on the request; the request ends when its terminal
+  state is stopped.
 
-### 2.5 `recall` and `search` (`OP-RC`, `OP-SR`)
+### 2.6 `recall` and `search` (`OP-RC`, `OP-SR`)
 
 Two moves read a stored result by id (the "index" mechanism, docs/ir_semantics.md §4.5):
 `recall` opens a body (optionally a line window), `search` finds a pattern inside it. Neither
@@ -302,27 +328,31 @@ file / reading a result (`read`) with searching one (`grep` / `search`).
 - **Projection** (`PRJ-REF`): a refused structural move (no node) enters the tape as a
   transient `tool` message (`rejected <move>: <reason>`) for the next turn.
 
-### 2.6 Traversal and containers (`TR`)
+### 2.7 Traversal and containers (`TR`)
 
 | Case | Rule | ID |
 |---|---|---|
 | focus | the focus is `branch[last]`, else the root | `TR-1` |
-| descend | `focusEvents` descends into the request's goal (`goal`), or the current item's sub-goal alternative (`alts`) | `TR-2` |
-| return | a finished top is popped; `return` is legal | `TR-3` |
-| trim under a finished ancestor | if any ancestor (other than the root) is finished, the branch is trimmed — not only when the top finishes | `TR-4` |
-| container choice | a goal's plan is a `plan` (`plan`); the request's interpretation is a `goal` relation; an item's alternatives are `alts` | `TR-5` |
-| item order and cursor | items follow `items` order (the LAST is current); the cursor is the first not `itemFulfilled`; an item is fulfilled when its current alternative is a succeeded action or a stopped goal | `TR-6` |
+| descend | `focusEvents` descends into the request's current `move` (`move`), or the `move`'s goal (`goal`) | `TR-2` |
+| return | a finished top is popped (`goal → move` on a goal `stop`; `move → request` when the next `move` is emitted); `return` is legal | `TR-3` |
+| flat states | the states are the request's children (`move`), never nested; a new `move` after a finished state is a new child (a sibling) | `TR-4` |
+| container choice | a goal's plan is a `plan` (`plan`); a state's work is a goal (`move.goal`); an item's alternatives are `alts` | `TR-5` |
+| item order and cursor | items follow `items` order (the LAST is current); the cursor is the first not `itemFulfilled`; an item is fulfilled when its current alternative is a succeeded action (no goal alternative) | `TR-6` |
 | placement | the incoming command becomes a new plan item when the current item is fulfilled, else a new alternative of it (`OP-AP-PLACE`) | `TR-7` |
-| frontier | `applicable` computes create_goal/apply/stop/decline from the same facts the gates use; the doxa chooses among them | `TR-8` |
+| frontier | `applicable` computes move/apply/stop/decline from the same facts the gates use; the doxa chooses among them | `TR-8` |
 | item alternatives | an item's alternatives (its history) are rendered in the tape with a marker | `TR-9` |
 
-### 2.7 Derived facts (`DER`)
+### 2.8 Derived facts (`DER`)
 
 State is always derived from the incident events, never stored.
 
 | Predicate | Rule | ID |
 |---|---|---|
-| goal closed | the goal has a `stop` relation to a `stop` node | `DER-GOAL-1` |
+| state closed | the `move` has a `stop` relation to a `stop` node | `DER-MOVE-1` |
+| state finished | a `move` with a `stop` relation (the terminal `move` closes the request) | `DER-STATE-1` |
+| request finished | an `unactionable` node, or the current `move` is the terminal state and is finished | `DER-REQ-1` |
+| current state | the state (`move.state`) of the last `move` child of the request | `DER-STATE-2` |
+| structural forest | the work relations (`move`/`plan`/`items`/`alts`/`stop`) form a forest (a DAG with single parents) | `DER-FOREST-1` |
 | action `executed` | it has a `result` or `mutates` relation | `DER-ACT-1` |
 | run witness | a run's observation carries a `witness` (the basis for staleness) | `DER-STALE-1` |
 
@@ -339,12 +369,14 @@ by the engine (`src/tools/index.ts`): its non-execution is recorded as an `actio
 
 | Reason (token) | Trigger | Operator | ID |
 |---|---|---|---|
-| `empty_what` / `empty_command` | malformed `create_goal` | `create_goal` | `REF-CG-EMPTY` |
-| `no_current_goal` | no focus | create_goal | `REF-NO-FOCUS` |
-| `interpreted` | a second `create_goal` at a request that already has a goal | create_goal | `REF-INTERPRETED` |
-| `not_addressed` | `stop` when the focus is not a goal (the request) | stop | `REF-ST-STATE` |
+| `empty_state` | malformed `move` (unknown `state`) | `move` | `REF-MV-EMPTY` |
+| `empty_what` | a non-terminal `move` with no goal text | `move` | `REF-MV-WHAT` |
+| `no_state` | `apply` when the focus is not an open state (the request, or a finished state) | apply | `REF-AP-NO-STATE` |
+| `no_state` | `apply` when the focus is not an open state | apply | `REF-NO-STATE` |
+| `state_open` | `move` while the current state is still open (not stopped) | move | `REF-STATE-OPEN` |
+| `not_addressed` | `stop` when the focus is neither an open state nor the terminal state (the request) | stop | `REF-ST-STATE` |
 | `not_request` | `decline` at a non-request focus | decline | `REF-DC-NOTREQ` |
-| `interpreted` | `decline` on a request that already has a goal | decline | `REF-DC-ADDR` |
+| `interpreted` | `decline` on a request that already has a `move` | decline | `REF-DC-ADDR` |
 
 **Command non-execution (an `action` + `observation` with a reason):**
 
@@ -365,20 +397,21 @@ Tool **failures** (a fail observation): missing file (`read`), bad scope (`grep`
 
 ## 4. Invariants
 
-- a goal is closed only by `stop` (a `stop` relation on the goal); there is no criterion run
+- a state is closed only by `stop` (a `stop` relation on the `move`); there is no criterion run
   and no exit-code gate.
-- the request ends when its goal is stopped (there is no `stop` on the request); a request
-  is interpreted once (`goal`) or declined (`unactionable`).
+- the request ends when its terminal state is stopped (there is no `stop` on the request); a
+  request is started (`move`) or declined (`unactionable`).
 - a run is an ordinary `observation`; its `exitCode` is output, not a verdict.
 - a command that did not run leaves an `action` + `observation` with a reason (never a
   node-less refusal); a structural move that is inadmissible is refused without a node.
 - a `stale` fact is never shown as active.
 - `project` is deterministic: same events → same `Context`.
-- structural relations (`goal`/`unactionable`/`plan`/`stop`/`items`/`alts`) form a DAG.
-- every non-root goal is bound by a `goal` or an `alts` relation.
+- structural relations (`move`/`unactionable`/`plan`/`stop`/`items`/`alts`) form a DAG.
+- a state is its own goal (`what` on the `move`); the states are the request's flat `move`
+  children; the plan hangs off the `move`.
 - a refusal/failure changes the projection.
-- a finished goal (and its descendants) does not remain the focus (`TR-4`); a closed goal's
-  internals leave the tape.
+- a finished state (a closed goal, or the stopped terminal) does not remain the focus; its turns
+  leave the tape and only its compaction line remains.
 - secrets live only in `.env`; small results may be inlined, never secrets.
 
 Helpers already implement the first four: `tests/invariants.ts`.
@@ -396,7 +429,8 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 
 | Spec ID | Offline test | Live |
 |---|---|---|
-| `OP-CG-1..5` | `tests/ops/create_goal.test.ts` | step `interpret-request`; scenario `multi-step-plan` |
+| `OP-MV-1..4` | `tests/ops/move.test.ts` | steps `request-choose-state`, `transition-move`, `terminal-stop` |
+| `OP-CG-1` | `tests/ops/apply.test.ts` | steps `move-concretize`, `goal-stop` |
 | `OP-AP-READ-1..8` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-GREP-1..6` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-LIST-1..4` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
@@ -408,8 +442,9 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-RC-1..6` | `tests/ops/recall.test.ts` | scenarios `retrieve-at-scale`, `reproduce-then-read` |
 | `OP-SR-1..7` | `tests/ops/search.test.ts` | scenario `retrieve-at-scale` |
 | `TR-1..9` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `continue-open-goal` |
-| `DER-GOAL/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-CG`, `REF-NO-FOCUS`, `REF-INTERPRETED` | `tests/ops/create_goal.test.ts`, `tests/ops/applicable.test.ts` | — |
+| `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
+| `REF-MV-EMPTY`, `REF-MV-WHAT`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
+| `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
 | `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RECALL-REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |
 | `REF-WRITE-STALE`, `REF-WRITE-CONSTRAINT` | `tests/ops/apply.test.ts` | — |

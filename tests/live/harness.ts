@@ -7,7 +7,6 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
-import { currentGoalId, goalPayload } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { invokeTools } from "../../src/llm/structured";
@@ -227,7 +226,7 @@ export type Branch =
   | "fetch"
   | "apply_patch"
   | "revise"
-  | "create_goal";
+  | "move";
 
 export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
   const used = new Set<Branch>();
@@ -239,8 +238,8 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
       case "search":
         used.add("search");
         break;
-      case "create_goal":
-        used.add("create_goal");
+      case "move":
+        used.add("move");
         break;
       case "apply":
         used.add(action.action.tool);
@@ -250,12 +249,12 @@ export function branchesOf(turns: readonly CapturedTurn[]): Set<Branch> {
   return used;
 }
 
-// The distinct islands the goals were authored in, in first-seen order — the state-traversal
+// The distinct islands the states were declared in, in first-seen order — the state-traversal
 // signal (a run that only ever sits in one state never crossed a bridge).
 export function statesOf(events: readonly Event[]): string[] {
   const states: string[] = [];
   for (const event of events) {
-    if (event.type !== "add_node" || event.node.kind !== "goal") continue;
+    if (event.type !== "add_node" || event.node.kind !== "move") continue;
     const state = (event.node.payload as { state?: unknown } | undefined)?.state;
     if (typeof state === "string" && !states.includes(state)) states.push(state);
   }

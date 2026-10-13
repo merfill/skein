@@ -24,12 +24,15 @@ writes `opencode.txt`).
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
 | 3 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
 | 4 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748,329 | 15,834 (2,720 + 13,114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
-| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **current, best Skein** | **1** | 33 | 33 | 702,152 | 23,003 (2,898 + 20,105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
-| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **current, best net off** | **1** | 45 | 45 | 981,165 | 81,294 (3,577 + 77,717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
-| 7 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
-| 8 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2,139,649 | 94,123 (4,568 + 89,555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
-| 9 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 50 | 50 | 1,076,441 | 108,811 (4,307 + 104,504) | 93% | — | `bench/runs/sandbox-tasks/2026-10-10T08-40-34-457Z-fix-ocaml-gc` |
-| 10 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † | **1** | 31 | 31 | 702,484 | 80,872 (2,930 + 77,942) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T07-02-41-446Z-fix-ocaml-gc` |
+| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **best Skein by cost** | **1** | 33 | 33 | 702,152 | 23,003 (2,898 + 20,105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
+| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
+| 7 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **new architecture (goal-into-move)** | **1** | 52 | 71 | 507,700 | 23,758 (5,040 + 18,718) | 63% | — | `bench/runs/sandbox-tasks/2026-10-13T11-39-19-740Z-fix-ocaml-gc` |
+| 8 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **best net off by cost** | **1** | 45 | 45 | 981,165 | 81,294 (3,577 + 77,717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
+| 9 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net off** † — **new architecture (goal-into-move)** | **1** | 49 | 72 | 537,153 | 44,498 (5,044 + 39,454) | 64% | — | `bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc` |
+| 10 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2,139,649 | 94,123 (4,568 + 89,555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
+
+Rows **`08-40`** (net on, 50 steps, no cost recorded) and **`07-02`** (net off, 13.78₽) fell out
+of the top-10 by the rule (more expensive / no cost) — their write-ups remain in the sections below.
 
 **Condition notes.** † — a run **after the oracle was removed**: the task verifier (including
 Harbor's `tests/test.sh`, which names the broken tag `tag_purposefully_broken_sweeping_changes`)
@@ -92,6 +95,52 @@ without B12): `2026-10-11T10-38-01` (net off, 32 steps, 58,551 rea, 10.43₽) an
 `2026-10-11T10-25-39` (net on, 40 steps, 62,438 rea, 12.06₽). The same day's **reward-0 runs**:
 `2026-10-11T09-18-55` (60 turns, 142,270 rea, 25.46₽) and `2026-10-11T10-04-08`
 (the `glob` rename experiment: 60 turns, 154,361 rea, 27.16₽ — `glob` never called).
+
+## The goal-into-move architecture (state = goal), 2026-10-13
+
+Redesign: the `goal` node and the `create_goal` operator are removed — a state (`move`) carries
+its own goal text (`what`), the plan hangs directly off the `move`, and the first plan item is an
+ordinary `apply` (`docs/plans/goal_into_move_plan.md`). The tool surface IS the frontier
+(`applicable`), so after a `stop` only `move` is offered (the post-stop loop is impossible by
+construction). The prompt is Phase 14 plus these changes. Two `fix-ocaml-gc` runs:
+
+| | opencode (baseline) | Skein goal-based (Phase 14) | Skein goal-into-move |
+|---|---|---|---|
+| **net on** — reward | 1 | 1 | **1** |
+| net on — steps / calls | 33 / 36 | 33 / 33 | 52 / 71 |
+| net on — in | 1,430,864 | 702,152 | **507,700** |
+| net on — out (vis + rea) | 11,399 (4,011 + 7,388) | 23,003 (2,898 + 20,105) | 23,758 (5,040 + 18,718) |
+| net on — cache | 97% | 88% | 63% |
+| net on — cost / time | ~314 s | **2.93₽** | 5.04₽ |
+| **net off** — reward | 1 | 1 | **1** |
+| net off — steps / calls | 24 / 31 | 45 / 45 | 49 / 72 |
+| net off — in | 748,329 | 981,165 | **537,153** |
+| net off — out (vis + rea) | 15,834 (2,720 + 13,114) | 81,294 (3,577 + 77,717) | **44,498** (5,044 + 39,454) |
+| net off — cache | 96% | 92% | 64% |
+| net off — cost / time | ~279 s | **6.04₽** | 6.70₽ |
+
+**Tokens.** Input is **halved** (net off: 981,165 → 537,153; net on: 702,152 → 507,700), but the
+mix changed: *fresh* input **grew** (net off 194,497 vs ~80,301; net on 186,292 vs ~84,258) while
+`cacheRead` **fell** (≈322–343k vs ~618–900k), hence the lower cache-hit (63–64% vs 88–92%). The
+reason: the tape is rebuilt per state — `move` carries `what`, states and transitions change the
+prefix, the plan is re-seeded by the first `apply` — so prefix reuse is worse; the total is still
+smaller. `out` is about the same size, but with more **visible** output (≈5,040 vs 2,898–3,577:
+the model writes `what` per state) and, crucially, less **reasoning**.
+
+**The headline: offline reasoning halves** (77,717 → **39,454**, ×0.51). With network the
+reasoning is about the same (20,105 → 18,718). Cost is comparable (net off +11%: 6.04 → 6.70₽;
+net on is pricier: 2.93 → 5.04₽, though steps rose 33 → 52). Steps are higher (52/49 vs 33/45):
+several states and transitions are now actually declared, not just one.
+
+**Versus opencode.** The offline-reasoning gap narrowed from ≈5.9× to **≈3.0×** (13,114 → 39,454);
+net on from ≈2.7× to ≈2.5× (7,388 → 18,718). By input the new architecture is now **below**
+opencode in both modes (507,700 vs 1,430,864 with network; 537,153 vs 748,329 without).
+
+**The motivating run.** The previous (goal-based) intermediate version on the same tree scored
+reward 0 (`no_progress`, 46 turns): after its single `stop` the doxa alternated
+`create_goal`/`apply` for 19 turns, because the inadmissible tool was still offered. The new
+architecture removes the operator itself — these runs show just **2** refusals (net on) and **5**
+(net off).
 
 ## opencode on `fix-ocaml-gc` (our sandbox)
 
@@ -174,6 +223,6 @@ inside the task image; the task's own verifier scores the result (`check.code = 
   above.
 - The `net off` pair (Skein and opencode, marker †) is **done**; the honest 2×2 is above.
   Implemented: `sandbox-run.ts --net off` (host `fetch`/background `run` via the allowlist proxy).
-- Next: work out **why** Skein spends ~3× the reasoning with network (#5: 20,105 vs opencode
-  7,388) and ~5.9× without (#6: 77,717 vs 13,114), and add other agents/tasks. Phase 14 and the
-  B12 removal narrowed the gap from ~6× to ~3× (net on).
+- Next: work out **why** Skein spends ~2.5× the reasoning with network (goal-into-move: 18,718
+  vs opencode 7,388) and ~3× without (39,454 vs 13,114), and add other agents/tasks. The offline
+  gap's evolution: ~5.9× (goal-based) → **~3.0×** (goal-into-move).

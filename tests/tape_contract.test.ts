@@ -15,16 +15,18 @@ import {
   cleanupWorkspaces,
   edit,
   exec,
+  execAll,
   fetchUrl,
   grep,
-  interpretation,
   makeWorkspace,
+  move,
   patch,
   read,
   recall,
   request,
   run,
   search,
+  withGoal,
   write,
 } from "./ops/helpers";
 import { assertTapeContract } from "./tape_invariant";
@@ -45,45 +47,51 @@ afterEach(cleanupWorkspaces);
 
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
-  // Strip the system prefix: base + node instruction (+ the island instruction on an open
-  // goal) + one message per constraint.
-  const system = 2 + (context.situation === "goal" && context.island !== undefined ? 1 : 0);
-  return compact(await wire(buildMessages(context))).slice(system + context.constraints.length);
+  // Strip the system prefix: base + node instruction (+ the island instruction while a state
+  // is being worked) + one message per constraint.
+  const withIsland =
+    context.island !== undefined &&
+    (context.situation === "plan" || context.situation === "working");
+  const system = 2 + (withIsland ? 1 : 0);
+  const all = compact(await wire(buildMessages(context)));
+  const start = system + context.constraints.length;
+  // Drop a trailing observation-instruction system message (added after a tool result).
+  const end = all.at(-1)?.role === "system" ? all.length - 1 : all.length;
+  return all.slice(start, end);
 }
 
 const kinds = (res: ReturnType<typeof exec>): (string | undefined)[] =>
   res.outcome.events.filter((e) => e.type === "add_node").map((e) => e.node.kind);
 
 const ws = () => makeWorkspace(DEFAULT_FILES).ws;
-const opened = (w: Workspace) => exec(interpretation("do it", "true"), [request()], w);
+// A state plus its first plan item: the shape every state-level op starts from.
+const opened = (w: Workspace) =>
+  execAll([move("reconnaissance", "do it"), run("true")], [request()], w);
 
-// before/after/nodes for an op applied to an existing goal.
+// before/after/nodes for an op applied to an existing state.
 function goalStep(op: Action, w: Workspace) {
   const first = opened(w);
   const before = project(first.state);
-  // The seed command ran on turn 0 (inside create_goal); the op is the NEXT turn, so it is a
-  // separate move (a batch would share one turn).
+  // The first plan item ran on turn 0; the op is the NEXT turn, so it is a separate move (a
+  // batch would share one turn).
   const res = exec(op, first.events, w, 1);
   return { before, after: project(res.state), nodes: kinds(res), res };
 }
 
 const REQ = { role: "user", content: "solve the task" };
 
-// The tape of `request` + `create_goal("do it","true")` + its executed seed: the state every
-// goal-level op starts from.
+// The tape of `request` + `move("reconnaissance","do it")` + its first plan item (`true`):
+// the state every state-level op starts from.
 const GOAL_PREFIX = [
   REQ,
   {
     role: "assistant",
-    call: {
-      name: "create_goal",
-      args: { what: "do it", state: "reconnaissance", action: { tool: "bash", command: "true" } },
-    },
+    call: { name: "move", args: { state: "reconnaissance", what: "do it" } },
   },
   {
     role: "tool",
-    content: expect.stringMatching(/^\[w:goal:\d+\] goal created: do it \(state: reconnaissance\)$/),
-    tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
+    content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
+    tool_call_id: expect.stringMatching(/^w:move:\d+$/),
   },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
@@ -93,24 +101,24 @@ const GOAL_PREFIX = [
   },
 ];
 
-describe("create_goal: before [request] -> delta goal/plan/item/action/observation -> after", () => {
-  it("interprets the request (situation flips request -> goal)", async () => {
+describe("move: before [request] -> delta -> after", () => {
+  it("declares a state, then the first plan item (situation flips request -> working)", async () => {
     const w = ws();
     const before = project(fold([request()]));
-    const res = exec(interpretation("green", "echo hi"), [request()], w);
+    const res = execAll(withGoal("green", "echo hi"), [request()], w);
     const after = project(res.state);
 
     expect(before.situation).toBe("request");
     expect(await tapeOf(before)).toEqual([REQ]);
-    expect(kinds(res)).toEqual(["goal", "plan", "item", "action", "observation"]);
-    expect(after.situation).toBe("goal");
+    expect(kinds(res)).toEqual(["action", "plan", "item", "observation"]);
+    expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      { role: "assistant", call: { name: "create_goal", args: { what: "green", state: "reconnaissance", action: { tool: "bash", command: "echo hi" } } } },
+      { role: "assistant", call: { name: "move", args: { state: "reconnaissance", what: "green" } } },
       {
         role: "tool",
-        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: green \(state: reconnaissance\)$/),
-        tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
+        content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
+        tool_call_id: expect.stringMatching(/^w:move:\d+$/),
       },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
@@ -121,9 +129,9 @@ describe("create_goal: before [request] -> delta goal/plan/item/action/observati
     ]);
   });
 
-  it("renders a failing seeded command (exit code, no output)", async () => {
+  it("renders a failing first command (exit code, no output)", async () => {
     const w = ws();
-    const res = exec(interpretation("green", "exit 3"), [request()], w);
+    const res = execAll(withGoal("green", "exit 3"), [request()], w);
     const after = await tapeOf(project(res.state));
     expect(after.slice(-2)).toEqual([
       { role: "assistant", call: { name: "bash", args: { command: "exit 3" } } },
@@ -135,29 +143,22 @@ describe("create_goal: before [request] -> delta goal/plan/item/action/observati
     ]);
   });
 
-  it("decomposes an open goal: the sub-goal is a native create_goal call", async () => {
+  it("stops a state and moves on: the finished state's turns collapse to one line", async () => {
     const w = ws();
-    // The parent's seed FAILS so its item stays unfulfilled (decomposable).
-    const first = exec(interpretation("do it", "false"), [request()], w);
-    const before = await tapeOf(project(first.state));
-    expect(before.at(-2)).toEqual({ role: "assistant", call: { name: "bash", args: { command: "false" } } });
-    const res = exec(interpretation("sub", "echo sub"), first.events, w);
-    expect(kinds(res)).toEqual(["goal", "plan", "item", "action", "observation"]);
-    const after = await tapeOf(project(res.state));
-    expect(after.slice(-4)).toEqual([
-      { role: "assistant", call: { name: "create_goal", args: { what: "sub", state: "reconnaissance", action: { tool: "bash", command: "echo sub" } } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(/^\[w:goal:\d+\] goal created: sub \(state: reconnaissance\)$/),
-        tool_call_id: expect.stringMatching(/^w:goal:\d+$/),
-      },
-      { role: "assistant", call: { name: "bash", args: { command: "echo sub" } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(/^\[obs:\d+\] exit 0\nsub\n$/),
-        tool_call_id: expect.stringMatching(/^w:action:\d+$/),
-      },
-    ]);
+    const first = execAll([move("localization", "do it"), run("false")], [request()], w);
+    const stopped = exec({ operator: "stop", why: "the line is named" }, first.events, w);
+    expect(kinds(stopped)).toEqual(["stop"]);
+    const moved = exec(move("patch", "apply the fix"), stopped.events, w);
+    const after = await tapeOf(project(moved.state));
+    // The finished state's plan and its command have left the tape; only the compaction
+    // line, carried on the transition move, remains.
+    const texts = after.map((entry) => entry.content ?? "").join("\n");
+    expect(texts).toContain("State Localization: finished — the line is named");
+    expect(texts).not.toContain("false");
+    expect(after.at(-2)).toEqual({
+      role: "assistant",
+      call: { name: "move", args: { state: "patch", what: "apply the fix" } },
+    });
   });
 });
 
@@ -464,7 +465,7 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
     ]);
   });
 
-  it("refusals carry the reason: stop at the request, and an empty create_goal", async () => {
+  it("refusals carry the reason: stop at the request, and an empty move", async () => {
     const req = request();
     const stop = { operator: "stop" as const };
     const stopCls = classification(stop, [req]);
@@ -481,11 +482,11 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
       { role: "assistant", call: { name: "stop", args: {} } },
       {
         role: "tool",
-        content: expect.stringMatching(/^rejected stop: not_addressed: stop applies to a goal/),
+        content: expect.stringMatching(/^rejected stop: not_addressed: stop applies to an open state/),
         tool_call_id: "call:rejected",
       },
     ]);
-    const empty: Action = { operator: "create_goal", what: "", state: "reconnaissance", action: { tool: "bash", command: "true" } };
+    const empty: Action = { operator: "move", state: "reconnaissance", what: "" };
     const emptyCls = classification(empty, [req]);
     expect(emptyCls.accept).toBe(false);
     const emptyCall = modelCall(empty);
@@ -497,16 +498,25 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
           }),
         )
       ).at(-1)?.content,
-    ).toMatch(/^rejected create_goal: empty_what$/);
+    ).toMatch(/^rejected move: empty_what/);
   });
 });
 
 describe("stop / decline: non-monotone cut and terminal turn", () => {
-  it("stop replaces the whole goal tape with its closure", async () => {
+  it("stop collapses the state's goal turns to its closure line", async () => {
     const s = goalStep({ operator: "stop", why: "done" }, ws());
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
     expect(s.nodes).toEqual(["stop"]);
-    expect(await tapeOf(s.after)).toEqual([REQ, { role: "assistant", content: "stopped: done" }]);
+    expect(await tapeOf(s.after)).toEqual([
+      REQ,
+      { role: "assistant", call: { name: "move", args: { state: "reconnaissance", what: "do it" } } },
+      {
+        role: "tool",
+        content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
+        tool_call_id: expect.stringMatching(/^w:move:\d+$/),
+      },
+      { role: "assistant", content: "stopped: done" },
+    ]);
   });
 
   it("decline: before [request] -> after the terminal assistant turn", async () => {
@@ -524,15 +534,15 @@ describe("crash (mock node) and prefix", () => {
     const llm = { kind: "llm" as const };
     const events: Event[] = [
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix" }, seq: 0 } },
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "green", payload: { what: "green", call: { name: "create_goal", args: { what: "green", command: "crash" } } }, seq: 1 } },
-      { type: "add_edge", edge: { id: "eg", from: "r1", to: "g1", kind: "goal", provenance: llm } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 2 } },
-      { type: "add_edge", edge: { id: "hp", from: "g1", to: "p1", kind: "plan", provenance: llm } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 3 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "reconnaissance", payload: { state: "reconnaissance", what: "green", call: { name: "move", args: { state: "reconnaissance", what: "green" } } }, seq: 1 } },
+      { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: llm } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
+      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "plan", provenance: llm } },
+      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 4 } },
       { type: "add_edge", edge: { id: "it", from: "p1", to: "i1", kind: "items", provenance: llm } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "crash", payload: { command: "crash", call: { name: "bash", args: { command: "crash" } } }, seq: 4 } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "crash", payload: { command: "crash", call: { name: "bash", args: { command: "crash" } } }, seq: 5 } },
       { type: "add_edge", edge: { id: "al", from: "i1", to: "a1", kind: "alts", provenance: llm } },
-      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "crash", payload: { command: "crash", signal: "SIGSEGV", core: "core.1", backtrace: "#0 boom" }, seq: 5 } },
+      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "crash", payload: { command: "crash", signal: "SIGSEGV", core: "core.1", backtrace: "#0 boom" }, seq: 6 } },
       { type: "add_edge", edge: { id: "ro", from: "a1", to: "o1", kind: "result", provenance: llm } },
     ];
     const state = fold(events);
@@ -547,7 +557,7 @@ describe("crash (mock node) and prefix", () => {
 
   it("a real signal death omits the exit code and surfaces the signal", async () => {
     const w = ws();
-    const res = exec(interpretation("crash", "kill -SEGV $$"), [request()], w);
+    const res = execAll(withGoal("crash", "kill -SEGV $$"), [request()], w);
     const obs = res.outcome.events
       .filter((e) => e.type === "add_node" && e.node.kind === "observation")
       .map((e) => (e as { node: { payload: Record<string, unknown> } }).node.payload)[0]!;

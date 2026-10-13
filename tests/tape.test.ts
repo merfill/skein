@@ -1,15 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import type { Event } from "../src/ir/events";
-import { fold } from "../src/ir/graph";
+import { fold, type State } from "../src/ir/graph";
 import { project, type TapeMessage } from "../src/ir/project";
+import { focusEvents } from "../src/ir/traversal";
 import type { Edge, EdgeKind, Node, NodeKind, Provenance } from "../src/ir/types";
 
+// A low-level tape test builds a tree by hand; the loop applies the deterministic focus
+// normalization (`focusEvents`) before projecting, so these tests do the same.
+function focused(state: State): State {
+  const drift = focusEvents(state);
+  return drift.length > 0 ? fold(drift, state) : state;
+}
+
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
-// (docs/ir_revision.md §5). These tests pin every construction situation: roles and order
-// per move, the goal/command pairing, the alternative marker, the non-monotone cut at
-// closure (nested), decline, the transient `query` result, ids exposed for addressability,
-// and determinism.
+// (docs/ir_semantics.md §7). These tests pin every construction situation: roles and order
+// per move, the state/command pairing, the alternative marker, the compaction of a
+// finished state, decline, the transient retrieval, ids exposed for addressability, and
+// determinism.
 
 function workNode(id: string, kind: NodeKind, label: string, seq: number, payload?: unknown): Node {
   return { id, space: "work", kind, label, ...(payload !== undefined ? { payload } : {}), seq };
@@ -28,17 +36,25 @@ function request(text: string, seq = 0): Event {
   };
 }
 
-function goal(id: string, what: string, seq: number): Event {
-  return {
-    type: "add_node",
-    node: workNode(id, "goal", what, seq, { what }),
-  };
+// A declared state (`move` mId): the state IS its goal, so `what` rides the move.
+function moved(mId: string, state: string, what: string, seq: number): Event[] {
+  return [
+    { type: "add_node", node: workNode(mId, "move", state, seq, { state, what }) },
+    { type: "add_edge", edge: edge(`em:${mId}`, "r1", mId, "move", llm) },
+  ];
 }
 
-function plan(id: string, goalId: string, itemIds: string[], seq: number): Event[] {
+function stopNode(id: string, why: string, seq: number, onId: string): Event[] {
   return [
-    { type: "add_node", node: workNode(id, "plan", `plan for ${goalId}`, seq) },
-    { type: "add_edge", edge: edge(`hp:${id}`, goalId, id, "plan", llm) },
+    { type: "add_node", node: workNode(id, "stop", why, seq, { why }) },
+    { type: "add_edge", edge: edge(`es:${id}`, onId, id, "stop", llm) },
+  ];
+}
+
+function plan(id: string, moveId: string, itemIds: string[], seq: number): Event[] {
+  return [
+    { type: "add_node", node: workNode(id, "plan", `plan for ${moveId}`, seq) },
+    { type: "add_edge", edge: edge(`hp:${id}`, moveId, id, "plan", llm) },
     ...itemIds.map(
       (itemId, index): Event => ({
         type: "add_edge",
@@ -85,32 +101,37 @@ function texts(history: readonly TapeMessage[]): string {
   return history.map((message) => message.text).join("\n");
 }
 
-describe("the tape: request and interpretation", () => {
+describe("the tape: request and state", () => {
   it("a fresh request is a single user turn, situation request", () => {
-    const context = project(fold([request("solve it")]));
+    const context = project(focused(fold([request("solve it")])));
     expect(roles(context.history)).toEqual(["user"]);
     expect(context.history[0]?.text).toBe("solve it");
     expect(context.situation).toBe("request");
   });
 
-  it("create_goal renders the goal, then the first command as a call/observation pair", () => {
+  it("move renders the state, then the first plan item as a call/result pair", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "make test", 2),
-      observation("o1", 3, { command: "make test", exitCode: 1, output: "boom" }, "make test"),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "make test", 3),
+      observation("o1", 4, { command: "make test", exitCode: 1, output: "boom" }, "make test"),
       result("eo", "a1", "o1"),
-      ...plan("p1", "g1", ["i1"], 4),
-      ...item("i1", 5, ["a1"]),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
     ]);
-    const context = project(state);
-    expect(context.situation).toBe("goal");
-    expect(roles(context.history)).toEqual(["user", "assistant", "assistant", "tool"]);
-    expect(context.history[1]?.text).toContain("[g1] create_goal:");
-    expect(context.history[1]?.text).toContain("what: green");
-    expect(context.history[2]?.text).toBe("[a1] make test");
-    expect(context.history[3]?.text).toBe("[o1] exit 1\nboom");
+    const context = project(focused(state));
+    expect(context.situation).toBe("working");
+    expect(roles(context.history)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+    ]);
+    expect(context.history[1]?.text).toContain("move: Reconnaissance");
+    expect(context.history[2]?.text).toContain("moved to Reconnaissance");
+    expect(context.history[3]?.text).toBe("[a1] make test");
+    expect(context.history[4]?.text).toBe("[o1] exit 1\nboom");
   });
 
   it("decline renders a single assistant refusal", () => {
@@ -119,7 +140,7 @@ describe("the tape: request and interpretation", () => {
       { type: "add_node", node: workNode("u1", "unactionable", "not actionable", 1, { why: "chit-chat" }) },
       { type: "add_edge", edge: edge("eu", "r1", "u1", "unactionable", llm) },
     ]);
-    const context = project(state);
+    const context = project(focused(state));
     expect(roles(context.history)).toEqual(["user", "assistant"]);
     expect(context.history[1]?.text).toBe("declined: chit-chat");
   });
@@ -129,69 +150,73 @@ describe("the tape: commands and their outcomes", () => {
   it("a successful continuation appends a new call/observation pair", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "make test", 2),
-      observation("o1", 3, { command: "make test", exitCode: 0 }, "make test"),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "make test", 3),
+      observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
-      action("a2", "read src/a.ts", 4),
-      observation("o2", 5, { ref: "file:src/a.ts", version: "v1", output: "source", start: 1, end: 1, total: 1 }, "read src/a.ts"),
+      action("a2", "read src/a.ts", 5),
+      observation("o2", 6, { ref: "file:src/a.ts", version: "v1", output: "source", start: 1, end: 1, total: 1 }, "read src/a.ts"),
       result("e2", "a2", "o2"),
-      ...plan("p1", "g1", ["i1", "i2"], 6),
-      ...item("i1", 7, ["a1"]),
-      ...item("i2", 8, ["a2"]),
+      ...plan("p1", "m1", ["i1", "i2"], 7),
+      ...item("i1", 8, ["a1"]),
+      ...item("i2", 9, ["a2"]),
     ]);
-    const context = project(state);
-    expect(roles(context.history)).toEqual(["user", "assistant", "assistant", "tool", "assistant", "tool"]);
-    expect(context.history[5]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
+    const context = project(focused(state));
+    expect(roles(context.history)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+    ]);
+    expect(context.history[6]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
   });
 
   it("renders an edit's mutate (no observation) as a mutated file", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "edit src/a.ts", 2),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "edit src/a.ts", 3),
       { type: "add_edge", edge: edge("em", "a1", "file:src/a.ts", "mutates", llm) },
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-      ...plan("p1", "g1", ["i1"], 3),
-      ...item("i1", 4, ["a1"]),
+      ...plan("p1", "m1", ["i1"], 4),
+      ...item("i1", 5, ["a1"]),
     ]);
-    const context = project(state);
-    expect(context.history[3]?.text).toBe("[a1] mutated src/a.ts");
+    const context = project(focused(state));
+    expect(context.history[4]?.text).toBe("[a1] mutated src/a.ts");
   });
 
   it("renders a refused command as an observation with the reason", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "read src/a.ts", 2),
-      observation("o1", 3, { failed: true, refused: true, output: "repeated_action: o0 already has it" }),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "read src/a.ts", 3),
+      observation("o1", 4, { failed: true, refused: true, output: "repeated_action: o0 already has it" }),
       result("e1", "a1", "o1"),
-      ...plan("p1", "g1", ["i1"], 4),
-      ...item("i1", 5, ["a1"]),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
     ]);
-    const context = project(state);
-    expect(context.history[3]?.text).toBe("[o1] repeated_action: o0 already has it");
+    const context = project(focused(state));
+    expect(context.history[4]?.text).toBe("[o1] repeated_action: o0 already has it");
   });
 
   it("marks an alternative with its previous attempt and reason", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "run one", 2),
-      observation("o1", 3, { command: "run one", exitCode: 1 }, "run one"),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "run one", 3),
+      observation("o1", 4, { command: "run one", exitCode: 1 }, "run one"),
       result("e1", "a1", "o1"),
-      action("a2", "run two", 4),
-      observation("o2", 5, { command: "run two", exitCode: 0 }, "run two"),
+      action("a2", "run two", 5),
+      observation("o2", 6, { command: "run two", exitCode: 0 }, "run two"),
       result("e2", "a2", "o2"),
-      ...plan("p1", "g1", ["i1"], 6),
-      ...item("i1", 7, ["a1", "a2"]),
+      ...plan("p1", "m1", ["i1"], 7),
+      ...item("i1", 8, ["a1", "a2"]),
     ]);
-    const context = project(state);
-    const marker = context.history[4]?.text ?? "";
+    const context = project(focused(state));
+    const marker = context.history[5]?.text ?? "";
     expect(marker).toContain('alternative to step "step"');
     expect(marker).toContain('previous attempt: "run one"');
     expect(marker).toContain("exit 1");
@@ -199,117 +224,88 @@ describe("the tape: commands and their outcomes", () => {
   });
 });
 
-describe("the tape: sub-goals and the non-monotone cut", () => {
-  function parentWithSubGoal(subClosed: boolean): Event[] {
-    const events: Event[] = [
-      request("do it", 0),
-      goal("g1", "parent", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "make test", 2),
-      observation("o1", 3, { command: "make test", exitCode: 1 }, "make test"),
-      result("e1", "a1", "o1"),
-      goal("g2", "sub goal", 4),
-      action("a2", "read src/a.ts", 5),
-      observation("o2", 6, { ref: "file:src/a.ts", version: "v1", output: "SUB-BODY" }, "read src/a.ts"),
-      result("e2", "a2", "o2"),
-      ...plan("p2", "g2", ["i2"], 7),
-      ...item("i2", 8, ["a2"]),
-      ...plan("p1", "g1", ["i1"], 9),
-      ...item("i1", 10, ["a1", "g2"]),
-    ];
-    if (subClosed) {
-      events.push(
-        { type: "add_node", node: workNode("s2", "stop", "done", 11, { why: "sub done" }) },
-        { type: "add_edge", edge: edge("es", "g2", "s2", "stop", llm) },
-      );
-    }
-    return events;
-  }
-
-  it("renders an open sub-goal inline, after a marker", () => {
-    const context = project(fold(parentWithSubGoal(false)));
-    const body = texts(context.history);
-    expect(body).toContain("[g2] create_goal:");
-    expect(body).toContain("what: sub goal");
-    expect(body).toContain("SUB-BODY");
-    // The sub-goal is the current alternative of the step, so it carries a marker.
-    expect(body).toContain("alternative to step");
-  });
-
-  it("collapses a closed sub-goal to a single closure message and removes its internals", () => {
-    const context = project(fold(parentWithSubGoal(true)));
-    const body = texts(context.history);
-    expect(body).toContain("stopped: sub done");
-    expect(body).not.toContain("what: sub goal");
-    expect(body).not.toContain("SUB-BODY");
-    // The parent's own messages remain.
-    expect(body).toContain("what: parent");
-    expect(body).toContain("[a1] make test");
-  });
-
-  it("cuts a middle goal while keeping the outer arm", () => {
+describe("the tape: the observation instruction", () => {
+  it("flags the observation instruction after a tool result in an open state", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "outer", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      goal("g2", "middle", 2),
-      { type: "add_node", node: workNode("s2", "stop", "done", 3, { why: "middle done" }) },
-      { type: "add_edge", edge: edge("es", "g2", "s2", "stop", llm) },
-      action("a1", "run after", 4),
-      observation("o1", 5, { command: "run after", exitCode: 0 }, "run after"),
+      ...moved("m1", "reconnaissance", "green", 1),
+      action("a1", "make test", 3),
+      observation("o1", 4, { command: "make test", exitCode: 0, output: "ok" }, "make test"),
       result("e1", "a1", "o1"),
-      ...plan("p1", "g1", ["i1"], 6),
-      ...item("i1", 7, ["g2", "a1"]),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
     ]);
-    const context = project(state);
+    const context = project(focused(state));
+    expect(context.situation).toBe("working");
+    // The observation reminder restates the current state's goal, criterion and constraints.
+    expect(context.result).toMatch(/Tool result above/);
+    expect(context.result).toMatch(/State: Reconnaissance/);
+    expect(context.result).toMatch(/Goal: green/);
+    expect(context.result).toMatch(/Done when: /);
+    // A fresh state (no result yet) carries no observation instruction.
+    const fresh = project(focused(fold([request("do it", 0), ...moved("m1", "reconnaissance", "green", 1)])));
+    expect(fresh.result).toBeUndefined();
+  });
+});
+
+describe("the tape: the compaction of a finished state", () => {
+  it("a finished state leaves one line, carried by the next move", () => {
+    const state = fold([
+      request("do it", 0),
+      ...moved("m1", "localization", "find it", 1),
+      action("a1", "grep x", 3),
+      observation("o1", 4, { ref: "file:src/a.ts", version: "v1", output: "FOUND-BODY" }, "grep x"),
+      result("e1", "a1", "o1"),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
+      ...stopNode("s1", "named the line", 7, "m1"),
+      ...moved("m2", "patch", "fix it", 8),
+    ]);
+    const context = project(focused(state));
     const body = texts(context.history);
-    expect(body).toContain("stopped: middle done");
-    expect(body).not.toContain("what: middle");
-    // The command after the closed sub-goal is a newer alternative of the same step: marked.
-    expect(body).toContain("alternative to step");
-    expect(body).toContain("[a1] run after");
+    // The finished state's command has left the tape...
+    expect(body).not.toContain("FOUND-BODY");
+    // ...only its compaction line remains, carried by the move that left it.
+    expect(body).toContain("State Localization: finished — named the line");
+    expect(context.situation).toBe("plan");
   });
 });
 
 describe("the tape: edge cases", () => {
-  it("a stopped root goal leaves only the closure message (the run ends there)", () => {
+  it("a stopped state without a successor leaves only the move and its closure", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-      action("a1", "make test", 2),
-      observation("o1", 3, { command: "make test", exitCode: 0 }, "make test"),
+      ...moved("m1", "localization", "gone", 1),
+      action("a1", "make test", 3),
+      observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
-      ...plan("p1", "g1", ["i1"], 4),
-      ...item("i1", 5, ["a1"]),
-      { type: "add_node", node: workNode("s1", "stop", "done", 6, { why: "all green" }) },
-      { type: "add_edge", edge: edge("es", "g1", "s1", "stop", llm) },
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
+      ...stopNode("s1", "all green", 7, "m1"),
     ]);
-    const context = project(state);
-    expect(roles(context.history)).toEqual(["user", "assistant"]);
-    expect(context.history[1]?.text).toBe("stopped: all green");
-    expect(texts(context.history)).not.toContain("what: green");
+    const context = project(focused(state));
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
+    expect(texts(context.history)).toContain("stopped: all green");
   });
 
-  it("a goal without a plan still renders its create_goal message", () => {
+  it("a declared state without a plan renders move + confirmation", () => {
     const state = fold([
       request("do it", 0),
-      goal("g1", "green", 1),
-      { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
+      ...moved("m1", "reconnaissance", "map", 1),
     ]);
-    const context = project(state);
-    expect(context.situation).toBe("goal");
-    expect(roles(context.history)).toEqual(["user", "assistant"]);
-    expect(context.history[1]?.text).toContain("[g1] create_goal:");
-    expect(context.history[1]?.text).toContain("what: green");
+    const context = project(focused(state));
+    expect(context.situation).toBe("plan");
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool"]);
+    expect(context.history[1]?.text).toContain("move: Reconnaissance");
   });
 });
 
 describe("the tape: transient retrieval and determinism", () => {
-  it("appends a recall result as a transient assistant/tool pair", () => {
-    const state = fold([request("do it"), goal("g1", "green", 1), { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) }]);
-    const context = project(state, {
+  it("appends a retrieval result as a transient assistant/tool pair", () => {
+    const state = fold([request("do it"), ...moved("m1", "reconnaissance", "green", 1)]);
+    const context = project(focused(state), {
       retrieval: {
         call: "recall { id: obs:5 }",
         name: "recall",
@@ -317,28 +313,27 @@ describe("the tape: transient retrieval and determinism", () => {
         output: "the stored body",
       },
     });
-    expect(roles(context.history)).toEqual(["user", "assistant", "assistant", "tool"]);
-    expect(context.history[2]?.text).toBe("recall { id: obs:5 }");
-    expect(context.history[2]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
-    expect(context.history[3]?.text).toBe("the stored body");
-    expect(context.history[3]?.callId).toBe("call:retrieval");
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+    expect(context.history[3]?.text).toBe("recall { id: obs:5 }");
+    expect(context.history[3]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
+    expect(context.history[4]?.text).toBe("the stored body");
+    expect(context.history[4]?.callId).toBe("call:retrieval");
   });
 
   it("is deterministic: same events, same tape", () => {
     const events = parentEvents();
-    expect(JSON.stringify(project(fold(events)))).toBe(JSON.stringify(project(fold(events))));
+    expect(JSON.stringify(project(focused(fold(events))))).toBe(JSON.stringify(project(focused(fold(events)))));
   });
 });
 
 function parentEvents(): Event[] {
   return [
     request("do it", 0),
-    goal("g1", "green", 1),
-    { type: "add_edge", edge: edge("eg", "r1", "g1", "goal", llm) },
-    action("a1", "make test", 2),
-    observation("o1", 3, { command: "make test", exitCode: 0 }, "make test"),
+    ...moved("m1", "reconnaissance", "green", 1),
+    action("a1", "make test", 3),
+    observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
     result("e1", "a1", "o1"),
-    ...plan("p1", "g1", ["i1"], 4),
-    ...item("i1", 5, ["a1"]),
+    ...plan("p1", "m1", ["i1"], 5),
+    ...item("i1", 6, ["a1"]),
   ];
 }

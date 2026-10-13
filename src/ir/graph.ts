@@ -62,15 +62,6 @@ export function planOf(state: State, goalId: string): string | undefined {
   return undefined;
 }
 
-// The goal a request is interpreted as (`goal` edge). The interpretation is fixed for
-// now (one goal), so there is at most one (docs/plans/request_goal_plan.md).
-export function goalOf(state: State, requestId: string): string | undefined {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "goal" && edge.from === requestId) return edge.to;
-  }
-  return undefined;
-}
-
 // The item that owns a node as one of its alternatives (`alts` edge), if any. An action or
 // sub-goal belongs to exactly one item (docs/ir_revision.md §2.2).
 export function itemOf(state: State, nodeId: string): string | undefined {
@@ -89,18 +80,18 @@ export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefi
   return payload?.witness;
 }
 
-// The `stop` node a goal is closed by (`stop` relation, goal → stop), if any. This is a
-// control fact (the arm is done), not truth. The closure (and its `why`) lives on the goal;
-// it is no longer a plan item (docs/ir_revision.md §2.2).
-export function stopOf(state: State, goalId: string): string | undefined {
+// The `stop` node a state is closed by (`stop` relation, move → stop), if any. This is a
+// control fact (the arm is done), not truth. The closure (and its `why`) lives on the state's
+// `move`; it is not a plan item (docs/ir_semantics.md §2.2).
+export function stopOf(state: State, moveId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "stop" && edge.from === goalId) return edge.to;
+    if (edge.kind === "stop" && edge.from === moveId) return edge.to;
   }
   return undefined;
 }
 
-export function hasStopped(state: State, goalId: string): boolean {
-  return stopOf(state, goalId) !== undefined;
+export function hasStopped(state: State, moveId: string): boolean {
+  return stopOf(state, moveId) !== undefined;
 }
 
 // The request's `unactionable` node, if the doxa declined to formulate a goal for it
@@ -187,9 +178,6 @@ function applyEvent(state: State, event: Event): void {
       if (event.node.kind === "request") {
         state.rootId = event.node.id;
         state.branch = [event.node.id];
-      } else if (event.node.kind === "goal" && state.rootId === undefined) {
-        state.rootId = event.node.id;
-        state.branch = [event.node.id];
       }
       const focus = currentFocus(state);
       if (focus !== undefined) state.focusOf.set(event.node.id, focus);
@@ -207,8 +195,9 @@ function applyEvent(state: State, event: Event): void {
     }
     case "add_edge": {
       state.edges.set(event.edge.id, event.edge);
-      // Ordered children: a plan's items (`items`) and an item's alternatives (`alts`).
-      if (event.edge.kind === "items" || event.edge.kind === "alts") {
+      // Ordered children: a request's states (`move`), a plan's items (`items`) and an
+      // item's alternatives (`alts`).
+      if (event.edge.kind === "move" || event.edge.kind === "items" || event.edge.kind === "alts") {
         const list = state.children.get(event.edge.from);
         if (list) list.push(event.edge.to);
         else state.children.set(event.edge.from, [event.edge.to]);

@@ -1,10 +1,11 @@
 import { actionExecuted, hasStopped, type State } from "./graph";
+import { moveIsland } from "./traversal";
 
 // A semantic progress key: new knowledge is a changed node status, a new mutation, a new
 // distinct observation, or a new distinct negative signature. Observations are keyed by
 // content (kind + label), not by node id, and repeated failures/refusals collapse, so a
-// loop of identical or uninformative moves does not reset the stall counter (§2.7–§2.8). A
-// goal's authored `state` is part of the key, so entering a new island is progress.
+// loop of identical or uninformative moves does not reset the stall counter (§2.8). A state's
+// authored `state` is part of the key, so entering a new island is progress.
 export function knowledgeKey(state: State): string {
   const parts = new Set<string>();
   for (const node of state.nodes.values()) {
@@ -14,11 +15,9 @@ export function knowledgeKey(state: State): string {
       const payload = node.payload as { command?: unknown } | undefined;
       const command = typeof payload?.command === "string" ? payload.command : node.label;
       parts.add(`action:${command}:${actionExecuted(state, node.id)}`);
-    } else if (node.kind === "goal") {
-      const island = (node.payload as { state?: unknown } | undefined)?.state;
-      parts.add(
-        `goal:${node.id}:${hasStopped(state, node.id)}:${typeof island === "string" ? island : ""}`,
-      );
+    } else if (node.kind === "move") {
+      const island = moveIsland(state, node.id);
+      parts.add(`move:${node.id}:${typeof island === "string" ? island : ""}:${hasStopped(state, node.id)}`);
     } else {
       parts.add(`${node.id}:${hasStopped(state, node.id)}`);
     }

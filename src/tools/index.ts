@@ -6,15 +6,16 @@ import {
   actionExecuted,
   actionSucceeded,
   childrenOf,
+  currentFocus,
   currentVersion,
   fold,
   itemOf,
   planOf,
   type State,
 } from "../ir/graph";
-import type { IslandId } from "../ir/islands";
-import { currentGoalId, firstUnfulfilledItem } from "../ir/traversal";
-import type { EdgeKind, Provenance, WitnessEntry } from "../ir/types";
+import { isTerminalIsland } from "../ir/islands";
+import { firstUnfulfilledItem, moveIsland } from "../ir/traversal";
+import type { EdgeKind, MovePayload, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
@@ -739,25 +740,25 @@ export function executeAction(
     });
   };
 
-  const ensurePlan = (goalId: string): string => {
-    const existing = planOf(state, goalId);
+  const ensurePlan = (moveId: string): string => {
+    const existing = planOf(state, moveId);
     if (existing !== undefined) return existing;
     const planSeq = next();
     const planId = `w:plan:${planSeq}`;
     events.push({
       type: "add_node",
-      node: { id: planId, space: "work", kind: "plan", label: `plan for ${goalId}`, seq: planSeq },
+      node: { id: planId, space: "work", kind: "plan", label: `plan for ${moveId}`, seq: planSeq },
     });
-    addEdge({ kind: "llm" }, goalId, planId, "plan");
+    addEdge({ kind: "llm" }, moveId, planId, "plan");
     return planId;
   };
 
-  const buildItem = (goalId: string): string => {
+  const buildItem = (moveId: string): string => {
     const itemSeq = next();
     const itemId = `w:item:${itemSeq}`;
     events.push({
       type: "add_node",
-      node: { id: itemId, space: "work", kind: "item", label: `item for ${goalId}`, seq: itemSeq },
+      node: { id: itemId, space: "work", kind: "item", label: `item for ${moveId}`, seq: itemSeq },
     });
     return itemId;
   };
@@ -779,46 +780,43 @@ export function executeAction(
     return id;
   };
 
-  // A goal is born with its plan: one item, seeded with the first command by the caller
-  // (docs/ir_revision.md §2.3, §3.1).
-  const buildGoal = (spec: { what: string; state: IslandId; call?: unknown }): {
-    goalId: string;
-    itemId: string;
-  } => {
-    const goalSeq = next();
-    const id = `w:goal:${goalSeq}`;
+  // A state: the doxa declared the island of work it will work in AND the state's goal text
+  // (`what`). The states are the request's flat children (`move` edges); a new move is a
+  // sibling of the previous state (docs/ir_semantics.md §4.1). The plan hangs directly off
+  // the `move` — there is no goal node (docs/plans/goal_into_move_plan.md) — and is seeded
+  // by the first `apply`.
+  const buildMove = (spec: MovePayload & { call?: unknown }): string => {
+    const moveSeq = next();
+    const id = `w:move:${moveSeq}`;
+    const payload: Record<string, unknown> = { state: spec.state, what: spec.what };
+    if (spec.note !== undefined && spec.note !== "") payload.note = spec.note;
+    if (spec.call !== undefined) payload.call = spec.call;
     events.push({
       type: "add_node",
       node: {
         id,
         space: "work",
-        kind: "goal",
-        label: spec.what,
-        payload: {
-          what: spec.what,
-          state: spec.state,
-          ...(spec.call !== undefined ? { call: spec.call } : {}),
-        },
-        seq: goalSeq,
+        kind: "move",
+        label: spec.what !== "" ? spec.what : spec.state,
+        payload,
+        seq: moveSeq,
       },
     });
-    const planId = ensurePlan(id);
-    const itemId = buildItem(id);
-    addEdge({ kind: "llm" }, planId, itemId, "items");
-    return { goalId: id, itemId };
+    return id;
   };
 
-  // Place a move (an action or a sub-goal) under the goal (docs/ir_revision.md §4): as a new
-  // alternative of the current (first unfulfilled) item, or as a new plan item when the plan is
-  // exhausted.
-  const placeMove = (goalId: string, nodeId: string): void => {
-    const item = firstUnfulfilledItem(state, goalId);
+  // Place a command under the focused state (docs/ir_semantics.md §2.7): as a new alternative
+  // of the current (first unfulfilled) item, or as a new plan item when the plan is
+  // exhausted — and, on the very first `apply` of a state, it creates the plan and its first
+  // item.
+  const placeMove = (moveId: string, nodeId: string): void => {
+    const item = firstUnfulfilledItem(state, moveId);
     if (item !== undefined) {
       addEdge({ kind: "llm" }, item, nodeId, "alts");
       return;
     }
-    const planId = ensurePlan(goalId);
-    const itemId = buildItem(goalId);
+    const planId = ensurePlan(moveId);
+    const itemId = buildItem(moveId);
     addEdge({ kind: "llm" }, planId, itemId, "items");
     addEdge({ kind: "llm" }, itemId, nodeId, "alts");
   };
@@ -998,43 +996,33 @@ export function executeAction(
       };
     }
 
-    case "create_goal": {
-      const current = currentGoalId(state);
-      if (current === undefined) return fail("create goal failed: no current goal");
-      const currentNode = state.nodes.get(current);
-      const atRequest = currentNode?.kind === "request";
-      const { goalId } = buildGoal({
-        what: action.what,
+    case "move": {
+      // Declare the state: a `move` node (carrying the state's goal text) hung off the
+      // request as a flat child (`move` relation). The states are siblings, never nested;
+      // the focus descends into the new state (docs/ir_semantics.md §4.1). The plan is left
+      // empty — the next turn's first `apply` seeds it (docs/plans/goal_into_move_plan.md).
+      const root = state.rootId;
+      if (root === undefined) return fail("move failed: no request");
+      const moveId = buildMove({
         state: action.state,
+        what: action.what,
+        note: action.note,
         call: modelCall(action),
       });
-      if (atRequest) {
-        // The request is interpreted as this goal (`goal` relation); the interpretation is fixed.
-        addEdge({ kind: "llm" }, current, goalId, "goal");
-      } else {
-        // A sub-goal on an open goal (I6): the current item's newest alternative, or a new plan
-        // item when the plan is exhausted (docs/ir_revision.md §4).
-        placeMove(current, goalId);
-      }
-      events.push(...descendTo(state, current, goalId));
-      // The first plan item — ANY tool, not only a shell command — runs at once as an
-      // alternative of the goal's first item, through the ordinary apply path
-      // (docs/ir_semantics.md §4.1). The nested call resumes numbering from the outer counter,
-      // so node ids are unchanged.
-      const after = fold(events, state);
-      const seed = executeAction(
-        { operator: "apply", action: action.action },
-        { ...after, seq: counter },
-        workspace,
-        turn,
-      );
-      return { ...seed, events: [...events, ...seed.events] };
+      addEdge({ kind: "llm" }, root, moveId, "move");
+      events.push(...descendTo(state, root, moveId));
+      return {
+        events,
+        turn: proposalTurn(`moved to ${action.state}`, moveId),
+        done: false,
+        stopReason: null,
+      };
     }
 
     case "decline": {
-      // Decline to formulate a goal: the request's intent is not actionable. Records an
-      // `unactionable` node under the request (edge `no_goal`) and ends the run — no goal,
-      // no fake criterion (docs/plans/request_goal_plan.md).
+      // Decline to formulate a state: the request's intent is not actionable. Records an
+      // `unactionable` node under the request (edge `unactionable`) and ends the run
+      // (docs/plans/request_goal_plan.md).
       const seq = next();
       const id = `w:unactionable:${seq}`;
       events.push({
@@ -1048,7 +1036,7 @@ export function executeAction(
           seq,
         },
       });
-      const focus = currentGoalId(state);
+      const focus = currentFocus(state);
       if (focus !== undefined) addEdge({ kind: "llm" }, focus, id, "unactionable");
       return {
         events,
@@ -1059,15 +1047,17 @@ export function executeAction(
     }
 
     case "stop": {
-      // The doxa's terminal move, on a goal: a `stop` node hung off the goal via the `stop`
-      // relation records the closure and its reason. The engine returns to the request on
-      // the next projection and the run ends there. There is no `stop` on the request
-      // (docs/ir_revision.md §3.4).
-      const focus = currentGoalId(state);
-      const focusNode = focus !== undefined ? state.nodes.get(focus) : undefined;
-      if (focusNode?.kind !== "goal" || focus === undefined) {
-        return fail("stop applies to a goal; the request ends when its goal is stopped");
+      // The doxa's closure. On an open state a `stop` node hung off the `move` via the `stop`
+      // relation records the closure; the engine returns to the state and the doxa makes the
+      // transition decision. On the terminal state (`handoff`, which has no plan) the `stop`
+      // ends the request (docs/ir_semantics.md §4.4).
+      const focus = currentFocus(state);
+      if (focus === undefined) return fail("stop applies to an open state or the terminal state");
+      const focusNode = state.nodes.get(focus);
+      if (focusNode?.kind !== "move") {
+        return fail("stop applies to an open state or the terminal state");
       }
+      const terminal = isTerminalIsland(moveIsland(state, focus) ?? "");
       const seq = next();
       const stopId = `w:stop:${seq}`;
       events.push({
@@ -1082,9 +1072,17 @@ export function executeAction(
         },
       });
       addEdge({ kind: "llm" }, focus, stopId, "stop");
+      if (terminal) {
+        return {
+          events,
+          turn: proposalTurn(`stopped: ${action.why ?? "done"}`, stopId),
+          done: true,
+          stopReason: "request_addressed",
+        };
+      }
       return {
         events,
-        turn: proposalTurn(`stopped goal: ${focus}`, stopId),
+        turn: proposalTurn(`stopped state: ${focus}`, stopId),
         done: false,
         stopReason: null,
       };
@@ -1092,8 +1090,8 @@ export function executeAction(
 
     case "apply": {
       const apply = action.action;
-      const focus = currentGoalId(state);
-      if (focus === undefined) return fail("apply failed: no current goal");
+      const focus = currentFocus(state);
+      if (focus === undefined) return fail("apply failed: no current state");
       const command = commandOf(apply);
       // Every attempt leaves an action node (docs/ir_revision.md §4); it is placed by the
       // outcome of the current item (new alternative, or a new plan item when exhausted).

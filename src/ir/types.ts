@@ -6,7 +6,7 @@ export const SPACES = ["work", "artifact"] as const;
 
 export const WORK_KINDS = [
   "request",
-  "goal",
+  "move",
   "plan",
   "item",
   "action",
@@ -53,17 +53,23 @@ export type Provenance =
     }
   | { kind: "list"; path?: string; include?: string; exclude?: string };
 
-export interface GoalPayload {
-  what: string;
-  // The island of work the goal is entered in — an authored label (docs/ir_semantics.md §2.5).
+// The state the doxa declared it will work in (docs/ir_semantics.md §2.5). `state` is
+// authored and never changes; `what` is the state's own goal text (a state IS its goal —
+// there is no separate goal node, docs/plans/goal_into_move_plan.md); `note` is an optional
+// one-line summary of the state just finished, carried into its compaction line
+// (docs/plans/state_protocol_plan.md §4a).
+export interface MovePayload {
   state: IslandId;
+  what: string;
+  note?: string;
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):
+// a request's states hang off it via `move`; a state's plan hangs off the `move` via `plan`;
 // plan items hang off a plan via `items`; an item's alternatives hang off the item via
-// `alts`; a goal's closure hangs off the goal via `stop`.
+// `alts`; a state's (the terminal move's) closure hangs off it via `stop`.
 export const EDGE_KINDS = [
-  "goal",
+  "move",
   "unactionable",
   "plan",
   "stop",

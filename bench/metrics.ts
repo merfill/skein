@@ -124,20 +124,20 @@ export function graphCounts(proposals: Action[], events: readonly Event[]): Reco
   const nodes = fold(events).nodes;
   const byKind: Record<string, number> = {};
   for (const node of nodes.values()) byKind[node.kind] = (byKind[node.kind] ?? 0) + 1;
-  let createGoal = 0;
+  let moves = 0;
   let edits = 0;
   let checks = 0;
   for (const action of proposals) {
-    if (action.operator === "create_goal") createGoal++;
+    if (action.operator === "move") moves++;
     else if (action.operator === "apply" && action.action.tool === "edit") edits++;
     else if (action.operator === "apply" && action.action.tool === "bash") checks++;
   }
   return {
-    createGoal,
+    moves,
     edits,
     checks: byKind.check ?? 0,
     checkProposals: checks,
-    goals: byKind.goal ?? 0,
+    states: byKind.move ?? 0,
     plans: byKind.plan ?? 0,
     alternatives: byKind.alternatives ?? 0,
     actions: byKind.action ?? 0,

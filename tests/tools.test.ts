@@ -157,7 +157,7 @@ describe("resolveBody", () => {
 
   it("returns undefined for a node with no body", () => {
     const noBody = fold([
-      { type: "add_node", node: { id: "g1", space: "work", kind: "goal", label: "g", seq: 0 } },
+      { type: "add_node", node: { id: "g1", space: "work", kind: "move", label: "g", seq: 0 } },
     ]);
     expect(resolveBody(noBody, "g1", tempWorkspace())).toBeUndefined();
   });

@@ -21,8 +21,8 @@ original and a Russian mirror named with the `_ru` suffix.
   tree and the context across execution contexts (a fix, a revision, a give-up, a
   decomposed step, a non-decisive run, the world).
 - [ir_operations.md](ir_operations.md) · [RU](ir_operations_ru.md) — the operator registry
-  (`OP-CG`, `OP-AP`, `TR`, `DER`, `REF`, ...). The coverage gate reads this file; keep the
-  ids in sync with the tests.
+  (`OP-MV`, `OP-CG`, `OP-AP`, `TR`, `DER`, `REF`, ...). The coverage gate reads this file; keep
+  the ids in sync with the tests.
 - [projection.md](projection.md) · [RU](projection_ru.md) — the context projection: what the
   model sees each turn and why.
 - [tools.md](tools.md) · [RU](tools_ru.md) — the tool contract.
@@ -54,11 +54,12 @@ original and a Russian mirror named with the `_ru` suffix.
   — reduce the goal to its minimal, monotone shape (planned).
 - [plans/state_protocol_plan.md](plans/state_protocol_plan.md) ·
   [RU](plans/state_protocol_plan_ru.md) — **the state protocol redesign**: states as the
-  skeleton of the walk, `move` + `create_goal`, a flat plan, a forced transition on `stop`, a
-  terminal state (planned, next big work).
+  skeleton of the walk, `move { state, what }` (a state IS its goal), a flat plan, a forced
+  transition on `stop`, a terminal state (settled; the follow-on is
+  [plans/goal_into_move_plan.md](plans/goal_into_move_plan.md)).
 - [plans/state_transitions_plan.md](plans/state_transitions_plan.md) ·
-  [RU](plans/state_transitions_plan_ru.md) — make `create_goal` the state-change move
-  (superseded by the state protocol plan).
+  [RU](plans/state_transitions_plan_ru.md) — make the state's goal the state-change move
+  (superseded by the state protocol and goal-into-move plans).
 - [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
   — observation of changes outside the engine (a/b done, c open).
 
@@ -69,8 +70,8 @@ original and a Russian mirror named with the `_ru` suffix.
 - [plans/archive/stop_closure_plan.md](plans/archive/stop_closure_plan.md) · [RU](plans/archive/stop_closure_plan_ru.md)
   — one closure (`stop`), checks as observations, no arbiter (done).
 - [plans/archive/request_goal_plan.md](plans/archive/request_goal_plan.md) · [RU](plans/archive/request_goal_plan_ru.md)
-  — `has_goal` (one goal per request), `unactionable`, `stop` inside the plan, no `chosen`
-  (done).
+  — one interpretation per request, `unactionable`, `stop` inside the plan, no `chosen`
+  (done; superseded by the state / `move` model).
 - [plans/archive/logos_roadmap_plan.md](plans/archive/logos_roadmap_plan.md) · [RU](plans/archive/logos_roadmap_plan_ru.md)
   — the earlier logos roadmap (modes, `cited`, `Revision`); superseded by the IR
   semantics, kept as history.

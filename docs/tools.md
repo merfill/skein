@@ -1,9 +1,9 @@
 # Skein — tools and the calling contract (proposal)
 
 > **Note (IR revision folded).** The tool input shapes below still hold, but the effects
-> changed: `stop` records a relation on the goal (it no longer appends a plan item), and the
-> context is a message tape (`docs/ir_semantics.md` §7, `docs/projection.md`). The as-built is
-> `docs/ir.md`.
+> changed: `stop` records a relation on the state's `move` (it no longer appends a plan item),
+> and the context is a message tape (`docs/ir_semantics.md` §7, `docs/projection.md`). The
+> as-built is `docs/ir.md`.
 
 > Russian mirror — `docs/tools_ru.md`.
 >
@@ -47,29 +47,30 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 
 | Operator | Purpose |
 |---|---|
-| `create_goal` | introduce a goal (the request's interpretation — exactly once — or a subgoal) with a plan |
-| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch` |
-| `stop` | the sole closure: finish the focused goal (no criterion gate) |
+| `move` | declare the state (island of work) to work in AND its goal `what` — the automaton's transition; the plan hangs off the `move` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch`; the first `apply` after a `move` seeds the state's plan |
+| `stop` | the sole closure: finish the state's `move` (or the terminal `move`; no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
 
-### 2.1 `create_goal { what, state, action }`
+### 2.1 `move { state, what, note? }`
 
-- `what` — what to achieve; non-empty.
-- `state` — the island of work the goal is entered in, one of the names the base prompt lists
+- `state` — the island of work to work in, one of the names the base prompt lists
   (`reconnaissance`, `localization`, `patch`, `verification`, …); an authored label, never a
-  gate.
-- `action` — the **first plan item**: **any tool** (`read`/`grep`/`list`/`edit`/`write`/`bash`/
-  `webfetch`/`apply_patch`); the engine runs it now. A `bash` action runs **from the workspace
-  root** and takes a `cd <dir> &&` prefix in a subdirectory
-  (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is stated in B6 and in the
-  `create_goal` `description`.
+  gate. The first `move` picks the opening state; later moves pick the next one (only after the
+  current state is `stop`ped).
+- `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
+  the terminal `handoff` state (which has no goal).
+- `note?` — an optional one-line summary of the state just finished; it rides into that state's
+  compaction line on the tape.
 
-Instruction: at a request node it creates the interpretation — **exactly once**: the
-request's interpretation is FIXED (a `has_goal` edge), so the `what` must be chosen
-deliberately and can never be re-proposed or the request re-interpreted. At an open goal it
-starts a sub-goal for the next state (a new alternative); the focus descends into it. `action`
-is not a special "step" — it is simply the first plan item.
+Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
+focus becomes a `move` node and the plan hangs directly off it. The next move is the state's
+**first plan item** — an ordinary tool call (`apply`), not a dedicated operator. A `bash` item
+runs **from the workspace root** and takes a `cd <dir> &&` prefix in a subdirectory
+(`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is stated in the request
+instruction and in the `move` `description`. The states are **flat children of the request**
+(`move` relation) — never nested. A `move` while a state is open is refused (`state_open`).
 
 ### 2.2 `apply { action }`
 
@@ -105,19 +106,20 @@ gone — the model never used them.
 
 ### 2.4 `stop { why? }`
 
-The doxa's terminal move and the sole closure: it finishes the focused **goal**. The engine
-appends a `stop` node as the goal's **last plan item** and records a `has_stopped` edge
-goal→stop (the closure and its reason sit in the plan); it then returns to the request and
-the run ends. There is **no criterion gate**: `stop` is accepted on an open goal (cycle /
-premature-stop detection is deferred). There is **no** `stop` on the request: the
-request/run ends when its goal is stopped, never by a `stop` of its own.
+The doxa's terminal move and the sole closure. On an open state it finishes that state: the
+engine hangs a `stop` node off the state's `move` (a `stop` relation, not a plan item;
+`hasStopped` is the derived fact), and the doxa then `move`s to the next state. On the **terminal move** (`hand-off`, which has no
+`what`) it hangs the `stop` node off the `move` and ends the request.
+There is **no criterion gate**: `stop` is accepted on an open state (cycle / premature-stop
+detection is deferred). There is **no** `stop` on the request: the run ends when the terminal
+move is stopped, never by a `stop` of its own.
 
 ### 2.5 `decline { why? }`
 
 Declines to formulate a goal: the request's intent is genuinely not actionable (chit-chat,
-no task). It records an `unactionable` node under the request (a `no_goal` edge) and ends
-the run. Available only while the request has no interpretation yet (before `create_goal`);
-give `why`. Never invent a goal just to close such a request.
+no task). It records an `unactionable` node under the request (`unactionable` relation) and ends
+the run. Available only while the request has no `move` yet (before the first state); give
+`why`. Never invent a state just to close such a request.
 
 ---
 
@@ -203,7 +205,7 @@ content. The model asks for 120 lines — it sees ~8.
   there instead of re-reading a file it already read (which the repeat guard refuses).
 - A run that produced **no `exitCode`** (a timeout) is **not** a repeat: the timeout brought
   no knowledge, so the same command may be repeated. Its `exitCode` is ordinary output, not
-  a closure oracle — a goal is closed only by `stop`.
+  a closure oracle — a state is closed only by `stop`.
 - A run killed by a **signal** (a crash, not a controlled exit) carries `signal` (e.g.
   `SIGSEGV`) — never a bare nonzero exit. The wrapper raises `ulimit -c unlimited`, so
   when the platform writes a core the engine finds the newest `core*` in the workspace
@@ -258,7 +260,7 @@ bare recall of an id already in view is refused as redundant.
   poll. The `fsWorkspace` job API (`startJob`/`pollJob`, `.skein/jobs/<id>.{out,err,code}`)
   remains an engine/test seam but is not reachable from a proposal.
 - stdout and stderr stay in **separate** logs (the §4.3 rule holds). A run is never a
-  closure oracle; a goal is closed only by `stop`.
+  closure oracle; a state is closed only by `stop`.
 
 ---
 
@@ -273,7 +275,7 @@ reflect the real limits. Proposed:
       build/test) and get a concrete error;
    2) localize by the error/code;
    3) fix (`edit`);
-   4) re-run the same command; close the goal with `stop` once it passes.
+   4) re-run the same command; close the state with `stop` once it passes.
 3. **The workspace is the source of truth.** Do not assume VCS/history/diff. If `git`
    (or another history tool) is unavailable — **do not hunt for it**, work with files
    and behavior (see §6).
@@ -281,7 +283,7 @@ reflect the real limits. Proposed:
    change the approach, not the phrasing of the command. A failure that says the command
    or path is missing (`No such file or directory`, `can't cd`, `No rule to make target`)
    is a wrong working directory, not bad code: apply the spelling with a `cd <dir> &&`
-   prefix (the project directory), or a sub-goal whose command carries it, instead of
+   prefix (the project directory), or a state whose command carries it, instead of
    repeating the bare command.
 5. **How to read code**: `grep` to localize, `read` a window; the whole file when
    needed; do not re-read the same window without a change to the world.
@@ -296,23 +298,23 @@ reflect the real limits. Proposed:
    matches: if there are more matches than the window, continue with `next`/`from`
    **without** changing the `pattern`.
 
-### 5.1 How to determine the goal from the request (and not reach for `git`)
+### 5.1 How to determine the state's goal from the request (and not reach for `git`)
 
 This is a mandatory separate part of the prompt: without it the model applies a coding
 agent's default reflex ("look at the diff").
 
 1. `request.text` is **raw motivation**, not a ready-made task. The first move is
-   `create_goal`: formulate an interpretation (`what`) and the first
-   `command`.
+   `move { state, what }` (declare the state to start in AND its goal); the next call is
+   the state's first plan item — an ordinary tool call (`apply`).
 2. If the request names a **verification command** — take it verbatim as the first
-   `command` — but the engine runs it from the **workspace root**, not a
+   plan item — but the engine runs it from the **workspace root**, not a
    project subdirectory. A named command is authoritative; its working directory is
    resolved from the tree. If the project lives in a subdirectory, the literal command
    must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
-   never the bare command. The rule is stated in B6 and echoed in the `create_goal` tool
+   never the bare command. The rule is stated in B6 and echoed in the `move` tool
    `description` (the schema the model sees on every call); the live test
    `tests/live/root-cd.test.ts` guards it with one call per layout.
-3. After the goal, the first step is to **reproduce** the failure (run the
+3. After the move, the first step is to **reproduce** the failure (run the
    verification/build), not to look for a change history.
 4. **The workspace is the source of truth.** Do **not** assume a VCS, `git`, a diff,
    or history. If `git` (or similar) fails — **do not try again**; move on to files
@@ -320,11 +322,12 @@ agent's default reflex ("look at the diff").
 5. **Example (matching).** Request: "I broke the GC build (the project is in `ocaml/`),
    the compiler crashes during bootstrap; verify with
    `make -C testsuite one DIR=tests/basic`". Correct:
-   - goal: `what: "fix the GC regression so the basic testsuite passes"`,
-     `command: "cd ocaml && make -C testsuite one DIR=tests/basic"` (the project is in a
-     subdirectory, so the literal command carries the `cd` prefix);
+   - move: `move { state: "reproduction", what: "fix the GC regression so the basic
+     testsuite passes" }`, then the first plan item
+     `bash { command: "cd ocaml && make -C testsuite one DIR=tests/basic" }` (the project is
+     in a subdirectory, so the literal command carries the `cd` prefix);
    - a plan of **commands**: `reproduce` and `locate` are plain **actions** (run the command,
-     read/grep/diff); `fix` is the goal itself, and the goal is closed by
+     read/grep/diff); `fix` is a state of its own, and the state is closed by
      the doxa's `stop` once the work is done (there is no separate `verify`, no `complete`
      and no criterion check), not a list of bare commands.
 6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a

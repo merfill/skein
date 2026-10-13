@@ -260,6 +260,9 @@ export interface ToolsOptions {
   settings?: Settings;
   ceiling?: number;
   bumps?: number;
+  // The tool names the model surface may offer (the frontier, `toolNamesFor`). When omitted,
+  // the full registry is bound (direct `invokeTools` callers, tests).
+  allowedTools?: string[];
   // Retries for a THROWN provider call (network/5xx/rate limit): the same request is resent
   // up to this many extra times before the error is given up. Defaults to `settings.llmRetries`.
   retries?: number;
@@ -325,6 +328,14 @@ export async function invokeTools(
   const invokeOptions = options.callbacks !== undefined ? { callbacks: options.callbacks } : undefined;
   const retries = options.retries ?? settings.llmRetries;
   const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
+  const allowed =
+    options.allowedTools !== undefined
+      ? new Set(options.allowedTools)
+      : undefined;
+  const tools =
+    allowed !== undefined
+      ? PROPOSAL_TOOLS.filter((tool) => allowed.has(tool.function.name))
+      : PROPOSAL_TOOLS;
 
   let maxTokens: number | undefined;
   let raised = 0;
@@ -338,7 +349,7 @@ export async function invokeTools(
     const target = base as unknown as ToolCallingModel;
     const bound =
       typeof target.bindTools === "function"
-        ? target.bindTools(PROPOSAL_TOOLS as unknown[], { tool_choice: "required" })
+        ? target.bindTools(tools as unknown[], { tool_choice: "required" })
         : target;
     const response = await invokeWithRetry(
       bound,

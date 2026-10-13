@@ -11,7 +11,7 @@ import { loadSettings } from "../src/config/settings";
 import { createChatModel } from "../src/llm/client";
 import { invokeStructured, invokeTools } from "../src/llm/structured";
 import { modelCall } from "../src/llm/schemas";
-import { toProposal } from "../src/llm/tools";
+import { toolNamesFor, toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
 
@@ -257,6 +257,26 @@ describe("tool calling", () => {
     ]);
   });
 
+  it("invokeTools binds only the allowed tools", async () => {
+    let bound: string[] = [];
+    const model = {
+      bindTools: (tools: unknown[]) => {
+        bound = (tools as { function: { name: string } }[]).map((tool) => tool.function.name);
+        return {
+          invoke: async () => ({
+            content: "x",
+            tool_calls: [{ name: "move", args: { state: "reconnaissance" } }],
+          }),
+        };
+      },
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")], {
+      allowedTools: ["move", "recall"],
+    });
+    expect(bound).toEqual(["move", "recall"]);
+    expect(proposal.actions[0]).toEqual({ operator: "move", state: "reconnaissance", what: "" });
+  });
+
   it("invokeTools repairs once when the model called no tool", async () => {
     let calls = 0;
     const model = {
@@ -371,6 +391,45 @@ describe("tool calling", () => {
     const proposal = await invokeTools(model, [new HumanMessage("go")]);
     expect(calls).toBe(2);
     expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+  });
+});
+
+// The model surface follows the frontier (docs/ir_semantics §2.6): only the admissible moves
+// are offered, so a refused move cannot be called at all.
+describe("tool surface (toolNamesFor)", () => {
+  const frontier = (over: Partial<Record<"move" | "createGoal" | "apply" | "stop" | "decline", boolean>>) => ({
+    move: false,
+    createGoal: false,
+    apply: false,
+    stop: false,
+    decline: false,
+    ...over,
+  });
+
+  it("offers move + recall/search at a transition", () => {
+    expect(toolNamesFor(frontier({ move: true }))).toEqual(["move", "recall", "search"]);
+  });
+
+  it("offers the apply vocabulary at an open state and decline at the request", () => {
+    expect(toolNamesFor(frontier({ apply: true, stop: true }))).toEqual([
+      "recall",
+      "search",
+      "read",
+      "grep",
+      "list",
+      "edit",
+      "bash",
+      "write",
+      "webfetch",
+      "apply_patch",
+      "stop",
+    ]);
+    expect(toolNamesFor(frontier({ move: true, decline: true }))).toEqual([
+      "move",
+      "recall",
+      "search",
+      "decline",
+    ]);
   });
 });
 

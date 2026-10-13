@@ -22,7 +22,6 @@ import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
 import { type State } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
-import { currentGoalId, goalPayload } from "../src/ir/traversal";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
@@ -130,7 +129,7 @@ function summary(metrics: Record<string, unknown>): string {
     `tok in=${metrics.inputTokens} out=${metrics.outputTokens} reason=${metrics.reasoningTokens}`,
     `cache=${metrics.cacheRead} (${(((metrics.cacheHitRatio as number | null) ?? 0) * 100).toFixed(0)}%)`,
     `cost=${(metrics.costRub as number).toFixed(2)}₽`,
-    `graph goals${graph.goals}/plans${graph.plans}/alt${graph.alternatives}/checks${graph.checks}`,
+    `graph states${graph.states}/plans${graph.plans}/alt${graph.alternatives}/checks${graph.checks}`,
     `loop=${((metrics.loopScore as number) * 100).toFixed(0)}%`,
     `rereads=${metrics.rereads}`,
   ].join(" ");

@@ -10,8 +10,8 @@ import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
 
 // Under a long horizon the context is the tape: it grows with the tree (each command is an
-// assistant/tool pair) and is monotone while a goal is open. The old bounded working set
-// (cap/TTL) is gone — the only reduction is the cut when a goal closes (docs/ir_revision.md §5).
+// assistant/tool pair) and is monotone while a state is open. The old bounded working set
+// (cap/TTL) is gone — the only reduction is the cut when a state closes (docs/ir_revision.md §5).
 
 const tempDirs: string[] = [];
 
@@ -40,10 +40,10 @@ describe("the message tape under a long horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        return {
-          thought: "",
-          actions: [{ operator: "create_goal", what: "green", state: "reconnaissance", action: { tool: "bash", command: "true" } }],
-        };
+        return { thought: "", actions: [{ operator: "move", state: "reconnaissance", what: "grow" }] };
+      }
+      if (n === 2) {
+        return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
       }
       return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: `echo step${n}` } }] };
     };
@@ -54,13 +54,13 @@ describe("the message tape under a long horizon", () => {
     );
 
     expect(lengths.length).toBeGreaterThan(30);
-    // Each command appends an assistant call and a tool result.
-    for (let i = 2; i < lengths.length; i += 1) {
+    // Once the state is declared, each command appends an assistant call and a tool result.
+    for (let i = 1; i < lengths.length; i += 1) {
       expect(lengths[i]).toBe((lengths[i - 1] ?? 0) + 2);
     }
   }, 30_000);
 
-  it("collapses a closed sub-goal to a single closure message", async () => {
+  it("collapses a finished state to one compaction line", async () => {
     const workspace = tinyWorkspace();
     const contexts: Context[] = [];
     let call = 0;
@@ -68,35 +68,30 @@ describe("the message tape under a long horizon", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       call += 1;
-      if (call === 1) {
-        // Interpret the request; the first command fails, leaving the item unfulfilled.
-        return {
-          thought: "",
-          actions: [{ operator: "create_goal", what: "A", state: "reconnaissance", action: { tool: "bash", command: "false" } }],
-        };
-      }
+      if (call === 1) return { thought: "", actions: [{ operator: "move", state: "reconnaissance", what: "A" }] };
       if (call === 2) {
-        // Decompose A's current item into a sub-goal G.
-        return {
-          thought: "",
-          actions: [{ operator: "create_goal", what: "G", state: "reconnaissance", action: { tool: "bash", command: "true" } }],
-        };
+        // The first command fails, leaving the item unfulfilled; the criterion is declared met
+        // anyway and the state is stopped by the doxa (no criterion gate).
+        return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "echo FIRSTCMD" } }] };
       }
-      if (call === 3) {
-        return { thought: "", actions: [{ operator: "stop", why: "G is done" }] };
-      }
-      return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: `echo step${call}` } }] };
+      if (call === 3) return { thought: "", actions: [{ operator: "stop", why: "A is done" }] };
+      if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B" }] };
+      if (call === 5) return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
+      if (call === 6) return { thought: "", actions: [{ operator: "stop", why: "B is done" }] };
+      if (call === 7) return { thought: "", actions: [{ operator: "move", state: "handoff", what: "" }] };
+      return { thought: "", actions: [{ operator: "stop", why: "done" }] };
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 1000 },
+      { propose, workspace, maxTurns: 10, noProgress: 1000 },
       { request: { id: "r1", text: "collapse" } },
     );
 
-    // After G closes, its create_goal message leaves the tape; only the closure remains.
+    // After the state closes, its plan turns leave the tape; only its compaction
+    // line, carried by the move that left it, remains.
     const last = contexts.at(-1);
     const texts = last?.history.map((message) => message.text).join("\n") ?? "";
-    expect(texts).toContain("stopped: G is done");
-    expect(texts).not.toContain("what: G");
+    expect(texts).toContain("State Reconnaissance: finished — A is done");
+    expect(texts).not.toContain("FIRSTCMD");
   }, 30_000);
 });

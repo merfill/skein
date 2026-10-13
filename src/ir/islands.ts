@@ -129,6 +129,14 @@ export const ISLANDS: Record<IslandId, Island> = {
 
 export const ISLAND_ORDER: readonly IslandId[] = ISLAND_IDS;
 
+// The terminal state: reaching it is the sign of the end; it carries no goal and accepts
+// `stop` directly (docs/plans/state_protocol_plan.md §2, §6.7).
+export const TERMINAL_ISLAND: IslandId = "handoff";
+
+export function isTerminalIsland(value: string): boolean {
+  return value === TERMINAL_ISLAND;
+}
+
 export function isIsland(value: string): value is IslandId {
   return (ISLAND_IDS as readonly string[]).includes(value);
 }

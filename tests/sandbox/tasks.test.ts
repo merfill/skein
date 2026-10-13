@@ -42,11 +42,11 @@ const IMAGE_TASKS: SandboxTask[] = [
   fixCodeVulnerability,
 ];
 
-const goal = (what: string): Action => ({
-  operator: "create_goal",
-  what,
-  state: "reconnaissance", action: { tool: "bash", command: "pwd" },
-});
+// A state plus its first plan item: the two turns a doxa makes to start working.
+const goal = (what: string): Action[] => [
+  { operator: "move", state: "reconnaissance", what },
+  { operator: "apply", action: { tool: "bash", command: "pwd" } },
+];
 const solve: Action = { operator: "apply", action: { tool: "bash", command: SOLUTION_COMMAND } };
 const stop: Action = { operator: "stop", why: "done" };
 
@@ -55,13 +55,13 @@ describe("ported image tasks (docker)", () => {
     const ready = dockerAvailable() && dockerImageAvailable(task.image ?? "") && taskAvailable(task.id);
     describe.skipIf(!ready)(task.id, () => {
       it("scores 0 without work", async () => {
-        const run = await runTask(task, scripted([goal(task.id)], stop), { maxTurns: 2 });
+        const run = await runTask(task, scripted([...goal(task.id)], stop), { maxTurns: 3 });
         expect(run.reward).toBe(0);
       }, 300_000);
 
       it("scores 1 on the task's own solution", async () => {
-        const run = await runTask(task, scripted([goal(task.id), solve], stop), {
-          maxTurns: 3,
+        const run = await runTask(task, scripted([...goal(task.id), solve], stop), {
+          maxTurns: 4,
           stageSolution: true,
         });
         expect(run.reward).toBe(1);
@@ -81,8 +81,8 @@ const slowReady =
 
 describe.skipIf(!slowReady)("fix-ocaml-gc (slow, rebuild verifier)", () => {
   it("scores 1 on the task's own solution", async () => {
-    const run = await runTask(fixOcamlGcTask, scripted([goal(fixOcamlGcTask.id), solve], stop), {
-      maxTurns: 3,
+    const run = await runTask(fixOcamlGcTask, scripted([...goal(fixOcamlGcTask.id), solve], stop), {
+      maxTurns: 4,
       stageSolution: true,
     });
     expect(run.reward).toBe(1);

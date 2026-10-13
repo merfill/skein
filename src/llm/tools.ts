@@ -61,22 +61,14 @@ const patchParams = z.object({
   patch: z.string(),
   strip: z.number().int().nonnegative().optional(),
 });
-// The seed of a `create_goal`: the first plan item, any tool — the same native vocabulary the
-// standalone tools use, discriminated by `tool` (docs/ir_semantics.md §4.1).
-const goalActionParams = z.discriminatedUnion("tool", [
-  readParams.extend({ tool: z.literal("read") }),
-  grepParams.extend({ tool: z.literal("grep") }),
-  listParams.extend({ tool: z.literal("list") }),
-  editParams.extend({ tool: z.literal("edit") }),
-  writeParams.extend({ tool: z.literal("write") }),
-  bashParams.extend({ tool: z.literal("bash") }),
-  fetchParams.extend({ tool: z.literal("webfetch") }),
-  patchParams.extend({ tool: z.literal("apply_patch") }),
-]);
-const createGoalParams = z.object({
-  what: z.string(),
+// The state: the island of work the doxa will work in AND the state's goal text (`what`) —
+// the state IS its goal (docs/plans/goal_into_move_plan.md). `what` is optional in the tool
+// schema because the terminal hand-off has no plan; `classify` requires it for every other
+// state.
+const moveParams = z.object({
   state: z.enum(ISLAND_IDS),
-  action: goalActionParams,
+  what: z.string().optional(),
+  note: z.string().optional(),
 });
 const stopParams = z.object({ why: z.string().optional() });
 const declineParams = z.object({ why: z.string().optional() });
@@ -85,10 +77,10 @@ const declineParams = z.object({ why: z.string().optional() });
 // the strategy lives in SYSTEM_PROMPT (single source of truth).
 const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
-    name: "create_goal",
+    name: "move",
     description:
-      `Move the work to the next state, or — at the request — interpret it. Give what (the outcome), state (the island of work this goal is entered in: one of ${ISLAND_IDS.join(", ")}), and action (the FIRST plan item — ANY tool: read/grep/list/edit/write/bash/webfetch/apply_patch). The engine executes that action at once and returns its result; a plan item is any action, appended in order, one at a time. At the request, call it ONCE — the interpretation is FIXED. At an open goal, call it to change state as soon as the current state's criterion holds (no failure is needed): it appends to the current plan item, or starts a new plan item when the plan is exhausted; the focus descends into the sub-goal. If the project lives in a subdirectory (seen with list, or named in the request, e.g. \`ocaml/\`), a bash command MUST carry the \`cd <dir> &&\` prefix (\`cd ocaml && make -C testsuite one DIR=tests/basic\`), never the bare command; a bash command runs from the WORKSPACE ROOT. Refused if: what/action is empty; the state is unknown; or the request already has an interpretation (interpreted).`,
-    schema: createGoalParams,
+      `Declare the state (the island of work) you will work in AND its goal: move { state, what }. Use it at the request to pick the FIRST state of the work (one of ${ISLAND_IDS.join(", ")}), and again after you have stopped a state to choose the next one — the transition is a fresh move. what = the concrete goal of THIS state (not the whole task); it is required except for handoff. After the move, give the state's FIRST plan item as an ordinary tool call (read/grep/list/edit/write/bash/webfetch/apply_patch); further items are the tool calls you make next, in order. A command runs from the WORKSPACE ROOT; if the project lives in a subdirectory (seen with list, or named in the request, e.g. \`ocaml/\`), prefix the command with \`cd <dir> &&\` (or pass workdir). A state's work is done when its criterion holds; stop it, then move on. To finish the whole work, move to the hand-off state and stop there. After a \`stop\`, \`move\` is the ONLY accepted move — \`apply\` is refused until you move. Give note (optional) to summarize the state you are leaving. Refused if: a state is still open — work it to its criterion and stop it first (state_open); or the goal text is missing (empty_what).`,
+    schema: moveParams,
   },
   {
     name: "recall",
@@ -153,13 +145,13 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      "Stop: finish the focused goal. Records a `stop` relation on the goal (the closure and its reason sit at the goal, not as a plan item); the engine then returns to the parent, and the run ends when the request's goal is stopped. There is no stop on the request.",
+      "Stop: finish the current state. On an open goal it closes the state's work — the closure and its reason sit at the goal, not as a plan item — and the engine returns you to the state so you can move to the next one. On the terminal hand-off state it ends the request (there is no stop on the request, and no stop on the request when a state has not been worked).",
     schema: stopParams,
   },
   {
     name: "decline",
     description:
-      "Decline to formulate a goal: the request's intent is not actionable (e.g. chit-chat, no task). Use it INSTEAD of inventing a goal. Available only while the request has no interpretation yet; records an unactionable node under the request and ends the run. Give why.",
+      "Decline to formulate a goal: the request's intent is not actionable (e.g. chit-chat, no task). Use it INSTEAD of inventing a goal. Available only while the request has no state yet; records an unactionable node under the request and ends the run. Give why.",
     schema: declineParams,
   },
 ];
@@ -189,7 +181,7 @@ function parseArgs(args: unknown): Record<string, unknown> {
 
 // The native tool names that map to an IR `apply`. Shared by the standalone call and by the
 // nested `action` of `create_goal`.
-const APPLY_TOOL_NAMES = new Set([
+export const APPLY_TOOL_NAMES = new Set([
   "read",
   "grep",
   "list",
@@ -199,6 +191,25 @@ const APPLY_TOOL_NAMES = new Set([
   "webfetch",
   "apply_patch",
 ]);
+
+// The tools the model surface offers for a given frontier (`applicable`): the doxa only ever
+// sees the moves the engine would accept, so a refused move cannot be called at all
+// (docs/ir_semantics.md §2.6). `recall`/`search` are read-only and always available.
+export function toolNamesFor(frontier: {
+  move: boolean;
+  apply: boolean;
+  stop: boolean;
+  decline: boolean;
+}): string[] {
+  const names = new Set<string>(["recall", "search"]);
+  if (frontier.move) names.add("move");
+  if (frontier.stop) names.add("stop");
+  if (frontier.decline) names.add("decline");
+  if (frontier.apply) for (const name of APPLY_TOOL_NAMES) names.add(name);
+  return PROPOSAL_TOOLS.filter((tool) => names.has(tool.function.name)).map(
+    (tool) => tool.function.name,
+  );
+}
 
 // Map a native tool call (`name` + `args`) into the IR `Apply`. One vocabulary for a
 // standalone tool call and for the seed carried inside `create_goal`.
@@ -256,20 +267,14 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
   const pick = (key: string): Record<string, unknown> => (present(key) ? { [key]: a[key] } : {});
   let action: unknown;
   switch (name) {
-    case "create_goal": {
-      const seed = (typeof a.action === "object" && a.action !== null ? a.action : {}) as Record<
-        string,
-        unknown
-      >;
-      const tool = typeof seed.tool === "string" ? seed.tool : "";
+    case "move":
       action = {
-        operator: "create_goal",
-        what: a.what,
+        operator: "move",
         state: a.state,
-        action: toApply(tool, seed),
+        what: typeof a.what === "string" ? a.what : "",
+        ...pick("note"),
       };
       break;
-    }
     case "recall":
       action = { operator: "recall", id: a.id, ...pick("start"), ...pick("end") };
       break;

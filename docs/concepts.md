@@ -1,10 +1,13 @@
 # Skein — a coding agent with a deterministic IR context
 
-> **Note (IR revision folded).** The sections below that describe the tree, the traversal
-> and the projection reflect the model **before** the IR revision. The current shape
-> (`item`/`alts`, `stop` on the goal, the message tape) is in `docs/ir_semantics.md`; the
-> as-built is `docs/ir.md`. The conceptual frame (doxa/logos, the journal, the projection)
-> still holds.
+> **Note (state protocol).** The tree/traversal/projection details here predate the
+> **state protocol** redesign (`docs/plans/state_protocol_plan.md`): the walk is now a state
+> machine over islands — `move` declares the state AND its goal text (`what`), the first
+> `apply` seeds its plan, `stop` finishes it and forces the transition, and the terminal
+> state ends the request. The current shape is `docs/ir_semantics.md`; the as-built is
+> `docs/ir.md`. The conceptual frame (doxa/logos, the journal, the projection) still holds.
+> Any `done_when`/criterion language below is historical (there is **no** criterion gate — a
+> state closes only by the doxa's `stop`).
 
 ## The core idea
 
@@ -24,24 +27,26 @@ call, and the only signal that the task is over is the model itself emitting a f
 answer. Skein **unwinds that loop along a tree**:
 
 ```
-request ─(has_goal)▶ goal (a hypothesis) ─(has_plan)▶ plan (a container of items; last item is current) ─▶ action ─▶ observation
+request ─(move)▶ state (its own goal) ─(plan)▶ plan (items; last is current) ─▶ action ─▶ observation
 ```
 
-A request is interpreted **once** as a goal (`has_goal`); the interpretation is fixed for
-now. A non-actionable request is **declined** instead (`no_goal` → `unactionable`).
+A request is walked as a sequence of states. Flat states hang off the request (a `move` each);
+a `move` carries the state's goal text (`what`), so a state IS its goal. A non-actionable request
+is **declined** instead (`unactionable`). A state closes only by the doxa's `stop` (no criterion);
+`stop`ping a state forces the next `move` (or the terminal state and `stop`).
 
-**The arm is ReAct in place.** Within one level — an arm — a goal is proposed whose
+**The arm is ReAct in place.** Within one level — an arm — a state is entered whose
 plan gains one item per command; each command is executed, its result recorded
 (`observation`/`mutate`) and shown to the doxa; the doxa then either adds the next node or
 stops. This is the ReAct loop unchanged: the next move is chosen from the results (a turn
 may carry several independent commands). What ReAct cannot do is *keep* it — here every
 step is an event in the append-only journal. An arm stops being flat only when a step
-**branches**: the doxa proposes an alternative to that step (another command) or
-decomposes it into a composite sub-goal — and each branch is still an arm, i.e. ReAct
-again, one level down. In this sense the tree is "ReAct unwound": not a different
-policy, but ReAct plus explicit memory, branching, and a termination criterion.
+**branches**: the doxa proposes an alternative to that step (another command) — and each
+branch is still an arm, i.e. ReAct again, one level down. In this sense the tree is "ReAct
+unwound": not a different policy, but ReAct plus explicit memory, branching, and a
+termination criterion.
 
-- Only the goal's first step is materialized as a plan item; later steps are chosen a turn at
+- Only the state's first step is materialized as a plan item; later steps are chosen a turn at
   a time. The plan's `item` edges append in order, and
   the **last** is the current step. A turn appends one item per command (a batch may append
   several).
@@ -78,53 +83,46 @@ Three consequences used throughout:
 The frame comes from the doxa/logos distinction (Ankyra, `doxa_and_logos.tex`):
 
 - **Doxa** is the LLM. It only *proposes*: one or more operators per turn (a batch)
-  (`create_goal`, `apply`, `stop`, `decline`; `recall`/`search` are read-only addressing). Its
-  thought is narrative and stays out of the IR. A proposed goal enters `open`; it is
-  never at once closed.
+  (`move`, `apply`, `stop`, `decline`; `recall`/`search` are read-only
+  addressing). Its thought is narrative and stays out of the IR. A proposed state enters
+  `open`; it is never at once closed.
 - **Logos** is the deterministic side: the gate (`classify`), the execution and
   recording of commands, and state derivation (`fold`, `project`), including the
-  **traversal** that decides where the focus moves. A criterion run's exit code is read
-  here — not issued as a node.
+  **traversal** that decides where the focus moves.
 - **Arbiter** is the authority outside doxa and logos at the **boundaries**: the
-  toolchain (the criterion command) and the user (the first request, the final
-  acceptance of the request). There is no per-goal acceptance.
+  toolchain and the user (the first request, the final acceptance of the request). There is no
+  per-state acceptance.
 
-Doxa never closes a goal by a verdict: a goal is closed only by the doxa's `stop`,
-gated by the criterion fact (a passing `exitCode`).
+Doxa never closes a state by a verdict: a state is closed only by the doxa's `stop` (there is no
+criterion gate).
 
 ## The IR in one page
 
 A single graph, two namespaces (`docs/ir.md` is the as-built reference):
 
-- **work** — `request`, `goal`, `plan`, `alternatives`, `action`, `observation`,
+- **work** — `request`, `move`, `plan`, `item`, `action`, `observation`,
   `stop`, `unactionable`, `constraint`.
 - **artifact** — `file` (canonical id `file:src/foo.ts`).
 
-**done_when** is a single **command string**: the criterion the engine runs, read by its
-exit code (0 = pass, non-zero = fail, absent = no verdict). The exit code is the only
-verdict — not a node.
+**Edges.** `move` (request → move), `plan` (move → plan), `items`, `alts`,
+  `result`, `stop` (move → stop), `unactionable`, `mutates`.
 
-**Edges.** `has_goal`, `has_plan`, `item`, `has_alternatives`, `produces`, `has_stopped`,
-`no_goal`, `mutates`.
-
-**State** (never stored; computed by `fold`): a node is `open`/`executed`/`stopped` — an
-action is `executed` once it produced a result, a goal is `stopped` once it has a
-`has_stopped` edge; there is no `achieved`/`refuted`/`abandoned`. The criterion facts
-(pass/fail/no verdict from a run's `exitCode`) and the settled request are derived reads,
-not statuses.
+**State** (never stored; computed by `fold`): an action is `executed` once it produced a
+result, a state (`move`) is `finished` once it has a `stop` relation (the terminal state
+included). There is no
+`achieved`/`refuted`/`abandoned` and no criterion.
 
 **Events** (closed vocabulary): `add_node`, `add_edge`, `descend`, `return`, `mutate`,
 `record_rejection`. There is no `set_status` and no `record_check`: a state change is a
-new node-event (`observation`/`stop`).
+new node-event (`move`/`observation`/`stop`).
 
-**Operators.** `create_goal { what, state, action }` interprets
-the request once, or starts a sub-goal for the next state (a new alternative); `state` names
-the island of work the goal is entered in (an authored label), and the goal
-gets a plan container whose first item is the `action` — any tool — run at once. `apply { action }`
-runs/reads/edits the world. `decline { why? }`
-answers a non-actionable request (`unactionable`). `stop { why? }` is the sole closure: the
-doxa's `stop` closes the goal — there is no criterion and no check; the request has no
-`stop`. `recall`/`search` are read-only addressing.
+**Operators.** `move { state, what }` declares the state to work in (the first one, or the next
+after a `stop`) AND its goal text (a state IS its goal; the plan hangs directly off the `move`
+and the first `apply` seeds it). `apply { action }`
+runs/reads/edits the world. `decline { why? }` answers a non-actionable request
+(`unactionable`). `stop { why? }` is the sole closure: it closes the state's `move` (or, at the
+terminal state, the request); there is no criterion and no check; the request has no `stop`.
+`recall`/`search` are read-only addressing.
 
 ## The cycle
 
@@ -136,7 +134,7 @@ project → propose → classify → execute → progress
 2. `propose` asks doxa for one or more operators (a batch).
 3. `classify` gates it (the logos decides admissibility).
 4. `execute` applies it deterministically, appending events.
-5. `progress` stops when the request's goal is stopped (the run ends), on no progress, or
+5. `progress` stops when the terminal state is stopped (the run ends), on no progress, or
    on the budget.
 
 One move per turn (one or more independent calls), so every turn leaves a verifiable trace.
@@ -145,8 +143,8 @@ One move per turn (one or more independent calls), so every turn leaves a verifi
 
 The position of work is a **stack of frames** — the **spine** — from the request to
 the focus, one frame per level. Each frame carries an **arm**: the ordered siblings at
-that level (the goal under the request, the plan items under a goal), with the current
-position inside it (the last item). Moving is a `descend` (push) or a `return`
+that level (the state under the request, the plan items under the state's `move`), with the
+current position inside it (the last item). Moving is a `descend` (push) or a `return`
 (pop); the engine computes where the focus must be, deterministically.
 
 Neither the stack nor the cursor is stored: the stack is the fold of `descend`/
@@ -160,11 +158,11 @@ context`. History (executed items, observations, criterion runs) is not kept on 
 Projection is the heart of Skein: not "what was said" but "what acts now". It is a
 deterministic function of the state, not an LLM summary. `Context` carries:
 
-- `path` — the spine (`request → … → focus`); each node carries its own `plan` and
-  `alternatives` (so a plan revision is visible where it happened);
-- `constraints`, `lastResult` (the full result of the latest call), `shown` (the
-  working set), `calls` (a deduplicated index of previous calls), `applicable`,
-  `checkReady`, `nextAction`, `budget`.
+- `path` — the spine (`request → current move`); each node carries its own `plan` (so a
+  plan revision is visible where it happened);
+- `constraints`, the message tape, `applicable`.
+The old `lastResult`/`shown`/`calls`/`checkReady`/`nextAction`/`budget` blocks are gone — the
+context is the tape (`docs/projection.md`).
 
 Everything else — file contents, raw output, older bodies — is reached through
 `recall`/`search`. Addressability is always guaranteed: every node is either shown or one
@@ -186,15 +184,14 @@ deferred.
 
 ## The arbiter
 
-The Arbiter is a **boundary authority**, not a per-goal actor:
+The Arbiter is a **boundary authority**, not a per-state actor:
 
 - the **toolchain** (tests, type checker, repro scripts) produces the criterion's exit
   code when the goal's `done_when` runs;
 - the **user** owns the first request and the final acceptance of the request.
 
-There is no `record_check` and no per-goal acceptance. A goal is closed only by the
-doxa's `stop`, gated by the criterion fact (a passing `exitCode`). The LLM never produces
-either.
+There is no `record_check` and no per-state acceptance. A state is closed only by the
+doxa's `stop` — there is no criterion gate. The LLM never produces the closure.
 
 The request root is not closed in the IR: acceptance is external and implicit. Inside,
 only `requestSettled` is computed.

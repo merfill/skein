@@ -28,8 +28,8 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 
 ## Invariants (do not break)
 
-- a goal is closed only by the doxa's `stop` (a `has_stopped` edge); there is no criterion
-  gate — cycle / premature-stop detection is deferred
+- a state is closed only by the doxa's `stop` (a `has_stopped` edge on the `move`); there is
+  no criterion gate — cycle / premature-stop detection is deferred
   (`docs/plans/goal_reduction_plan.md`);
 - the request ends when its goal is stopped (there is no `stop` on the request);
 - a `stale` fact is never shown as active content;

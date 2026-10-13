@@ -6,10 +6,10 @@ import { cleanupWorkspaces, request } from "./helpers";
 
 afterEach(cleanupWorkspaces);
 
-function goalNode(id: string, what: string, seq: number): Event {
+function moveNode(id: string, what: string, seq: number): Event {
   return {
     type: "add_node",
-    node: { id, space: "work", kind: "goal", label: what, payload: { what }, seq },
+    node: { id, space: "work", kind: "move", label: what, payload: { state: "patch", what }, seq },
   };
 }
 
@@ -33,8 +33,8 @@ describe("derived predicates", () => {
     expect(actionExecuted(fold(produced), "a1")).toBe(true);
   });
 
-  it("DER-GOAL-1 a goal is closed iff it has a stop relation", () => {
-    const base: Event[] = [request(), goalNode("g1", "fix it", 1)];
+  it("DER-MOVE-1 a state is closed iff it has a stop relation", () => {
+    const base: Event[] = [request(), moveNode("g1", "fix it", 1)];
     expect(hasStopped(fold(base), "g1")).toBe(false);
     const stopped: Event[] = [
       ...base,
@@ -50,7 +50,7 @@ describe("derived predicates", () => {
   it("DER-STALE-1 records a run's witness (the basis for staleness)", () => {
     const events: Event[] = [
       request(),
-      goalNode("g1", "fix it", 1),
+      moveNode("g1", "fix it", 1),
       {
         type: "add_node",
         node: { id: "f:src/x", space: "artifact", kind: "file", label: "src/x", seq: 2 },
