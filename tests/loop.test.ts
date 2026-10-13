@@ -669,16 +669,17 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; move is its own call + result; the first apply
-    // seeds the plan as another call + result.
+    // A fresh request is a single user turn; move is its own call + result, followed by the
+    // state's description (shown once at entry); the first apply seeds the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "assistant", "tool"]);
-    expect(roles[2]).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "assistant", "tool", "system"]);
+    expect(roles[2]).toEqual(["user", "assistant", "tool", "system", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
       "assistant",
       "tool",
+      "system",
       "assistant",
       "tool",
       "assistant",

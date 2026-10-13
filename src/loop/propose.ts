@@ -4,9 +4,9 @@ import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/
 
 import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
-import { invokeTools } from "../llm/structured";
+import { invokeTools, type ToolsOptions } from "../llm/structured";
 import { toolNamesFor } from "../llm/tools";
-import { BASE_PROMPT, ISLAND_INSTRUCTIONS, NODE_INSTRUCTIONS } from "./prompt";
+import { BASE_PROMPT, NODE_INSTRUCTIONS } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
 
@@ -31,6 +31,8 @@ function toMessage(message: TapeMessage): BaseMessage {
     return new AIMessage(message.text);
   }
   if (message.role === "user") return new HumanMessage(message.text);
+  // A `system` turn on the tape (e.g. a state's description, shown once when it is entered).
+  if (message.role === "system") return new SystemMessage(message.text);
   // Every tool result answers an assistant tool_call; a tool turn without a callId would
   // desync the transcript, so it is an invariant violation, not a user turn.
   if (message.callId === undefined) {
@@ -39,23 +41,12 @@ function toMessage(message: TapeMessage): BaseMessage {
   return new ToolMessage({ content: message.text, tool_call_id: message.callId });
 }
 
-// The context the model sees is the tape, assembled from the node-scoped instruction and the
-// history: a stable base prompt, the instruction for the current situation, the constraints,
-// then the tape itself (docs/ir_revision.md §5–6).
+// The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
+// the tape itself, then — appended AT THE END — the instruction for the current situation. That
+// instruction is temporary: it is not part of the history (it is re-derived from the situation
+// each turn, it never accumulates). docs/ir_semantics §7.
 export function buildMessages(context: Context): BaseMessage[] {
-  const messages: BaseMessage[] = [
-    new SystemMessage(BASE_PROMPT),
-    new SystemMessage(NODE_INSTRUCTIONS[context.situation]),
-  ];
-  // While a state is being worked (a fresh plan or an open one), highlight its work /
-  // criterion / constraints (an authored label, §2.5). A finished state (transition/terminal)
-  // does NOT show them: the criterion is already met, and re-showing it is noise.
-  if (
-    (context.situation === "plan" || context.situation === "working") &&
-    context.island !== undefined
-  ) {
-    messages.push(new SystemMessage(ISLAND_INSTRUCTIONS[context.island]));
-  }
+  const messages: BaseMessage[] = [new SystemMessage(BASE_PROMPT)];
   // A soft attractor on a stalled goal: the projection nudges the doxa to decide (§2.8).
   if (context.nudge !== undefined) {
     messages.push(new SystemMessage(context.nudge));
@@ -70,6 +61,8 @@ export function buildMessages(context: Context): BaseMessage[] {
   for (const message of context.history) messages.push(toMessage(message));
   // The observation step: right after a tool result, tell the model to read it and decide.
   if (context.result !== undefined) messages.push(new SystemMessage(context.result));
+  // The situation's instruction, appended last (temporary — never stored in the history).
+  messages.push(new SystemMessage(NODE_INSTRUCTIONS[context.situation]));
   return messages;
 }
 
@@ -78,14 +71,17 @@ export function promptText(context: Context): string {
   return buildMessages(context).map(messageText).join("\n\n");
 }
 
-export async function propose(model: BaseChatModel, context: Context): Promise<Proposals> {
+export async function propose(
+  model: BaseChatModel,
+  context: Context,
+  options: ToolsOptions = {},
+): Promise<Proposals> {
   const allowedTools =
     context.applicable !== undefined ? toolNamesFor(context.applicable) : undefined;
-  return invokeTools(
-    model,
-    buildMessages(context),
-    allowedTools !== undefined ? { allowedTools } : {},
-  );
+  return invokeTools(model, buildMessages(context), {
+    ...options,
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
+  });
 }
 
 export function modelProposer(model: BaseChatModel): Proposer {

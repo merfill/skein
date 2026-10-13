@@ -33,11 +33,14 @@ const shape = (m: TapeMessage) => ({
   ...(m.call === undefined && m.callId === undefined ? { text: m.text } : {}),
 });
 
-// hop 2 helper: build a synthetic tape and read back the provider JSON (system prefix sliced).
+// hop 2 helper: build a synthetic tape and read back the provider JSON (system prefix and the
+// trailing situation instruction sliced off).
 async function wireTape(history: TapeMessage[], constraints: Context["constraints"] = []) {
-  return compact(await wire(buildMessages({ history, situation: "working", constraints }))).slice(
-    2 + constraints.length,
-  );
+  const all = compact(await wire(buildMessages({ history, situation: "working", constraints })));
+  const start = 1 + constraints.length;
+  let end = all.length;
+  while (end > start && all[end - 1]?.role === "system") end -= 1;
+  return all.slice(start, end);
 }
 
 describe("hop 1 — IR node kind -> TapeMessage role", () => {
@@ -54,6 +57,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
       ["user", null, false],
       ["assistant", "move", false],
       ["tool", null, true],
+      ["system", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
       ["assistant", "read", false],
@@ -61,7 +65,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
   });
 
-  it("stop -> a terminal assistant text with no call", () => {
+  it("stop -> the finished state's move result carries its closure (no assistant text)", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
@@ -69,8 +73,8 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
       { role: "user", text: "solve the task" },
       { role: "assistant", call: "move" },
       { role: "tool", answers: true },
-      { role: "assistant", text: "stopped: done" },
     ]);
+    expect(ctx.history.at(-1)?.text).toContain("finished — done");
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {
@@ -95,7 +99,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     // ...but the tape has exactly one assistant.tool_calls per move (goal + seed + read),
     // never a message tagged `item`/`file`/`plan`.
     expect(new Set(project(res.state).history.map((m) => m.role))).toEqual(
-      new Set(["user", "assistant", "tool"]),
+      new Set(["user", "assistant", "tool", "system"]),
     );
   });
 });
@@ -108,7 +112,7 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
   it("assistant text -> role assistant with content and no tool_calls", async () => {
     const ctx: Context = { history: [{ role: "assistant", text: "done" }], situation: "working", constraints: [] };
     const raw = await wire(buildMessages(ctx));
-    const message = raw[2]!;
+    const message = raw[1]!;
     expect(message.role).toBe("assistant");
     expect(message.content).toBe("done");
     expect(message.tool_calls).toBeUndefined();
@@ -123,7 +127,7 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
       situation: "working",
       constraints: [],
     };
-    const message = (await wire(buildMessages(ctx)))[2]!;
+    const message = (await wire(buildMessages(ctx)))[1]!;
     expect(message.role).toBe("assistant");
     expect(message.content).toBe("");
     expect(message.tool_calls?.[0]).toEqual({
@@ -135,7 +139,7 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
 
   it("tool with callId -> role tool, tool_call_id, content", async () => {
     const ctx: Context = { history: [{ role: "tool", text: "ok", callId: "c1" }], situation: "working", constraints: [] };
-    expect((await wire(buildMessages(ctx)))[2]).toMatchObject({
+    expect((await wire(buildMessages(ctx)))[1]).toMatchObject({
       role: "tool",
       tool_call_id: "c1",
       content: "ok",
@@ -147,16 +151,17 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(() => buildMessages(ctx)).toThrow(/without a callId/);
   });
 
-  it("the system prefix is base + node instruction + one per constraint", async () => {
+  it("is the base + one system per constraint, then the tape, then the situation instruction", async () => {
     const context: Context = {
       history: [{ role: "user", text: "fix" }],
       situation: "working",
       constraints: [{ id: "k1", forbid: ["secret"] }],
     };
     const msgs = await wire(buildMessages(context));
-    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "system", "user"]);
+    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user", "system"]);
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
-    expect(msgs[1]?.content).toBe(NODE_INSTRUCTIONS.working);
-    expect(String(msgs[2]?.content)).toContain("k1");
+    expect(String(msgs[1]?.content)).toContain("k1");
+    expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
+    expect(msgs[3]?.content).toBe(NODE_INSTRUCTIONS.working);
   });
 });

@@ -9,9 +9,8 @@ import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import type { Action, Proposals } from "../../src/llm/schemas";
-import { invokeTools } from "../../src/llm/structured";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
-import { buildMessages, promptText } from "../../src/loop/propose";
+import { promptText, propose as proposeModel } from "../../src/loop/propose";
 import { fsWorkspace } from "../../src/tools/workspace";
 
 // Live scenario harness: run the agent on a tiny fixture project and keep the full
@@ -171,7 +170,7 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
   const turns: CapturedTurn[] = [];
   const propose = async (context: Context): Promise<Proposals> => {
     const contextChars = promptText(context).length;
-    const proposal = await invokeTools(model, buildMessages(context));
+    const proposal = await proposeModel(model, context);
     turns.push({
       turn: turns.length,
       action: proposal.actions[0]!,

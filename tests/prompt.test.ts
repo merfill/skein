@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, ISLAND_INSTRUCTIONS, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -41,22 +41,13 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toMatch(/Hand-off is terminal/);
   });
 
-  it("renders each state as What / Done when / Constraints, without repeating the routes", () => {
-    for (const [id, text] of Object.entries(ISLAND_INSTRUCTIONS)) {
-      expect(text, `${id} states its work`).toMatch(/^State: .+ — .+\./);
-      expect(text, `${id} states its criterion`).toMatch(/\nDone when: .+\./);
-      expect(text, `${id} states its constraints`).toMatch(/\nConstraints: .+\./);
-      expect(text, `${id} does not repeat the route`).not.toContain("When done");
-    }
-  });
-
   it("gives the request and goal situations their own instructions", () => {
     expect(NODE_INSTRUCTIONS.request.length).toBeGreaterThan(0);
     expect(NODE_INSTRUCTIONS.working.length).toBeGreaterThan(0);
     expect(NODE_INSTRUCTIONS.request).not.toBe(NODE_INSTRUCTIONS.working);
     expect(NODE_INSTRUCTIONS.request).toMatch(/move \{ state|decline/);
     expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
-    expect(NODE_INSTRUCTIONS.plan).toMatch(/first plan item/i);
+    expect(NODE_INSTRUCTIONS.plan).toMatch(/first step/i);
     expect(NODE_INSTRUCTIONS.transition).toMatch(/move \{ state/);
     expect(NODE_INSTRUCTIONS.terminal).toMatch(/stop/i);
   });
@@ -236,23 +227,24 @@ describe("context format: tape", () => {
     constraints: [{ id: "k1", forbid: ["secret"] }],
   };
 
-  it("lays the context out as a system prefix then the tape", () => {
+  it("lays the context out as a stable prefix, the tape, then the situation instruction", () => {
     const messages = buildMessages(context);
     expect(messages[0]).toBeInstanceOf(SystemMessage);
     expect(String(messages[0]?.content)).toBe(BASE_PROMPT);
     expect(messages[1]).toBeInstanceOf(SystemMessage);
-    expect(String(messages[1]?.content)).toBe(NODE_INSTRUCTIONS.working);
-    expect(messages[2]).toBeInstanceOf(SystemMessage);
-    expect(String(messages[2]?.content)).toContain("k1");
-    expect(messages[3]).toBeInstanceOf(HumanMessage);
-    expect(String(messages[3]?.content)).toContain("fix the failing test");
+    expect(String(messages[1]?.content)).toContain("k1");
+    expect(messages[2]).toBeInstanceOf(HumanMessage);
+    expect(String(messages[2]?.content)).toContain("fix the failing test");
     // A move is a native `assistant.tool_calls`; its result is a `tool` message answering it —
     // never a result smuggled in as a `user` turn (the old OBSERVATION hack, removed).
-    expect(messages[4]).toBeInstanceOf(AIMessage);
-    expect((messages[4] as AIMessage).tool_calls?.[0]?.name).toBe("bash");
-    expect(messages[5]).toBeInstanceOf(ToolMessage);
-    expect((messages[5] as ToolMessage).tool_call_id).toBe("c1");
-    expect(String(messages[5]?.content)).toContain("boom");
+    expect(messages[3]).toBeInstanceOf(AIMessage);
+    expect((messages[3] as AIMessage).tool_calls?.[0]?.name).toBe("bash");
+    expect(messages[4]).toBeInstanceOf(ToolMessage);
+    expect((messages[4] as ToolMessage).tool_call_id).toBe("c1");
+    expect(String(messages[4]?.content)).toContain("boom");
+    // The situation's instruction is appended LAST (temporary — re-derived each turn).
+    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
+    expect(String(messages.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.working);
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {
@@ -267,17 +259,21 @@ describe("context format: tape", () => {
       result:
         "A tool call just returned — read its result above, then decide exactly one: if this state's criterion now holds, `stop`; else the next action.",
     };
-    const last = buildMessages(withResult).at(-1);
-    expect(last).toBeInstanceOf(SystemMessage);
-    expect(String(last?.content)).toMatch(/read its result/i);
-    expect(String(last?.content)).toMatch(/`stop`/);
+    const msgs = buildMessages(withResult);
+    // The situation's instruction is last; the observation instruction sits just before it.
+    expect(msgs.at(-1)).toBeInstanceOf(SystemMessage);
+    expect(String(msgs.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.working);
+    const observation = msgs.at(-2);
+    expect(observation).toBeInstanceOf(SystemMessage);
+    expect(String(observation?.content)).toMatch(/read its result/i);
+    expect(String(observation?.content)).toMatch(/`stop`/);
     // Not shown when nothing just returned (a fresh request).
     const request = buildMessages({ ...context, history: [], situation: "request" });
     expect(request.some((message) => /read its result/i.test(String(message.content)))).toBe(false);
   });
 
-  it("prepends the request instruction on a fresh request", () => {
+  it("appends the request instruction last on a fresh request", () => {
     const messages = buildMessages({ ...context, history: [], situation: "request" });
-    expect(String(messages[1]?.content)).toBe(NODE_INSTRUCTIONS.request);
+    expect(String(messages.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.request);
   });
 });

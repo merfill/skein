@@ -5,7 +5,7 @@
 > text `what`; the state's plan hangs directly off the `move` and is seeded by its first
 > ordinary `apply`; `stop` closes the state and forces the transition; the terminal
 > (`handoff`) move's `stop` ends the request. The context is a message tape, and a finished
-> state left behind is elided to a compaction line. The current shape is `docs/ir_semantics.md`,
+> state collapses to its `move` call and that call's result (the closure line). The current shape is `docs/ir_semantics.md`,
 > the operator reference is `docs/ir_operations.md`, the design plan is
 > `docs/plans/goal_into_move_plan.md`; the as-built is `docs/ir.md`.
 

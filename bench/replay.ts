@@ -14,8 +14,7 @@ import { loadSettings } from "../src/config/settings";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
-import { invokeTools } from "../src/llm/structured";
-import { buildMessages } from "../src/loop/propose";
+import { propose as proposeModel } from "../src/loop/propose";
 import { TurnMeter } from "./metrics";
 
 const RUNS = join(import.meta.dirname, "runs");
@@ -60,7 +59,9 @@ function fromHarborLog(path: string): Turn[] {
 function resolveTrace(arg: string): string {
   if (arg.includes("/") || arg.endsWith(".log") || arg.endsWith(".ndjson")) return arg;
   const dirs = readdirSync(RUNS)
-    .filter((dir) => dir.endsWith(`-${arg}`))
+    // Runs are named `live-<ts>-<scenario>-<uniq>` (a uniq suffix) or `<ts>-<scenario>-skein`,
+    // so the scenario sits in the middle: match `-<scenario>-` as well as the trailing form.
+    .filter((dir) => dir.endsWith(`-${arg}`) || dir.includes(`-${arg}-`))
     .sort();
   const last = dirs[dirs.length - 1];
   if (last === undefined) throw new Error(`no trace for scenario ${arg}`);
@@ -114,7 +115,7 @@ for (const turn of turns) {
   const meter = new TurnMeter();
   let lastFinish: string | undefined;
   try {
-    const proposal: Proposals = await invokeTools(model, buildMessages(turn.context), {
+    const proposal: Proposals = await proposeModel(model, turn.context, {
       callbacks: [meter],
       settings,
       rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens, model: modelName }),

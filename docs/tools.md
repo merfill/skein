@@ -62,7 +62,7 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 - `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
   the terminal `handoff` state (which has no goal).
 - `note?` — an optional one-line summary of the state just finished; it rides into that state's
-  compaction line on the tape.
+  closure line on the tape.
 
 Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
 focus becomes a `move` node and the plan hangs directly off it. The next move is the state's

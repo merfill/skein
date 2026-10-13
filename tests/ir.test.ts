@@ -178,6 +178,7 @@ describe("projection (the message tape)", () => {
       "user",
       "assistant",
       "tool",
+      "system",
       "assistant",
       "tool",
     ]);

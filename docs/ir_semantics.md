@@ -396,8 +396,10 @@ The context is what the model sees on the next step. It looks like an ordinary t
 messages but is **rebuilt from the tree every turn** — it is a projection, not an
 accumulating transcript. The same events always give the same tape.
 
-**Roles:** `system` (the base prompt plus the current node's instruction and the
-constraints), `user` (the request), `assistant` (the doxa's moves), `tool` (command results).
+**Roles:** `system` (the stable base prompt, the constraints, the state's own description once
+when it is entered, the observation instruction, and — appended last, temporary — the current
+node's instruction), `user` (the request), `assistant` (the doxa's moves), `tool` (command
+results).
 The tape is rendered with the **native tool-calling contract**: a move is an `assistant` with
 `tool_calls` (the tool name and arguments), a result is a `tool` with `tool_call_id`. A move may
 carry several calls — a **batch**: one `assistant` with N `tool_calls`, then the N `tool` results
@@ -410,31 +412,33 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 
 **Moves and their messages:**
 
-- `move` — an `assistant` call `move { state, what, note? }` + a `tool` confirmation. When it
-  leaves a finished state, the result carries that state's compaction line (`State <label>:
-  finished — <summary>`, §4a of the plan);
+- `move` — an `assistant` call `move { state, what, note? }` + a `tool` result of that call.
+  While the state is open the result is a confirmation (`moved to <label>`), followed by a
+  `system` turn with the state's description (`What / Done when`, shown once on entry); once the
+  state is stopped the result is the state's own **closure line** (`State <label>: finished — <why>`,
+  read from the `move.stop` relation). The line carries only the label, the `stop` reason and
+  the optional `note` — never a list of changed files;
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
   observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
   `item`), so the first plan item is an ordinary tool call;
-- `stop` — `assistant` with the reason (`why`): the state is closed; at the terminal state
-  it ends the request;
+- `stop` — adds no message of its own: the state's closure rides the result of that state's
+  `move`; at the terminal state it ends the request;
 - `decline` — `assistant` with the reason (`why`): the request is declined;
 - a refused structural move — a transient `assistant` (the call that was refused) + `tool`
   with the reason (`rejected <move>: <reason>`, next turn; no node); a `recall`/`search`
   result is likewise a transient `assistant` (its arguments) + `tool` pair.
 
 So a move is one `assistant` message (a single `call`, or a batch of `calls`) followed by one
-`tool` per call, while moving and closing a state are separate `assistant` messages.
-Alternative commands carry a marker
+`tool` per call; a state is exactly its `move` call plus that call's result. Alternative
+commands carry a marker
 (`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one line**
 referencing the observation (`see [obsId]`), never an inlined body. Each message exposes the
 node id (`[id] …`) so a result can be addressed by id with `recall`/`search`.
 
-**The tape is not monotone.** As soon as a state closes, its internal messages leave the tape;
-only the `move` call and its closure line (`stop` with `why`) remain. When a `move` leaves a
-finished state behind, that whole state's turns (its `apply` calls and their observations)
-leave the tape, and only the compaction line (`State <label>: finished — <summary>`) remains.
-Only the view goes, not the data: the tree stays complete.
+**The tape is not monotone.** A finished state — the current one awaiting the transition, or
+one already left behind — collapses to its `move` call and that call's result (the closure line
+`State <label>: finished — <why>`); its plan turns (the `apply` calls and their observations)
+leave the tape. Only the view goes, not the data: the tree stays complete.
 
 **The doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
 the tape; its meaning lives in the `why` fields.
@@ -463,7 +467,11 @@ Right after a tool result inside an open state, an **observation instruction** i
 the last system
 message: read the result and decide (`stop` / the next action / a different action). The tool
 names/parameters/descriptions are **not**
-in the prompt — they ship in the request's `tools` field.
+in the prompt — they ship in the request's `tools` field, and that field is **bound from
+`Context.applicable`**: on a transition only `move` is offered (plus read-only
+`recall`/`search`), while a state is open the apply tools and `stop` are offered, so a move the
+engine would refuse cannot be called at all (the `propose` path passes `toolNamesFor(applicable)`
+as `allowedTools`).
 
 ---
 
@@ -478,9 +486,8 @@ in the prompt — they ship in the request's `tools` field.
    the `move`; every action is an alternative of exactly one item. A state is never an item's
    alternative, and the request has no goal of its own.
 7. `stop` is a relation on the `move`, never a plan item.
-8. A closed state's internals leave the tape (only the `move` call and its closure message
-   remain); when a state is left behind, its whole subtree is elided and only its compaction
-   line remains (§7).
+8. A closed state's plan turns leave the tape: only its `move` call and that call's result (the
+   closure line `State <label>: finished — <why>`) remain (§7).
 9. A `move`'s `state` is the doxa's authored label: it never gates a move and never closes a
    state (closure is `stop` alone).
 10. The request ends when the terminal state (`handoff`) is stopped, or when it is declined;

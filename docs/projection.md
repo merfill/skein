@@ -3,7 +3,8 @@
 > Russian mirror — `docs/projection_ru.md`.
 
 > **Folded from the revision.** The projection is a message tape rebuilt from the tree every
-> turn; the old `path`/`lastResult`/`shown`/`calls`/`applicable`/`budget` blocks are gone.
+> turn; the old `path`/`lastResult`/`shown`/`calls`/`budget` blocks are gone (the tape is the
+> whole context; `Context.applicable` is kept only to bind the offered tool surface, §2).
 > Source of truth — `docs/ir_semantics.md` §7; as-built — `docs/ir.md`; the operator
 > registry — `docs/ir_operations.md`.
 
@@ -18,29 +19,32 @@ a projection, not an accumulating transcript. The same events always give the sa
 - `system` — the base prompt, the current node's instruction, and the constraints;
 - `user` — the request;
 - `assistant` — the doxa's moves;
-- `tool` — command results.
+- `tool` — command results;
+- `system` — a state's description, shown once when the state is entered.
 
 | Move | Messages |
 |---|---|
-| `move` | `assistant` (the call `move { state, what, note? }`) + `tool` (the confirmation; when it leaves a finished state, the confirmation carries that state's compaction line `State <label>: finished — <summary>`) |
+| `move` | `assistant` (the call `move { state, what, note? }`) + `tool` (the result of that call): while the state is open the result is a confirmation (`moved to <label>`), followed by a `system` message with the state's description (`What / Done when`); once the state is stopped the result is the state's own **closure line** `State <label>: finished — <why>`, read from the `move.stop` relation |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
-| `stop` | `assistant` (the reason `why`): the state is closed (or, at the terminal state, the request ends) |
+| `stop` | the state's closure; it adds no message of its own — it is rendered as the result of that state's `move` (or, at the terminal state, the request ends) |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
-Every plan item is a pair `assistant` + `tool`; moving and closing a state are separate
-`assistant` messages, and the first `apply` after a `move` seeds the state's plan. A command that
-ran and mutated a file (an edit) has no observation, so its `tool` message reads `mutated <path>`.
+Every plan item is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
+state's plan. A command that ran and mutated a file (an edit) has no observation, so its `tool`
+message reads `mutated <path>`. The closure line carries **only** the state label and the `stop`
+reason (plus the `note` the model passed on the move that left it) — never the list of changed
+files: a state that runs a build mutates thousands of artifacts.
 
 ## 3. The tape is built by walking the tree
 
 - the request is the first `user` turn;
-- its states (`move` children) render in order: a finished state that has been left behind is
-  elided to one compaction line (`State <label>: finished — <summary>`), carried by the `move`
-  that left it; the current state renders its `move` call and then its plan items in order (the
-  first `apply` seeds the plan). The current finished state (awaiting the transition) shows
-  its closure line;
+- its states (`move` children) render in order: an **open** state renders its `move` call, its
+  result, and then its plan items in order (the first `apply` seeds the plan); a **finished**
+  state — the current one awaiting the transition, or one already left behind — collapses to
+  just its `move` call and its result (the closure line `State <label>: finished — <why>`). No
+  plan turns and no separate `stop` message remain;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns
-  leave the tape; only its compaction line remains. Only the view goes, not the data: the tree
+  leave the tape; only its `move` + closure remain. Only the view goes, not the data: the tree
   stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
   the tape; its meaning lives in the `why` fields and the `move` `note`.
@@ -77,6 +81,9 @@ The system part is assembled from the current node's intent, not as a monolith:
 - the **base prompt** holds only what is true on any move — the role and the contract. It is
   stable, so it is a good cache prefix. The tool names/parameters/descriptions are **not** here:
   they ship in the request's `tools` field;
+- the **tool surface** offered in that field is bound from `Context.applicable`: on a transition
+  only `move` is offered, while a state is open the apply tools and `stop` are offered
+  (`recall`/`search` always), so a move the engine would refuse cannot be called at all;
 - the **node instruction** holds the admissible moves and the rules of the current situation
   (a fresh request / a state awaiting its first plan item / an open state / a finished state
   awaiting the transition / the terminal state); while a state is in focus, the state's

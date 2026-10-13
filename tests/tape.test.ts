@@ -125,13 +125,15 @@ describe("the tape: request and state", () => {
       "user",
       "assistant",
       "tool",
+      "system",
       "assistant",
       "tool",
     ]);
     expect(context.history[1]?.text).toContain("move: Reconnaissance");
     expect(context.history[2]?.text).toContain("moved to Reconnaissance");
-    expect(context.history[3]?.text).toBe("[a1] make test");
-    expect(context.history[4]?.text).toBe("[o1] exit 1\nboom");
+    expect(context.history[3]?.text).toContain("State: Reconnaissance");
+    expect(context.history[4]?.text).toBe("[a1] make test");
+    expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
   });
 
   it("decline renders a single assistant refusal", () => {
@@ -166,12 +168,13 @@ describe("the tape: commands and their outcomes", () => {
       "user",
       "assistant",
       "tool",
+      "system",
       "assistant",
       "tool",
       "assistant",
       "tool",
     ]);
-    expect(context.history[6]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
+    expect(context.history[7]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
   });
 
   it("renders an edit's mutate (no observation) as a mutated file", () => {
@@ -185,7 +188,7 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 5, ["a1"]),
     ]);
     const context = project(focused(state));
-    expect(context.history[4]?.text).toBe("[a1] mutated src/a.ts");
+    expect(context.history[5]?.text).toBe("[a1] mutated src/a.ts");
   });
 
   it("renders a refused command as an observation with the reason", () => {
@@ -199,7 +202,7 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 6, ["a1"]),
     ]);
     const context = project(focused(state));
-    expect(context.history[4]?.text).toBe("[o1] repeated_action: o0 already has it");
+    expect(context.history[5]?.text).toBe("[o1] repeated_action: o0 already has it");
   });
 
   it("marks an alternative with its previous attempt and reason", () => {
@@ -216,7 +219,7 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 8, ["a1", "a2"]),
     ]);
     const context = project(focused(state));
-    const marker = context.history[5]?.text ?? "";
+    const marker = context.history[6]?.text ?? "";
     expect(marker).toContain('alternative to step "step"');
     expect(marker).toContain('previous attempt: "run one"');
     expect(marker).toContain("exit 1");
@@ -237,11 +240,10 @@ describe("the tape: the observation instruction", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    // The observation reminder restates the current state's goal, criterion and constraints.
+    // The observation reminder restates the decision only; the state's work/criterion are on
+    // the tape (shown once at entry).
     expect(context.result).toMatch(/Tool result above/);
-    expect(context.result).toMatch(/State: Reconnaissance/);
-    expect(context.result).toMatch(/Goal: green/);
-    expect(context.result).toMatch(/Done when: /);
+    expect(context.result).toMatch(/`Done when`/);
     // A fresh state (no result yet) carries no observation instruction.
     const fresh = project(focused(fold([request("do it", 0), ...moved("m1", "reconnaissance", "green", 1)])));
     expect(fresh.result).toBeUndefined();
@@ -284,10 +286,10 @@ describe("the tape: edge cases", () => {
       ...stopNode("s1", "all green", 7, "m1"),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "assistant"]);
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool"]);
     expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
-    expect(texts(context.history)).toContain("stopped: all green");
+    expect(texts(context.history)).toContain("finished — all green");
   });
 
   it("a declared state without a plan renders move + confirmation", () => {
@@ -297,7 +299,7 @@ describe("the tape: edge cases", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("plan");
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool"]);
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "system"]);
     expect(context.history[1]?.text).toContain("move: Reconnaissance");
   });
 });
@@ -313,11 +315,11 @@ describe("the tape: transient retrieval and determinism", () => {
         output: "the stored body",
       },
     });
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "assistant", "tool"]);
-    expect(context.history[3]?.text).toBe("recall { id: obs:5 }");
-    expect(context.history[3]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
-    expect(context.history[4]?.text).toBe("the stored body");
-    expect(context.history[4]?.callId).toBe("call:retrieval");
+    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "system", "assistant", "tool"]);
+    expect(context.history[4]?.text).toBe("recall { id: obs:5 }");
+    expect(context.history[4]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
+    expect(context.history[5]?.text).toBe("the stored body");
+    expect(context.history[5]?.callId).toBe("call:retrieval");
   });
 
   it("is deterministic: same events, same tape", () => {

@@ -47,16 +47,13 @@ afterEach(cleanupWorkspaces);
 
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
-  // Strip the system prefix: base + node instruction (+ the island instruction while a state
-  // is being worked) + one message per constraint.
-  const withIsland =
-    context.island !== undefined &&
-    (context.situation === "plan" || context.situation === "working");
-  const system = 2 + (withIsland ? 1 : 0);
+  // Strip the leading system prefix (base + one message per constraint) and the TRAILING system
+  // messages (the observation instruction and the situation's instruction — both temporary, never
+  // in the history). A state's description is on the tape (shown once at entry), not stripped.
   const all = compact(await wire(buildMessages(context)));
-  const start = system + context.constraints.length;
-  // Drop a trailing observation-instruction system message (added after a tool result).
-  const end = all.at(-1)?.role === "system" ? all.length - 1 : all.length;
+  const start = 1 + context.constraints.length;
+  let end = all.length;
+  while (end > start && all[end - 1]?.role === "system") end -= 1;
   return all.slice(start, end);
 }
 
@@ -93,6 +90,7 @@ const GOAL_PREFIX = [
     content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
     tool_call_id: expect.stringMatching(/^w:move:\d+$/),
   },
+  { role: "system", content: expect.stringContaining("State: Reconnaissance") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -120,6 +118,7 @@ describe("move: before [request] -> delta -> after", () => {
         content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
         tool_call_id: expect.stringMatching(/^w:move:\d+$/),
       },
+      { role: "system", content: expect.stringContaining("State: Reconnaissance") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -512,10 +511,9 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
       { role: "assistant", call: { name: "move", args: { state: "reconnaissance", what: "do it" } } },
       {
         role: "tool",
-        content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
+        content: expect.stringMatching(/^\[w:move:\d+\] State Reconnaissance: finished — done$/),
         tool_call_id: expect.stringMatching(/^w:move:\d+$/),
       },
-      { role: "assistant", content: "stopped: done" },
     ]);
   });
 
@@ -573,9 +571,10 @@ describe("crash (mock node) and prefix", () => {
     expect(context.situation).toBe("request");
     const msgs = await wire(buildMessages(context));
     expect(msgs[0]).toMatchObject({ role: "system", content: BASE_PROMPT });
-    expect(msgs[1]).toMatchObject({ role: "system", content: NODE_INSTRUCTIONS.request });
-    expect(msgs[2]?.role).toBe("system");
-    expect(String(msgs[2]?.content)).toContain("k1");
-    expect(msgs[3]).toMatchObject({ role: "user", content: "fix" });
+    expect(msgs[1]?.role).toBe("system");
+    expect(String(msgs[1]?.content)).toContain("k1");
+    expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
+    // The situation's instruction is appended last, temporary (never in the history).
+    expect(msgs.at(-1)).toMatchObject({ role: "system", content: NODE_INSTRUCTIONS.request });
   });
 });

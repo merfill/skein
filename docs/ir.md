@@ -101,21 +101,25 @@ the engine and produce observations (`src/tools/index.ts`).
 
 `src/ir/traversal.ts`: `focusEvents` descends from the request into the current `move` and
 returns out of a finished state. `applicable` gives the doxa the admissible moves
-(`move`/`apply`/`stop`/`decline`) from the same facts as the gate. The loop
+(`move`/`apply`/`stop`/`decline`) from the same facts as the gate; `src/loop/propose.ts` binds
+the offered tool surface from it (`toolNamesFor` → `allowedTools`), so a refused move is not
+offered. The loop
 (`src/loop/graph.ts`): `project → propose → classify → execute → progress`; the run ends when
 the terminal state is stopped (`request_addressed`), or on `no_progress` / the budget
 (`maxTurns`).
 
 ## 7. Projection
 
-`Context` (`src/ir/project.ts`) is `{ history, situation, constraints }`: the tape of
+`Context` (`src/ir/project.ts`) is `{ history, situation, applicable, constraints }`: the tape of
 `user`/`assistant`/`tool` turns (rebuilt from the tree), the current situation
-(`request`/`plan`/`working`/`transition`/`terminal`), and the constraints. `src/loop/propose.ts`
+(`request`/`plan`/`working`/`transition`/`terminal`), the admissible moves, and the constraints. `src/loop/propose.ts`
 assembles the model messages: the base prompt, the node instruction for the situation, the
 constraints, then the history. Right after a tool result inside an open state it appends an
-**observation instruction** (`Context.result`) last: read the result and decide. A finished
-state left behind is elided to a compaction line
-(`State <label>: finished — <summary>`), carried by the move that left it. The `tool` messages
+**observation instruction** (`Context.result`) last: read the result and decide. A state is
+rendered as its `move` call plus that call's result: while the state is open the result is a
+confirmation (`moved to <label>`); a finished state collapses to its closure line
+(`State <label>: finished — <why>`, read from the `move.stop` relation) — the plan turns leave
+the tape. The `tool` messages
 carry the bounded inline body (an inspection result's head, a command's tail, when large); the
 full body is addressed by id via `recall`/`search`. A structural move refused by `classify`
 creates no node, so its reason is appended as a transient `tool` message for the next turn. The

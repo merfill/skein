@@ -29,10 +29,11 @@ writes `opencode.txt`).
 | 7 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **new architecture (goal-into-move)** | **1** | 52 | 71 | 507,700 | 23,758 (5,040 + 18,718) | 63% | — | `bench/runs/sandbox-tasks/2026-10-13T11-39-19-740Z-fix-ocaml-gc` |
 | 8 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **best net off by cost** | **1** | 45 | 45 | 981,165 | 81,294 (3,577 + 77,717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
 | 9 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net off** † — **new architecture (goal-into-move)** | **1** | 49 | 72 | 537,153 | 44,498 (5,044 + 39,454) | 64% | — | `bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc` |
-| 10 | 2026-10-10 | Skein | `fix-ocaml-gc` | **net on** | **1** | 41 | 41 | 2,139,649 | 94,123 (4,568 + 89,555) | 91% | — | `bench/runs/sandbox-tasks/2026-10-10T18-30-49-240Z-fix-ocaml-gc` |
+| 10 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **anti-VCS prompt cleanup (B19 + B7)** | **1** | 46 | 66 | 761,596 | 48,548 (4,699 + 43,849) | 83% | — | `bench/runs/sandbox-tasks/2026-10-13T19-02-00-767Z-fix-ocaml-gc` |
 
-Rows **`08-40`** (net on, 50 steps, no cost recorded) and **`07-02`** (net off, 13.78₽) fell out
-of the top-10 by the rule (more expensive / no cost) — their write-ups remain in the sections below.
+Rows **`08-40`** (net on, 50 steps, no cost recorded), **`07-02`** (net off, 13.78₽) and
+**`18-30`** (net on, 12.68₽) fell out of the top-10 by the rule (more expensive / no cost) —
+their write-ups remain in the sections below.
 
 **Condition notes.** † — a run **after the oracle was removed**: the task verifier (including
 Harbor's `tests/test.sh`, which names the broken tag `tag_purposefully_broken_sweeping_changes`)
@@ -142,6 +143,28 @@ reward 0 (`no_progress`, 46 turns): after its single `stop` the doxa alternated
 architecture removes the operator itself — these runs show just **2** refusals (net on) and **5**
 (net off).
 
+## Anti-VCS prompt cleanup (B19 + B7), 2026-10-13
+
+A prompt review found the cause of the `git` reflex documented in `docs/tools.md` §5–6: the
+mandatory "do not rely on a VCS" clause was **missing**, and `bash`'s description named
+`git status/diff/log`. Changes:
+
+- **B19** (new, in the base): "the workspace is the source of truth: do not assume a VCS, `git`,
+  a diff or history; a `git` failure is not retried".
+- **B7** rewritten — "make the first action a DISCOVERY one (e.g. `bash ls`)" is gone; now "take
+  the state's first step … act on the goal and the tape; do not look for a change history".
+- The **state description** (`What / Done when`) moved from a per-turn injected block to a single
+  `system` turn on the tape (shown once at entry); the situation instruction is now appended
+  **last** and temporary (never stored in the history). Block cleanup: B0+B1 merged, B18 removed,
+  the trust / "apply refused" dups dropped.
+
+Run (net on, †): reward 1, `request_addressed`, 46 steps / 66 calls, in 761,596 (fresh 127,228 +
+cache 634,368, hit 83%), out 48,548 (4,699 + 43,849), **6.97₽**. Versus the **same-day run on the
+pre-cleanup prompt** (goal-into-move): reward 1 but `max_turns`, 60 steps, 22.64₽ — now it
+self-closes in 46 steps at a third of the cost. Two `git` probes survive (t9, t24) but do not
+spiral; 0 refusals. By steps it is mid-pack (33 is the best, #5); by input it sits below the older
+rows (900k–2.1M) and above goal-into-move (507k).
+
 ## opencode on `fix-ocaml-gc` (our sandbox)
 
 Runs: `tests/sandbox/opencode-run.ts` (Docker, **no Harbor**) runs opencode inside the
@@ -182,6 +205,13 @@ the owner's request.
 inside the task image; the task's own verifier scores the result (`check.code = 0`,
 `PASS test_tests_output`). Model `routerai/~deepseek/deepseek-v4-flash-latest`,
 `SKEIN_REASONING_EFFORT=low`, task budget 60 turns.
+
+- **net on (#10, `19-02`) — current net on (anti-VCS cleanup).** 46 steps, 66 calls (all
+  accepted), a clean `stop = request_addressed`; **6.97₽** (in 761,596: fresh 127,228 + cache
+  634,368 = 83%; out 48,548: 4,699 + 43,849; context peak 142,602). The first run after B19/B7 and
+  moving the state description onto the tape. Localized by reading, one `edit`, then `./configure`
+  `make` `make -C testsuite one DIR=tests/basic`; the verifier passed. Two `git` probes (t9, t24)
+  did not spiral.
 
 - **net on (#5, `13-21`) — new best.** 33 steps, 33 tool calls, `edit` 3×, a clean
   `stop = request_addressed`; **2.93₽** (rea 20,105; ~2.3k-char starting context — no tool

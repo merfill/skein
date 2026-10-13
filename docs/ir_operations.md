@@ -111,12 +111,13 @@ never nested under it.
 | open a state | focus is the request with no `move` yet | add `move` (`state`, `what`, `note?`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state`, `empty_what` | `OP-MV-1` |
 | transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `empty_what`, `state_open` | `OP-MV-2` |
 | terminal | the state is `handoff` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
-| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the compaction line of the state being left (§4a of the plan) | the finished state's turns are elided, its line remains | — | `OP-MV-4` |
+| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the closure line of the state being left | the finished state's turns are elided, its line remains | — | `OP-MV-4` |
 
 - **Projection** (`PRJ-MV`): the tape gains an `assistant` call `move { state, what, note? }` + a
-  `tool` confirmation. Leaving a finished state, the result carries the compaction line
-  (`State <label>: finished — <summary>`); the finished state's own turns are elided (§7 of the
-  semantics).
+  `tool` result of that call. While the state is open the result is a confirmation
+  (`moved to <label>`); once the state is stopped the result is its **closure line**
+  (`State <label>: finished — <why>`, from the `move.stop` relation); the state's own plan turns
+  are elided (§7 of the semantics).
 - **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
   **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
   it) and where to go next. `what` is required except for the terminal `handoff`.
@@ -281,13 +282,14 @@ check: the doxa decides while working.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| finish a state's work | the focus is an open goal | add a `stop` node and a `stop` relation from the goal | the state is finished; focus returns to its `move` | — | `OP-ST-1` |
-| closure recorded on the goal | a goal | the `stop` node is hung off the goal (no plan item); the reason lives in its `why` | the closure and its reason sit on the goal | — | `OP-ST-2` |
+| finish a state's work | the focus is an open state | add a `stop` node and a `stop` relation from the state's `move` | the state is finished; focus returns to its `move` | — | `OP-ST-1` |
+| closure recorded on the move | a state | the `stop` node is hung off the `move` (no plan item); the reason lives in its `why` | the closure and its reason sit on the `move` | — | `OP-ST-2` |
 | the request ends | the focus is the terminal state (`handoff`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
-| not at a closeable state | the focus is the request, or a non-terminal `move` with no goal | — | — | `not_addressed` | `REF-ST-STATE` |
+| not at a closeable state | the focus is the request, or a non-terminal `move` | — | — | `not_addressed` | `REF-ST-STATE` |
 
-- **Projection** (`PRJ-STOP`): the tape shows the closure message `stopped: <why>`; a closed
-  goal's internals leave the tape.
+- **Projection** (`PRJ-STOP`): the state's closure renders as the result of that state's `move`
+  (the closure line `State <label>: finished — <why>`); the `stop` adds no message of its own,
+  and the state's plan turns leave the tape.
 - A goal is closed only by `stop` (a `stop` relation); the terminal state is closed by a `stop`
   relation on its `move`. There is no `stop` on the request; the request ends when its terminal
   state is stopped.
@@ -410,8 +412,8 @@ Tool **failures** (a fail observation): missing file (`read`), bad scope (`grep`
 - a state is its own goal (`what` on the `move`); the states are the request's flat `move`
   children; the plan hangs off the `move`.
 - a refusal/failure changes the projection.
-- a finished state (a closed goal, or the stopped terminal) does not remain the focus; its turns
-  leave the tape and only its compaction line remains.
+- a finished state (a closed state, or the stopped terminal) does not remain the focus; its
+  plan turns leave the tape and only its `move` + closure line remain.
 - secrets live only in `.env`; small results may be inlined, never secrets.
 
 Helpers already implement the first four: `tests/invariants.ts`.

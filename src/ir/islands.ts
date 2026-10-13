@@ -129,6 +129,13 @@ export const ISLANDS: Record<IslandId, Island> = {
 
 export const ISLAND_ORDER: readonly IslandId[] = ISLAND_IDS;
 
+// The state's description, shown ONCE when the state is entered (a `system` turn on the tape):
+// what the state is and the knowledge that closes it. The relief (the operational constraints)
+// is deliberately not repeated here — it is not re-injected every turn.
+export function stateDescription(island: Island): string {
+  return `State: ${island.label} — ${island.what}.\nDone when: ${island.criterion}.`;
+}
+
 // The terminal state: reaching it is the sign of the end; it carries no goal and accepts
 // `stop` directly (docs/plans/state_protocol_plan.md §2, §6.7).
 export const TERMINAL_ISLAND: IslandId = "handoff";

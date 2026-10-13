@@ -54,8 +54,11 @@ describe("the message tape under a long horizon", () => {
     );
 
     expect(lengths.length).toBeGreaterThan(30);
-    // Once the state is declared, each command appends an assistant call and a tool result.
-    for (let i = 1; i < lengths.length; i += 1) {
+    // The request -> declared state adds the move call, its result and the state's description
+    // (shown once at entry, as a system turn); each later command appends an assistant call and
+    // a tool result.
+    expect(lengths[1]).toBe((lengths[0] ?? 0) + 3);
+    for (let i = 2; i < lengths.length; i += 1) {
       expect(lengths[i]).toBe((lengths[i - 1] ?? 0) + 2);
     }
   }, 30_000);

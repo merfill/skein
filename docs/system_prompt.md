@@ -36,8 +36,9 @@ L2 is under the gate, L3 is acceptance.
   `transition` / `terminal`), assembled in `src/loop/prompt/blocks.ts` (re-exported by
   `src/loop/prompt/index.ts`): each is its blocks' texts joined with `\n\n`.
 - A block is `{ id: string; text: string }`; the IDs are stable (B1…).
-- `src/loop/propose.ts` puts `BASE_PROMPT` then the situation's instruction into the message
-  list (`docs/ir_semantics.md` §6).
+- `src/loop/propose.ts` builds the message list as: `BASE_PROMPT`, the constraints, the tape
+  (the history), then the situation's instruction **appended last** — temporary, re-derived from
+  the situation each turn, never stored in the history (`docs/ir_semantics.md` §6).
 - The tool contract (names, parameters, descriptions) is **not** copied into the prompt text:
   it is sent as the request's `tools` field (native function-calling), generated from the
   single registry `PROPOSAL_TOOLS` (`src/llm/tools.ts`). The prompt only tells the model to
@@ -59,26 +60,24 @@ Current blocks:
 
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
-| B1 | Frame: a coding agent with access to files/directories on disk; one or more moves per turn (a batch, independent calls) | `ir_semantics` §1 | in code |
-| B0 | Frame: a coding agent implemented as a state machine — states with exit criteria, transitions as preconditions | `prompt_state_machine_concept` | in code |
+| B0 | Frame: a coding agent implemented as a state machine — stages of work with exit criteria, transitions as preconditions; files/directories on disk; independent calls are batched | `prompt_state_machine_concept` | in code |
 | B4 | The walk (`move { state, what }` declares the state AND its goal — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
 | B6 | Request situation: the first move is `move { state, what }` (choose the starting state and its goal) or `decline`; literal command / workspace root / `cd <dir> &&` | `tools` §5.1 | in code |
-| B7 | Plan situation: give the state's FIRST plan item — an ordinary tool call (`apply`); no sub-states | `ir_semantics` §4.2 | in code |
+| B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
 | B8 | Working situation: search → implement; when the state's criterion holds, `stop` (no criterion gate); `move` while open is refused | `ir_semantics` §4.3–4.4 | in code |
 | B9 | Transition situation: the state is finished — `move { state, what }` to the next one, or `move { state: "handoff" }` to finish | `ir_semantics` §4.1 | in code |
 | B10 | Terminal situation: the hand-off state — call `stop` to finish the request | `ir_semantics` §4.4 | in code |
-| B18 | Micro-examples of a move: `move { state, what }`; recon/edit in a batch; `stop` a state; `move` a transition | `tests/prompt.test.ts` | in code |
-| B13 | Output discipline: keep reasoning short; never reconstruct code from memory (use `read`/`grep`/`webfetch`); no code snippets in reasoning | `tests/prompt.test.ts` | in code |
+| B13 | Output discipline: keep replies short; the tape is the only thing seen — never assume file/directory content from memory, read from disk | `tests/prompt.test.ts` | in code |
+| B19 | The workspace is the source of truth — do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
 
-While a state is being worked (`plan` / `working`), `ISLAND_INSTRUCTIONS[state]` follows
-the node instruction — the state's work, closing criterion and constraints
-(`What / Done when / Constraints`), keyed by the `move`'s authored `state`
-(`src/ir/islands.ts`, `docs/prompt_state_machine_concept.md`). A finished state
-(`transition` / `terminal`) does **not** show them (the criterion is met). A stalled state also
-gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result
-inside an open state the projection appends an **observation instruction** as the last system
-message (`Context.result`, `src/ir/project.ts`): read the result and decide — criterion holds →
-`stop`; step worked, more needed → the next action; failed/wrong step → a different action.
+A state's description (`What / Done when`, from `src/ir/islands.ts`) is shown **once**, when the
+state is entered: it is a `system` turn on the tape (right after the `move` result), not a
+per-turn injected block. A finished state (`transition` / `terminal`) does not carry it (its
+turns are elided into the closure line). A stalled state also gets a soft nudge
+(`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result inside an open
+state the projection appends an **observation instruction** as the last system message
+(`Context.result`, `src/ir/project.ts`): read the result and decide — criterion holds → `stop`;
+step worked, more needed → the next step; failed/wrong step → a different action.
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -234,6 +233,14 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   `plan` / `working` / `transition` / `terminal`; B4/B6/B7/B8/B9 reworded (B7 now gives the
   first plan item, not a goal). The model surface offered each turn IS the frontier
   (`Context.applicable`).
+- **Phase 17 (2026-10-13).** The closure is rendered as the state's own `move` result: while
+  the state is open the result is a confirmation (`moved to <label>`); once stopped it is the
+  closure line (`State <label>: finished — <why>`, from `move.stop`) — no separate `stopped:`
+  assistant line and no changed-file list. Each state is exactly its `move` call plus that
+  call's result. The offered tool surface is now **wired** to the frontier
+  (`propose` → `toolNamesFor(applicable)` → `allowedTools`): on a transition only `move` is
+  offered, so an `apply` at a transition cannot be called. B4/B9 gained the "trust the state's
+  record" line.
 
 ## 5. Test map
 

@@ -6,8 +6,7 @@ import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import type { Proposals } from "../../src/llm/schemas";
-import { invokeTools } from "../../src/llm/structured";
-import { buildMessages, promptText } from "../../src/loop/propose";
+import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
 import { runSandbox } from "./run";
 import { FIX_OCAML_REQUEST, fixOcamlGc } from "./specs/fix-ocaml-gc";
@@ -53,7 +52,7 @@ async function main(): Promise<void> {
       rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
     );
     const before = snapshot(meter);
-    const proposal = await invokeTools(model, messages, { settings, rebuild, callbacks: [meter] });
+    const proposal = await proposeModel(model, context, { settings, rebuild, callbacks: [meter] });
     const usage = delta(snapshot(meter), before);
     const action = proposal.actions[0]!;
     const tool = action.operator === "apply" ? action.action.tool : action.operator;

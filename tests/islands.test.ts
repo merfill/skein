@@ -1,9 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fold } from "../src/ir/graph";
-import { ISLAND_IDS, ISLANDS, isIsland } from "../src/ir/islands";
+import { ISLAND_IDS, ISLANDS, isIsland, stateDescription } from "../src/ir/islands";
 import { islandOf, project } from "../src/ir/project";
-import { ISLAND_INSTRUCTIONS } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 import { PROPOSAL_TOOLS, toProposal } from "../src/llm/tools";
 import {
@@ -81,17 +80,17 @@ describe("islands: the doxa authors the state at move", () => {
 });
 
 describe("islands: the projection highlights the state", () => {
-  it("projects the island and injects its work into the system prefix", () => {
+  it("projects the island and puts its description on the tape once (as a system turn)", () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const res = execAll(withGoal("recon", "true"), [request()], ws);
     const context = project(res.state);
     expect(context.situation).toBe("working");
     expect(context.island).toBe("reconnaissance");
     expect(islandOf(res.state)).toBe("reconnaissance");
+    const description = stateDescription(ISLANDS.reconnaissance);
+    expect(context.history.some((m) => m.role === "system" && m.text === description)).toBe(true);
     const messages = buildMessages(context);
-    expect(messages.some((message) => String(message.content) === ISLAND_INSTRUCTIONS.reconnaissance)).toBe(
-      true,
-    );
+    expect(messages.some((message) => String(message.content) === description)).toBe(true);
   });
 
   it("has no island on a fresh request", () => {

@@ -6,7 +6,7 @@ import {
   unactionableOf,
   type State,
 } from "./graph";
-import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
+import { ISLANDS, isTerminalIsland, stateDescription, type IslandId } from "./islands";
 import {
   applicable,
   currentMove,
@@ -18,11 +18,11 @@ import {
 import type { Node } from "./types";
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
-// (docs/ir_semantics.md §7). The request is the user turn; each state is a `move` call +
-// confirmation, then its plan's call/observation pairs. A state that has been left behind is
-// elided to one compaction line, carried by the move that left it
-// (docs/plans/state_protocol_plan.md §4a). There is no goal node: the state IS its goal
-// (docs/plans/goal_into_move_plan.md).
+// (docs/ir_semantics.md §7). The request is the user turn; each state is a `move` call and
+// its result — while the state is open the result confirms the move and the plan's
+// call/observation pairs follow; once the state is stopped its turns are elided and the
+// `move` result carries the state's own closure, the `stop` reason read from the `move.stop`
+// relation (docs/plans/goal_into_move_plan.md). There is no goal node: the state IS its goal.
 
 export type Situation = "request" | "plan" | "working" | "transition" | "terminal";
 
@@ -35,7 +35,7 @@ export interface ToolCall {
 }
 
 export interface TapeMessage {
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "tool" | "system";
   text: string;
   // An assistant turn that is a single tool call (`[id] …` was the model's move this turn).
   call?: ToolCall;
@@ -118,19 +118,6 @@ function mutatedPaths(state: State, actionId: string): string[] {
   return paths;
 }
 
-// Every file a state's plan changed, so a finished state's compaction line can name them.
-function mutatedFilesUnderMove(state: State, moveId: string): string[] {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return [];
-  const paths = new Set<string>();
-  for (const item of childrenOf(state, plan)) {
-    for (const alt of childrenOf(state, item)) {
-      for (const path of mutatedPaths(state, alt)) paths.add(path);
-    }
-  }
-  return [...paths];
-}
-
 // A tool result rendered for the tape, from the bounded inline body (the full body stays
 // addressable by id via `recall`/`search`, docs/ir_semantics.md §7).
 function observationText(node: Node): string {
@@ -209,57 +196,47 @@ function asCall(node: Node | undefined): { name: string; args: Record<string, un
   return { name: call.name, args };
 }
 
-// The compaction line a finished state leaves on the tape: the engine's mechanical closure
-// plus the optional model `note` (docs/plans/state_protocol_plan.md §4a). The note rides the
-// `move` that leaves the state, so it is passed in by the caller.
-function stateSummary(state: State, moveId: string, note: string | undefined): string {
+// The closure line a finished state's `move` returns: the engine's mechanical reason (the
+// `stop` payload) plus the optional model `note` (docs/plans/state_protocol_plan.md §4a). The
+// note rides the `move` that leaves the state, so it is passed in by the caller. The changed
+// files are deliberately NOT listed: a state that runs a build mutates thousands of artifacts.
+function closureLine(state: State, moveId: string, note: string | undefined): string {
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : "State";
   const stop = stopOf(state, moveId);
   const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
   let line = `State ${label}: finished — ${typeof why === "string" && why !== "" ? why : "done"}`;
-  const files = mutatedFilesUnderMove(state, moveId);
-  if (files.length > 0) line += `; changed ${files.join(", ")}`;
   if (typeof note === "string" && note !== "") line += ` (note: ${note})`;
   return line;
 }
 
-// Render a state: its `move` native call and confirmation (the confirmation carries the
-// compaction line of the state it left, if any), then its plan — elided when the state has
-// already been left behind, shown as its closure line while it is the current finished one.
+// Render a state: its `move` native call and the result of that call. While the state is open
+// the result confirms the move and the plan follows; once the state is stopped its turns are
+// elided and the result is the state's own closure line (the `stop` reason, read from the
+// `move.stop` relation — the state IS its goal, docs/plans/goal_into_move_plan.md).
 function renderState(
   state: State,
   moveId: string,
-  previousMoveId: string | undefined,
-  isCurrent: boolean,
+  note: string | undefined,
   out: TapeMessage[],
 ): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
   const call = asCall(move);
-  const note = movePayload(state, moveId)?.note;
-  const confirmation = previousMoveId !== undefined
-    ? `${stateSummary(state, previousMoveId, note)}\n→ moved to ${label}`
-    : `moved to ${label}`;
   if (call !== undefined) {
     out.push({ role: "assistant", text: "", call: { id: moveId, ...call } });
-    out.push({ role: "tool", text: `[${moveId}] ${confirmation}`, callId: moveId });
   } else {
     out.push({ role: "assistant", text: `[${moveId}] move: ${label}` });
-    out.push({ role: "tool", text: `[${moveId}] ${confirmation}`, callId: moveId });
   }
-
-  if (island !== undefined && isTerminalIsland(island)) return;
-  // A finished state that has already been left behind is elided (only its compaction line,
-  // carried by the next move, remains); the current finished state shows its closure line.
-  if (!isCurrent && isMoveFinished(state, moveId)) return;
-  if (isMoveFinished(state, moveId)) {
-    const stop = stopOf(state, moveId);
-    const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
-    out.push({ role: "assistant", text: `stopped: ${typeof why === "string" && why !== "" ? why : "done"}` });
+  if (stopOf(state, moveId) !== undefined) {
+    out.push({ role: "tool", text: `[${moveId}] ${closureLine(state, moveId, note)}`, callId: moveId });
     return;
   }
+  out.push({ role: "tool", text: `[${moveId}] moved to ${label}`, callId: moveId });
+  // The state description is shown ONCE, when the state is entered, and stays on the tape while
+  // the state is open (a finished state's turns are elided into its closure).
+  if (island !== undefined) out.push({ role: "system", text: stateDescription(ISLANDS[island]) });
   renderPlan(state, moveId, out);
 }
 
@@ -350,20 +327,12 @@ export function situationOf(state: State): Situation {
 }
 
 // The observation step: right after a tool result inside an open state, the doxa must read the
-// result and decide. The message repeats the current state's authored rule (what / criterion /
-// constraints) and the state's own goal text at the highest recency, so the doxa stops when
-// the criterion holds instead of drifting into a later state's work (docs/ir_semantics.md §7).
-function observationInstruction(state: State, island: IslandId): string {
-  const authored = ISLANDS[island];
-  const move = currentMove(state);
-  const what = move !== undefined ? movePayload(state, move)?.what : undefined;
+// result and decide. The state's work / criterion already sit on the tape (shown once at entry),
+// so only the decision is restated here (docs/ir_semantics.md §7).
+function observationInstruction(): string {
   return [
     "Tool result above. Stay in this state — work only its goal.",
-    `State: ${authored.label} — ${authored.what}`,
-    `Goal: ${typeof what === "string" && what !== "" ? what : authored.what}`,
-    `Done when: ${authored.criterion}`,
-    `Constraints: ${authored.relief}`,
-    "Decide exactly one, and answer this first: does `Done when` above already hold? Yes → `stop`. No → the next action for this state if the step worked, or a DIFFERENT action if it failed or was the wrong step (never repeat it).",
+    "Decide exactly one, and answer this first: does the state's `Done when` already hold? Yes → `stop`. No → the next action for this state if the step worked, or a DIFFERENT action if it failed or was the wrong step (never repeat it).",
   ].join("\n");
 }
 
@@ -394,7 +363,10 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     } else {
       const moves = childrenOf(state, rootId);
       moves.forEach((moveId, index) => {
-        renderState(state, moveId, index > 0 ? moves[index - 1] : undefined, index === moves.length - 1, history);
+        // The model's `note` on a move summarizes the state it leaves, so it belongs on the
+        // closure line of the previous state (the previous move's result).
+        const nextNote = index + 1 < moves.length ? movePayload(state, moves[index + 1] as string)?.note : undefined;
+        renderState(state, moveId, nextNote, history);
       });
     }
   }
@@ -432,7 +404,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const last = history[history.length - 1];
   const result =
     situation === "working" && last?.role === "tool" && island !== undefined
-      ? observationInstruction(state, island)
+      ? observationInstruction()
       : undefined;
   return {
     history,
