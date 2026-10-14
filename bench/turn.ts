@@ -1,0 +1,330 @@
+// Replays ONE recorded turn from a `sandbox-tasks` trace, optionally patching the context,
+// through the live model — to test the effect of a single prompt change without rerunning the
+// task. The trace row (`tests/sandbox/live.ts`) is
+//   { turn, chars, situation, constraints, history, messages }
+// and `messages` already carries the native `tool_calls`/`tool_call_id` (live.ts renders them),
+// so the exact model-facing transcript is reconstructible. The trace does NOT store
+// `applicable`, so the tool surface is reconstructed from `situation`.
+//
+// Usage:
+//   npx tsx bench/turn.ts <run-dir-or-trace> --turn N [--patch patch.json]
+//       [--append-system "text"] [--repeat K] [--model M] [--dump out.txt] [--dry] [--list]
+//
+// A patch file is a JSON array of ops applied in order:
+//   { "op": "append",  "role": "system", "text": "..." }        // push at the end
+//   { "op": "insert",  "at": 3, "role": "system", "text": "..." } // 0-based insert
+//   { "op": "remove",  "match": "substring" }                   // drop messages whose text has it
+//   { "op": "replace", "match": "substring", "text": "..." }     // rewrite the first match
+//
+// Live model calls cost money and are gated (AGENTS.md): run only with the owner's go-ahead.
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  AIMessage,
+  HumanMessage,
+  SystemMessage,
+  ToolMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
+
+import { createChatModel } from "../src/llm/client";
+import { invokeTools } from "../src/llm/structured";
+import type { Action, Proposals } from "../src/llm/schemas";
+import { toolNamesFor } from "../src/llm/tools";
+import { loadSettings } from "../src/config/settings";
+import { ISLANDS, stateDescription, type IslandId } from "../src/ir/islands";
+import { observationInstruction, type Context, type Situation, type TapeMessage } from "../src/ir/project";
+import { buildMessages } from "../src/loop/propose";
+import { TurnMeter } from "./metrics";
+
+const RUNS = join(import.meta.dirname, "runs", "sandbox-tasks");
+
+interface RenderedMessage {
+  type: string;
+  content: string;
+  tool_calls?: { name: string; args: unknown; id: string }[];
+  tool_call_id?: string;
+}
+
+interface Row {
+  turn: number;
+  chars?: number;
+  situation: Situation;
+  messages: RenderedMessage[];
+  // `--rebuild` sources (present in `sandbox-tasks` traces, `tests/sandbox/live.ts`).
+  history?: TapeMessage[];
+  constraints?: { id: string; forbid: string[] }[];
+}
+
+type PatchOp =
+  | { op: "append"; role: string; text: string }
+  | { op: "insert"; at: number; role: string; text: string }
+  | { op: "remove"; match: string }
+  | { op: "replace"; match: string; text: string };
+
+function flag(name: string): string | undefined {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
+
+function resolveTrace(arg: string): string {
+  if (arg.endsWith(".ndjson")) return arg;
+  if (existsSync(join(arg, "contexts.ndjson"))) return join(arg, "contexts.ndjson");
+  const dirs = readdirSync(RUNS)
+    .filter((dir) => dir === arg || dir.endsWith(`-${arg}`) || dir.includes(`-${arg}-`) || dir.includes(arg))
+    .sort();
+  const last = dirs[dirs.length - 1];
+  if (last === undefined) throw new Error(`no trace matching "${arg}" under ${RUNS}`);
+  return join(RUNS, last, "contexts.ndjson");
+}
+
+function loadRows(path: string): Row[] {
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as Row);
+}
+
+// The frontier a situation implies (`src/ir/project.ts:situationOf` + `traversal.applicable`);
+// the trace does not store `applicable`, so the tool surface is reconstructed from this.
+function frontierFor(situation: Situation) {
+  switch (situation) {
+    case "request":
+      return { move: true, apply: false, stop: false, decline: true };
+    case "plan":
+    case "working":
+      return { move: false, apply: true, stop: true, decline: false };
+    case "terminal":
+      return { move: false, apply: false, stop: true, decline: false };
+    case "transition":
+    default:
+      return { move: true, apply: false, stop: false, decline: false };
+  }
+}
+
+function toolsFor(situation: Situation): string[] {
+  return toolNamesFor(frontierFor(situation));
+}
+
+function toBaseMessage(message: RenderedMessage): BaseMessage {
+  if (message.type === "human") return new HumanMessage(message.content);
+  if (message.type === "system") return new SystemMessage(message.content);
+  if (message.type === "tool") {
+    if (message.tool_call_id === undefined) {
+      throw new Error(`rendered tool message without tool_call_id: ${message.content.slice(0, 60)}`);
+    }
+    return new ToolMessage({ content: message.content, tool_call_id: message.tool_call_id });
+  }
+  const calls = (message.tool_calls ?? []).map((call) => ({
+    name: call.name,
+    args: (typeof call.args === "string" ? JSON.parse(call.args) : call.args) as Record<string, unknown>,
+    id: call.id,
+    type: "tool_call" as const,
+  }));
+  if (calls.length > 0) return new AIMessage({ content: message.content, tool_calls: calls });
+  return new AIMessage(message.content);
+}
+
+function applyPatch(messages: RenderedMessage[], patch: PatchOp[]): RenderedMessage[] {
+  const out = [...messages];
+  for (const op of patch) {
+    if (op.op === "append") {
+      out.push({ type: op.role === "system" ? "system" : op.role, content: op.text });
+    } else if (op.op === "insert") {
+      out.splice(op.at, 0, { type: op.role === "system" ? "system" : op.role, content: op.text });
+    } else if (op.op === "remove") {
+      for (let i = out.length - 1; i >= 0; i -= 1) {
+        if (out[i]!.content.includes(op.match)) out.splice(i, 1);
+      }
+    } else {
+      const index = out.findIndex((message) => message.content.includes(op.match));
+      if (index < 0) throw new Error(`patch replace: no message matches ${JSON.stringify(op.match)}`);
+      out[index] = { ...out[index]!, content: op.text };
+    }
+  }
+  return out;
+}
+
+// The island of the current state, read from the last `move` call on the recorded history.
+function lastIslandOf(history: TapeMessage[]): IslandId | undefined {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const message = history[i]!;
+    const calls = message.calls ?? (message.call !== undefined ? [message.call] : []);
+    for (const call of calls) {
+      if (call.name !== "move") continue;
+      const state = (call.args as { state?: unknown }).state;
+      if (typeof state === "string" && state in ISLANDS) return state as IslandId;
+    }
+  }
+  return undefined;
+}
+
+// `--rebuild`: re-render the prompt from the CURRENT code over the recorded `history` — the
+// state description (from the island of the last `move`) and the situation/observation
+// instructions are recomputed, so a prompt edit can be tested on a recorded run without a new
+// run. Needs a `sandbox-tasks` trace (it carries `history`). `--patch` is not applied here; use
+// `--append-system` to add a message after the rebuilt tail.
+function rebuildMessages(row: Row): BaseMessage[] {
+  if (row.history === undefined) throw new Error("--rebuild needs a trace with `history` (sandbox-tasks)");
+  const island = lastIslandOf(row.history);
+  const history: TapeMessage[] = row.history.map((message) =>
+    island !== undefined && message.role === "system" && message.text.startsWith("State: ")
+      ? { ...message, text: stateDescription(ISLANDS[island]) }
+      : message,
+  );
+  const last = history.at(-1);
+  const result =
+    row.situation === "working" && last?.role === "tool" && island !== undefined
+      ? observationInstruction()
+      : undefined;
+  const context: Context = {
+    history,
+    situation: row.situation,
+    constraints: row.constraints ?? [],
+    ...(island !== undefined ? { island } : {}),
+    ...(result !== undefined ? { result } : {}),
+  };
+  return buildMessages(context);
+}
+
+const traceArg = process.argv[2];
+if (traceArg === undefined || traceArg.startsWith("--")) {
+  console.error(
+    "usage: tsx bench/turn.ts <run-dir-or-trace> (--turn N | --turns A-B) " +
+      "[--patch f.json] [--rebuild] [--append-system s] [--repeat K] [--dry] [--reasoning]",
+  );
+  process.exit(1);
+}
+const tracePath = resolveTrace(traceArg);
+const rows = loadRows(tracePath);
+
+if (process.argv.includes("--list")) {
+  for (const row of rows) {
+    const last = row.messages.at(-1);
+    console.log(`t${row.turn} situ=${row.situation} last=${last?.type}:${last?.content.slice(0, 60).replace(/\n/g, " ")}`);
+  }
+  process.exit(0);
+}
+
+// `--turn N` or `--turns A-B` / `--turns 16,18,20`. Several consecutive turns scanned with the
+// SAME patch is a per-step counterfactual (each uses the recorded prefix), not a self-consistent
+// rollout — a true rollout needs the workspace to execute the chosen tools.
+function parseTurns(spec: string): number[] {
+  if (spec.includes("-")) {
+    const [from, to] = spec.split("-").map(Number);
+    const out: number[] = [];
+    for (let turn = from ?? 0; turn <= (to ?? 0); turn += 1) out.push(turn);
+    return out;
+  }
+  return spec.split(",").map(Number);
+}
+const turnSpec = flag("--turns") ?? flag("--turn");
+if (turnSpec === undefined) {
+  console.error(`specify --turn N or --turns A-B (have ${rows.map((r) => r.turn).join(",")})`);
+  process.exit(1);
+}
+const turns = parseTurns(turnSpec);
+
+const patchFile = flag("--patch");
+const patch: PatchOp[] = patchFile !== undefined ? (JSON.parse(readFileSync(patchFile, "utf8")) as PatchOp[]) : [];
+const appendSystem = flag("--append-system");
+if (appendSystem !== undefined) patch.push({ op: "append", role: "system", text: appendSystem });
+
+const settings = loadSettings();
+const modelName = flag("--model") ?? settings.model;
+const repeat = Math.max(1, Number(flag("--repeat") ?? "1") || 1);
+const showReasoning = process.argv.includes("--reasoning");
+const dumpPath = flag("--dump");
+const dry = process.argv.includes("--dry");
+const useRebuild = process.argv.includes("--rebuild");
+if (useRebuild && patchFile !== undefined) {
+  console.error("--rebuild re-renders the prompt; --patch does not apply (use --append-system)");
+  process.exit(1);
+}
+
+const label = (action: Action): string =>
+  action.operator === "apply" ? `apply:${action.action.tool}` : action.operator;
+
+// A fresh model per call that also captures the provider's hidden reasoning text
+// (`choices[0].message.reasoning`), the way `tests/sandbox/live.ts` does.
+function makeRenderer(sink: string[]) {
+  const hooks = {
+    onResponseBody: (body: unknown): void => {
+      const value = (body as { choices?: { message?: { reasoning?: unknown } }[] } | undefined)?.choices?.[0]
+        ?.message?.reasoning;
+      if (typeof value === "string" && value !== "") sink.push(value);
+    },
+  };
+  return {
+    model: createChatModel({ ...settings, model: modelName }, hooks),
+    rebuild: (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
+      createChatModel(
+        { ...settings, model: modelName, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
+        hooks,
+      ),
+  };
+}
+
+for (const turn of turns) {
+  const row = rows.find((candidate) => candidate.turn === turn);
+  if (row === undefined) {
+    console.log(`t${turn} MISSING`);
+    continue;
+  }
+  // `--rebuild` re-renders the tail from the CURRENT code; otherwise the recorded `messages`
+  // are replayed (optionally patched). Reconstructing the native transcript validates the
+  // trace's tool_calls/tool_call_id even in `--dry`, so a wrong patch/trace surfaces without a
+  // model call.
+  const patched = useRebuild ? undefined : patch.length > 0 ? applyPatch(row.messages, patch) : row.messages;
+  const messages = useRebuild ? rebuildMessages(row) : patched!.map(toBaseMessage);
+  if (useRebuild && appendSystem !== undefined) messages.push(new SystemMessage(appendSystem));
+  const allowedTools = toolsFor(row.situation);
+
+  if (dumpPath !== undefined) {
+    const target = turns.length === 1 ? dumpPath : `${dumpPath}.t${turn}`;
+    const text = (message: BaseMessage): string =>
+      typeof message.content === "string" ? message.content : JSON.stringify(message.content);
+    writeFileSync(target, messages.map((m) => `===== ${m.getType()} =====\n${text(m)}`).join("\n\n"));
+  }
+  if (dry) {
+    console.log(
+      `dry t${row.turn} situation=${row.situation} mode=${useRebuild ? "rebuild" : "patch"} ` +
+        `tools=[${allowedTools.join(",")}] messages=[${messages.map((message) => message.getType()).join(",")}]`,
+    );
+    continue;
+  }
+
+  console.log(
+    `turn ${row.turn} situation=${row.situation} mode=${useRebuild ? "rebuild" : "patch"} ` +
+      `messages=${messages.length} tools=[${allowedTools.join(",")}] model=${modelName} repeat=${repeat}`,
+  );
+  for (let run = 0; run < repeat; run += 1) {
+    const reasoning: string[] = [];
+    const { model, rebuild } = makeRenderer(reasoning);
+    const meter = new TurnMeter();
+    let finish: string | undefined;
+    try {
+      const proposal: Proposals = await invokeTools(model, messages, {
+        settings,
+        rebuild,
+        callbacks: [meter],
+        allowedTools,
+        onResponse: (response) => {
+          const value = (response as { response_metadata?: { finish_reason?: unknown } } | undefined)
+            ?.response_metadata?.finish_reason;
+          if (typeof value === "string") finish = value;
+        },
+      });
+      console.log(
+        `  #${run} actions=${proposal.actions.map(label).join("+")} thought=${proposal.thought.length} ` +
+          `out=${meter.outputTokens} reason=${meter.reasoningTokens} in=${meter.inputTokens} finish=${finish ?? "?"}`,
+      );
+      console.log(`     args=${JSON.stringify(proposal.actions).slice(0, 6000)}`);
+      const text = reasoning.join("\n").replace(/\s+/g, " ").trim();
+      if (showReasoning && text !== "") console.log(`     reasoning: ${text}`);
+    } catch (error) {
+      console.log(`  #${run} FAIL finish=${finish ?? "?"} ${(error as Error).message.slice(0, 160)}`);
+    }
+  }
+}

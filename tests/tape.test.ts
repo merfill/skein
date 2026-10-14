@@ -240,9 +240,9 @@ describe("the tape: the observation instruction", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    // The observation reminder restates the decision only; the state's work/criterion are on
-    // the tape (shown once at entry).
-    expect(context.result).toMatch(/Tool result above/);
+    // The observation reminder is an active directive (decide now); the state's work/criterion
+    // are on the tape (shown once at entry).
+    expect(context.result).toMatch(/Decide NOW/);
     expect(context.result).toMatch(/`Done when`/);
     // A fresh state (no result yet) carries no observation instruction.
     const fresh = project(focused(fold([request("do it", 0), ...moved("m1", "reconnaissance", "green", 1)])));

@@ -20,20 +20,43 @@ opencode пишет ещё `opencode.txt`).
 
 | # | дата (UTC) | агент | задача | режим | reward | шагов | вызовов | in | out (виз + реа) | cache | время | каталог |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
-| 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
-| 3 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1 430 864 | 11 399 (4 011 + 7 388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
-| 4 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748 329 | 15 834 (2 720 + 13 114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
-| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **лучший Skein по стоимости** | **1** | 33 | 33 | 702 152 | 23 003 (2 898 + 20 105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
-| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908 678 | 57 946 (2 947 + 54 999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
-| 7 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **новая архитектура (goal-into-move)** | **1** | 52 | 71 | 507 700 | 23 758 (5 040 + 18 718) | 63% | — | `bench/runs/sandbox-tasks/2026-10-13T11-39-19-740Z-fix-ocaml-gc` |
-| 8 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **лучший net off по стоимости** | **1** | 45 | 45 | 981 165 | 81 294 (3 577 + 77 717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
-| 9 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net off** † — **новая архитектура (goal-into-move)** | **1** | 49 | 72 | 537 153 | 44 498 (5 044 + 39 454) | 64% | — | `bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc` |
-| 10 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **анти-VCS чистка промта (B19 + B7)** | **1** | 46 | 66 | 761 596 | 48 548 (4 699 + 43 849) | 83% | — | `bench/runs/sandbox-tasks/2026-10-13T19-02-00-767Z-fix-ocaml-gc` |
+| 1 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **лучший net on и лучший Skein по стоимости (Фаза 18: активные директивы)** | **1** | 29 | 37 | 252 551 | 16 198 (3 177 + 13 021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
+| 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
+| 3 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
+| 4 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1 430 864 | 11 399 (4 011 + 7 388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
+| 5 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748 329 | 15 834 (2 720 + 13 114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
+| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † | **1** | 33 | 33 | 702 152 | 23 003 (2 898 + 20 105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
+| 7 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908 678 | 57 946 (2 947 + 54 999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
+| 8 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **новая архитектура (goal-into-move)** | **1** | 52 | 71 | 507 700 | 23 758 (5 040 + 18 718) | 63% | — | `bench/runs/sandbox-tasks/2026-10-13T11-39-19-740Z-fix-ocaml-gc` |
+| 9 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **лучший net off по стоимости** | **1** | 45 | 45 | 981 165 | 81 294 (3 577 + 77 717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
+| 10 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net off** † — **новая архитектура (goal-into-move)** | **1** | 49 | 72 | 537 153 | 44 498 (5 044 + 39 454) | 64% | — | `bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc` |
 
-Строки **`08-40`** (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и
-**`18-30`** (net on, 12.68₽) выпали из топ-10 по правилу (дороже/без стоимости) — их описания
-остались в разделах ниже.
+Из топ-10 выпали: **`19-02`** (net on, 46 шагов, 6.97₽, #10 прошлой таблицы), **`08-40`**
+(net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
+12.68₽) — их описания остались в разделах ниже.
+
+### 2026-10-14 — Фаза 18 (активные директивы), два варианта формулировки
+
+Промпт-правки (директивы состояний в императив, `Now:` в описании состояния) проверены полным
+прогоном `fix-ocaml-gc` в двух вариантах формулировки локализации/наблюдения: **pre-fix**
+(«make the edit this turn» — правка внутри локализации) и **post-fix** («name it, then `stop`» —
+выравнивание под протокол).
+
+| вариант | net | шагов | reason | costo | stop | каталог |
+|---|---|---|---|---|---|---|
+| **pre-fix** | on | **29** | **13 021** | **2.645₽** | request_addressed | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
+| pre-fix | off | 60 | 168 345 | 17.921₽ | **max_turns** | `bench/runs/sandbox-tasks/2026-10-14T06-26-36-654Z-fix-ocaml-gc` |
+| post-fix | on | 51 | 52 542 | 6.746₽ | request_addressed | `bench/runs/sandbox-tasks/2026-10-14T06-47-00-005Z-fix-ocaml-gc` |
+| post-fix | off | 57 | 97 696 | 20.408₽ | request_addressed | `bench/runs/sandbox-tasks/2026-10-14T06-59-11-252Z-fix-ocaml-gc` |
+
+**Pre-fix net on — лучший net on за всю историю** (29 шагов, 2.645₽ против 33/2.93₽ у #6).
+Механизм: «правь в этот ход» форсирует решение в локализации и гасит пере-вывод. **Но pre-fix net
+off — регресс** (`max_turns`): правка в локализации нарушает протокол «локализация называет — патч
+правит», и Patch открывается с уже сделанной правкой (модель в reasoning видит «line 650 shows
+`p += edit` — maybe already fixed?» и перевыводит). **Post-fix net on хуже и pre-fix, и истории** —
+без «edit now» возвращается медленный путь. Оставлен **pre-fix** (лучший net on); net-off-петля —
+отдельная проблема (reference-trap + правка не в том состоянии), разбор — в
+`docs/plans/prompt_stall_investigation_ru.md` §6.
 
 **Пометки об условиях.** † — прогон **после удаления оракула**: верификатор задачи
 (в т.ч. harbor-овский `tests/test.sh`, называющий ломающий тег `tag_purposefully_broken_sweeping_changes`)

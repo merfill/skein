@@ -29,13 +29,21 @@ describe("islands: the closed vocabulary", () => {
       expect(island.label).not.toBe("");
       expect(island.what).not.toBe("");
       expect(island.criterion).not.toBe("");
-      expect(island.relief).not.toBe("");
+      expect(island.directive).not.toBe("");
       for (const edge of island.next) {
         expect(isIsland(edge.to)).toBe(true);
         expect(edge.when).not.toBe("");
       }
     }
     expect(isIsland("atlantis")).toBe(false);
+  });
+
+  it("renders each state's active directive in its description", () => {
+    for (const id of ISLAND_IDS) {
+      const description = stateDescription(ISLANDS[id]);
+      expect(description).toContain("Now:");
+      expect(description).toContain(ISLANDS[id].directive);
+    }
   });
 
   it("exposes the island enum as the move `state` parameter", () => {

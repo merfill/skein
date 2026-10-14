@@ -327,12 +327,14 @@ export function situationOf(state: State): Situation {
 }
 
 // The observation step: right after a tool result inside an open state, the doxa must read the
-// result and decide. The state's work / criterion already sit on the tape (shown once at entry),
-// so only the decision is restated here (docs/ir_semantics.md §7).
-function observationInstruction(): string {
+// result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
+// passive form did not change behaviour in the replay experiment, while this directive produced
+// the edit (docs/plans/prompt_stall_investigation_ru.md §6). The state's `Now:` directive rides
+// the state description on the tape.
+export function observationInstruction(): string {
   return [
-    "Tool result above. Stay in this state — work only its goal.",
-    "Decide exactly one, and answer this first: does the state's `Done when` already hold? Yes → `stop`. No → the next action for this state if the step worked, or a DIFFERENT action if it failed or was the wrong step (never repeat it).",
+    "Decide NOW, this turn.",
+    "Does this state's `Done when` already hold? Yes → `stop`. If you can already name the exact change from what is above, make it this turn instead of reading to confirm. Otherwise take the ONE next action that closes the gap — a DIFFERENT action if the last step failed or was the wrong step (never repeat it). Do not re-read what is already above; do not repeat a step that failed.",
   ].join("\n");
 }
 

@@ -27,8 +27,10 @@ export interface Island {
   what: string;
   // The state of knowledge that shows you are done here.
   criterion: string;
-  // The relief: constraints relevant here (one behavior each).
-  relief: string;
+  // The directive: the imperative for this state — what to DO here, in one line (an active
+  // instruction, not a passive constraint). Shown in the state description; the running state
+  // also rides the observation instruction.
+  directive: string;
   // The transitions out of this state: a target and the precondition ("when"). A floating or
   // terminal state carries none (docs/prompt_state_machine_concept.md §4.3).
   next: readonly { to: IslandId; when: string }[];
@@ -40,8 +42,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Reconnaissance",
     what: "build the project map: the entry point, how it builds and runs, where the relevant code and data are",
     criterion: "the entry point, the build/test commands and the files the change touches are known",
-    relief:
-      "batch independent reads/greps; wide first, then narrow; at most two rounds of inspection, then move",
+    directive:
+      "Read wide, then narrow — at most two rounds of inspection — then move on. Do not derive the cause here; that is the next state's job.",
     next: [
       { to: "reproduction", when: "there is a command that fails observably" },
       { to: "localization", when: "the cause is findable by reading" },
@@ -53,7 +55,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Reproduction",
     what: "obtain an observable failure tied to the goal",
     criterion: "a command fails observably and the failure is the goal's, not the environment's",
-    relief: "tell \"not found\" from \"not built\"; if the failure is environmental, move to Environment triage",
+    directive:
+      "Reproduce the failure now — run the acceptance command and read the error. If it fails for environmental reasons (missing config/deps), move to Environment triage; otherwise move to Localization.",
     next: [{ to: "localization", when: "the failure is the goal's, not the environment's" }],
   },
   localization: {
@@ -61,8 +64,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Localization",
     what: "find the exact cause: the file, the line and the expression, or the missing symbol/contract",
     criterion: "you can name the file, the line and the exact change to make",
-    relief:
-      "if the target lines are already on the tape, name the exact replacement and edit now — do not re-read or re-derive; read only what you still need; move to Patch in the same move",
+    directive:
+      "Name the file, the line and the exact replacement from what is already on the tape, and make the edit this turn — do not re-read or re-derive, and do not fetch to confirm. If one fact is genuinely missing, read exactly that, then edit.",
     next: [
       { to: "patch", when: "the file, the line and the exact change are named" },
       { to: "reference", when: "external truth is needed (an upstream change, docs)" },
@@ -74,7 +77,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Reference",
     what: "obtain external truth — an upstream change, a diff, documentation",
     criterion: "the reference is on disk, or one attempt failed and you derive it yourself",
-    relief: "at most one fetch; an unavailable reference is a fact, not a reason to retry",
+    directive:
+      "Fetch the reference once. If it fails or does not fit the version, stop fetching — derive the change yourself and move to Patch.",
     next: [
       { to: "localization", when: "the reference refined your derivation" },
       { to: "patch", when: "the reference confirms the change" },
@@ -85,7 +89,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Design",
     what: "choose the approach and the sequence; for a design, the interface/structure",
     criterion: "the set of changes, or the sequence, is concrete and its first item is executable now",
-    relief: "the first item is a literal action, not a description; plan no more than the task needs — a single edit needs no design",
+    directive:
+      "State the changes and their order now, and make the first item executable. Plan no more than the task needs — a single edit needs no design.",
     next: [{ to: "patch", when: "the first item is executable now" }],
   },
   patch: {
@@ -93,7 +98,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Patch",
     what: "make the change",
     criterion: "the exact change is in the workspace",
-    relief: "edit for a targeted change; oldString must be unique; after the edit, verify — do not re-read the file you just changed",
+    directive:
+      "Make the change now with a single `edit` (make `oldString` unique). After it lands, move to Verification — do not re-read the file you changed.",
     next: [{ to: "verification", when: "the change is in the workspace" }],
   },
   verification: {
@@ -101,8 +107,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Verification",
     what: "confirm the change with the acceptance command/tests",
     criterion: "the acceptance command that failed now passes",
-    relief:
-      "run builds/tests in the foreground; never repeat a failed command — on failure change the approach and return to Localization with the new evidence; do not re-verify what passed",
+    directive:
+      "Run the acceptance command in the foreground. On failure, change the approach and go back to Localization with the new evidence — never repeat the same failed command. Do not re-verify what already passed.",
     next: [
       { to: "handoff", when: "the acceptance command passes" },
       { to: "localization", when: "it fails: go back with the new evidence (corrective cycle)" },
@@ -114,7 +120,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "tell an environmental failure (missing config/deps) from a failure of the goal",
     criterion:
       "the failure is named as environmental or the goal's, and the environment is prepared if it is environmental",
-    relief: "building the project is setup, not the defect; this is a detour — return to the state you came from",
+    directive:
+      "Decide now whether the failure is environmental or the goal's. Prepare the environment if it is environmental, then return to the state you came from.",
     next: [],
   },
   handoff: {
@@ -122,7 +129,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Hand-off",
     what: "close the work",
     criterion: "the goal is closed with `stop`",
-    relief: "call `stop` now — the work is verified; do not re-verify and do not start new work",
+    directive:
+      "Call `stop` now — the work is verified. Do not start new work and do not re-verify.",
     next: [],
   },
 };
@@ -130,10 +138,12 @@ export const ISLANDS: Record<IslandId, Island> = {
 export const ISLAND_ORDER: readonly IslandId[] = ISLAND_IDS;
 
 // The state's description, shown ONCE when the state is entered (a `system` turn on the tape):
-// what the state is and the knowledge that closes it. The relief (the operational constraints)
-// is deliberately not repeated here — it is not re-injected every turn.
+// what the state is, the knowledge that closes it, and the directive — the imperative for what
+// to DO here. The directive is active (an instruction, not a passive constraint): a passive
+// description did not change behaviour in the replay experiment
+// (docs/plans/prompt_stall_investigation_ru.md §6).
 export function stateDescription(island: Island): string {
-  return `State: ${island.label} — ${island.what}.\nDone when: ${island.criterion}.`;
+  return `State: ${island.label} — ${island.what}.\nDone when: ${island.criterion}.\nNow: ${island.directive}`;
 }
 
 // The terminal state: reaching it is the sign of the end; it carries no goal and accepts

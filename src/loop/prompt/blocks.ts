@@ -61,11 +61,11 @@ ${TRANSITIONS}`,
   },
   {
     id: "B13",
-    text: `Keep replies short: one line of intent, then the calls — do not narrate. The tape is the ONLY thing you have seen: never recall or assume the CONTENT of a file or a directory from memory — names, syntax, pointer arithmetic and macros are unreliable. A name in a summary or a \`what\` tells you WHERE to look, not WHAT is there: read it from disk. A finished state's result is its closure line (\`State …: finished — …\`), already on the tape — use it; a copy you have not read this state is still unread. If you already know the file, read it first — do not rescan the workspace.`,
+    text: `Keep replies short: one line of intent, then the calls — do not narrate. The tape is the ONLY thing you have seen: never recall or assume the CONTENT of a file or a directory from memory — names, syntax, pointer arithmetic and macros are unreliable. A name in a summary or a \`what\` tells you WHERE to look, not WHAT is there: read it from disk. Within the current state the tape IS what you have read — reuse it, do not re-read or re-derive it. A finished state's turns are elided into its closure line (\`State …: finished — …\`): that line is all you have from it, so re-read from disk only what you still need.`,
   },
   {
     id: "B19",
-    text: `The workspace is the source of truth: do not assume a VCS, \`git\`, a diff or history. If \`git\` (or similar) fails, do not retry — work with the files and reproduce the failure. Not \`git diff\`/\`git log\`/hunting for \`.git\`.`,
+    text: `The workspace is the source of truth — the change is already in the files. Find what changed by reading the code and reproducing the failure; do not assume a VCS, \`git\`, a diff or history. If \`git\` (or similar) fails, do not retry — move to the files and the failure.`,
   },
 ];
 
@@ -73,9 +73,8 @@ ${TRANSITIONS}`,
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B6",
-    text: `The request is raw motivation, not a ready task. Your FIRST move declares the state to start in:
-- move { state, what }: "state" = the stage of work you begin in (see Start); "what" = the concrete goal of that state.
-- decline { why? }: if the request has no actionable task (chit-chat, thanks), record it as unactionable and end the run — never invent a state just to close it.
+    text: `The request is raw motivation, not a ready task. Declare the state you start in NOW — your first move is \`move { state, what }\`: "state" = the stage of work you begin in (see Start); "what" = the concrete goal of that state.
+- Call \`decline { why? }\` instead if the request has no actionable task (chit-chat, thanks) — never invent a state just to close it.
 - A bash command runs from the WORKSPACE ROOT; if the project lives in a subdirectory, the literal command carries the \`cd <dir> &&\` prefix.`,
   },
 ];
@@ -84,7 +83,7 @@ const REQUEST_BLOCKS: readonly PromptBlock[] = [
 const MOVE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
-    text: `The state is declared. Take its first step now — the next tool call you make is that step; act on what the goal and the tape already give, and look further only when the target is not yet known. The first step acts on the goal — it does not look for a change history.`,
+    text: `Take the state's first step NOW — your next tool call IS that step; act on what the goal and the tape already give, and look further only when the target is not yet known. If the target is unknown, the first step is the read/grep/list that finds it. Do not look for a change history.`,
   },
 ];
 
@@ -92,11 +91,11 @@ const MOVE_BLOCKS: readonly PromptBlock[] = [
 const GOAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B8",
-    text: `The state is open. Work it: batch the independent reads/greps, then make the change — and when THIS state's criterion holds, \`stop\` — do not re-check it and do not over-work it.
-- A failed step: make the next call a different action for the same item.
-- A step that succeeded but needs more: the next call is the next step.
+    text: `Work the state now — then stop it. When THIS state's criterion holds, \`stop\` NOW — do not re-check it and do not over-work it.
+- A failed step: make the next call a DIFFERENT action for the same item — never repeat a failed step.
+- A step that succeeded but the item is not done: make the next call the next step.
 - To leave this state you must \`stop\` first; a \`move\` while it is open is refused.
-- \`stop\` closes the state and is the only closure (no criterion check): call it as soon as the criterion holds.`,
+- \`stop\` is the only closure (no criterion check): call it as soon as the criterion holds.`,
   },
 ];
 
@@ -104,7 +103,7 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
 const TRANSITION_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B9",
-    text: `The state is finished. The ONLY valid move now is \`move { state, what }\`. Choose the next state from the transitions above (the order is not fixed) and give its goal in \`what\`. If everything is done, \`move { state: "handoff" }\` (the terminal state; no \`what\`) and \`stop\` there to finish the request. Give \`note\` to summarize the state you are leaving.`,
+    text: `The state is finished — declare the next one NOW. The ONLY accepted move is \`move { state, what }\`: choose the next state from the transitions above (the order is not fixed) and give its goal in \`what\`. If everything is done, \`move { state: "handoff" }\` (the terminal state; no \`what\`) and \`stop\` there to finish the request. Give \`note\` to summarize the state you are leaving.`,
   },
 ];
 
@@ -112,7 +111,7 @@ const TRANSITION_BLOCKS: readonly PromptBlock[] = [
 const TERMINAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B10",
-    text: `This is Hand-off: the terminal state. The work is done — call \`stop\` now to finish the request. Do not start new work or re-verify.`,
+    text: `This is Hand-off: the terminal state. Call \`stop\` now to finish the request — the work is done. Do not start new work and do not re-verify.`,
   },
 ];
 

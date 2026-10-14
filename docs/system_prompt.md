@@ -64,20 +64,22 @@ Current blocks:
 | B4 | The walk (`move { state, what }` declares the state AND its goal — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
 | B6 | Request situation: the first move is `move { state, what }` (choose the starting state and its goal) or `decline`; literal command / workspace root / `cd <dir> &&` | `tools` §5.1 | in code |
 | B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
-| B8 | Working situation: search → implement; when the state's criterion holds, `stop` (no criterion gate); `move` while open is refused | `ir_semantics` §4.3–4.4 | in code |
+| B8 | Working situation (imperative): work the state now; when the criterion holds, `stop` now (no criterion gate); a failed step is a different action; `move` while open is refused | `ir_semantics` §4.3–4.4 | in code |
 | B9 | Transition situation: the state is finished — `move { state, what }` to the next one, or `move { state: "handoff" }` to finish | `ir_semantics` §4.1 | in code |
 | B10 | Terminal situation: the hand-off state — call `stop` to finish the request | `ir_semantics` §4.4 | in code |
-| B13 | Output discipline: keep replies short; the tape is the only thing seen — never assume file/directory content from memory, read from disk | `tests/prompt.test.ts` | in code |
-| B19 | The workspace is the source of truth — do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
+| B13 | Output discipline: keep replies short; the tape is the only thing seen — never assume file/directory content from memory, read from disk; within the current state the tape is authoritative (do not re-read/re-derive); a finished state is elided into its closure line | `tests/prompt.test.ts` | in code |
+| B19 | The workspace is the source of truth — the change is already in the files; find it by reading the code and reproducing the failure; do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
 
-A state's description (`What / Done when`, from `src/ir/islands.ts`) is shown **once**, when the
-state is entered: it is a `system` turn on the tape (right after the `move` result), not a
-per-turn injected block. A finished state (`transition` / `terminal`) does not carry it (its
-turns are elided into the closure line). A stalled state also gets a soft nudge
-(`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result inside an open
-state the projection appends an **observation instruction** as the last system message
-(`Context.result`, `src/ir/project.ts`): read the result and decide — criterion holds → `stop`;
-step worked, more needed → the next step; failed/wrong step → a different action.
+A state's description (`What / Done when / Now`, from `src/ir/islands.ts`) is shown **once**, when
+the state is entered: it is a `system` turn on the tape (right after the `move` result), not a
+per-turn injected block. `Now` is the state's **directive** (`Island.directive`) — an imperative
+for what to do here (active, not a passive constraint). A finished state (`transition` /
+`terminal`) does not carry it (its turns are elided into the closure line). A stalled state also
+gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result
+inside an open state the projection appends an **observation instruction** as the last system
+message (`Context.result`, `src/ir/project.ts`): **decide now** — criterion holds → `stop`; you
+can already name the exact change → make it this turn instead of reading to confirm; otherwise
+the one next action (a different one if the step failed).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
