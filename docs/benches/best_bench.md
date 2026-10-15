@@ -20,6 +20,7 @@ writes `opencode.txt`).
 
 | # | date (UTC) | agent | task | condition | reward | steps | tool calls | in | out (vis + rea) | cache | time | run dir |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **★** | 2026-10-15 | Skein | `fix-ocaml-gc` | **net on** — **latest version** (observable state criteria; reworked `stop`, nudge and transition hint) | **1** | 52 | 53 | 950,833 | 69,562 (7,019 + 62,543) | 88% | — | `bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc` |
 | 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
 | 3 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
@@ -55,6 +56,33 @@ churns through `bash` and burns reasoning. Offline the gap is even wider: **open
 Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
+
+## Latest version (2026-10-15) — observable state criteria
+
+`fix-ocaml-gc --net on`, reward **1**, `request_addressed`, 52 turns, 7.30₽
+(`bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc`). Per-state breakdown:
+
+| state | turns | closure |
+|---|---|---|
+| Orientation | t1–t4 | layout/build known |
+| **Localization** | t5–t36 | `why`: "Offending file: **ocaml/runtime/shared_heap.c** — function **pool_sweep** (line 650): `p += Whsize_hd(hd)`…" |
+| **Patch** | t37–t40 | a single `edit`: `p += Whsize_hd(hd);` → `p += wh;` (the correct one-line fix) |
+| **Verification** | t41–t50 | `make -C testsuite one DIR=tests/basic` → passes |
+| Finish | t51 | `request_addressed` |
+
+**What changed** (to be hand-edited): observable criteria in `src/ir/islands.ts` — `Localization`
+= "the failure is located — the file(s) and the offending code are named", `Patch` = "the fix is
+applied in the workspace", `Verification` = "the request's acceptance command now passes"; the
+`stop` description = the state's outcome (no "next state"), `why` required; `turnInstruction`
+names the criterion (the "otherwise … single next step" and the next-state fragment removed);
+`transitionInstruction` points at the just-finished state's `Finish state <label>` line as the
+source of `what`/`done`; `done` is required on `move`.
+
+**Key effect:** Localization **closed** (observable criterion) naming file:function:line + the
+offending code; Patch **carried the file** and made one focused edit — no `stale_base` storm. Cf.
+the regression `2026-10-15T15-36-50` (reward 0, Localization never closed in 60 turns). Open:
+Localization is still long (32 turns); the batch-`stale_base` root is untouched (the fix was
+one-line).
 
 ## New reference point and the tool-index A/B (B12), 2026-10-11
 

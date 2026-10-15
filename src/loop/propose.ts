@@ -6,7 +6,7 @@ import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools, type ToolsOptions } from "../llm/structured";
 import { toolNamesFor } from "../llm/tools";
-import { BASE_PROMPT, NODE_INSTRUCTIONS, REQUEST_INSTRUCTION, turnInstruction } from "./prompt";
+import { BASE_PROMPT, NODE_INSTRUCTIONS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
 
@@ -65,7 +65,7 @@ export function buildMessages(context: Context): BaseMessage[] {
   } else if (context.situation === "working") {
     messages.push(new SystemMessage(turnInstruction(context.island, context.done)));
   } else if (context.situation === "transition") {
-    messages.push(new SystemMessage(NODE_INSTRUCTIONS.transition));
+    messages.push(new SystemMessage(transitionInstruction(context.island)));
   } else if (context.situation === "terminal") {
     messages.push(new SystemMessage(NODE_INSTRUCTIONS.terminal));
   }

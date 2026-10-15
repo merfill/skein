@@ -40,7 +40,7 @@ describe("the message tape under a long horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        return { thought: "", actions: [{ operator: "move", state: "orientation", what: "grow" }] };
+        return { thought: "", actions: [{ operator: "move", state: "orientation", what: "grow", done: "grown" }] };
       }
       if (n === 2) {
         return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
@@ -71,14 +71,14 @@ describe("the message tape under a long horizon", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       call += 1;
-      if (call === 1) return { thought: "", actions: [{ operator: "move", state: "orientation", what: "A" }] };
+      if (call === 1) return { thought: "", actions: [{ operator: "move", state: "orientation", what: "A", done: "a" }] };
       if (call === 2) {
         // The first command fails, leaving the item unfulfilled; the criterion is declared met
         // anyway and the state is stopped by the doxa (no criterion gate).
         return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "echo FIRSTCMD" } }] };
       }
       if (call === 3) return { thought: "", actions: [{ operator: "stop", why: "A is done" }] };
-      if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B" }] };
+      if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B", done: "b" }] };
       if (call === 5) return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
       if (call === 6) return { thought: "", actions: [{ operator: "stop", why: "B is done" }] };
       if (call === 7) return { thought: "", actions: [{ operator: "move", state: "finish", what: "" }] };

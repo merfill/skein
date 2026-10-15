@@ -460,10 +460,12 @@ nonzero exit.
 **The system part** is assembled per situation, not as a monolith: the base prompt holds only
 what is true on any turn (the role, the contract, the walk, and the state set with its
 transitions); appended last each turn (temporary, never stored) is the current situation's
-instruction — one line per situation: `request` (choose the first state, or `decline`), `plan`
-(the state's first step), `working` (the state's criterion restated: `stop` when it holds, else
-the single next step — the doxa must not over-work), `transition` (the finished states are above;
-choose the next state), `terminal` (call `stop` to end). The tool names/parameters/descriptions
+instruction per situation: `request` (choose the first state, or `decline`; `what`/`done` — from the
+request), `plan` (the state's first step), `working` (`turnInstruction`: the criterion named
+explicitly — "This state's done criterion: "<criterion>". When it holds, `stop` — and nothing else;
+do not over-work the state"), `transition` (`transitionInstruction(island)`: the source of
+`what`/`done` is the `Finish state <label>` line of the just-finished state; the `next` neighbours
+are listed; choose the next state), `terminal` (call `stop` to end). The tool names/parameters/descriptions
 are **not** in the prompt — they ship in the request's `tools` field, and that field is **bound
 from `Context.applicable`**: on a `request`/`transition` only `move` is offered (plus read-only
 `recall`/`search`), while a state is open the apply tools and `stop` are offered, so a move the

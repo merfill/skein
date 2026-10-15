@@ -76,6 +76,18 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
   });
 
+  it("does not double the period when the doxa's `done` already ends with one", () => {
+    const w = makeWorkspace(DEFAULT_FILES).ws;
+    const first = execAll(
+      [{ operator: "move", state: "orientation", what: "map it", done: "the layout is known." }],
+      [request()],
+      w,
+    );
+    const ctx = project(first.state);
+    const goal = ctx.history.find((m) => m.role === "user" && m.text.startsWith("map it"))?.text ?? "";
+    expect(goal).toBe("map it\nDone when: the layout is known.");
+  });
+
   it("unactionable(decline) -> a terminal assistant text", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const ctx = project(exec({ operator: "decline", why: "chat" }, [request()], w).state);

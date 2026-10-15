@@ -44,7 +44,7 @@ const IMAGE_TASKS: SandboxTask[] = [
 
 // A state plus its first plan item: the two turns a doxa makes to start working.
 const goal = (what: string): Action[] => [
-  { operator: "move", state: "orientation", what },
+  { operator: "move", state: "orientation", what, done: "the state is done" },
   { operator: "apply", action: { tool: "bash", command: "pwd" } },
 ];
 const solve: Action = { operator: "apply", action: { tool: "bash", command: SOLUTION_COMMAND } };

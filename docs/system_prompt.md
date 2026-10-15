@@ -62,10 +62,10 @@ Current blocks:
 |---|---|---|---|
 | B0 | Frame: a coding agent implemented as a state machine — stages of work with exit criteria, transitions as preconditions; files/directories on disk; independent calls are batched | `prompt_state_machine_concept` | in code |
 | B4 | The walk (`move { state, what, done }` declares the state, its goal and its stop condition — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the whole state set with a `Done` per state; the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
-| B6 | Request situation: choose the starting state (`move`, with `what`/`done` scoped to it) or `decline`; the startable states | `tools` §5.1 | in code |
+| B6 | Request situation: choose the starting state (`move`, with `what`/`done` scoped to it — **from the request**) or `decline`; the startable states | `tools` §5.1 | in code |
 | B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
 | B8 | Working situation **block** — superseded by `turnInstruction` (below): work the state now; when the criterion holds, `stop` (no criterion gate) | `ir_semantics` §4.3–4.4 | defined, not wired |
-| B9 | Transition situation: the finished states are on the tape above — choose the next state (`move`) or Finish and `stop` | `ir_semantics` §4.1 | in code |
+| B9 | Transition situation (dynamic — `transitionInstruction(island)`): the source of `what`/`done` is the `Finish state <label>` line of the just-finished state; the `next` neighbours (+ Finish) are listed; "choose the next state (`move`) or Finish and `stop`" | `ir_semantics` §4.1 | in code |
 | B10 | Terminal situation: the Finish state — call `stop` to end the request | `ir_semantics` §4.4 | in code |
 | B13 | Output discipline: **removed** (the base prompt carries the contract) | — | cut |
 | B19 | The workspace is the source of truth — the change is already in the files; find it by reading the code and reproducing the failure; do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
@@ -74,9 +74,9 @@ A state is rendered **on the tape**, not injected per turn: a `Start state <labe
 `assistant` turn) followed by the state's goal as a `user` turn (`<what>` + `Done when: <done>.`).
 The request is a **temporary** `user` turn — shown when a state is chosen (`request` /
 `transition`), dropped while a state is worked. On an open state, the per-turn instruction is
-`turnInstruction` (appended last, temporary): `The state is done when "<criterion>". … if that
-already holds, call \`stop\` and nothing else — do not look ahead … otherwise take the single next
-step.` A stalled state also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
+`turnInstruction` (appended last, temporary): `This state's done criterion: "<criterion>". When it
+holds, \`stop\` — and nothing else; do not over-work the state.` A stalled state also gets a soft
+nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -264,6 +264,16 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   (never a later state's work). The `transition`/`terminal` situations are now wired in
   `buildMessages` (they were defined but never appended). See `docs/ir_semantics.md` §7 and
   `docs/projection.md`.
+- **Phase 21 (2026-10-15).** **Observable state criteria** (`src/ir/islands.ts`): `Localization` →
+  "the failure is located — the file(s) and the offending code are named", `Patch` → "the fix is
+  applied in the workspace", `Verification` → "the request's acceptance command now passes" (the
+  island criterion is generic; the doxa concretes it on `move`). `turnInstruction` is rewritten:
+  `This state's done criterion: "<criterion>". When it holds, \`stop\` — and nothing else; do not
+  over-work the state.` (the "otherwise … single next step" and the next-state fragment are gone —
+  they masked an unfulfillable criterion). `transitionInstruction` points at the just-finished
+  state's `Finish state <label>` line as the **source** of `what`/`done`. The `stop` description =
+  the state's outcome (no "next state"), `why` required; `done` is required on `move`. Details and
+  the run — `docs/benches/best_bench.md` §"Latest version"; the tape — `docs/projection.md`.
 
 ## 5. Test map
 

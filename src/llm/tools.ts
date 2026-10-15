@@ -61,17 +61,18 @@ const patchParams = z.object({
   patch: z.string(),
   strip: z.number().int().nonnegative().optional(),
 });
-// The state: the island of work the doxa will work in AND the state's goal text (`what`) —
-// the state IS its goal (docs/plans/archive/goal_into_move_plan.md). `what` is optional in the tool
-// schema because the terminal Finish state has no plan; `classify` requires it for every other
-// state.
+// The state: the island of work the doxa will work in AND the state's goal text (`what`) and its
+// stop criterion (`done`) — the state IS its goal (docs/plans/archive/goal_into_move_plan.md).
+// `what` is optional in the tool schema because the terminal Finish state has no plan; `done` is
+// required (the provider forces the model to state the criterion; leave it empty for Finish).
+// `classify` requires both non-empty for every other state (empty_what / empty_done).
 const moveParams = z.object({
   state: z.enum(ISLAND_IDS),
   what: z.string().optional(),
-  done: z.string().optional(),
+  done: z.string(),
   note: z.string().optional(),
 });
-const stopParams = z.object({ why: z.string().optional() });
+const stopParams = z.object({ why: z.string() });
 const declineParams = z.object({ why: z.string().optional() });
 
 // The descriptions carry the operation, its required fields and the refusals to avoid;
@@ -80,7 +81,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state you will work in and its goal and stop condition: move { state, what, done }. Call \`move\` alone — never batch it with other calls. what = the goal of this state; done = the knowledge that closes THIS state — its own "Done:" line restated for the request, never the whole task and never a later state's work. At most 12 words each.`,
+      `Declare the state you will work in and its goal and stop condition: move { state, what, done }. Call \`move\` alone — never batch it with other calls. what = the goal of this state; done = the knowledge that closes THIS state — at the start, restated from the request; at a transition, carried from the state you just finished (its "Finish:" line). Never restate the whole task and never do a later state's work. done is required for every state except the terminal Finish (leave it empty there). One short sentence each — up to ~20 words.`,
     schema: moveParams,
   },
   {
@@ -145,7 +146,8 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   },
   {
     name: "stop",
-    description: "Call `stop` — and nothing else — when the current state's Done criteria are met.",
+    description:
+      `Call \`stop\` — and nothing else — when this state's \`Done when\` criterion holds. why = the state's outcome: what you found or changed (the file, the function, the line, the exact change or command), not just "done".`,
     schema: stopParams,
   },
   {

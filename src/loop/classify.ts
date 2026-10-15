@@ -36,6 +36,11 @@ export function classify(action: Action, state: State): Classification {
     if (!isTerminalIsland(action.state) && action.what.trim() === "") {
       return reject("empty_what: name the state's goal in `what`");
     }
+    // The state's stop criterion is required too (except for the terminal Finish, which is closed
+    // directly): the state must know when it is done (docs/ir_semantics.md §4.1).
+    if (!isTerminalIsland(action.state) && (action.done ?? "").trim() === "") {
+      return reject("empty_done: name the state's stop criterion in `done`");
+    }
     if (node?.kind === "request") {
       if (unactionableOf(state, current as string) !== undefined) {
         return reject("interpreted: the request is already declined");

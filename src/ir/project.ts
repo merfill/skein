@@ -224,7 +224,10 @@ function renderState(
   const what = payload?.what !== undefined && payload.what !== "" ? payload.what : island !== undefined ? ISLANDS[island].what : "";
   const done = payload?.done !== undefined && payload.done !== "" ? payload.done : island !== undefined ? ISLANDS[island].criterion : "";
   if (what !== "") {
-    out.push({ role: "user", text: done !== "" ? `${what}\nDone when: ${done}.` : what });
+    // The criterion is rendered with a trailing period; strip any the doxa already wrote so a
+    // `done` ending in "." does not double up.
+    const criterion = done.replace(/[.\s]+$/, "");
+    out.push({ role: "user", text: criterion !== "" ? `${what}\nDone when: ${criterion}.` : what });
   }
   if (stopOf(state, moveId) !== undefined) {
     out.push({ role: "assistant", text: closureLine(state, moveId, note) });

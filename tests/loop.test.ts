@@ -306,7 +306,7 @@ describe("executeAction", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
     ]);
     const outcome = executeAction(
-      { operator: "move", state: "orientation", what: "map" },
+      { operator: "move", state: "orientation", what: "map", done: "mapped" },
       root,
       workspace,
       0,
@@ -636,7 +636,7 @@ describe("the message tape", () => {
       roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -674,7 +674,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       if (index === 3) {
         // One doxa move, two independent probes (a batch).
@@ -722,7 +722,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -811,7 +811,7 @@ describe("runAgent", () => {
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "patch", what: "fix the off-by-one" });
+        return proposal({ operator: "move", state: "patch", what: "fix the off-by-one", done: "the fix is in" });
       }
       if (index === 2) {
         return proposal({
@@ -845,7 +845,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "make the suite pass" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "make the suite pass", done: "the suite passes" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -878,7 +878,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "interpret the request" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "interpret the request", done: "the request is interpreted" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -908,7 +908,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -932,7 +932,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -963,7 +963,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "read the long file" });
+        return proposal({ operator: "move", state: "orientation", what: "read the long file", done: "the file is read" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -1034,7 +1034,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1072,7 +1072,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1098,7 +1098,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -1125,7 +1125,7 @@ describe("failed edit materializes the file content", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) {
         return proposal({
           operator: "apply",

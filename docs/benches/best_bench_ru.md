@@ -20,6 +20,7 @@ opencode пишет ещё `opencode.txt`).
 
 | # | дата (UTC) | агент | задача | режим | reward | шагов | вызовов | in | out (виз + реа) | cache | время | каталог |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **★** | 2026-10-15 | Skein | `fix-ocaml-gc` | **net on** — **последняя версия** (наблюдаемые критерии состояний; переработаны `stop`, нудж и хинт перехода) | **1** | 52 | 53 | 950 833 | 69 562 (7 019 + 62 543) | 88% | — | `bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc` |
 | 1 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **лучший net on и лучший Skein по стоимости (Фаза 18: активные директивы)** | **1** | 29 | 37 | 252 551 | 16 198 (3 177 + 13 021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
 | 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 | 3 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
@@ -34,6 +35,37 @@ opencode пишет ещё `opencode.txt`).
 Из топ-10 выпали: **`19-02`** (net on, 46 шагов, 6.97₽, #10 прошлой таблицы), **`08-40`**
 (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
 12.68₽) — их описания остались в разделах ниже.
+
+## Последняя версия (2026-10-15) — наблюдаемые критерии состояний
+
+`fix-ocaml-gc --net on`, reward **1**, `request_addressed`, 52 хода, 7.30₽
+(`bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc`). Разбивка по состояниям:
+
+| состояние | ходы | закрытие |
+|---|---|---|
+| Orientation | t1–t4 | layout/build known |
+| **Localization** | t5–t36 | `why`: «Offending file: **ocaml/runtime/shared_heap.c** — function **pool_sweep** (line 650): `p += Whsize_hd(hd)`…» |
+| **Patch** | t37–t40 | один `edit`: `p += Whsize_hd(hd);` → `p += wh;` (верная однострочная правка) |
+| **Verification** | t41–t50 | `make -C testsuite one DIR=tests/basic` → passes |
+| Finish | t51 | `request_addressed` |
+
+**Что нового в формулировках** (правится вручную):
+
+- **наблюдаемые критерии** состояний (`src/ir/islands.ts`): `Localization` = «the failure is
+  located — the file(s) and the offending code are named»; `Patch` = «the fix is applied in the
+  workspace»; `Verification` = «the request's acceptance command now passes» (было «the cause is
+  understood» / «the change is in the workspace» / «the failing command now passes»);
+- **`stop`** (описание инструмента): результат состояния, без «next state»; `why` обязателен;
+- **`turnInstruction`** (рабочий нудж): называет критерий явно, убраны «otherwise … single next
+  step» и next-state-осколок;
+- **`transitionInstruction`** (хинт перехода): ссылается на строку `Finish state <label>` только
+  что закрытого состояния как **источник** `what`/`done`; `done` у `move` — обязателен.
+
+**Ключевой эффект:** локализация **закрылась** (наблюдаемый критерий) и назвала
+файл:функцию:строку + виновный код; Patch **унёс файл** в `what`/`done` и сделал **одну точечную
+правку** — без `stale_base`-шторма. Против регресса `2026-10-15T15-36-50` (reward 0, локализация
+не закрылась за 60 ходов) — см. «Фаза 20». Осталось: локализация всё ещё длинная (32 хода);
+батчинг-`stale_base` корень не тронут (правка была однострочной).
 
 ## Фаза 20 — лента состояний (`Start state` / цель / `Finish state`), 2026-10-15
 

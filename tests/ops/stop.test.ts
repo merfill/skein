@@ -59,7 +59,7 @@ describe("stop", () => {
     let index = 0;
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "map the repo" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "map the repo", done: "mapped" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
       if (index === 3) return proposal({ operator: "stop", why: "the state is done" });
       if (index === 4) return proposal({ operator: "move", state: "finish", what: "" });

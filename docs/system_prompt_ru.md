@@ -60,10 +60,10 @@
 |---|---|---|---|
 | B0 | Фрейм: агент кодирования, реализованный как машина состояний — этапы работы с критериями выхода, переходы как предусловия; файлы/каталоги на диске; независимые вызовы батчатся | `prompt_state_machine_concept` | в коде |
 | B4 | Обход (`move { state, what, done }` объявляет состояние, его цель и условие остановки — состояние ЕСТЬ его цель; первый `apply` засевает план; `stop` завершает и вынуждает переход); весь набор состояний с `Done` у каждого; обусловленные переходы, сгруппированные по источнику, из `ISLANDS` | `src/ir/islands.ts` | в коде |
-| B6 | Ситуация запроса: выбрать стартовое состояние (`move`, `what`/`done` в его терминах) или `decline`; стартовые состояния | `tools_ru` §5.1 | в коде |
+| B6 | Ситуация запроса: выбрать стартовое состояние (`move`, `what`/`done` в его терминах — **из запроса**) или `decline`; стартовые состояния | `tools_ru` §5.1 | в коде |
 | B7 | Ситуация плана: сделать первый шаг состояния (следующий вызов инструмента); опираться на цель и ленту; без истории изменений | `ir_semantics` §4.2 | в коде |
 | B8 | Блок ситуации работы — вытеснен `turnInstruction` (ниже): работать состояние сейчас; когда критерий выполнен — `stop` (гейта нет) | `ir_semantics` §4.3–4.4 | определён, не подключён |
-| B9 | Ситуация перехода: завершённые состояния на ленте выше — выбрать следующее (`move`) или Finish и `stop` | `ir_semantics` §4.1 | в коде |
+| B9 | Ситуация перехода (динамическая — `transitionInstruction(island)`): источник `what`/`done` — строка `Finish state <label>` только что закрытого состояния; перечислены соседи по `next` (+ Finish); «выбери следующее (`move`) или Finish и `stop`» | `ir_semantics` §4.1 | в коде |
 | B10 | Ситуация терминала: состояние Finish — `stop`, чтобы завершить запрос | `ir_semantics` §4.4 | в коде |
 | B13 | Дисциплина вывода: **удалён** (контракт несёт базовый промпт) | — | вырезан |
 | B19 | Воркспейс — источник правды: изменение уже в файлах — найти его чтением кода и воспроизведением падения; не предполагать VCS/`git`/diff/историю; сбой `git` не повторяется | `tests/prompt.test.ts` | в коде |
@@ -72,9 +72,9 @@
 (ход `assistant`) и затем цель состояния ходом `user` (`<what>` + `Done when: <done>.`). Запрос —
 **временный** `user`-ход: показывается, когда выбирают состояние (`request` / `transition`), и
 убирается, пока состояние работает. На открытом состоянии пошаговая инструкция — `turnInstruction`
-(в конце, временно): `The state is done when "<criterion>". … if that already holds, call \`stop\`
-and nothing else — do not look ahead … otherwise take the single next step.` Застрявшее состояние
-также получает мягкий пинок (`Context.nudge`, `docs/ir_semantics_ru.md` §2.8).
+(в конце, временно): `This state's done criterion: "<criterion>". When it holds, \`stop\` — and
+nothing else; do not over-work the state.` Застрявшее состояние также получает мягкий пинок
+(`Context.nudge`, `docs/ir_semantics_ru.md` §2.8).
 
 Удалены в «opencode-style» сокращении (Фаза 11): **B3/B4/B5** (свёрнуты), **B8** (политика
 VCS), **B9** (внешний референс / diff-плейбук), **B11** (цикл ревизии), **B15** (stop — теперь
@@ -261,6 +261,16 @@ VCS), **B9** (внешний референс / diff-плейбук), **B11** (�
   current state's Done criteria are met»; описание `move` ограничивает `done` состоянием (никогда
   не работа следующего). Ситуации `transition`/`terminal` теперь подключены в `buildMessages`
   (были определены, но не добавлялись). См. `docs/ir_semantics_ru.md` §7 и `docs/projection_ru.md`.
+- **Фаза 21 (2026-10-15).** **Наблюдаемые критерии состояний** (`src/ir/islands.ts`): `Localization`
+  → «the failure is located — the file(s) and the offending code are named», `Patch` → «the fix is
+  applied in the workspace», `Verification` → «the request's acceptance command now passes»
+  (критерий острова — общий, конкретизируется доксой на `move`). `turnInstruction` переписан:
+  `This state's done criterion: "<criterion>". When it holds, \`stop\` — and nothing else; do not
+  over-work the state.` (убраны «otherwise … single next step» и next-state-осколок — они
+  маскировали невыполнимый критерий). `transitionInstruction` ссылается на строку
+  `Finish state <label>` закрытого состояния как **источник** `what`/`done`. Описание `stop` =
+  результат состояния (без «next state»), `why` обязателен; `done` у `move` обязателен.
+  Детали и прогон — `docs/benches/best_bench_ru.md` §«Последняя версия»; лента — `docs/projection_ru.md`.
 
 ## 5. Карта тестов
 

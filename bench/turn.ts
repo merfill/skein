@@ -153,7 +153,14 @@ function applyPatch(messages: RenderedMessage[], patch: PatchOp[]): RenderedMess
   return out;
 }
 
-// The focused state, read from the last `move` call on the recorded history.
+// The focused state, read from the recorded history. The tape renders a state as the text
+// `Start state <label>` (not a `move` call), so the last such marker gives the island; its goal
+// is the following `user` turn (`<what>` / `Done when: <done>.`). A `move` call, when present
+// (older traces), wins.
+const ISLAND_BY_LABEL: Record<string, IslandId> = Object.fromEntries(
+  Object.values(ISLANDS).map((island) => [island.label, island.id]),
+);
+
 function lastMoveOf(history: TapeMessage[]):
   | { island: IslandId; what?: string; done?: string }
   | undefined {
@@ -170,6 +177,19 @@ function lastMoveOf(history: TapeMessage[]):
         ...(typeof args.done === "string" ? { done: args.done } : {}),
       };
     }
+    const marker = /^Start state (.+)$/.exec(message.text.trim());
+    if (marker === null) continue;
+    const island = ISLAND_BY_LABEL[marker[1]!];
+    if (island === undefined) continue;
+    const goal = history[i + 1]?.text ?? "";
+    const parsed = /^(.*?)\nDone when: (.*?)\.?\s*$/s.exec(goal);
+    const what = parsed?.[1]?.trim();
+    const done = parsed?.[2]?.trim();
+    return {
+      island,
+      ...(what !== undefined && what !== "" ? { what } : {}),
+      ...(done !== undefined && done !== "" ? { done } : {}),
+    };
   }
   return undefined;
 }

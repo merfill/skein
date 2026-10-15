@@ -4,6 +4,7 @@ export {
   NODE_INSTRUCTIONS,
   PROMPT_BLOCKS,
   REQUEST_INSTRUCTION,
+  transitionInstruction,
   turnInstruction,
   type PromptBlock,
 } from "./blocks";

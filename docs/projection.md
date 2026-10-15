@@ -84,11 +84,13 @@ The system part is assembled per situation, not as a monolith:
 - the **tool surface** offered in that field is bound from `Context.applicable`: on a
   `request`/`transition` only `move` is offered, while a state is open the apply tools and `stop`
   are offered (`recall`/`search` always), so a move the engine would refuse cannot be called at all;
-- the **situation instruction** is appended last each turn (temporary, never stored) — one line:
-  `request` (choose the first state, or `decline`), `plan` (the state's first step), `working`
-  (the state's criterion restated: `stop` when it holds, else the single next step),
-  `transition` (the finished states are above; choose the next state), `terminal` (call `stop` to
-  end);
+- the **situation instruction** is appended last each turn (temporary, never stored):
+  `request` (choose the first state, or `decline`; `what`/`done` — **from the request**), `plan`
+  (the state's first step), `working` (`turnInstruction`: the criterion named explicitly — "This
+  state's done criterion: "<criterion>". When it holds, `stop` — and nothing else; do not over-work
+  the state"), `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
+  `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
+  the next state or Finish), `terminal` (call `stop` to end);
 - the **constraints** are added as separate `system` messages.
 
 The exact base/situation boundary is the subject of the following stage (the composite system

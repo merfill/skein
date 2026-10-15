@@ -40,7 +40,7 @@ const GOOD_REGEX = String.raw`(?=.*(?:^|[^0-9A-Za-z])(?:(?:25[0-5]|2[0-4]\d|1?\d
 const BAD_REGEX = String.raw`\d{4}-\d{2}-\d{2}`;
 
 function proposerFor(regex: string) {
-  const toWork: Action = { operator: "move", state: "orientation", what: "write a regex matching the last date on lines with an IPv4 address" };
+  const toWork: Action = { operator: "move", state: "orientation", what: "write a regex matching the last date on lines with an IPv4 address", done: "the regex is written" };
   const goal: Action = {
     operator: "apply",
     action: { tool: "bash", command: "pwd" },

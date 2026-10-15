@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, turnInstruction } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -49,8 +49,19 @@ describe("system prompt: base + node assembly", () => {
     expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
     expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
     expect(NODE_INSTRUCTIONS.plan).toMatch(/call a tool/i);
-    expect(NODE_INSTRUCTIONS.transition).toMatch(/choose the next state/i);
+    expect(transitionInstruction("orientation")).toMatch(/choose the next state/i);
     expect(NODE_INSTRUCTIONS.terminal).toMatch(/stop/i);
+  });
+
+  it("at a transition, points at the finished state's `Finish` line as the source of what/done", () => {
+    const fromOrientation = transitionInstruction("orientation");
+    expect(fromOrientation).toContain("Localization"); // a reachable candidate
+    expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
+    expect(fromOrientation).not.toContain("Patch"); // only the focused state's `next` targets
+    expect(fromOrientation).toMatch(/`what`.*`done`/i);
+    const fromVerification = transitionInstruction("verification");
+    expect(fromVerification).toContain("Finish state Verification");
+    expect(fromVerification).toContain("Localization"); // the corrective edge
   });
 });
 
@@ -74,6 +85,23 @@ describe("system prompt: tool contract", () => {
     const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
     expect(bash?.function.description).toMatch(/stdout and stderr are captured SEPARATELY/i);
     expect(bash?.function.description).toMatch(/pipefail/i);
+  });
+
+  it("keeps `stop` about this state's criterion, with its outcome as the record", () => {
+    const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
+    expect(stop?.function.description).toMatch(/Done when/i);
+    expect(stop?.function.description).toMatch(/outcome/i);
+    expect(stop?.function.description).not.toMatch(/next state/i);
+    const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
+    expect(required).toContain("why");
+  });
+
+  it("the working nudge names the done criterion and never a next state", () => {
+    const nudge = turnInstruction("localization", "the cause is named with the file and the exact change");
+    expect(nudge).toContain("the cause is named with the file and the exact change");
+    expect(nudge).toMatch(/stop/i);
+    expect(nudge).not.toMatch(/single next step/i);
+    expect(nudge).not.toMatch(/next state/i);
   });
 
   it("keeps the stop condition in the working instruction (B8): a state closes by stop", () => {
@@ -265,5 +293,23 @@ describe("context format: tape", () => {
     const messages = buildMessages({ ...context, history: [], situation: "request" });
     expect(String(messages.at(-1)?.content)).toBe(REQUEST_INSTRUCTION);
     expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
+  });
+
+  it("appends the transition instruction, naming the focused state's reachable next states", () => {
+    const transition: Context = {
+      history: [
+        { role: "assistant", text: "Start state Orientation" },
+        { role: "user", text: "Learn the layout\nDone when: the layout is known." },
+        { role: "assistant", text: "Finish state Orientation — layout known" },
+        { role: "user", text: "fix the failing test" },
+      ],
+      situation: "transition",
+      island: "orientation",
+      constraints: [],
+    };
+    const messages = buildMessages(transition);
+    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
+    expect(String(messages.at(-1)?.content)).toBe(transitionInstruction("orientation"));
+    expect(String(messages.at(-1)?.content)).toContain("Localization");
   });
 });
