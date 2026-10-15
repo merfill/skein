@@ -1,7 +1,7 @@
 # Skein — state transitions plan (create_goal as the state-change move)
 
-> English mirror of `docs/plans/state_transitions_plan_ru.md`.
-> Status: **superseded by `docs/plans/state_protocol_plan.md`** (the live `fix-ocaml-gc` runs of
+> English mirror of `docs/plans/archive/state_transitions_plan_ru.md`.
+> Status: **superseded by `docs/plans/archive/state_protocol_plan.md`** (the live `fix-ocaml-gc` runs of
 > 2026-10-13 showed the incremental fix does not make the doxa transition; the redesign makes the
 > state a first-class move). Kept for the P1–P5 evidence and the prompt review.
 

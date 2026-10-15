@@ -101,7 +101,7 @@ without B12): `2026-10-11T10-38-01` (net off, 32 steps, 58,551 rea, 10.43₽) an
 
 Redesign: the `goal` node and the `create_goal` operator are removed — a state (`move`) carries
 its own goal text (`what`), the plan hangs directly off the `move`, and the first plan item is an
-ordinary `apply` (`docs/plans/goal_into_move_plan.md`). The tool surface IS the frontier
+ordinary `apply` (`docs/plans/archive/goal_into_move_plan.md`). The tool surface IS the frontier
 (`applicable`), so after a `stop` only `move` is offered (the post-stop loop is impossible by
 construction). The prompt is Phase 14 plus these changes. Two `fix-ocaml-gc` runs:
 

@@ -7,7 +7,7 @@
 > Related documents: `docs/system_prompt.md` (the prompt's current shape),
 > `src/loop/prompt/blocks.ts` (assembly), `docs/ir_semantics.md` §6–7 (situations),
 > `src/ir/project.ts` (the projection), `docs/benches/best_bench.md` (live runs),
-> `docs/plans/goal_reduction_plan.md` (invariant: only `stop` closes a state).
+> `docs/plans/archive/goal_reduction_plan.md` (invariant: only `stop` closes a state).
 
 ## 0. The problem and the thesis
 
@@ -47,7 +47,7 @@ to it. The target state defines:
   if one is named or derived).
 
 In Skein's terms the target state is the request and its acceptance sign; in the engine's
-terms it is a state closed only by `stop` (`docs/plans/goal_reduction_plan.md`).
+terms it is a state closed only by `stop` (`docs/plans/archive/goal_reduction_plan.md`).
 
 ### 1.2 State
 
@@ -95,7 +95,7 @@ all of them lead to the target state.
    environment triage → back to the same state.
 6. **Criteria are doxa's heuristic, not the engine's gate.** States help the model *choose a
    move*; closure stays with `stop`. A state criterion must not become a new engine gate — that
-   would break the invariant of `docs/plans/goal_reduction_plan.md`.
+   would break the invariant of `docs/plans/archive/goal_reduction_plan.md`.
 7. **States are not examples to imitate.** The lesson from the B12 A/B (tool index): what the
    prompt lists, the model imitates, even to its detriment. So a state is a condition, not a
    model action; a constraint is a prohibition/permission, not a demonstration.
@@ -242,6 +242,31 @@ Interpretation/Reconnaissance.
 - **Decline:** the request is not workable → record it and finish, without inventing a state.
 - **Decomposition:** gone. A state is one goal; a step too large is **more steps** or a
   **more specific state**, never a sub-state.
+
+#### Tool surface per state
+
+An open state only offers the tools that belong to its work: the engine binds the model surface
+from the island's `applies` (`src/llm/tools.ts:toolNamesFor`) and refuses a tool outside it
+(`not_in_state`). The write-class (`edit`/`write`/`apply_patch`) belongs to **Patch alone**, so a
+state can never pre-satisfy Patch's criterion; `webfetch` and `bash` are shared by the states
+that need them. `recall`/`search` (read a stored result) are always available; `move`/`stop`/
+`decline` follow the frontier, never the island. The island still never closes a state and never
+gates a `move` — it delimits the action surface only (`docs/ir_semantics.md` §2.5).
+
+| State | `applies` (apply tools) |
+|---|---|
+| Reconnaissance | read, grep, list, bash, webfetch |
+| Reproduction | read, grep, list, bash, webfetch |
+| Localization | read, grep, list, bash, webfetch |
+| Reference | read, grep, list, bash, webfetch |
+| Design | read, grep, list, bash, webfetch |
+| **Patch** | read, grep, list, bash, webfetch, **edit, write, apply_patch** |
+| Verification | read, grep, list, bash, webfetch |
+| Environment triage | read, grep, list, bash, webfetch |
+| Hand-off | — |
+
+*Open work:* pruning the inspection set per state (`bash`/`webfetch` on a strict "what the
+state's criterion needs" basis) is deferred.
 
 ### 4.3 Transitions (a sketch of the graph)
 

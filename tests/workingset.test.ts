@@ -40,7 +40,7 @@ describe("the message tape under a long horizon", () => {
       call += 1;
       const n = call;
       if (n === 1) {
-        return { thought: "", actions: [{ operator: "move", state: "reconnaissance", what: "grow" }] };
+        return { thought: "", actions: [{ operator: "move", state: "orientation", what: "grow" }] };
       }
       if (n === 2) {
         return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
@@ -54,10 +54,10 @@ describe("the message tape under a long horizon", () => {
     );
 
     expect(lengths.length).toBeGreaterThan(30);
-    // The request -> declared state adds the move call, its result and the state's description
-    // (shown once at entry, as a system turn); each later command appends an assistant call and
-    // a tool result.
-    expect(lengths[1]).toBe((lengths[0] ?? 0) + 3);
+    // The request turn is dropped; the declared state adds the `Start state` marker and the
+    // goal turn (+1 net of the dropped request); each later command appends an assistant call
+    // and a tool result.
+    expect(lengths[1]).toBe((lengths[0] ?? 0) + 1);
     for (let i = 2; i < lengths.length; i += 1) {
       expect(lengths[i]).toBe((lengths[i - 1] ?? 0) + 2);
     }
@@ -71,7 +71,7 @@ describe("the message tape under a long horizon", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       call += 1;
-      if (call === 1) return { thought: "", actions: [{ operator: "move", state: "reconnaissance", what: "A" }] };
+      if (call === 1) return { thought: "", actions: [{ operator: "move", state: "orientation", what: "A" }] };
       if (call === 2) {
         // The first command fails, leaving the item unfulfilled; the criterion is declared met
         // anyway and the state is stopped by the doxa (no criterion gate).
@@ -81,7 +81,7 @@ describe("the message tape under a long horizon", () => {
       if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B" }] };
       if (call === 5) return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
       if (call === 6) return { thought: "", actions: [{ operator: "stop", why: "B is done" }] };
-      if (call === 7) return { thought: "", actions: [{ operator: "move", state: "handoff", what: "" }] };
+      if (call === 7) return { thought: "", actions: [{ operator: "move", state: "finish", what: "" }] };
       return { thought: "", actions: [{ operator: "stop", why: "done" }] };
     };
 
@@ -90,11 +90,11 @@ describe("the message tape under a long horizon", () => {
       { request: { id: "r1", text: "collapse" } },
     );
 
-    // After the state closes, its plan turns leave the tape; only its compaction
-    // line, carried by the move that left it, remains.
+    // After the state closes, its plan turns leave the tape; only its closure marker, in the
+    // `Start state` / goal / `Finish state` triple, remains.
     const last = contexts.at(-1);
     const texts = last?.history.map((message) => message.text).join("\n") ?? "";
-    expect(texts).toContain("State Reconnaissance: finished — A is done");
+    expect(texts).toContain("Finish state Orientation — A is done");
     expect(texts).not.toContain("FIRSTCMD");
   }, 30_000);
 });

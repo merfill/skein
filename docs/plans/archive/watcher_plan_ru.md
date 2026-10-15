@@ -2,7 +2,7 @@
 
 > Английское зеркало — `docs/plans/archive/watcher_plan.md`.
 
-Связанные: `docs/plans/observation_plan_ru.md` (§8), `docs/concepts_ru.md`
+Связанные: `docs/plans/archive/observation_plan_ru.md` (§8), `docs/concepts_ru.md`
 (первый принцип), `docs/ir_ru.md` §5. Общий план —
 `docs/plans/implementation_plan_ru.md`.
 

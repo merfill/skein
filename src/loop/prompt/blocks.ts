@@ -1,4 +1,4 @@
-import { ISLAND_ORDER, ISLANDS } from "../../ir/islands";
+import { ISLAND_ORDER, ISLANDS, type IslandId } from "../../ir/islands";
 import type { Situation } from "../../ir/project";
 
 export interface PromptBlock {
@@ -8,34 +8,33 @@ export interface PromptBlock {
 
 // The transitions, rendered from the single island list (src/ir/islands.ts): each state's
 // outgoing edges with their precondition, grouped by source. Branches are several lines; the
-// corrective cycle (verification → localization) and the floating env_triage are explicit
+// corrective cycle (verification → localization) is explicit
 // (docs/prompt_state_machine_concept.md §4.3).
 const TRANSITIONS = (() => {
   const lines: string[] = [];
-  let n = 0;
   for (const id of ISLAND_ORDER) {
     const island = ISLANDS[id];
-    if (island.next.length === 0) continue;
-    lines.push(`${island.label} leads to:`);
     for (const edge of island.next) {
-      n += 1;
-      lines.push(`  ${n}. ${ISLANDS[edge.to].label} — ${edge.when}.`);
+      lines.push(`- ${island.label} → ${ISLANDS[edge.to].label} — ${edge.when}.`);
     }
   }
-  lines.push(
-    "Any state leads to Environment triage when a command fails for environmental reasons; it returns to the state you came from.",
-    "Hand-off is terminal: move there when the work is done and `stop`.",
-  );
+  lines.push("Finish is terminal: move there when the work is done and `stop`.");
   return lines.join("\n");
 })();
 
-// The candidate initial states: a state starts where its work starts, not at a fixed first step.
-const START = `Start — choose the state whose criterion already holds:
-- Reconnaissance — the default: the entry point, the build/test commands and the touched files are not known yet.
-- Localization — the request already names the file and the exact change (a one-line fix).
-- Reproduction — the request hands a command that must first be seen to fail.
-- Design — the task is a feature or a multi-step change, not a defect.
-The state is named at \`move\`; there is no fixed first step.`;
+// The states, rendered from the island list (single source): each is a goal (`what`) and the
+// knowledge that closes it (`done`). The base prompt carries the whole set, once.
+const STATES = ISLAND_ORDER.map((id) => {
+  const island = ISLANDS[id];
+  const done = island.criterion !== "" ? ` Done: ${island.criterion}.` : "";
+  return `- ${island.label} — ${island.what}.${done}`;
+}).join("\n");
+
+// The states a request can start in, shown in the request hint.
+const INITIAL_ISLANDS: readonly IslandId[] = ["orientation", "localization"];
+const INITIAL_STATES = INITIAL_ISLANDS.map(
+  (id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`,
+).join("\n");
 
 // S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
 // tool descriptions — those ship in the request's `tools` field (the single source is the
@@ -43,39 +42,37 @@ The state is named at \`move\`; there is no fixed first step.`;
 export const BASE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B0",
-    text: `You are a coding agent implemented as a state machine: you walk through the stages of a development task, each stage a phase of work with an exit criterion, and transitions are preconditions, not a fixed order. You choose the next move and the engine records it. Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch the calls whose arguments do not depend on a sibling's result.`,
+    text: `You are a coding agent. You work in a small set of states — each a step of the work with its own goal — and the engine records your moves. Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result.`,
   },
   {
     id: "B4",
-    text: `You are always in exactly one state; a state IS its goal. The walk is:
-- \`move { state, what }\` declares the state you will work in AND its goal: \`what\` is the concrete outcome for THIS state (not the whole task). Use it at the request (the first state) and after a \`stop\` (the next one).
-- Then you work the state: the first tool call you make is the state's first step; the calls that follow are its further steps, until the state's criterion holds.
-- \`stop\` finishes the state. The engine returns you to the state; you must then \`move\` to the next one — or to Hand-off and \`stop\` there to finish the request.
-You cannot \`move\` while a state is open: work it to its criterion and \`stop\` it first. Moving is cheap — once a criterion holds, do not re-check it; stop and move now.
-The result of a finished state's \`move\` (\`State <label>: finished — <why>\`) is the engine's record of what that state established: trust it, do not re-derive or re-check it.
+    text: `You are always in exactly one state; the state is its goal.
 
-${START}
+States:
+${STATES}
 
-Transitions — move as soon as the condition holds; the order is not fixed:
+Work the state — your tool calls are its steps — until its goal is reached, then \`stop\`. The engine returns you to it; then \`move\` to the next one, or to Finish and \`stop\` to end the request.
+
+Transitions — move on as soon as the condition holds:
 ${TRANSITIONS}`,
   },
   {
-    id: "B13",
-    text: `Keep replies short: one line of intent, then the calls — do not narrate. The tape is the ONLY thing you have seen: never recall or assume the CONTENT of a file or a directory from memory — names, syntax, pointer arithmetic and macros are unreliable. A name in a summary or a \`what\` tells you WHERE to look, not WHAT is there: read it from disk. Within the current state the tape IS what you have read — reuse it, do not re-read or re-derive it. A finished state's turns are elided into its closure line (\`State …: finished — …\`): that line is all you have from it, so re-read from disk only what you still need.`,
-  },
-  {
     id: "B19",
-    text: `The workspace is the source of truth — the change is already in the files. Find what changed by reading the code and reproducing the failure; do not assume a VCS, \`git\`, a diff or history. If \`git\` (or similar) fails, do not retry — move to the files and the failure.`,
+    text: `The workspace is the source of truth: read the code and run it to see what happens. Do not look for a change history.`,
   },
 ];
 
-// S2 — the request scenario (a fresh request: choose the first state, or decline).
+// S2 — the request scenario (a fresh request: choose the first state, or decline). It scopes
+// `what`: the goal of the state you enter, never the whole task — so an Orientation goal cannot
+// absorb the bug-hunt the request mentions (docs/ir_semantics.md §2.5). Rendered as a system
+// message right after the request, per turn (never stored).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B6",
-    text: `The request is raw motivation, not a ready task. Declare the state you start in NOW — your first move is \`move { state, what }\`: "state" = the stage of work you begin in (see Start); "what" = the concrete goal of that state.
-- Call \`decline { why? }\` instead if the request has no actionable task (chit-chat, thanks) — never invent a state just to close it.
-- A bash command runs from the WORKSPACE ROOT; if the project lives in a subdirectory, the literal command carries the \`cd <dir> &&\` prefix.`,
+    text: `Choose the state to start in from the user's request: call \`move\` to enter it, or \`decline\` if the request admits no such state.
+
+Startable states:
+${INITIAL_STATES}`,
   },
 ];
 
@@ -83,7 +80,7 @@ const REQUEST_BLOCKS: readonly PromptBlock[] = [
 const MOVE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
-    text: `Take the state's first step NOW — your next tool call IS that step; act on what the goal and the tape already give, and look further only when the target is not yet known. If the target is unknown, the first step is the read/grep/list that finds it. Do not look for a change history.`,
+    text: `Call a tool — the action that advances the goal above.`,
   },
 ];
 
@@ -91,19 +88,19 @@ const MOVE_BLOCKS: readonly PromptBlock[] = [
 const GOAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B8",
-    text: `Work the state now — then stop it. When THIS state's criterion holds, \`stop\` NOW — do not re-check it and do not over-work it.
-- A failed step: make the next call a DIFFERENT action for the same item — never repeat a failed step.
-- A step that succeeded but the item is not done: make the next call the next step.
-- To leave this state you must \`stop\` first; a \`move\` while it is open is refused.
-- \`stop\` is the only closure (no criterion check): call it as soon as the criterion holds.`,
+    text: `Work the state, then stop it. When its goal is reached, \`stop\` — do not re-check, do not over-work.
+- A failed step: try a different action, never repeat it.
+- To leave the state you must \`stop\` first; a \`move\` while it is open is refused.`,
   },
 ];
 
-// S5 — the finished-state scenario: the forced transition decision.
+// S5 — the finished-state scenario: the state's work is closed; the tape above carries the
+// record (each finished state is a `Start state` / goal / `Finish state` triple). The hint only
+// points at it — the history is short and does not need restating.
 const TRANSITION_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B9",
-    text: `The state is finished — declare the next one NOW. The ONLY accepted move is \`move { state, what }\`: choose the next state from the transitions above (the order is not fixed) and give its goal in \`what\`. If everything is done, \`move { state: "handoff" }\` (the terminal state; no \`what\`) and \`stop\` there to finish the request. Give \`note\` to summarize the state you are leaving.`,
+    text: `The states you have finished are above — read them. Choose the next state and \`move\` to it; if the work is done, \`move\` to Finish and \`stop\` there.`,
   },
 ];
 
@@ -111,7 +108,7 @@ const TRANSITION_BLOCKS: readonly PromptBlock[] = [
 const TERMINAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B10",
-    text: `This is Hand-off: the terminal state. Call \`stop\` now to finish the request — the work is done. Do not start new work and do not re-verify.`,
+    text: `This is Finish. Call \`stop\` now to end the request.`,
   },
 ];
 
@@ -119,8 +116,34 @@ const assemble = (blocks: readonly PromptBlock[]): string => blocks.map((block) 
 
 export const BASE_PROMPT = assemble(BASE_BLOCKS);
 
-export const NODE_INSTRUCTIONS: Record<Situation, string> = {
-  request: assemble(REQUEST_BLOCKS),
+// The request-step instruction, appended as a system message after the request: it scopes the
+// first `move`'s `what` (never the whole task). Rendered per turn (never stored), like the
+// open-state nudge below.
+export const REQUEST_INSTRUCTION = assemble(REQUEST_BLOCKS);
+
+// The recency nudge on an open state, appended last each turn: when the state's criterion
+// holds the doxa MUST close it (`stop`), and it must not keep acting. It restates the current
+// state's criterion (concretized `done`, island fallback) so the doxa does not have to recall
+// the one-time state description far up the tape.
+export function turnInstruction(island?: IslandId, done?: string): string {
+  const criterion =
+    done !== undefined && done !== ""
+      ? done
+      : island !== undefined
+        ? ISLANDS[island].criterion
+        : "";
+  const lead =
+    criterion !== ""
+      ? `The state is done when "${criterion.replace(/\.\s*$/, "").replace(/^./, (char) => char.toLowerCase())}".`
+      : `The state is done when its goal holds.`;
+  return (
+    `${lead} Before acting, decide: if that already holds, call \`stop\` and nothing else — do ` +
+    `not read or list more, do not look ahead, and do not do the next state's work. Otherwise ` +
+    `take the single next step.`
+  );
+}
+
+export const NODE_INSTRUCTIONS: Record<Exclude<Situation, "request">, string> = {
   plan: assemble(MOVE_BLOCKS),
   working: assemble(GOAL_BLOCKS),
   transition: assemble(TRANSITION_BLOCKS),

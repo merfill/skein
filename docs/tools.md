@@ -60,9 +60,9 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
   gate. The first `move` picks the opening state; later moves pick the next one (only after the
   current state is `stop`ped).
 - `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
-  the terminal `handoff` state (which has no goal).
+  the terminal `finish` state (which has no goal).
 - `note?` — an optional one-line summary of the state just finished; it rides into that state's
-  closure line on the tape.
+  `Finish state` marker on the tape.
 
 Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
 focus becomes a `move` node and the plan hangs directly off it. The next move is the state's
@@ -108,7 +108,7 @@ gone — the model never used them.
 
 The doxa's terminal move and the sole closure. On an open state it finishes that state: the
 engine hangs a `stop` node off the state's `move` (a `stop` relation, not a plan item;
-`hasStopped` is the derived fact), and the doxa then `move`s to the next state. On the **terminal move** (`hand-off`, which has no
+`hasStopped` is the derived fact), and the doxa then `move`s to the next state. On the **terminal move** (`finish`, which has no
 `what`) it hangs the `stop` node off the `move` and ends the request.
 There is **no criterion gate**: `stop` is accepted on an open state (cycle / premature-stop
 detection is deferred). There is **no** `stop` on the request: the run ends when the terminal
@@ -229,10 +229,10 @@ no per-file read cap: distinct windows are new knowledge, only an identical wind
 **Folded into `docs/ir_semantics.md` §4.5, §7.** `recall { id, start?, end? }` returns a line
 window of a stored result's body (a small one inline, a large one behind `outputRef`);
 `search { id, pattern, before?, after? }` returns matching line windows over its stdout and
-stderr. Either enters the tape as a transient `assistant`+`tool` pair. A `recall` window is
+stderr. Either leaves a node (an `action` + its `observation`) on the state's tape, like any
+step, and elides with the state on `stop`. A `recall` window is
 shrunk by whole lines so its JSON-escaped form fits `QUERY_BODY_LIMIT` (valid JSON, never
-clipped mid-string). A windowed `recall` or any `search` is new content and is allowed; only a
-bare recall of an id already in view is refused as redundant.
+clipped mid-string).
 
 ### 4.6 `list`: file listing (decided)
 
@@ -256,7 +256,7 @@ bare recall of an id already in view is refused as redundant.
   single command in milliseconds; both are part of the repeat signature, so the same text
   under a different directory or cap is a new action (`OP-AP-RUN-3`). `target` (a criterion
   check) and the `background`/`job` machinery are **removed from the model path**
-  (`docs/plans/goal_reduction_plan.md` §4): there is no criterion to check and no job to
+  (`docs/plans/archive/goal_reduction_plan.md` §4): there is no criterion to check and no job to
   poll. The `fsWorkspace` job API (`startJob`/`pollJob`, `.skein/jobs/<id>.{out,err,code}`)
   remains an engine/test seam but is not reachable from a proposal.
 - stdout and stderr stay in **separate** logs (the §4.3 rule holds). A run is never a

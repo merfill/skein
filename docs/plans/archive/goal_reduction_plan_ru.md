@@ -1,8 +1,8 @@
 # Skein — план редукции цели (минимальная цель)
 
-> Русское зеркало `docs/plans/goal_reduction_plan.md`.
+> Русское зеркало `docs/plans/archive/goal_reduction_plan.md`.
 > Статус: **планирование — ждём утверждения.** Без кода до «ок» владельца.
-> Заменяет части goal/plan/closure из `docs/plans/traversal_stack_spec_ru.md` и гейт по
+> Заменяет части goal/plan/closure из `docs/plans/archive/traversal_stack_spec_ru.md` и гейт по
 > критерию в `docs/ir_semantics_ru.md` §2.2/§4.3; затрагивает `AGENTS.md`.
 
 ## 1. Назначение
@@ -110,7 +110,7 @@ id `revises` и выставленный `state`, а движок гейтит `
 10. **Доки** — `docs/ir_semantics{,_ru}.md` (§2.2, §2.4–2.6, §4.1–4.3, §6),
     `docs/tools{,_ru}.md` (§2.1, §2.2, §4.3, §4.7, §5.1), `docs/system_prompt{,_ru}.md`,
     `docs/ir_operations{,_ru}.md` (реестр операторов), `docs/walkthrough{,_ru}.md`,
-    `docs/plans/traversal_stack_spec{,_ru}.md` (пометить части про критерий как заменённые),
+    `docs/plans/archive/traversal_stack_spec{,_ru}.md` (пометить части про критерий как заменённые),
     `docs/benches/bench_report{,_ru}.md` (отметить смену модели), **`AGENTS.md`** (переписать
     инвариант stop: цель закрывается `stop`; гейта по критерию нет).
 11. **Тесты** — `tests/ops/{create_goal,stop,applicable,traversal,derivation,decline}.test.ts`,

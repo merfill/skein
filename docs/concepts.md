@@ -1,7 +1,7 @@
 # Skein — a coding agent with a deterministic IR context
 
 > **Note (state protocol).** The tree/traversal/projection details here predate the
-> **state protocol** redesign (`docs/plans/state_protocol_plan.md`): the walk is now a state
+> **state protocol** redesign (`docs/plans/archive/state_protocol_plan.md`): the walk is now a state
 > machine over islands — `move` declares the state AND its goal text (`what`), the first
 > `apply` seeds its plan, `stop` finishes it and forces the transition, and the terminal
 > state ends the request. The current shape is `docs/ir_semantics.md`; the as-built is
@@ -151,7 +151,7 @@ Neither the stack nor the cursor is stored: the stack is the fold of `descend`/
 `return` over the journal, the cursor is derived from the plan. So `same events → same
 context`. History (executed items, observations, criterion runs) is not kept on the spine
 — it lives in the tree and is recalled **by address** (`recall { id }`). The full model is
-`docs/plans/traversal_stack_spec.md`.
+`docs/plans/archive/traversal_stack_spec.md`.
 
 ## Projection
 
@@ -214,5 +214,5 @@ traversal and verification only by running a goal's criterion.
 
 Tier 0 (a bug fix by a failing test) and the Tier 1 work graph are implemented; the
 current IR is `docs/ir.md`, the semantics `docs/ir_semantics.md`, the traversal stack
-`docs/plans/traversal_stack_spec.md`, and the step-reduction work
-`docs/plans/step_reduction_plan.md`.
+`docs/plans/archive/traversal_stack_spec.md`, and the step-reduction work
+`docs/plans/archive/step_reduction_plan.md`.

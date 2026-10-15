@@ -1,6 +1,7 @@
 import { currentFocus, hasStopped, unactionableOf, type State } from "../ir/graph";
-import { isIsland, isTerminalIsland } from "../ir/islands";
-import { currentMove, isMoveFinished } from "../ir/traversal";
+import { ISLANDS, isIsland, isTerminalIsland } from "../ir/islands";
+import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
+import { nativeToolName } from "../llm/tools";
 import type { Action } from "../llm/schemas";
 
 export interface Classification {
@@ -19,41 +20,19 @@ function reject(reason: string, constraintId?: string): Classification {
 
 const accept: Classification = { accept: true };
 
-// A node has a retrievable body if it is a result (observation) or carries inline output /
-// an outputRef; an action/etc. has none, so `recall`/`search` of it finds no body.
-function hasBody(state: State, id: string): boolean {
-  const node = state.nodes.get(id);
-  if (node === undefined) return false;
-  if (node.kind === "observation") return true;
-  const payload = node.payload as
-    | { output?: unknown; outputRef?: unknown; error?: unknown; errorRef?: unknown }
-    | undefined;
-  return (
-    typeof payload?.output === "string" ||
-    typeof payload?.outputRef === "string" ||
-    typeof payload?.error === "string" ||
-    typeof payload?.errorRef === "string"
-  );
-}
-
 // The gate for the doxa's structural moves (move / stop / decline): if such a move is
 // inadmissible in the current context it is refused — the reason is returned and no node is
 // created (docs/ir_semantics.md §2.6–2.7). A command (`apply`) is normally a non-execution
 // observation in the engine (a repeat, a stale base, a forbidden path); only `apply` outside
 // an open state is a protocol error refused here.
-export function classify(
-  action: Action,
-  state: State,
-  held: readonly string[] = [],
-  queried: readonly string[] = [],
-): Classification {
+export function classify(action: Action, state: State): Classification {
   const current = currentFocus(state);
   const node = current !== undefined ? state.nodes.get(current) : undefined;
 
   if (action.operator === "move") {
     if (!isIsland(action.state)) return reject("empty_state: move needs a state");
-    // The state's goal text is required (`what`), except for the terminal hand-off, which has
-    // no plan and is closed directly (docs/plans/goal_into_move_plan.md).
+    // The state's goal text is required (`what`), except for the terminal Finish state, which
+    // has no plan and is closed directly (docs/plans/archive/goal_into_move_plan.md).
     if (!isTerminalIsland(action.state) && action.what.trim() === "") {
       return reject("empty_what: name the state's goal in `what`");
     }
@@ -82,24 +61,11 @@ export function classify(
     return accept;
   }
 
-  if (action.operator === "recall") {
-    // A windowed recall reads a different fragment of the body: new content, not a redundant
-    // re-fetch (§4.6). Only a bare recall of an id already in view is refused.
-    const windowed = action.start !== undefined || action.end !== undefined;
-    if (held.includes(action.id) && !windowed) {
-      return reject(
-        `repeated_action: ${action.id} was just recalled; use that result (no need to recall it again)`,
-      );
-    }
-    if (!hasBody(state, action.id) && queried.includes(action.id)) {
-      return reject(`repeated_action: ${action.id} was already recalled; do not recall it again`);
-    }
-    return accept;
-  }
-
-  if (action.operator === "search") {
-    // A pattern search reads a different fragment of the body: always new content.
-    return accept;
+  if (action.operator === "recall" || action.operator === "search") {
+    // Recall/search read a stored body into the state's tape; they are work of an open state
+    // (a closed state's turns are elided, and a fresh request has nothing stored yet).
+    if (node?.kind === "move" && !hasStopped(state, current as string)) return accept;
+    return reject("no_state: recall/search read stored results — they belong to an open state");
   }
 
   if (action.operator === "stop") {
@@ -111,7 +77,21 @@ export function classify(
 
   if (action.operator === "apply") {
     // A command runs only inside an open state; elsewhere it is a protocol error.
-    if (node?.kind === "move" && !hasStopped(state, current as string)) return accept;
+    if (node?.kind === "move" && !hasStopped(state, current as string)) {
+      // The state's island delimits the action surface: a tool that does not belong to the
+      // state's work is refused (the model surface already omits it — this is the guard).
+      const island = moveIsland(state, current as string);
+      if (island !== undefined) {
+        const tool = nativeToolName(action.action.tool);
+        if (!ISLANDS[island].applies.includes(tool)) {
+          return reject(
+            `not_in_state: ${tool} is not admissible in ${ISLANDS[island].label}; ` +
+              "stop it and move to the state that owns that work",
+          );
+        }
+      }
+      return accept;
+    }
     return reject("no_state: there is no open state to work; move to a state first");
   }
 

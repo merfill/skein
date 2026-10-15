@@ -3,7 +3,7 @@
 > Russian mirror — `docs/plans/archive/staleness_scope_plan_ru.md`.
 
 Related: `docs/design_review.md` (R3b), `docs/plans/archive/check_soundness_plan.md`,
-`docs/plans/observation_plan.md`. Overall plan —
+`docs/plans/archive/observation_plan.md`. Overall plan —
 `docs/plans/implementation_plan.md`.
 
 Status: implemented (see §8).

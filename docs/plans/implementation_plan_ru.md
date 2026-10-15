@@ -96,7 +96,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **Наблюдение изменений** — `run` пишет `mutate` на каждый изменённый файл;
   движок сверяет активные `ref` перед каждой проекцией, с кэшем отпечатков;
   `fs.watch` оставлен для будущего стримингового режима
-  (`docs/plans/observation_plan_ru.md`, `docs/plans/archive/watcher_plan_ru.md`).
+  (`docs/plans/archive/observation_plan_ru.md`, `docs/plans/archive/watcher_plan_ru.md`).
 - **Фиксация отказов** — отклонённое предложение пишется событием
   `record_rejection` и показывается в `frontier.refusals`, поэтому переживает
   вытеснение из хвоста и реплей (`docs/plans/archive/rejection_plan_ru.md`).
@@ -180,7 +180,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   первую команду; `apply` размещает команду по исходу текущего пункта, а неисполнение команды —
   наблюдение с причиной (не отказ без узла); контекст — **лента сообщений**, собираемая из
   дерева. Спек — `docs/ir_semantics_ru.md`; ход работ —
-  `docs/plans/ir_revision_implementation_plan_ru.md`. Прежние формулировки формы в этом
+  `docs/plans/archive/ir_revision_implementation_plan_ru.md`. Прежние формулировки формы в этом
   разделе — история.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
@@ -216,7 +216,7 @@ live-гейт только при `SKEIN_LIVE=true`.
   поэтому формат стоит перепроверить (детали — `docs/benches/bench_report_ru.md` §4.8).
   Пока промпт толкает к правке по названному подозреваемому, а thrash-guard отклоняет третье
   чтение неизменённого файла. Остаётся открытым: замыкание логоса (проходящий objective-чек
-  верифицирует предков с тем же критерием) — `docs/plans/step_reduction_plan_ru.md`.
+  верифицирует предков с тем же критерием) — `docs/plans/archive/step_reduction_plan_ru.md`.
 - **Долгая сборка vs бюджет ходов (следующее исследование).** Build-heavy критерий
   (`fix-ocaml-gc` пересобирает весь компилятор OCaml) стоит ходов, даже когда правка верна:
   после правки агент запускает фоновый `run {background: true}`, и каждый `poll` — отдельный
@@ -246,6 +246,17 @@ CSP/арифметика, UI, мультиязычность, несколько
 - Валидация предложений: жёсткий zod-контракт vs мягкий fallback JSON (как в
   `llm/structured.py` Ankyra).
 - Остановка: вправе ли движок сам запускать `done_when.command` после завершения
-  плана, без хода доксы (A5 в `docs/plans/step_reduction_plan_ru.md` §5).
+  плана, без хода доксы (A5 в `docs/plans/archive/step_reduction_plan_ru.md` §5).
 - Кэш: кэшируется только стабильный префикс (request + constraints); фокус
-  проекции меняется каждый ход (`docs/plans/step_reduction_plan_ru.md` §4).
+  проекции меняется каждый ход (`docs/plans/archive/step_reduction_plan_ru.md` §4).
+- **Локализация теряет межсостоянийную передачу (регресс, 2026-10-15).** Реальный sandbox
+  `fix-ocaml-gc --net on` (Phase-20-лента) провалился — reward 0, `max_turns` 60: orientation
+  закрылась на «layout known», а локализация стартовала с причинной целью («find why the
+  bootstrap crashes») без указателя на `runtime/shared_heap.c` и ушла в `major_gc.c` / отладку
+  bootstrap. Успешный прогон 2026-10-14 (Phase 18, 29 ходов, reward 1) держался на **широкой цели
+  orientation** («…locate the sweeping/free-space changes in the major GC…») и **`note`** — сводке
+  оставляемого состояния («…changes in `runtime/shared_heap.c`/`.h`»). Phase 20 сузил orientation
+  до «layout» и убрал `note` из контракта `move`/B9 — передача потеряна. Фикс не выбран;
+  варианты: (A) вернуть `note`-цепочку, (B) расширить orientation до «где лежит изменение»,
+  (C) сделать первый шаг локализации «найти затронутые файлы». Доказательства:
+  `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / виртуальная спека).

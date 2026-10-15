@@ -265,7 +265,7 @@ describe("tool calling", () => {
         return {
           invoke: async () => ({
             content: "x",
-            tool_calls: [{ name: "move", args: { state: "reconnaissance" } }],
+            tool_calls: [{ name: "move", args: { state: "orientation" } }],
           }),
         };
       },
@@ -274,7 +274,7 @@ describe("tool calling", () => {
       allowedTools: ["move", "recall"],
     });
     expect(bound).toEqual(["move", "recall"]);
-    expect(proposal.actions[0]).toEqual({ operator: "move", state: "reconnaissance", what: "" });
+    expect(proposal.actions[0]).toEqual({ operator: "move", state: "orientation", what: "" });
   });
 
   it("invokeTools repairs once when the model called no tool", async () => {
@@ -406,8 +406,8 @@ describe("tool surface (toolNamesFor)", () => {
     ...over,
   });
 
-  it("offers move + recall/search at a transition", () => {
-    expect(toolNamesFor(frontier({ move: true }))).toEqual(["move", "recall", "search"]);
+  it("offers move alone at a transition (recall/search belong to an open state)", () => {
+    expect(toolNamesFor(frontier({ move: true }))).toEqual(["move"]);
   });
 
   it("offers the apply vocabulary at an open state and decline at the request", () => {
@@ -426,10 +426,20 @@ describe("tool surface (toolNamesFor)", () => {
     ]);
     expect(toolNamesFor(frontier({ move: true, decline: true }))).toEqual([
       "move",
-      "recall",
-      "search",
       "decline",
     ]);
+  });
+
+  it("offers only the frontier's `applies` (the state's tools; the write-class is Patch's)", () => {
+    expect(
+      toolNamesFor({
+        move: false,
+        apply: true,
+        stop: true,
+        decline: false,
+        applies: ["read", "grep", "list", "bash", "webfetch"],
+      }),
+    ).toEqual(["recall", "search", "read", "grep", "list", "bash", "webfetch", "stop"]);
   });
 });
 

@@ -1,6 +1,6 @@
 # Skein — план внедрения ревизии IR
 
-> Английское зеркало — `docs/plans/ir_revision_implementation_plan.md`.
+> Английское зеркало — `docs/plans/archive/ir_revision_implementation_plan.md`.
 > Статус: **сделано (ядро).** P1 (форма), P2 (операции), P3 (контекст-лента) и P4
 > (сворачивание документации) сделаны; офлайн-набор зелёный (`npm run typecheck`;
 > `SKEIN_LIVE=false npx vitest run` — 209 тестов). P5 (live-гейт) отложен до следующего этапа —

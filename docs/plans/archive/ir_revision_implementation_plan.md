@@ -1,6 +1,6 @@
 # Skein — IR revision implementation plan
 
-> Russian mirror — `docs/plans/ir_revision_implementation_plan_ru.md`.
+> Russian mirror — `docs/plans/archive/ir_revision_implementation_plan_ru.md`.
 > Status: **done (core).** P1 (shape), P2 (operations), P3 (context tape) and P4 (docs fold)
 > are done; the offline suite is green (`npm run typecheck`; `SKEIN_LIVE=false npx vitest run`
 > — 209 tests). P5 (live gate) is deferred to the following stage, the composite system

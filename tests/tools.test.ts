@@ -118,6 +118,10 @@ describe("workspace background jobs", () => {
 
 describe("resolveBody", () => {
   const state = fold([
+    { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
+    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "go", payload: { state: "orientation", what: "go" }, seq: 1 } },
+    { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+    { type: "descend", node: "m1" },
     {
       type: "add_node",
       node: {
@@ -125,7 +129,7 @@ describe("resolveBody", () => {
         space: "work",
         kind: "observation",
         label: "run make",
-        seq: 0,
+        seq: 3,
         payload: {
           command: "make",
           verdict: "fail",
@@ -176,6 +180,10 @@ describe("resolveBody", () => {
 
   it("treats an error-only run result as a retrievable body", () => {
     const state = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "go", payload: { state: "orientation", what: "go" }, seq: 1 } },
+      { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
+      { type: "descend", node: "m1" },
       {
         type: "add_node",
         node: {
@@ -183,7 +191,7 @@ describe("resolveBody", () => {
           space: "work",
           kind: "observation",
           label: "run make",
-          seq: 0,
+          seq: 3,
           payload: { command: "make", verdict: "fail", error: "boom" },
         },
       },

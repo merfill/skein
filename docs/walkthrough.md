@@ -1,13 +1,15 @@
 # Skein — walkthrough: the tree and the context, step by step
 
-> **Note (goal-into-move).** The tree and the tables below reflect the current model: a state
-> (`move`) IS its goal. `move { state, what }` declares the island of work AND the state's goal
-> text `what`; the state's plan hangs directly off the `move` and is seeded by its first
-> ordinary `apply`; `stop` closes the state and forces the transition; the terminal
-> (`handoff`) move's `stop` ends the request. The context is a message tape, and a finished
-> state collapses to its `move` call and that call's result (the closure line). The current shape is `docs/ir_semantics.md`,
-> the operator reference is `docs/ir_operations.md`, the design plan is
-> `docs/plans/goal_into_move_plan.md`; the as-built is `docs/ir.md`.
+> **Note (state tape).** The tree and the tables below reflect the current model: a state
+> (`move`) IS its goal. `move { state, what, done }` declares the island of work, the state's goal
+> (`what`) and its stop condition (`done`); the state's plan hangs directly off the `move` and is
+> seeded by its first ordinary `apply`; `stop` closes the state and forces the transition; the
+> terminal (`finish`) move's `stop` ends the request. The context is a message tape, and a state
+> renders as a `Start state <label>` / goal / `Finish state <label> — <why>` triple (the request
+> is a temporary `user` turn shown at a state decision). The current shape is `docs/ir_semantics.md`,
+> the operator reference is `docs/ir_operations.md`, the design plans are
+> `docs/plans/archive/goal_into_move_plan.md` and `docs/plans/archive/state_protocol_plan.md`; the
+> as-built is `docs/ir.md`.
 
 > Russian mirror — `docs/walkthrough_ru.md`.
 
@@ -165,7 +167,7 @@ Nothing doxa "thinks" is stored. The plan is a note to self; the trace is the tr
 | symbol | meaning |
 |---|---|
 | `R` | the root `request` |
-| `I`, `I0`, `I1`, `H` | states (`move`): the focus of an island, and the terminal `handoff` |
+| `I`, `I0`, `I1`, `H` | states (`move`): the focus of an island, and the terminal `finish` |
 | `a1`, `a2` | plan items (an `action`) |
 | `obs` | an `observation` (a read window, a run's output together with its exit code) |
 | `→` | the focus moves; `+` a node/edge is created; `⟂` a refusal (`record_rejection`) |
@@ -182,7 +184,7 @@ This is the main section. The task:
 One constraint `k1` — do not touch the tests. The run lasts 16 turns (0–15). The first
 attempt does not help; doxa **stays in the same state** — it adds another step and
 re-checks — and `stop`s the state once its `Done when` holds. It then `move`s through the
-remaining states and finishes at `handoff`. Each row shows what doxa does, which event
+remaining states and ends at `finish`. Each row shows what doxa does, which event
 logos appends, how the tree grows, which facts appear, and what doxa will see on the next
 turn.
 
@@ -202,7 +204,7 @@ turn.
 | 11 | `[R,I2] → [R,I3]` | `move I3 {state:"verification", what:"the acceptance command make test passes"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `path=[R, I3]`; `applicable=[apply, stop]` |
 | 12 | `[R,I3]` | `apply bash {command:"make test"}` (first plan item — the acceptance command) | `+ plan Q3`; `+ items Q3→a5`; `+ action a5 "make test"`; `+ obs o5 {command:"make test", exitCode:0}` | `a5=executed` | `lastResult={command:"make test", exitCode:0}` |
 | 13 | `[R,I3]` | `stop {why:"the acceptance command passes"}` | `+ stop s4`; `+ stop I3→s4` | `I3=stopped`; `situation=transition` | `applicable=[move]` |
-| 14 | `[R,I3] → [R,H]` | `move H {state:"handoff"}` (no `what` — the terminal state) | `+ move H {state}`; `+ move R→H` | `H=open`; `situation=terminal` | `applicable=[stop]` |
+| 14 | `[R,I3] → [R,H]` | `move H {state:"finish"}` (no `what` — the terminal state) | `+ move H {state}`; `+ move R→H` | `H=open`; `situation=terminal` | `applicable=[stop]` |
 | 15 | `[R,H]` | `stop {why:"done"}` | `+ stop s5`; `+ stop H→s5`; the request ends | `H=stopped`; `hasStopped(H)=true` | the session ends with reason `request_addressed` |
 
 ### 4.1 The final tree
@@ -238,7 +240,7 @@ R  request "I broke the build; verify with make test"      (root: no plan, no st
 │      └─▶ Q3  plan   [ a5 ]
 │      │      └─ items ─▶ a5  action "make test"     executed → obs o5 (exit 0)
 │      └─ stop ─▶ s4  stop
-└─▶ H   move {state:"handoff"}                       stopped ✔ (terminal; its stop ends the request)
+└─▶ H   move {state:"finish"}                       stopped ✔ (terminal; its stop ends the request)
        └─ stop ─▶ s5  stop
 ```
 
@@ -262,7 +264,7 @@ moves. Everything else is one `recall`/`search` away.
   when the state's `Done when` holds (the observation instruction restates it after every
   tool result). A failed run is a fact, not a closure — doxa adds another step.
 - **The request ends at the terminal state.** A `stop` on a working state does not end the
-  request; only the terminal `handoff` move's `stop` does (turn 15).
+  request; only the terminal `finish` move's `stop` does (turn 15).
 - **The model surface IS the frontier.** At the request it is `move`/`decline`; at an open
   state the apply vocabulary plus `stop`; at a finished state `move` only; at the terminal
   state `stop`; `recall`/`search` throughout.
@@ -301,7 +303,7 @@ state (move)
 draws a `stop` edge from the state's `move` to that node — that is how the state is marked
 closed; the stop is not a plan item. There is no criterion gate: `stop` is accepted on an
 open state. A `stop` on a working state forces the transition (the next admissible move is
-`move`); a `stop` on the terminal `handoff` move ends the request. There is no `stop` on
+`move`); a `stop` on the terminal `finish` move ends the request. There is no `stop` on
 the request.
 
 ---
@@ -364,7 +366,7 @@ closure oracle: a state is closed only by `stop`.
 |---|---|---|---|---|---|
 | r | `[R,I]` | `apply read runtime/shared_heap.c [10-80]` | `+ action`; `+ obs{ref, version:v1}`; `result` | `observed(file)=v1` | the window enters the tape as a `tool` result |
 | e | `[R,I]` | `apply edit runtime/shared_heap.c` | `+ action`; `+ mutates`; `mutate v1→v2` | `currentVersion(file)=v2`; the `v1` read is now stale | the stale read is **not** shown as active content |
-| q | `[R,I]` | `recall {id:"obs:…"}` | no node; the body is returned | — | the body enters the tape as a transient `tool` result |
+| q | `[R,I]` | `recall {id:"obs:…"}` | `+ action` (recall); `+ obs` (the body window); `result` | — | the recall renders as an `action` + `observation` on the state's tape |
 
 A file changing emits `mutate` (a version bump); actualness is **computed**, not stored as
 a flag. The `v1` read fact is not deleted — it simply stops belonging to the active

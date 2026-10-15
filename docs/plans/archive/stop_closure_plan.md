@@ -7,7 +7,7 @@
 > Implemented step by step; every step leaves the tree green.
 
 Related: `docs/ir_semantics.md` (source of truth — change it with the code),
-`docs/ir_operations.md`, `docs/projection.md`, `docs/plans/traversal_stack_spec.md`,
+`docs/ir_operations.md`, `docs/projection.md`, `docs/plans/archive/traversal_stack_spec.md`,
 `docs/system_prompt.md`, `docs/tools.md`. History: `docs/plans/archive/ir_operations_revision_plan.md`
 §2.4 (the original "stop only at an addressed request"), commit `ad28337` (the arbiter-goal
 stop that introduced the premature stop).
@@ -168,7 +168,7 @@ Update, in the same commit as the code, so the achieved state is not lost:
   acceptance; the doxa proposes, the engine gates, the `stop` closes.
 - `docs/tools{,_ru}.md` — `run {target}` (the criterion of the focus goal) and the exit code
   as the pass/fail fact.
-- `docs/plans/traversal_stack_spec{,_ru}.md` §9 — verification is a targeted run's exit code.
+- `docs/plans/archive/traversal_stack_spec{,_ru}.md` §9 — verification is a targeted run's exit code.
 - `docs/plans/implementation_plan{,_ru}.md` — mark this work done; refresh §3.
 - `docs/benches/bench_report{,_ru}.md` — note the premature-stop fix and re-run
   `fix-ocaml-gc` in the sandbox.

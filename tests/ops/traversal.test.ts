@@ -63,7 +63,7 @@ describe("traversal and containers", () => {
   it("TR-2 focusEvents descends into the current state", () => {
     const events: Event[] = [
       request(),
-      moveNode("m1", "reconnaissance", 1),
+      moveNode("m1", "orientation", 1),
       edge("em", "r1", "m1", "move"),
     ];
     expect(focusEvents(fold(events))).toEqual([{ type: "descend", node: "m1" }]);

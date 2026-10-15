@@ -90,7 +90,7 @@ retry» (`islands.ts:77`).
 
 Документация же требует рендерить его: `docs/prompt_state_machine_concept_ru.md:298-301`
 («инструкция состояния рендерит `What / Done when / Constraints`»),
-`docs/plans/state_protocol_plan.md:74-75`. То есть спецификация и код разошлись.
+`docs/plans/archive/state_protocol_plan.md:74-75`. То есть спецификация и код разошлись.
 
 Подтверждение по прогону: `grep "at most two rounds|do not re-read or re-derive|at most one
 fetch"` по `contexts/` = **0**.
@@ -158,7 +158,7 @@ log`». А описание `bash` (`tools.ts:124`) заканчивается: 
 
 Мягкий аттрактор (`project.ts:398-401`) сформулирован верно, но в прогоне не появлялся ни разу
 (`grep "no progress for"` по `contexts/` = 0): детектор застоя считает любое новое наблюдение
-прогрессом (`docs/plans/state_protocol_plan.md:52-53`), поэтому пере-вывод держит `stall = 0`.
+прогрессом (`docs/plans/archive/state_protocol_plan.md:52-53`), поэтому пере-вывод держит `stall = 0`.
 
 ### O9. Данные прогона (эталон)
 

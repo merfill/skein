@@ -4,7 +4,7 @@
 > а не спецификация. Код харнесса — `bench/`, `langgraph/`.
 >
 > **Смена модели (2026-10-09).** Прогоны ниже измерены **до** редукции цели
-> (`docs/plans/goal_reduction_plan_ru.md`): тогда цель несла критерий `done_when`,
+> (`docs/plans/archive/goal_reduction_plan_ru.md`): тогда цель несла критерий `done_when`,
 > отдельный `step`, `revises` и выставленный `state`, а `stop` гейтился прогоном критерия.
 > Именно эту возню редукция и убирает; считать эти числа базой, с которой сравнивается
 > редукция, а не текущей моделью.
@@ -373,7 +373,7 @@ Skein строго одно действие на ход.
 Запуск: `SKEIN_CASES=fixtures/synthetic npx tsx bench/run.ts ref-localize-<on|off>`,
 Flash, `reasoningEffort=low`, `maxTurns=24`, по 3 прогона на условие (2026-10-07, после
 замыкания логоса и сокращения A1–A4 с фиксом верификации A4 —
-`docs/plans/step_reduction_plan_ru.md` §3).
+`docs/plans/archive/step_reduction_plan_ru.md` §3).
 
 | условие | прогон | reward | steps | checks | tok in | tok out | cache | `diff` | rereads |
 |---|---|---|---|---|---|---|---|---|---|
@@ -406,7 +406,7 @@ opencode на тех же кейсах (локальный `opencode run --varia
 - **Баг верификации A4 исправлен.** Авто-прогон ведущего действия `node --test` совпадал
   с `done_when.command` цели и **неявно** повышался до чека — цель опровергалась на шаге
   воспроизведения (прогоны `09:31`, `09:48`). Теперь вердикт — **только от явного чека**
-  (`run {target}`); голый run — наблюдение (`docs/plans/traversal_stack_spec_ru.md` §9).
+  (`run {target}`); голый run — наблюдение (`docs/plans/archive/traversal_stack_spec_ru.md` §9).
   Во всех успешных прогонах снова ровно один чек.
 - **Стратегия референса держится:** `on` — `diff` 3/3 (предложен моделью или авто-прогнан
   A4); `off` — ручная локализация, `diff` 0/3.

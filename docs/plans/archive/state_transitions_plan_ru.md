@@ -1,7 +1,7 @@
 # Skein — план переходов состояний (create_goal как ход смены состояния)
 
-> Русское зеркало `docs/plans/state_transitions_plan.md`.
-> Статус: **вытеснено `docs/plans/state_protocol_plan_ru.md`** (живые прогоны `fix-ocaml-gc`
+> Русское зеркало `docs/plans/archive/state_transitions_plan.md`.
+> Статус: **вытеснено `docs/plans/archive/state_protocol_plan_ru.md`** (живые прогоны `fix-ocaml-gc`
 > 2026-10-13 показали, что инкрементальный фикс не заставляет доксу переходить; редизайн делает
 > состояние первоклассным ходом). Хранится ради свидетельств P1–P5 и ревью промпта.
 

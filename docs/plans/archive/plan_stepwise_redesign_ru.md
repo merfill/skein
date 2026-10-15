@@ -105,7 +105,7 @@ w:goal:2  arbiter; plan=[action ls ✓, action sed ✓, w:goal:18]
 - Убрать неиспользуемый импорт `fold` (если станет лишним).
 - Тесты, предполагавшие авто-прогон (`tests/loop.test.ts`, где план исполнялся в том
   же ходу), переписать на пошаговое исполнение.
-- `docs/plans/step_reduction_plan{,_ru}.md`: пометить A4 как **отменённый** (рядом с
+- `docs/plans/archive/step_reduction_plan{,_ru}.md`: пометить A4 как **отменённый** (рядом с
   A5), с причиной (нарушает пошаговость; породил воронку).
 
 **Проверка:** typecheck + offline зелёные.
@@ -162,7 +162,7 @@ w:goal:2  arbiter; plan=[action ls ✓, action sed ✓, w:goal:18]
 ### Шаг 5 — документация
 - `docs/ir_semantics{,_ru}.md`: I1–I6 в §2 (узлы/план), §4 (операторы), инварианты.
 - `docs/ir{,_ru}.md` §2/§5: `done_when`, план, `create_goal`, «пункт — только action».
-- `docs/plans/traversal_stack_spec{,_ru}.md`: I1–I6 явно; пошаговый обход.
+- `docs/plans/archive/traversal_stack_spec{,_ru}.md`: I1–I6 явно; пошаговый обход.
 - `docs/concepts{,_ru}.md`: при необходимости «план = строка + первый шаг».
 
 ## 5. Карта файлов
@@ -175,7 +175,7 @@ w:goal:2  arbiter; plan=[action ls ✓, action sed ✓, w:goal:18]
   `tests/workingset.test.ts`, `tests/live/ir_operations_step.test.ts`,
   `tests/prompt.test.ts`.
 - Доки: `docs/ir_semantics{,_ru}.md`, `docs/ir{,_ru}.md`,
-  `docs/plans/traversal_stack_spec{,_ru}.md`, `docs/plans/step_reduction_plan{,_ru}.md`,
+  `docs/plans/archive/traversal_stack_spec{,_ru}.md`, `docs/plans/archive/step_reduction_plan{,_ru}.md`,
   `docs/system_prompt{,_ru}.md`, `docs/concepts{,_ru}.md`.
 
 ## 6. Статус бенча (пауза)

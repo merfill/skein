@@ -4,7 +4,7 @@
 > not a specification. Harness code lives in `bench/` and `langgraph/`.
 >
 > **Model change (2026-10-09).** The runs below were measured **before** the goal reduction
-> (`docs/plans/goal_reduction_plan.md`): the goal then carried a criterion `done_when`, a
+> (`docs/plans/archive/goal_reduction_plan.md`): the goal then carried a criterion `done_when`, a
 > separate `step`, `revises` and an exposed `state`, and `stop` was gated on the criterion
 > run. That churn is exactly what the reduction removes; treat these numbers as the
 > baseline the reduction is measured against, not as the current model.
@@ -368,7 +368,7 @@ The prompt is **identical** and points at a reference if one exists.
 Run: `SKEIN_CASES=fixtures/synthetic npx tsx bench/run.ts ref-localize-<on|off>`, Flash,
 `reasoningEffort=low`, `maxTurns=24`, three runs per condition (2026-10-07, after the logos
 closure and the A1–A4 step reduction with the A4 verification fix —
-`docs/plans/step_reduction_plan.md` §3).
+`docs/plans/archive/step_reduction_plan.md` §3).
 
 | condition | run | reward | steps | checks | tok in | tok out | cache | `diff` | rereads |
 |---|---|---|---|---|---|---|---|---|---|
@@ -402,7 +402,7 @@ opencode on the same cases (local `opencode run --variant low --auto --pure`,
   used to match the goal's `done_when.command` and be **implicitly** promoted to a check,
   refuting the goal at the reproduce step (runs `09:31`, `09:48`). A verdict now comes
   **only from an explicit check** (`run {target}`); a bare run is an observation
-  (`docs/plans/traversal_stack_spec.md` §9). All successful runs again show exactly one
+  (`docs/plans/archive/traversal_stack_spec.md` §9). All successful runs again show exactly one
   check.
 - **The reference strategy holds:** `on` — `diff` 3/3 (proposed or auto-run by A4); `off`
   — manual localization, `diff` 0/3.

@@ -35,7 +35,7 @@ original and a Russian mirror named with the `_ru` suffix.
   [RU](prompt_state_machine_concept_ru.md) — the agent's prompt as a state machine (states,
   criteria, transitions, constraints); draft.
 - [context_design.md](context_design.md) · [RU](context_design_ru.md) — the design rationale
-  for the projection (working memory, working set, alternatives).
+  for the projection (working memory, alternatives).
 
 ## Working on the engine
 
@@ -43,30 +43,32 @@ original and a Russian mirror named with the `_ru` suffix.
   output lands.
 - [plans/implementation_plan.md](plans/implementation_plan.md) · [RU](plans/implementation_plan_ru.md)
   — overall plan, decisions, roadmap, status.
-- [plans/ir_revision_implementation_plan.md](plans/ir_revision_implementation_plan.md) ·
-  [RU](plans/ir_revision_implementation_plan_ru.md) — the IR revision rollout (shape,
-  operations, context tape; the spec was folded into `ir_semantics`).
-- [plans/traversal_stack_spec.md](plans/traversal_stack_spec.md) · [RU](plans/traversal_stack_spec_ru.md)
-  — the traversal stack (the spine and the arms).
-- [plans/step_reduction_plan.md](plans/step_reduction_plan.md) · [RU](plans/step_reduction_plan_ru.md)
-  — context format and LLM-turn reduction (current work).
-- [plans/goal_reduction_plan.md](plans/goal_reduction_plan.md) · [RU](plans/goal_reduction_plan_ru.md)
-  — reduce the goal to its minimal, monotone shape (planned).
-- [plans/state_protocol_plan.md](plans/state_protocol_plan.md) ·
-  [RU](plans/state_protocol_plan_ru.md) — **the state protocol redesign**: states as the
-  skeleton of the walk, `move { state, what }` (a state IS its goal), a flat plan, a forced
-  transition on `stop`, a terminal state (settled; the follow-on is
-  [plans/goal_into_move_plan.md](plans/goal_into_move_plan.md)).
-- [plans/state_transitions_plan.md](plans/state_transitions_plan.md) ·
-  [RU](plans/state_transitions_plan_ru.md) — make the state's goal the state-change move
-  (superseded by the state protocol and goal-into-move plans).
-- [plans/observation_plan.md](plans/observation_plan.md) · [RU](plans/observation_plan_ru.md)
-  — observation of changes outside the engine (a/b done, c open).
 
 ## Plans
 
-- `plans/` — active plans.
+- `plans/` — active plans (`implementation_plan`).
 - `plans/archive/` — completed or superseded plans, kept for the record.
+- [plans/archive/state_protocol_plan.md](plans/archive/state_protocol_plan.md) ·
+  [RU](plans/archive/state_protocol_plan_ru.md) — the state protocol redesign: states as the
+  walk's skeleton, `move { state, what }` (a state IS its goal), a flat plan, a forced
+  transition on `stop`, a terminal state (done; extended by goal-into-move).
+- [plans/archive/goal_into_move_plan.md](plans/archive/goal_into_move_plan.md) ·
+  [RU](plans/archive/goal_into_move_plan_ru.md) — the goal moves into `move` (done; the tape
+  renders a state as `Start state` / goal / `Finish state` markers).
+- [plans/archive/state_transitions_plan.md](plans/archive/state_transitions_plan.md) ·
+  [RU](plans/archive/state_transitions_plan_ru.md) — the state's goal as the state-change move
+  (superseded by the state protocol).
+- [plans/archive/goal_reduction_plan.md](plans/archive/goal_reduction_plan.md) ·
+  [RU](plans/archive/goal_reduction_plan_ru.md) — reduce the goal to its minimal, monotone shape (done).
+- [plans/archive/step_reduction_plan.md](plans/archive/step_reduction_plan.md) ·
+  [RU](plans/archive/step_reduction_plan_ru.md) — context format and LLM-turn reduction (done).
+- [plans/archive/traversal_stack_spec.md](plans/archive/traversal_stack_spec.md) ·
+  [RU](plans/archive/traversal_stack_spec_ru.md) — the traversal stack (the spine and the arms) (done).
+- [plans/archive/ir_revision_implementation_plan.md](plans/archive/ir_revision_implementation_plan.md) ·
+  [RU](plans/archive/ir_revision_implementation_plan_ru.md) — the IR revision rollout (done; the
+  spec was folded into `ir_semantics`).
+- [plans/archive/observation_plan.md](plans/archive/observation_plan.md) ·
+  [RU](plans/archive/observation_plan_ru.md) — observation of changes outside the engine (done).
 - [plans/archive/stop_closure_plan.md](plans/archive/stop_closure_plan.md) · [RU](plans/archive/stop_closure_plan_ru.md)
   — one closure (`stop`), checks as observations, no arbiter (done).
 - [plans/archive/request_goal_plan.md](plans/archive/request_goal_plan.md) · [RU](plans/archive/request_goal_plan_ru.md)

@@ -59,7 +59,7 @@ function moveIdOf(context: Context | undefined): string | undefined {
 function open(what = "green"): Event[] {
   return [
     { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
-    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: what, payload: { state: "reconnaissance", what }, seq: 1 } },
+    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: what, payload: { state: "orientation", what }, seq: 1 } },
     { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
     { type: "descend", node: "m1" },
   ];
@@ -188,7 +188,7 @@ describe("classify", () => {
     ).toBe(false);
   });
 
-  it("points a repeated recall at the result already held", () => {
+  it("a recall in an open state reads a stored body (accepted)", () => {
     const state = fold([
       ...open(),
       {
@@ -196,9 +196,7 @@ describe("classify", () => {
         node: { id: "o1", space: "work", kind: "observation", label: "run", payload: { output: "x" }, seq: 1 },
       },
     ]);
-    const verdict = classify({ operator: "recall", id: "o1" }, state, ["o1"]);
-    expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("recalled");
+    expect(classify({ operator: "recall", id: "o1" }, state)).toEqual({ accept: true });
   });
 
   it("refuses an identical re-search and names the stored result", () => {
@@ -226,7 +224,7 @@ describe("classify", () => {
     };
     const moved = fold([
       req,
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "reconnaissance", what: "locate" }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "orientation", what: "locate" }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
       { type: "descend", node: "m1" },
     ]);
@@ -236,7 +234,7 @@ describe("classify", () => {
     ).toEqual({ accept: true });
     // A non-terminal move must name the state's goal in `what`.
     expect(
-      classify({ operator: "move", state: "reconnaissance", what: " " }, fold([req])).reason,
+      classify({ operator: "move", state: "orientation", what: " " }, fold([req])).reason,
     ).toContain("empty_what");
     // At the request there is no state yet: an apply outside a state is refused.
     expect(
@@ -276,7 +274,7 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "reconnaissance", what: "locate" }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "orientation", what: "locate" }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
       { type: "descend", node: "m1" },
     ]);
@@ -308,7 +306,7 @@ describe("executeAction", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
     ]);
     const outcome = executeAction(
-      { operator: "move", state: "reconnaissance", what: "map" },
+      { operator: "move", state: "orientation", what: "map" },
       root,
       workspace,
       0,
@@ -316,7 +314,7 @@ describe("executeAction", () => {
     const state = fold(outcome.events, root);
     const moveNode = [...state.nodes.values()].find((node) => node.kind === "move");
     expect(moveNode).toBeDefined();
-    expect((moveNode?.payload as { state?: string }).state).toBe("reconnaissance");
+    expect((moveNode?.payload as { state?: string }).state).toBe("orientation");
     expect(currentFocus(state)).toBe(moveNode?.id);
     const edge = [...state.edges.values()].find((edge) => edge.kind === "move");
     expect(edge?.from).toBe("r1");
@@ -619,29 +617,13 @@ describe("recall by id (history index)", () => {
     expect(bigJson.output).not.toContain("line 5");
   });
 
-  it("refuses a recall for a result already in the working set", () => {
-    const state = fold(open());
-    const held = ["obs:30"];
-
-    const repeat = classify({ operator: "recall", id: "obs:30" }, state, held);
-    expect(repeat.accept).toBe(false);
-    expect(repeat.reason).toContain("obs:30");
-    expect(repeat.reason).toContain("repeated_action");
-
-    // Another id is fine.
-    expect(classify({ operator: "recall", id: "obs:31" }, state, held)).toEqual({
-      accept: true,
-    });
-  });
-
-  it("refuses a re-recall of a non-result id (e.g. an action node)", () => {
-    const state = fold(open());
-    const verdict = classify({ operator: "recall", id: "w:action:77" }, state, [
-      "w:action:77",
+  it("refuses a recall with no open state (it belongs to an open state)", () => {
+    const request = fold([
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
     ]);
+    const verdict = classify({ operator: "recall", id: "obs:30" }, request);
     expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("w:action:77");
-    expect(verdict.reason).toContain("repeated_action");
+    expect(verdict.reason).toContain("no_state");
   });
 });
 
@@ -654,7 +636,7 @@ describe("the message tape", () => {
       roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -669,17 +651,15 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; move is its own call + result, followed by the
-    // state's description (shown once at entry); the first apply seeds the plan.
+    // A fresh request is a single user turn; the move is a `Start state` marker + the goal as a
+    // user turn (the request turn is dropped); the first apply seeds the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "assistant", "tool", "system"]);
-    expect(roles[2]).toEqual(["user", "assistant", "tool", "system", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["assistant", "user"]);
+    expect(roles[2]).toEqual(["assistant", "user", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
-      "user",
       "assistant",
-      "tool",
-      "system",
+      "user",
       "assistant",
       "tool",
       "assistant",
@@ -694,7 +674,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       if (index === 3) {
         // One doxa move, two independent probes (a batch).
@@ -716,7 +696,7 @@ describe("the message tape", () => {
           ],
         };
       }
-      if (index === 5) return proposal({ operator: "move", state: "handoff", what: "" });
+      if (index === 5) return proposal({ operator: "move", state: "finish", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -742,7 +722,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -831,7 +811,7 @@ describe("runAgent", () => {
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "reconnaissance", what: "fix the off-by-one" });
+        return proposal({ operator: "move", state: "patch", what: "fix the off-by-one" });
       }
       if (index === 2) {
         return proposal({
@@ -846,7 +826,7 @@ describe("runAgent", () => {
         return proposal({ operator: "apply", action: { tool: "bash", command: "node --test" } });
       }
       if (index === 5) return proposal({ operator: "stop", why: "node --test passes" });
-      if (index === 6) return proposal({ operator: "move", state: "handoff", what: "" });
+      if (index === 6) return proposal({ operator: "move", state: "finish", what: "" });
       return proposal({ operator: "stop", why: "node --test passes" });
     };
     const result = await runAgent(
@@ -865,7 +845,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "make the suite pass" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "make the suite pass" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -873,7 +853,7 @@ describe("runAgent", () => {
         });
       }
       if (index === 3) return proposal({ operator: "stop", why: "state done" });
-      if (index === 4) return proposal({ operator: "move", state: "handoff", what: "" });
+      if (index === 4) return proposal({ operator: "move", state: "finish", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -898,7 +878,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "interpret the request" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "interpret the request" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -928,7 +908,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -952,7 +932,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+        return proposal({ operator: "move", state: "orientation", what: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -983,7 +963,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "reconnaissance", what: "read the long file" });
+        return proposal({ operator: "move", state: "orientation", what: "read the long file" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -996,18 +976,19 @@ describe("runAgent", () => {
         return proposal({ operator: "recall", id: id ?? "missing", start: 55, end: 65 });
       }
       if (index === 5) return proposal({ operator: "stop", why: "seen enough" });
-      if (index === 6) return proposal({ operator: "move", state: "handoff", what: "" });
+      if (index === 6) return proposal({ operator: "move", state: "finish", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
       { propose, workspace, maxTurns: 8, noProgress: 3 },
       { request: { id: "r1", text: "read the long file" } },
     );
-    // The windowed recall returned the middle fragment (line 60), not a refusal.
-    const after = contexts[4]?.history.map((message) => message.text).join("\n") ?? "";
+    // The windowed recall returned the middle fragment (line 60), rendered as a node.
+    const ctx = contexts[4];
+    const after = ctx?.history.map((message) => message.text).join("\n") ?? "";
     expect(after).toContain("line 60");
-    // The assistant's own history shows the call's arguments, not a bare `recall`.
-    expect(after).toMatch(/recall \{ id: obs:\d+, start: 55, end: 65 \}/);
+    const recallCall = ctx?.history.find((message) => message.call?.name === "recall");
+    expect(recallCall?.call?.args).toMatchObject({ start: 55, end: 65 });
     expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
   });
 
@@ -1022,9 +1003,9 @@ describe("runAgent", () => {
           kind: "move",
           label: "green",
           payload: {
-            state: "reconnaissance",
+            state: "orientation",
             what: "green",
-            call: { name: "move", args: { state: "reconnaissance", what: "green" } },
+            call: { name: "move", args: { state: "orientation", what: "green" } },
           },
           seq: 1,
         },
@@ -1039,14 +1020,13 @@ describe("runAgent", () => {
     ]);
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");
-    expect(context.history[0]?.role).toBe("user");
-    expect(context.history[0]?.text).toBe("green");
+    expect(context.history[0]?.role).toBe("assistant");
+    expect(context.history[0]?.text).toBe("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
-    expect(texts).toContain("moved to Reconnaissance");
     expect(texts).toContain("run build");
-    // The state IS its goal: the move call carries the goal text (`what`), not a create_goal.
-    const moveCall = context.history.find((message) => message.call?.name === "move");
-    expect(moveCall?.call?.args).toMatchObject({ state: "reconnaissance", what: "green" });
+    // The state IS its goal: the goal (the move's `what`) is the `user` turn, not a create_goal.
+    const goal = context.history.find((message) => message.role === "user")?.text ?? "";
+    expect(goal).toContain("green");
   });
 
   it("refuses a repeated read and names the stored result", async () => {
@@ -1054,7 +1034,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1086,13 +1066,13 @@ describe("runAgent", () => {
     expect(refusal?.label).toContain(firstRead?.id ?? "?");
   });
 
-  it("refuses an identical re-recall by id instead of re-retrieving", async () => {
+  it("a repeated recall is accepted — it appends the body to the state's tape each turn", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let readId: string | undefined;
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1104,22 +1084,21 @@ describe("runAgent", () => {
       return proposal({ operator: "recall", id: readId ?? "missing" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 8, noProgress: 2 },
+      { propose, workspace, maxTurns: 5, noProgress: 2 },
       { request: { id: "r1", text: "green" } },
     );
 
-    const rejection = result.events.find((event) => event.type === "record_rejection");
-    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
-    expect(reason).toContain("repeated_action");
-    expect(result.stopReason).toBe("no_progress");
+    // No refusal: each recall is a new node, so the run is bounded by the budget, not by a guard.
+    expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
+    expect(result.stopReason).toBe("max_turns");
   });
 
-  it("refuses a repeated recall of a non-result node", async () => {
+  it("a recall of a non-result node is accepted (it reports no stored body)", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -1130,13 +1109,11 @@ describe("runAgent", () => {
       return proposal({ operator: "recall", id: moveIdOf(context) ?? "missing" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { propose, workspace, maxTurns: 5, noProgress: 2 },
       { request: { id: "r1", text: "green" } },
     );
 
-    const rejection = result.events.find((event) => event.type === "record_rejection");
-    const reason = rejection?.type === "record_rejection" ? rejection.reason : "";
-    expect(reason).toContain("repeated_action");
+    expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
   });
 });
 
@@ -1148,7 +1125,7 @@ describe("failed edit materializes the file content", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "reconnaissance", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green" });
       if (index === 2) {
         return proposal({
           operator: "apply",

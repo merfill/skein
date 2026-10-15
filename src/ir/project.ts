@@ -22,7 +22,7 @@ import type { Node } from "./types";
 // its result — while the state is open the result confirms the move and the plan's
 // call/observation pairs follow; once the state is stopped its turns are elided and the
 // `move` result carries the state's own closure, the `stop` reason read from the `move.stop`
-// relation (docs/plans/goal_into_move_plan.md). There is no goal node: the state IS its goal.
+// relation (docs/plans/archive/goal_into_move_plan.md). There is no goal node: the state IS its goal.
 
 export type Situation = "request" | "plan" | "working" | "transition" | "terminal";
 
@@ -55,6 +55,9 @@ export interface Context {
   situation: Situation;
   // The island of the focused state, when there is one (an authored label, §2.5).
   island?: IslandId;
+  // The focused state's stop condition, concretized by the doxa on the `move` (falls back to
+  // the island's generic criterion in the renderer). Used by the per-turn nudge.
+  done?: string;
   // The frontier: the moves admissible at the focus. The model surface is bound from it, so
   // the offered tools cannot include a move the engine would refuse (§2.6). Absent on a
   // hand-built context (tests), where the full surface is offered.
@@ -69,15 +72,6 @@ export interface Context {
 }
 
 export interface ProjectOptions {
-  // The current turn's `recall`/`search` result: these create no node, so the pair is
-  // appended as a transient assistant/tool turn for this turn only.
-  retrieval?: {
-    call: string;
-    name: string;
-    args: Record<string, unknown>;
-    output: string;
-    error?: string;
-  };
   // A structural move the engine refused: appended as a transient assistant call + `tool`
   // reason for this turn only (the refused move creates no node; §2.7).
   rejection?: { text: string; name: string; args: Record<string, unknown> };
@@ -197,7 +191,7 @@ function asCall(node: Node | undefined): { name: string; args: Record<string, un
 }
 
 // The closure line a finished state's `move` returns: the engine's mechanical reason (the
-// `stop` payload) plus the optional model `note` (docs/plans/state_protocol_plan.md §4a). The
+// `stop` payload) plus the optional model `note` (docs/plans/archive/state_protocol_plan.md §4a). The
 // note rides the `move` that leaves the state, so it is passed in by the caller. The changed
 // files are deliberately NOT listed: a state that runs a build mutates thousands of artifacts.
 function closureLine(state: State, moveId: string, note: string | undefined): string {
@@ -205,15 +199,17 @@ function closureLine(state: State, moveId: string, note: string | undefined): st
   const label = island !== undefined ? ISLANDS[island].label : "State";
   const stop = stopOf(state, moveId);
   const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
-  let line = `State ${label}: finished — ${typeof why === "string" && why !== "" ? why : "done"}`;
+  let line = `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
   if (typeof note === "string" && note !== "") line += ` (note: ${note})`;
   return line;
 }
 
-// Render a state: its `move` native call and the result of that call. While the state is open
-// the result confirms the move and the plan follows; once the state is stopped its turns are
-// elided and the result is the state's own closure line (the `stop` reason, read from the
-// `move.stop` relation — the state IS its goal, docs/plans/goal_into_move_plan.md).
+// Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
+// two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
+// (the `stop` reason). The goal is the request concretized onto the state, a `user` turn. While
+// the state is open its plan follows (native tool calls and their results); once it is stopped
+// the plan is elided — the triple `[Start state, goal, Finish state]` is the compact record
+// (docs/ir_semantics §7; the working turns stay in the tree, retrievable by `recall`).
 function renderState(
   state: State,
   moveId: string,
@@ -223,25 +219,22 @@ function renderState(
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
-  const call = asCall(move);
-  if (call !== undefined) {
-    out.push({ role: "assistant", text: "", call: { id: moveId, ...call } });
-  } else {
-    out.push({ role: "assistant", text: `[${moveId}] move: ${label}` });
+  out.push({ role: "assistant", text: `Start state ${label}` });
+  const payload = movePayload(state, moveId);
+  const what = payload?.what !== undefined && payload.what !== "" ? payload.what : island !== undefined ? ISLANDS[island].what : "";
+  const done = payload?.done !== undefined && payload.done !== "" ? payload.done : island !== undefined ? ISLANDS[island].criterion : "";
+  if (what !== "") {
+    out.push({ role: "user", text: done !== "" ? `${what}\nDone when: ${done}.` : what });
   }
   if (stopOf(state, moveId) !== undefined) {
-    out.push({ role: "tool", text: `[${moveId}] ${closureLine(state, moveId, note)}`, callId: moveId });
+    out.push({ role: "assistant", text: closureLine(state, moveId, note) });
     return;
   }
-  out.push({ role: "tool", text: `[${moveId}] moved to ${label}`, callId: moveId });
-  // The state description is shown ONCE, when the state is entered, and stays on the tape while
-  // the state is open (a finished state's turns are elided into its closure).
-  if (island !== undefined) out.push({ role: "system", text: stateDescription(ISLANDS[island]) });
   renderPlan(state, moveId, out);
 }
 
 // Render a state's plan: its items and their current alternatives in order (the plan hangs
-// directly off the `move` — there is no goal node, docs/plans/goal_into_move_plan.md). Calls
+// directly off the `move` — there is no goal node, docs/plans/archive/goal_into_move_plan.md). Calls
 // a single doxa move made together (`payload.turn`) render as ONE assistant `tool_calls`
 // message followed by their results, in order; a lone call keeps the plain `call` shape
 // (docs/ir_semantics §7).
@@ -329,12 +322,18 @@ export function situationOf(state: State): Situation {
 // The observation step: right after a tool result inside an open state, the doxa must read the
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
-// the edit (docs/plans/prompt_stall_investigation_ru.md §6). The state's `Now:` directive rides
-// the state description on the tape.
-export function observationInstruction(): string {
+// the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
+// surface has no write tool (Localization) is told to `stop`, never to edit. The state's `Now:`
+// directive rides the state description on the tape.
+export function observationInstruction(applies: readonly string[]): string {
+  const canWrite = applies.some((tool) => tool === "edit" || tool === "write" || tool === "apply_patch");
   return [
-    "Decide NOW, this turn.",
-    "Does this state's `Done when` already hold? Yes → `stop`. If you can already name the exact change from what is above, make it this turn instead of reading to confirm. Otherwise take the ONE next action that closes the gap — a DIFFERENT action if the last step failed or was the wrong step (never repeat it). Do not re-read what is already above; do not repeat a step that failed.",
+    "Decide now.",
+    "Does the state's goal already hold? Yes → `stop`.",
+    canWrite
+      ? "If you can already make the change, do it this turn — do not read to confirm. Otherwise take the one next action that closes the gap — a different action if the last step failed."
+      : "Otherwise take the one next action that closes the gap — a different action if the last step failed.",
+    "Do not re-read what is already above.",
   ].join("\n");
 }
 
@@ -353,37 +352,30 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     const request = state.nodes.get(rootId);
     if (request?.kind === "request") {
       const text = payloadOf(state, rootId)?.text;
-      history.push({ role: "user", text: typeof text === "string" ? text : request.label });
+      const requestText = typeof text === "string" ? text : request.label;
+      const unactionable = unactionableOf(state, rootId);
+      const moves = unactionable === undefined ? childrenOf(state, rootId) : [];
+      if (unactionable !== undefined) {
+        history.push({ role: "user", text: requestText });
+        const why = payloadOf(state, unactionable)?.why;
+        history.push({
+          role: "assistant",
+          text: `declined: ${typeof why === "string" && why !== "" ? why : "not actionable"}`,
+        });
+      } else {
+        moves.forEach((moveId, index) => {
+          // The model's `note` on a move summarizes the state it leaves, so it belongs on the
+          // closure line of the previous state (the previous move's result).
+          const nextNote = index + 1 < moves.length ? movePayload(state, moves[index + 1] as string)?.note : undefined;
+          renderState(state, moveId, nextNote, history);
+        });
+        // The request is a temporary turn: shown for the initial state choice and again at a
+        // transition (choosing the next state), and dropped while a state is being worked.
+        if (moves.length === 0 || situationOf(state) === "transition") {
+          history.push({ role: "user", text: requestText });
+        }
+      }
     }
-    const unactionable = unactionableOf(state, rootId);
-    if (unactionable !== undefined) {
-      const why = payloadOf(state, unactionable)?.why;
-      history.push({
-        role: "assistant",
-        text: `declined: ${typeof why === "string" && why !== "" ? why : "not actionable"}`,
-      });
-    } else {
-      const moves = childrenOf(state, rootId);
-      moves.forEach((moveId, index) => {
-        // The model's `note` on a move summarizes the state it leaves, so it belongs on the
-        // closure line of the previous state (the previous move's result).
-        const nextNote = index + 1 < moves.length ? movePayload(state, moves[index + 1] as string)?.note : undefined;
-        renderState(state, moveId, nextNote, history);
-      });
-    }
-  }
-  if (options.retrieval !== undefined) {
-    const callId = "call:retrieval";
-    history.push({
-      role: "assistant",
-      text: options.retrieval.call,
-      call: { id: callId, name: options.retrieval.name, args: options.retrieval.args },
-    });
-    const text =
-      options.retrieval.error !== undefined && options.retrieval.error !== ""
-        ? `${options.retrieval.output}\n[stderr]\n${options.retrieval.error}`
-        : options.retrieval.output;
-    history.push({ role: "tool", text, callId });
   }
   if (options.rejection !== undefined) {
     const callId = "call:rejected";
@@ -395,23 +387,26 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     history.push({ role: "tool", text: options.rejection.text, callId });
   }
   const island = islandOf(state);
+  const focusedMove = currentMove(state);
+  const done = focusedMove !== undefined ? movePayload(state, focusedMove)?.done : undefined;
   const situation = situationOf(state);
   const frontier = applicable(state, currentFocus(state));
   const nudge =
     options.stall !== undefined && options.stall > 0 && island !== undefined
-      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Decide now: name the exact change and edit; \`stop\` this state and \`move\` to the next; or \`stop\` at the terminal state.`
+      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Act, or \`stop\` this state and \`move\` on.`
       : undefined;
   // Right after a tool result inside an open state, tell the doxa to read it and decide — the
   // state's rule and criterion restated at the highest recency (the observation step).
   const last = history[history.length - 1];
   const result =
     situation === "working" && last?.role === "tool" && island !== undefined
-      ? observationInstruction()
+      ? observationInstruction(frontier.applies)
       : undefined;
   return {
     history,
     situation,
     island,
+    ...(done !== undefined && done !== "" ? { done } : {}),
     applicable: frontier,
     constraints: constraintsOf(state),
     ...(nudge !== undefined ? { nudge } : {}),

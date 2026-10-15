@@ -11,7 +11,7 @@
 > (например, §4.5, §7) отражают состояние на момент написания; с тех пор реализованы
 > операторная модель (`move`/`apply`/`stop`/`decline` + read-only
 > `recall`/`search`), `no_progress` и стек обхода. Текущий as-built — `docs/ir_ru.md`; протокол
-> состояний — `docs/plans/state_protocol_plan_ru.md`; перекрытый роадмап —
+> состояний — `docs/plans/archive/state_protocol_plan_ru.md`; перекрытый роадмап —
 > `docs/plans/archive/logos_roadmap_plan_ru.md`.
 >
 > **Закрытие `stop` (позже).** Описанная ниже машинерия
@@ -553,7 +553,7 @@ Skein перестаёт дрейфовать. На `fix-ocaml-gc` он либо
 стек есть стек кадров — **спина** — плюс сиблинги уровня, **руки**; он есть
 `fold(journal)`, производная величина, а не самостоятельное состояние. Это новая
 часть: сейчас явного «где мы в дереве» у Skein нет. Полная спецификация —
-`docs/plans/traversal_stack_spec_ru.md`.
+`docs/plans/archive/traversal_stack_spec_ru.md`.
 
 ### 5.5 Записи о смене ответа
 

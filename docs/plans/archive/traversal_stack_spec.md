@@ -1,6 +1,6 @@
 # Skein — traversal stack specification (folded)
 
-> Russian mirror — `docs/plans/traversal_stack_spec_ru.md`.
+> Russian mirror — `docs/plans/archive/traversal_stack_spec_ru.md`.
 
 > **Folded into `docs/ir_semantics.md` §2.** The traversal model is unchanged in spirit — a
 > stack from the root to the current goal, a cursor over the plan, one set of admissible

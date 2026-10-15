@@ -20,11 +20,11 @@ afterEach(cleanupWorkspaces);
 describe("move", () => {
   it("OP-MV-1 opens a state as a flat child of the request, descends into it, with no plan yet", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { state } = exec(move("reconnaissance", "map the repo"), [request()], ws);
+    const { state } = exec(move("orientation", "map the repo"), [request()], ws);
     const moveNode = currentMove(state);
     expect(moveNode).toBeDefined();
     expect(state.nodes.get(moveNode as string)?.kind).toBe("move");
-    expect(moveIsland(state, moveNode as string)).toBe("reconnaissance");
+    expect(moveIsland(state, moveNode as string)).toBe("orientation");
     // The edge is request → move (`move` relation); the request has no goal of its own.
     expect(
       [...state.edges.values()].some(
@@ -59,9 +59,9 @@ describe("move", () => {
 
   it("OP-MV-3 the terminal state accepts stop directly (DER-REQ-1)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("handoff"), [request()], ws);
+    const moved = exec(move("finish"), [request()], ws);
     const moveId = currentMove(moved.state)!;
-    expect(moveIsland(moved.state, moveId)).toBe("handoff");
+    expect(moveIsland(moved.state, moveId)).toBe("finish");
     expect(isMoveFinished(moved.state, moveId)).toBe(false);
     const stopped = exec({ operator: "stop", why: "done" }, moved.events, ws);
     expect(stopped.outcome.done).toBe(true);
@@ -79,7 +79,7 @@ describe("move", () => {
       ws,
     );
     const texts = project(moved.state).history.map((message) => message.text).join("\n");
-    expect(texts).toContain("State Localization: finished — the line is named");
+    expect(texts).toContain("Finish state Localization — the line is named");
     expect(texts).toContain("(note: named p += Whsize_hd(hd))");
   });
 
@@ -91,7 +91,7 @@ describe("move", () => {
 
   it("REF-MV-WHAT rejects a non-terminal move with no goal text", () => {
     const verdict = classification(
-      { operator: "move", state: "reconnaissance", what: "   " },
+      { operator: "move", state: "orientation", what: "   " },
       [request()],
     );
     expect(verdict.accept).toBe(false);

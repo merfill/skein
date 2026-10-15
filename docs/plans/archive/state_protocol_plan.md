@@ -1,6 +1,6 @@
 # Skein — state protocol plan (states as the skeleton of the walk)
 
-> English mirror of `docs/plans/state_protocol_plan_ru.md`.
+> English mirror of `docs/plans/archive/state_protocol_plan_ru.md`.
 > Status: **in progress — Phase 0 (freeze the concept).** The concept (§2–§4) and all open
 > decisions (§13, incl. §4a) are **settled with the owner** (2026-10-13); the implementation
 > ("how", §6–§7) is fixed accordingly. Phase 0 lands the decisions in the semantics and the
@@ -243,7 +243,7 @@ Open IR decisions are collected in §13.
 ## 9. Relation to the working tree and existing plans
 
 The working tree currently holds the (uncommitted) incremental changes from
-`docs/plans/state_transitions_plan.md`: the `no_current_item` engine fix, the prompt redesign
+`docs/plans/archive/state_transitions_plan.md`: the `no_current_item` engine fix, the prompt redesign
 (`B1`/`B4`/island `What/Done/Constraints`/transitions/`create_goal` description), the
 `Context.nudge`, the `OP-CG-5` tests, and `tests/live/state_transitions_step.test.ts`.
 
@@ -251,7 +251,7 @@ The working tree currently holds the (uncommitted) incremental changes from
   leave `create_goal`; sub-goals go away).
 - The prompt redesign (per-state `What/Done/Constraints`, conditioned transitions, the nudge)
   **carries over in spirit** and is re-expressed in §7.
-- `docs/plans/state_transitions_plan{,_ru}.md` is **superseded** by this plan; keep it as a
+- `docs/plans/archive/state_transitions_plan{,_ru}.md` is **superseded** by this plan; keep it as a
   historical record (or fold its P1–P5 evidence into §1).
 
 **(resolved)** The incremental work was **committed as a stepping stone** (`6af64b7`), not

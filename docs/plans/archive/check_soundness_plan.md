@@ -77,7 +77,7 @@ only the latter.
   a snapshot of the whole workspace, so any change (including an imported module)
   stales the check. Precision via an import graph is deferred
   (`docs/plans/archive/staleness_scope_plan.md`).
-- External changes are handled in `docs/plans/observation_plan.md`.
+- External changes are handled in `docs/plans/archive/observation_plan.md`.
 
 ## 7. Order of work
 

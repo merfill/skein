@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, turnInstruction } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -24,31 +24,32 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toBe(BASE_BLOCKS.map((block) => block.text).join("\n\n"));
   });
 
-  it("carries the state-machine preamble and the state graph", () => {
-    expect(BASE_PROMPT).toContain("implemented as a state machine");
-    expect(BASE_PROMPT).toContain("Reconnaissance");
+  it("carries the agent preamble and the state graph", () => {
+    expect(BASE_PROMPT).toContain("a small set of states");
+    expect(BASE_PROMPT).toContain("Orientation");
     expect(BASE_PROMPT).toContain("Verification");
   });
 
-  it("states the state-change mechanism, Start and conditioned Transitions once in the base", () => {
-    expect(BASE_PROMPT).toMatch(/`move \{ state, what \}` declares the state/);
-    expect(BASE_PROMPT).toContain("a state IS its goal");
+  it("states the state-change mechanism, the States and conditioned Transitions once in the base", () => {
+    expect(BASE_PROMPT).toContain("the state is its goal");
     expect(BASE_PROMPT).not.toContain("create_goal");
-    expect(BASE_PROMPT).toContain("Start —");
+    expect(BASE_PROMPT).toContain("States:");
+    // Each state is described by its goal and the knowledge that closes it.
+    expect(BASE_PROMPT).toMatch(/- Orientation — .*Done: .*\./);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/Localization — the cause is findable by reading/);
-    expect(BASE_PROMPT).toMatch(/Hand-off is terminal/);
+    expect(BASE_PROMPT).toMatch(/Localization — the project and its layout are known/);
+    expect(BASE_PROMPT).toMatch(/Finish is terminal/);
   });
 
   it("gives the request and goal situations their own instructions", () => {
-    expect(NODE_INSTRUCTIONS.request.length).toBeGreaterThan(0);
+    expect(REQUEST_INSTRUCTION.length).toBeGreaterThan(0);
     expect(NODE_INSTRUCTIONS.working.length).toBeGreaterThan(0);
-    expect(NODE_INSTRUCTIONS.request).not.toBe(NODE_INSTRUCTIONS.working);
-    expect(NODE_INSTRUCTIONS.request).toMatch(/move \{ state|decline/);
+    expect(REQUEST_INSTRUCTION).not.toBe(NODE_INSTRUCTIONS.working);
+    expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
     expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
-    expect(NODE_INSTRUCTIONS.plan).toMatch(/first step/i);
-    expect(NODE_INSTRUCTIONS.transition).toMatch(/move \{ state/);
+    expect(NODE_INSTRUCTIONS.plan).toMatch(/call a tool/i);
+    expect(NODE_INSTRUCTIONS.transition).toMatch(/choose the next state/i);
     expect(NODE_INSTRUCTIONS.terminal).toMatch(/stop/i);
   });
 });
@@ -75,10 +76,10 @@ describe("system prompt: tool contract", () => {
     expect(bash?.function.description).toMatch(/pipefail/i);
   });
 
-  it("keeps the stop condition in the goal instruction (B8): a goal closes by stop, no criterion", () => {
+  it("keeps the stop condition in the working instruction (B8): a state closes by stop", () => {
     const b8 = PROMPT_BLOCKS.find((block) => block.id === "B8");
     expect(b8?.text).toMatch(/stop/i);
-    expect(b8?.text).toMatch(/only closure|no criterion/i);
+    expect(b8?.text).toMatch(/do not re-check/i);
     expect(NODE_INSTRUCTIONS.working).toContain(b8?.text ?? "");
   });
 
@@ -93,8 +94,8 @@ describe("system prompt: tool contract", () => {
     const move = PROPOSAL_TOOLS.find((tool) => tool.function.name === "move");
     const description = move?.function.description ?? "";
     expect(description).not.toContain("sketch");
-    expect(description).toContain("command");
-    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.request}\n${NODE_INSTRUCTIONS.working}`;
+    expect(description).toContain("never batch");
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${NODE_INSTRUCTIONS.working}`;
     for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
       expect(prompt, `prompt must not mention ${removed}`).not.toContain(removed);
       expect(description, `move must not mention ${removed}`).not.toContain(removed);
@@ -157,7 +158,7 @@ describe("tool surface: no drift to a removed tool", () => {
   it("mentions no removed tool anywhere the model reads", () => {
     // `query` was split into `recall`/`search`; the old name must not survive in a tool
     // description or the prompt, or the model will call a tool that does not exist.
-    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.request}\n${NODE_INSTRUCTIONS.working}`;
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${NODE_INSTRUCTIONS.working}`;
     for (const tool of PROPOSAL_TOOLS) {
       expect(tool.function.description, `${tool.function.name} mentions 'query'`).not.toMatch(
         /\bquery\b/i,
@@ -181,15 +182,10 @@ describe("system prompt: stream discipline", () => {
     expect(bashDescription).toMatch(/hides the left side's exit code/i);
   });
 
-  it("requires objective commands to be runnable from the workspace root", () => {
-    expect(NODE_INSTRUCTIONS.request).toMatch(/WORKSPACE ROOT/);
-    expect(NODE_INSTRUCTIONS.request).toContain("cd <dir> &&");
-  });
-
-  it("states the workspace-root/cd rule in the move description", () => {
-    const move = PROPOSAL_TOOLS.find((tool) => tool.function.name === "move");
-    expect(move?.function.description).toMatch(/WORKSPACE ROOT/);
-    expect(move?.function.description).toContain("cd <dir> &&");
+  it("states the workspace-root/cd rule in the bash description (not in move)", () => {
+    const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
+    expect(bash?.function.description).toMatch(/WORKSPACE ROOT/);
+    expect(bash?.function.description).toContain("cd <dir> &&");
   });
 
   it("carries no failure-diagnosis playbook (the log and the tools carry it)", () => {
@@ -227,7 +223,7 @@ describe("context format: tape", () => {
     constraints: [{ id: "k1", forbid: ["secret"] }],
   };
 
-  it("lays the context out as a stable prefix, the tape, then the situation instruction", () => {
+  it("lays the context out as a stable prefix, the constraints, the tape, then the open-state nudge", () => {
     const messages = buildMessages(context);
     expect(messages[0]).toBeInstanceOf(SystemMessage);
     expect(String(messages[0]?.content)).toBe(BASE_PROMPT);
@@ -242,9 +238,10 @@ describe("context format: tape", () => {
     expect(messages[4]).toBeInstanceOf(ToolMessage);
     expect((messages[4] as ToolMessage).tool_call_id).toBe("c1");
     expect(String(messages[4]?.content)).toContain("boom");
-    // The situation's instruction is appended LAST (temporary — re-derived each turn).
+    // The open-state nudge is appended last (temporary — never in the history).
     expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
-    expect(String(messages.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.working);
+    expect(String(messages.at(-1)?.content)).toBe(turnInstruction());
+    expect(messages).toHaveLength(6);
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {
@@ -253,27 +250,20 @@ describe("context format: tape", () => {
     );
   });
 
-  it("renders the observation instruction when the projection carries a result", () => {
+  it("appends the open-state nudge on a work turn (the observation is not rendered)", () => {
     const withResult: Context = {
       ...context,
-      result:
-        "A tool call just returned — read its result above, then decide exactly one: if this state's criterion now holds, `stop`; else the next action.",
+      result: "A tool call just returned — read its result above.",
     };
     const msgs = buildMessages(withResult);
-    // The situation's instruction is last; the observation instruction sits just before it.
     expect(msgs.at(-1)).toBeInstanceOf(SystemMessage);
-    expect(String(msgs.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.working);
-    const observation = msgs.at(-2);
-    expect(observation).toBeInstanceOf(SystemMessage);
-    expect(String(observation?.content)).toMatch(/read its result/i);
-    expect(String(observation?.content)).toMatch(/`stop`/);
-    // Not shown when nothing just returned (a fresh request).
-    const request = buildMessages({ ...context, history: [], situation: "request" });
-    expect(request.some((message) => /read its result/i.test(String(message.content)))).toBe(false);
+    expect(String(msgs.at(-1)?.content)).toBe(turnInstruction());
+    expect(msgs.some((m) => /read its result/i.test(String(m.content)))).toBe(false);
   });
 
-  it("appends the request instruction last on a fresh request", () => {
+  it("appends the request instruction after the request (scopes the first move's goal)", () => {
     const messages = buildMessages({ ...context, history: [], situation: "request" });
-    expect(String(messages.at(-1)?.content)).toBe(NODE_INSTRUCTIONS.request);
+    expect(String(messages.at(-1)?.content)).toBe(REQUEST_INSTRUCTION);
+    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
   });
 });

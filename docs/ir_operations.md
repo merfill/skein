@@ -9,10 +9,10 @@ operational reference and the coverage contract, not a second formalism),
 
 Status: **Specified (state protocol) — implementation in progress.** §1–§4 specify the model and
 every operator; §5 is the coverage matrix (to be refilled as the state protocol lands,
-`docs/plans/state_protocol_plan.md`). An ID is **stable**: a spec point may gain tests, but its
+`docs/plans/archive/state_protocol_plan.md`). An ID is **stable**: a spec point may gain tests, but its
 meaning does not change.
 
-> **State protocol** (`docs/plans/state_protocol_plan.md`). The walk is a state machine over
+> **State protocol** (`docs/plans/archive/state_protocol_plan.md`). The walk is a state machine over
 > islands: `move` declares the state AND its goal text (a `move` node, a flat child of the request; the state IS its goal), the first `apply`
 > concretizes that state's work (`what` + a plan seeded with the first action), `apply` works it,
 > and `stop` closes it and forces the transition. A goal carries `what` only — the `state`
@@ -101,7 +101,7 @@ node-event (`move`/`observation`/`stop`). A run's result is a plain `observation
 ### 2.1 `move` (`OP-MV`)
 
 Declares the state (the island of work) the doxa will work in AND the state's goal text
-(`what`) — the state **IS** its goal (docs/plans/goal_into_move_plan.md); the plan hangs
+(`what`) — the state **IS** its goal (docs/plans/archive/goal_into_move_plan.md); the plan hangs
 directly off the `move`. The states are the request's **flat children** (`move` relation): a new
 `move` after a finished state is a new child of the request (a sibling of the previous state),
 never nested under it.
@@ -110,23 +110,22 @@ never nested under it.
 |---|---|---|---|---|---|
 | open a state | focus is the request with no `move` yet | add `move` (`state`, `what`, `note?`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state`, `empty_what` | `OP-MV-1` |
 | transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `empty_what`, `state_open` | `OP-MV-2` |
-| terminal | the state is `handoff` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
-| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the closure line of the state being left | the finished state's turns are elided, its line remains | — | `OP-MV-4` |
+| terminal | the state is `finish` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
+| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the `Finish state` marker of the state being left | the finished state's turns are elided, its marker remains | — | `OP-MV-4` |
 
-- **Projection** (`PRJ-MV`): the tape gains an `assistant` call `move { state, what, note? }` + a
-  `tool` result of that call. While the state is open the result is a confirmation
-  (`moved to <label>`); once the state is stopped the result is its **closure line**
-  (`State <label>: finished — <why>`, from the `move.stop` relation); the state's own plan turns
-  are elided (§7 of the semantics).
+- **Projection** (`PRJ-MV`): the tape gains a `Start state <label>` marker (an `assistant` turn)
+  and the state's goal as a `user` turn (the request concretized). Once the state is stopped it
+  renders a `Finish state <label> — <why>` marker (from the `move.stop` relation); the state's own
+  plan turns are elided (§7 of the semantics).
 - **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
   **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
-  it) and where to go next. `what` is required except for the terminal `handoff`.
+  it) and where to go next. `what` is required except for the terminal `finish`.
 
 ### 2.2 the state's first plan item (`OP-CG`)
 
 The concrete work of a state is its plan, hung directly off the `move` (there is **no goal
 node**). The first plan item is an ordinary `apply` — the first tool call the doxa makes after
-the `move` seeds the plan (docs/plans/goal_into_move_plan.md §3).
+the `move` seeds the plan (docs/plans/archive/goal_into_move_plan.md §3).
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
@@ -277,19 +276,18 @@ the request (`unactionable` relation) and ends the run
 
 The doxa's terminal move and the **sole closure**. On an open **goal** it finishes the state's
 work (the engine returns to the governing `move` and forces the transition decision); on the
-**terminal state** (`handoff`, which has no goal) it ends the run. There is no criterion and no
+**terminal state** (`finish`, which has no goal) it ends the run. There is no criterion and no
 check: the doxa decides while working.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
 | finish a state's work | the focus is an open state | add a `stop` node and a `stop` relation from the state's `move` | the state is finished; focus returns to its `move` | — | `OP-ST-1` |
 | closure recorded on the move | a state | the `stop` node is hung off the `move` (no plan item); the reason lives in its `why` | the closure and its reason sit on the `move` | — | `OP-ST-2` |
-| the request ends | the focus is the terminal state (`handoff`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
+| the request ends | the focus is the terminal state (`finish`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
 | not at a closeable state | the focus is the request, or a non-terminal `move` | — | — | `not_addressed` | `REF-ST-STATE` |
 
-- **Projection** (`PRJ-STOP`): the state's closure renders as the result of that state's `move`
-  (the closure line `State <label>: finished — <why>`); the `stop` adds no message of its own,
-  and the state's plan turns leave the tape.
+- **Projection** (`PRJ-STOP`): the state's closure renders as a `Finish state <label> — <why>`
+  marker; the `stop` adds no tool call, and the state's plan turns leave the tape.
 - A goal is closed only by `stop` (a `stop` relation); the terminal state is closed by a `stop`
   relation on its `move`. There is no `stop` on the request; the request ends when its terminal
   state is stopped.
@@ -297,27 +295,28 @@ check: the doxa decides while working.
 ### 2.6 `recall` and `search` (`OP-RC`, `OP-SR`)
 
 Two moves read a stored result by id (the "index" mechanism, docs/ir_semantics.md §4.5):
-`recall` opens a body (optionally a line window), `search` finds a pattern inside it. Neither
-creates a node — the result is a transient `assistant`+`tool` pair on the tape for the next
-turn (docs/ir_semantics.md §7). They are separate tools so the doxa cannot conflate reading a
+`recall` opens a body (optionally a line window), `search` finds a pattern inside it. Both leave
+a node — an `action` + its `observation` under the state's plan, like any other step — so the
+fetched window stays on the state's tape while the state is open and is elided when the state is
+stopped (docs/ir_semantics.md §7). They are separate tools so the doxa cannot conflate reading a
 file / reading a result (`read`) with searching one (`grep` / `search`).
 
 `recall { id, start?, end? }` (`OP-RC`):
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
-| by id | the id addresses a stored body (observation or inline/`Ref` body) | no node; the body window is returned; a `continue from N` cursor when the body is longer | `OP-RC-1` |
+| by id | the id addresses a stored body (observation or inline/`Ref` body) | an `action` + `observation` under the state's plan; the body window is returned; a `continue from N` cursor when the body is longer | `OP-RC-1` |
 | window | `start`/`end` | a line window; continues with a new `recall` | `OP-RC-2` |
 | large body | the body exceeds the byte budget | the window is shrunk by whole lines (`QUERY_BODY_LIMIT`, valid JSON, never clipped mid-string); the error stream, if any, is the bounded inline tail | `OP-RC-3` |
 | no body | the id is an action/goal/etc. | `(nothing to recall: <id> has no stored body)` | `OP-RC-4` |
 | unknown id | — | `(nothing to recall: <id> is not a node)` | `OP-RC-5` |
-| transient | — | no node; appended to the tape as a transient pair | `OP-RC-6` |
+| stays in the state | — | the recall renders as a turn of the open state; it elides with the state on `stop` (no TTL, no working set) | `OP-RC-6` |
 
 `search { id, pattern, before?, after? }` (`OP-SR`):
 
 | Case | Pre | Effects | ID |
 |---|---|---|---|
-| by pattern | the id addresses a stored body; `pattern` is a regex | no node; matching line windows over stdout **and** stderr as JSON, with context | `OP-SR-1` |
+| by pattern | the id addresses a stored body; `pattern` is a regex | an `action` + `observation`; matching line windows over stdout **and** stderr as JSON, with context | `OP-SR-1` |
 | stderr | the body has a stderr stream | matches in the error stream carry `stream: "stderr"` | `OP-SR-2` |
 | broad pattern | more matches than the window holds | whole trailing results dropped; a `note` says `showing N of M; narrow the pattern` — never a dangling `next` (`search` has no paging) | `OP-SR-3` |
 | no match | — | empty `results` | `OP-SR-4` |
@@ -325,8 +324,8 @@ file / reading a result (`read`) with searching one (`grep` / `search`).
 | no body | the id has no stored body | `(nothing to search: <id> has no stored body)` | `OP-SR-6` |
 | context | `before`/`after` | `before`/`after` context lines per match (default 3/3) | `OP-SR-7` |
 
-- **Projection** (`PRJ-RC`): the recalled/searched body enters the tape as a transient
-  `assistant`+`tool` pair for the next turn; it is not pinned into the tree.
+- **Projection** (`PRJ-RC`): the recalled/searched body enters the tape as an `action` +
+  `observation` (a node), rendered while the state is open and elided on `stop`.
 - **Projection** (`PRJ-REF`): a refused structural move (no node) enters the tape as a
   transient `tool` message (`rejected <move>: <reason>`) for the next turn.
 
@@ -375,6 +374,7 @@ by the engine (`src/tools/index.ts`): its non-execution is recorded as an `actio
 | `empty_what` | a non-terminal `move` with no goal text | `move` | `REF-MV-WHAT` |
 | `no_state` | `apply` when the focus is not an open state (the request, or a finished state) | apply | `REF-AP-NO-STATE` |
 | `no_state` | `apply` when the focus is not an open state | apply | `REF-NO-STATE` |
+| `not_in_state` | `apply` choosing a tool outside the focused state's island `applies` | apply | `REF-NOT-IN-STATE` |
 | `state_open` | `move` while the current state is still open (not stopped) | move | `REF-STATE-OPEN` |
 | `not_addressed` | `stop` when the focus is neither an open state nor the terminal state (the request) | stop | `REF-ST-STATE` |
 | `not_request` | `decline` at a non-request focus | decline | `REF-DC-NOTREQ` |
@@ -385,7 +385,7 @@ by the engine (`src/tools/index.ts`): its non-execution is recorded as an `actio
 | Reason | Trigger | Operator | ID |
 |---|---|---|---|
 | `repeated_action` | identical read/grep/run with an unchanged world | read/grep/run | `REF-REPEAT` |
-| `repeated_action` | a bare recall of a body already in view (a windowed recall is new content) | recall | `REF-RECALL-REPEAT` |
+| `no_state` | `recall`/`search` outside an open state (a closed state's turns are elided; a fresh request has nothing stored) | recall, search | `REF-RC-STATE` |
 | run without command | empty `run` | run | `REF-RUN-EMPTY` |
 | `stale_base` | edit on a file changed after the read | edit | `REF-EDIT-STALE` |
 | `constraint_violation:<pattern>` | edit a forbidden path | edit | `REF-EDIT-CONSTRAINT` |
@@ -413,7 +413,7 @@ Tool **failures** (a fail observation): missing file (`read`), bad scope (`grep`
   children; the plan hangs off the `move`.
 - a refusal/failure changes the projection.
 - a finished state (a closed state, or the stopped terminal) does not remain the focus; its
-  plan turns leave the tape and only its `move` + closure line remain.
+  plan turns leave the tape and only its `Start state` / goal / `Finish state` triple remains.
 - secrets live only in `.env`; small results may be inlined, never secrets.
 
 Helpers already implement the first four: `tests/invariants.ts`.
@@ -447,7 +447,8 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
 | `REF-MV-EMPTY`, `REF-MV-WHAT`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
 | `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
-| `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RECALL-REPEAT` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |
+| `REF-NOT-IN-STATE` | `tests/ops/applicable.test.ts` | — |
+| `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RC-STATE` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | scenario `constraint-honored` |
 | `REF-WRITE-STALE`, `REF-WRITE-CONSTRAINT` | `tests/ops/apply.test.ts` | — |
 | `OP-ST-1..3`, `REF-ST-STATE` | `tests/ops/stop.test.ts` | step `stop-open-goal` |

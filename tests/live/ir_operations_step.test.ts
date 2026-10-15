@@ -59,7 +59,7 @@ function buildSteps(): Step[] {
     // OP-AP-RUN-1 / TR-7: an open state continues with an action (or stops).
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll(
-      [move("reconnaissance", "carry out the request"), run("echo ready")],
+      [move("orientation", "carry out the request"), run("echo ready")],
       [request("First run `echo ready`, then continue with the task.")],
       ws,
     );
@@ -73,7 +73,7 @@ function buildSteps(): Step[] {
   {
     // OP-ST-1: an open goal offers stop (or a further command); there is no criterion.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("reconnaissance", "fix the build"), run("true")], [request()], ws);
+    const opened = execAll([move("orientation", "fix the build"), run("true")], [request()], ws);
     steps.push({
       name: "stop-open-goal",
       context: projectAt(opened.events),
@@ -85,7 +85,7 @@ function buildSteps(): Step[] {
     // TR-8 (F2): an open goal whose one step is done continues with an action (apply),
     // not a create_goal funnel.
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("reconnaissance", "investigate the failure"), run("true")], [request()], ws);
+    const opened = execAll([move("orientation", "investigate the failure"), run("true")], [request()], ws);
     const ran = exec(run("true"), opened.events, ws);
     steps.push({
       name: "continue-open-goal",
@@ -99,7 +99,7 @@ function buildSteps(): Step[] {
     // (by id) instead of re-running the command.
     const { ws } = makeWorkspace({});
     const opened = execAll(
-      [move("reconnaissance", "inspect the failing output"), run("true")],
+      [move("orientation", "inspect the failing output"), run("true")],
       [request("The command's output is long; the part I need scrolled off the top. Re-read more of the stored result.")],
       ws,
     );
@@ -116,7 +116,7 @@ function buildSteps(): Step[] {
     // OP-SR (search): find a marker inside a big stored output instead of paging it.
     const { ws } = makeWorkspace({});
     const opened = execAll(
-      [move("reconnaissance", "locate the failure in the output"), run("true")],
+      [move("orientation", "locate the failure in the output"), run("true")],
       [request("Find the line naming MIDDLE_ASSERT_FAIL in the long output; it is somewhere in the middle.")],
       ws,
     );

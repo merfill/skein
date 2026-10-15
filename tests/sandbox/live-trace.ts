@@ -23,6 +23,7 @@ function brief(value: unknown, max = 240): string {
 
 async function main(): Promise<void> {
   const settings = loadSettings();
+  const maxTurns = Math.max(1, Number(process.argv[2] ?? process.env.SKEIN_TRACE_TURNS ?? "16") || 16);
   const model = createChatModel(settings);
   const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
     createChatModel({ ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) });
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  const { result, workspace } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, propose, { maxTurns: 16 });
+  const { result, workspace } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, propose, { maxTurns });
   const source = workspace.read("ocaml/runtime/shared_heap.c") ?? "";
   const fixed = !source.includes("RLE-SWEEP-BUG");
   console.info(`\n=== result ===\nstop=${result.stopReason} turns=${result.turns} fixed=${fixed}`);

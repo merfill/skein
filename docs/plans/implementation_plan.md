@@ -94,7 +94,7 @@ Beyond Tier 0, the current line adds:
 - **Observation of change** — `run` records a `mutate` per changed file; the
   engine reconciles active `ref`s before each projection, with a signature cache;
   `fs.watch` is left for a future streaming mode
-  (`docs/plans/observation_plan.md`, `docs/plans/archive/watcher_plan.md`).
+  (`docs/plans/archive/observation_plan.md`, `docs/plans/archive/watcher_plan.md`).
 - **Rejection recording** — a refused proposal is recorded as a
   `record_rejection` event and shown under `frontier.refusals`, so it survives
   tail eviction and replay (`docs/plans/archive/rejection_plan.md`).
@@ -178,7 +178,7 @@ Beyond Tier 0, the current line adds:
   `create_goal` runs its first command at once; `apply` places a command by the outcome of the
   current item, and a command's non-execution is an observation with a reason (not a
   node-less refusal); the context is a **message tape** rebuilt from the tree. Spec —
-  `docs/ir_semantics.md`; rollout — `docs/plans/ir_revision_implementation_plan.md`. The
+  `docs/ir_semantics.md`; rollout — `docs/plans/archive/ir_revision_implementation_plan.md`. The
   earlier shape statements in this section are history.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
@@ -212,7 +212,7 @@ live gate only when `SKEIN_LIVE=true`.
   should be re-run (details — `docs/benches/bench_report.md` §4.8). Meanwhile a named-suspect
   prompt trigger pushes the edit, and a read thrash-guard refuses a third read of an unchanged
   file. Still open: logos closure (a passing objective check verifies ancestors with the same
-  criterion) — `docs/plans/step_reduction_plan.md`.
+  criterion) — `docs/plans/archive/step_reduction_plan.md`.
 - **Long builds vs the turn budget (next study).** A build-heavy criterion (`fix-ocaml-gc`
   rebuilds the whole OCaml compiler) costs turns even when the fix is right: after the edit
   the agent starts a background `run {background: true}` and each `poll` is a separate doxa
@@ -241,6 +241,17 @@ CSP/arithmetic, UI, multilinguality, multiple LLM providers.
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`).
 - Stopping: whether the engine may run `done_when.command` itself once a plan is
-  done, without a doxa turn (A5 in `docs/plans/step_reduction_plan.md` §5).
+  done, without a doxa turn (A5 in `docs/plans/archive/step_reduction_plan.md` §5).
 - Cache: only the stable prefix (request + constraints) is cacheable; the
-  projection's focus changes every turn (`docs/plans/step_reduction_plan.md` §4).
+  projection's focus changes every turn (`docs/plans/archive/step_reduction_plan.md` §4).
+- **Localization loses the cross-state handoff (regression, 2026-10-15).** The real sandbox
+  `fix-ocaml-gc --net on` (Phase-20 tape) failed — reward 0, `max_turns` 60: orientation closed
+  on "layout known" and localization started with a causal goal ("find why the bootstrap
+  crashes") with no pointer to `runtime/shared_heap.c`, then went into `major_gc.c` / bootstrap
+  debugging. The successful 2026-10-14 run (Phase 18, 29 turns, reward 1) chained via a **broad
+  orientation goal** ("…locate the sweeping/free-space changes in the major GC…") and the move's
+  **`note`** (the leaving state's summary → "…changes in `runtime/shared_heap.c`/`.h`"). Phase 20
+  narrowed orientation to "layout" and dropped `note` from the move contract / B9, so the handoff
+  is gone. Not yet fixed; options: (A) restore the `note` chain, (B) widen orientation to "where
+  the change belongs", (C) make localization's first step "locate the touched files". Evidence:
+  `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / virtual spec).

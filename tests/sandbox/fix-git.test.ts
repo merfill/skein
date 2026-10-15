@@ -15,7 +15,7 @@ afterEach(() => {
 // Offline (no model) validation of the Docker backend against the task's own image and
 // verifier. The engine drives a scripted proposer; the check is the cached test_outputs.py.
 
-const toWork: Action = { operator: "move", state: "reconnaissance", what: "recover the lost personal-site changes and merge them into master" };
+const toWork: Action = { operator: "move", state: "orientation", what: "recover the lost personal-site changes and merge them into master" };
 const goal: Action = {
   operator: "apply",
   action: { tool: "bash", command: "git log --oneline --all" },
@@ -30,7 +30,7 @@ const restore: Action = {
   },
 };
 const stopState: Action = { operator: "stop", why: "the reference files are restored" };
-const toEnd: Action = { operator: "move", state: "handoff", what: "" };
+const toEnd: Action = { operator: "move", state: "finish", what: "" };
 const stopRequest: Action = { operator: "stop", why: "the reference files are restored" };
 
 const image = fixGit.image ?? "";

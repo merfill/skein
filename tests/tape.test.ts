@@ -112,7 +112,7 @@ describe("the tape: request and state", () => {
   it("move renders the state, then the first plan item as a call/result pair", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 1, output: "boom" }, "make test"),
       result("eo", "a1", "o1"),
@@ -122,18 +122,15 @@ describe("the tape: request and state", () => {
     const context = project(focused(state));
     expect(context.situation).toBe("working");
     expect(roles(context.history)).toEqual([
+      "assistant",
       "user",
       "assistant",
       "tool",
-      "system",
-      "assistant",
-      "tool",
     ]);
-    expect(context.history[1]?.text).toContain("move: Reconnaissance");
-    expect(context.history[2]?.text).toContain("moved to Reconnaissance");
-    expect(context.history[3]?.text).toContain("State: Reconnaissance");
-    expect(context.history[4]?.text).toBe("[a1] make test");
-    expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
+    expect(context.history[0]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toContain("green");
+    expect(context.history[2]?.text).toBe("[a1] make test");
+    expect(context.history[3]?.text).toBe("[o1] exit 1\nboom");
   });
 
   it("decline renders a single assistant refusal", () => {
@@ -152,7 +149,7 @@ describe("the tape: commands and their outcomes", () => {
   it("a successful continuation appends a new call/observation pair", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
@@ -165,22 +162,20 @@ describe("the tape: commands and their outcomes", () => {
     ]);
     const context = project(focused(state));
     expect(roles(context.history)).toEqual([
-      "user",
       "assistant",
-      "tool",
-      "system",
+      "user",
       "assistant",
       "tool",
       "assistant",
       "tool",
     ]);
-    expect(context.history[7]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
+    expect(context.history[5]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
   });
 
   it("renders an edit's mutate (no observation) as a mutated file", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "edit src/a.ts", 3),
       { type: "add_edge", edge: edge("em", "a1", "file:src/a.ts", "mutates", llm) },
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
@@ -188,13 +183,13 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 5, ["a1"]),
     ]);
     const context = project(focused(state));
-    expect(context.history[5]?.text).toBe("[a1] mutated src/a.ts");
+    expect(context.history[3]?.text).toBe("[a1] mutated src/a.ts");
   });
 
   it("renders a refused command as an observation with the reason", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "read src/a.ts", 3),
       observation("o1", 4, { failed: true, refused: true, output: "repeated_action: o0 already has it" }),
       result("e1", "a1", "o1"),
@@ -202,13 +197,13 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 6, ["a1"]),
     ]);
     const context = project(focused(state));
-    expect(context.history[5]?.text).toBe("[o1] repeated_action: o0 already has it");
+    expect(context.history[3]?.text).toBe("[o1] repeated_action: o0 already has it");
   });
 
   it("marks an alternative with its previous attempt and reason", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "run one", 3),
       observation("o1", 4, { command: "run one", exitCode: 1 }, "run one"),
       result("e1", "a1", "o1"),
@@ -219,7 +214,7 @@ describe("the tape: commands and their outcomes", () => {
       ...item("i1", 8, ["a1", "a2"]),
     ]);
     const context = project(focused(state));
-    const marker = context.history[6]?.text ?? "";
+    const marker = context.history[4]?.text ?? "";
     expect(marker).toContain('alternative to step "step"');
     expect(marker).toContain('previous attempt: "run one"');
     expect(marker).toContain("exit 1");
@@ -231,7 +226,7 @@ describe("the tape: the observation instruction", () => {
   it("flags the observation instruction after a tool result in an open state", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "green", 1),
+      ...moved("m1", "orientation", "green", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 0, output: "ok" }, "make test"),
       result("e1", "a1", "o1"),
@@ -242,10 +237,10 @@ describe("the tape: the observation instruction", () => {
     expect(context.situation).toBe("working");
     // The observation reminder is an active directive (decide now); the state's work/criterion
     // are on the tape (shown once at entry).
-    expect(context.result).toMatch(/Decide NOW/);
-    expect(context.result).toMatch(/`Done when`/);
+    expect(context.result).toMatch(/Decide now/);
+    expect(context.result).toMatch(/goal/);
     // A fresh state (no result yet) carries no observation instruction.
-    const fresh = project(focused(fold([request("do it", 0), ...moved("m1", "reconnaissance", "green", 1)])));
+    const fresh = project(focused(fold([request("do it", 0), ...moved("m1", "orientation", "green", 1)])));
     expect(fresh.result).toBeUndefined();
   });
 });
@@ -267,8 +262,8 @@ describe("the tape: the compaction of a finished state", () => {
     const body = texts(context.history);
     // The finished state's command has left the tape...
     expect(body).not.toContain("FOUND-BODY");
-    // ...only its compaction line remains, carried by the move that left it.
-    expect(body).toContain("State Localization: finished — named the line");
+    // ...only its closure marker remains, in the finished state's triple.
+    expect(body).toContain("Finish state Localization — named the line");
     expect(context.situation).toBe("plan");
   });
 });
@@ -286,40 +281,45 @@ describe("the tape: edge cases", () => {
       ...stopNode("s1", "all green", 7, "m1"),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool"]);
+    expect(roles(context.history)).toEqual(["assistant", "user", "assistant", "user"]);
     expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
-    expect(texts(context.history)).toContain("finished — all green");
+    expect(texts(context.history)).toContain("Finish state Localization — all green");
   });
 
   it("a declared state without a plan renders move + confirmation", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "reconnaissance", "map", 1),
+      ...moved("m1", "orientation", "map", 1),
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("plan");
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "system"]);
-    expect(context.history[1]?.text).toContain("move: Reconnaissance");
+    expect(roles(context.history)).toEqual(["assistant", "user"]);
+    expect(context.history[0]?.text).toBe("Start state Orientation");
   });
 });
 
-describe("the tape: transient retrieval and determinism", () => {
-  it("appends a retrieval result as a transient assistant/tool pair", () => {
-    const state = fold([request("do it"), ...moved("m1", "reconnaissance", "green", 1)]);
-    const context = project(focused(state), {
-      retrieval: {
-        call: "recall { id: obs:5 }",
-        name: "recall",
-        args: { id: "obs:5" },
-        output: "the stored body",
+describe("the tape: recall and determinism", () => {
+  it("renders a recall as an action + observation under the state's plan (a node, not transient)", () => {
+    const state = fold([
+      request("do it", 0),
+      ...moved("m1", "orientation", "green", 1),
+      {
+        type: "add_node",
+        node: workNode("a1", "action", "recall { id: obs:5 }", 3, {
+          command: "recall { id: obs:5 }",
+          call: { name: "recall", args: { id: "obs:5" } },
+        }),
       },
-    });
-    expect(roles(context.history)).toEqual(["user", "assistant", "tool", "system", "assistant", "tool"]);
-    expect(context.history[4]?.text).toBe("recall { id: obs:5 }");
-    expect(context.history[4]?.call).toEqual({ id: "call:retrieval", name: "recall", args: { id: "obs:5" } });
-    expect(context.history[5]?.text).toBe("the stored body");
-    expect(context.history[5]?.callId).toBe("call:retrieval");
+      observation("o1", 4, { output: "the stored body" }, "recall"),
+      result("e1", "a1", "o1"),
+      ...plan("p1", "m1", ["i1"], 5),
+      ...item("i1", 6, ["a1"]),
+    ]);
+    const context = project(focused(state));
+    expect(roles(context.history)).toEqual(["assistant", "user", "assistant", "tool"]);
+    expect(context.history[2]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
+    expect(context.history[3]?.text).toBe("[o1] the stored body");
   });
 
   it("is deterministic: same events, same tape", () => {
@@ -331,7 +331,7 @@ describe("the tape: transient retrieval and determinism", () => {
 function parentEvents(): Event[] {
   return [
     request("do it", 0),
-    ...moved("m1", "reconnaissance", "green", 1),
+    ...moved("m1", "orientation", "green", 1),
     action("a1", "make test", 3),
     observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
     result("e1", "a1", "o1"),

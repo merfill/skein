@@ -6,7 +6,7 @@ import { project, type Context } from "../src/ir/project";
 import type { Action } from "../src/llm/schemas";
 import { modelCall } from "../src/llm/schemas";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { NODE_INSTRUCTIONS } from "../src/loop/prompt";
+import { REQUEST_INSTRUCTION } from "../src/loop/prompt";
 import type { Workspace } from "../src/tools/workspace";
 import {
   DEFAULT_FILES,
@@ -63,7 +63,7 @@ const kinds = (res: ReturnType<typeof exec>): (string | undefined)[] =>
 const ws = () => makeWorkspace(DEFAULT_FILES).ws;
 // A state plus its first plan item: the shape every state-level op starts from.
 const opened = (w: Workspace) =>
-  execAll([move("reconnaissance", "do it"), run("true")], [request()], w);
+  execAll([move("orientation", "do it"), run("true")], [request()], w);
 
 // before/after/nodes for an op applied to an existing state.
 function goalStep(op: Action, w: Workspace) {
@@ -77,20 +77,12 @@ function goalStep(op: Action, w: Workspace) {
 
 const REQ = { role: "user", content: "solve the task" };
 
-// The tape of `request` + `move("reconnaissance","do it")` + its first plan item (`true`):
-// the state every state-level op starts from.
+// The tape of `request` + `move("orientation","do it")` + its first plan item (`true`):
+// the state every state-level op starts from. A state is a `Start state` marker + the goal as
+// a `user` turn; the plan items are native call/result pairs.
 const GOAL_PREFIX = [
-  REQ,
-  {
-    role: "assistant",
-    call: { name: "move", args: { state: "reconnaissance", what: "do it" } },
-  },
-  {
-    role: "tool",
-    content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
-    tool_call_id: expect.stringMatching(/^w:move:\d+$/),
-  },
-  { role: "system", content: expect.stringContaining("State: Reconnaissance") },
+  { role: "assistant", content: "Start state Orientation" },
+  { role: "user", content: expect.stringContaining("do it") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -111,14 +103,8 @@ describe("move: before [request] -> delta -> after", () => {
     expect(kinds(res)).toEqual(["action", "plan", "item", "observation"]);
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
-      REQ,
-      { role: "assistant", call: { name: "move", args: { state: "reconnaissance", what: "green" } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(/^\[w:move:\d+\] moved to Reconnaissance$/),
-        tool_call_id: expect.stringMatching(/^w:move:\d+$/),
-      },
-      { role: "system", content: expect.stringContaining("State: Reconnaissance") },
+      { role: "assistant", content: "Start state Orientation" },
+      { role: "user", content: expect.stringContaining("green") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -149,14 +135,14 @@ describe("move: before [request] -> delta -> after", () => {
     expect(kinds(stopped)).toEqual(["stop"]);
     const moved = exec(move("patch", "apply the fix"), stopped.events, w);
     const after = await tapeOf(project(moved.state));
-    // The finished state's plan and its command have left the tape; only the compaction
-    // line, carried on the transition move, remains.
+    // The finished state's plan and its command have left the tape; only the closure marker,
+    // in the finished state's triple, remains.
     const texts = after.map((entry) => entry.content ?? "").join("\n");
-    expect(texts).toContain("State Localization: finished — the line is named");
+    expect(texts).toContain("Finish state Localization — the line is named");
     expect(texts).not.toContain("false");
-    expect(after.at(-2)).toEqual({
+    expect(after.at(-3)).toEqual({
       role: "assistant",
-      call: { name: "move", args: { state: "patch", what: "apply the fix" } },
+      content: "Finish state Localization — the line is named",
     });
   });
 });
@@ -384,84 +370,36 @@ describe("apply — bash outcomes: before GOAL_PREFIX -> delta -> after", () => 
   });
 });
 
-describe("transient turns: no IR delta, the before/after differ by the option", () => {
-  it("a recall result is appended as an assistant call + tool, no node", async () => {
+describe("recall / search: they leave a node on the state's tape", () => {
+  it("a recall renders as an action + observation on the state's tape", async () => {
     const w = ws();
     const first = opened(w);
     const r = exec(run("echo hi"), first.events, w, 1);
     const obs = r.outcome.turn.nodeId as string;
     const rec = exec(recall(obs), r.events, w, 2);
-    expect(rec.outcome.events.filter((e) => e.type === "add_node")).toHaveLength(0);
-    const before = project(r.state);
-    const retrieval = {
-      call: rec.outcome.turn.call as string,
-      name: rec.outcome.turn.callName as string,
-      args: rec.outcome.turn.callArgs as Record<string, unknown>,
-      output: rec.outcome.turn.text,
-    };
-    expect(await tapeOf(before)).toEqual([
-      ...GOAL_PREFIX,
-      { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(/^\[obs:\d+\] exit 0\nhi\n$/),
-        tool_call_id: expect.stringMatching(/^w:action:\d+$/),
-      },
-    ]);
-    expect(await tapeOf(project(r.state, { retrieval }))).toEqual([
-      ...(await tapeOf(before)),
-      { role: "assistant", content: `recall { id: ${obs} }`, call: { name: "recall", args: { id: obs } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(new RegExp(`"id": "${obs}"`)),
-        tool_call_id: "call:retrieval",
-      },
-    ]);
-  });
-
-  it("a search result is appended as an assistant call + tool", async () => {
-    const w = ws();
-    const first = opened(w);
-    const r = exec(run("printf 'MATCH one\\nMATCH two\\n'"), first.events, w);
-    const obs = r.outcome.turn.nodeId as string;
-    const sr = exec(search(obs, "MATCH"), r.events, w);
-    const retrieval = {
-      call: sr.outcome.turn.call as string,
-      name: sr.outcome.turn.callName as string,
-      args: sr.outcome.turn.callArgs as Record<string, unknown>,
-      output: sr.outcome.turn.text,
-    };
-    const after = await tapeOf(project(r.state, { retrieval }));
-    expect(after.at(-2)).toEqual({
-      role: "assistant",
-      content: `search { id: ${obs}, pattern: MATCH }`,
-      call: { name: "search", args: { id: obs, pattern: "MATCH" } },
-    });
-    expect(after.at(-1)?.content).toContain("MATCH one");
-    expect(after.at(-1)?.tool_call_id).toBe("call:retrieval");
-  });
-
-  it("a refused structural move is appended as an assistant call + tool reason", async () => {
-    const w = ws();
-    const first = opened(w);
-    const r = exec(run("echo hi"), first.events, w, 1);
-    const obs = r.outcome.turn.nodeId as string;
-    const action = recall(obs);
-    const cls = classification(action, r.events, [obs]);
-    expect(cls.accept).toBe(false);
-    const call = modelCall(action);
-    const text = `rejected ${call.name}: ${cls.reason}`;
-    const before = await tapeOf(project(r.state));
-    const after = await tapeOf(project(r.state, { rejection: { text, name: call.name, args: call.args } }));
-    expect(after).toEqual([
-      ...before,
+    const after = await tapeOf(project(rec.state));
+    expect(after.slice(-2)).toEqual([
       { role: "assistant", call: { name: "recall", args: { id: obs } } },
       {
         role: "tool",
-        content: expect.stringMatching(/^rejected recall: repeated_action: obs:\d+ was just recalled/),
-        tool_call_id: "call:rejected",
+        content: expect.stringMatching(new RegExp(`"id": "${obs}"`)),
+        tool_call_id: expect.stringMatching(/^w:action:\d+$/),
       },
     ]);
+  });
+
+  it("a search renders as an action + observation", async () => {
+    const w = ws();
+    const first = opened(w);
+    const r = exec(run("printf 'MATCH one\\nMATCH two\\n'"), first.events, w, 1);
+    const obs = r.outcome.turn.nodeId as string;
+    const sr = exec(search(obs, "MATCH"), r.events, w, 2);
+    const after = await tapeOf(project(sr.state));
+    expect(after.at(-2)).toEqual({
+      role: "assistant",
+      call: { name: "search", args: { id: obs, pattern: "MATCH" } },
+    });
+    expect(after.at(-1)?.content).toContain("MATCH one");
   });
 
   it("refusals carry the reason: stop at the request, and an empty move", async () => {
@@ -485,7 +423,7 @@ describe("transient turns: no IR delta, the before/after differ by the option", 
         tool_call_id: "call:rejected",
       },
     ]);
-    const empty: Action = { operator: "move", state: "reconnaissance", what: "" };
+    const empty: Action = { operator: "move", state: "orientation", what: "" };
     const emptyCls = classification(empty, [req]);
     expect(emptyCls.accept).toBe(false);
     const emptyCall = modelCall(empty);
@@ -507,13 +445,10 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
-      REQ,
-      { role: "assistant", call: { name: "move", args: { state: "reconnaissance", what: "do it" } } },
-      {
-        role: "tool",
-        content: expect.stringMatching(/^\[w:move:\d+\] State Reconnaissance: finished — done$/),
-        tool_call_id: expect.stringMatching(/^w:move:\d+$/),
-      },
+      { role: "assistant", content: "Start state Orientation" },
+      { role: "user", content: expect.stringContaining("do it") },
+      { role: "assistant", content: "Finish state Orientation — done" },
+      { role: "user", content: "solve the task" },
     ]);
   });
 
@@ -532,7 +467,7 @@ describe("crash (mock node) and prefix", () => {
     const llm = { kind: "llm" as const };
     const events: Event[] = [
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix" }, seq: 0 } },
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "reconnaissance", payload: { state: "reconnaissance", what: "green", call: { name: "move", args: { state: "reconnaissance", what: "green" } } }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "orientation", payload: { state: "orientation", what: "green", call: { name: "move", args: { state: "orientation", what: "green" } } }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: llm } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
       { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "plan", provenance: llm } },
@@ -574,7 +509,7 @@ describe("crash (mock node) and prefix", () => {
     expect(msgs[1]?.role).toBe("system");
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
-    // The situation's instruction is appended last, temporary (never in the history).
-    expect(msgs.at(-1)).toMatchObject({ role: "system", content: NODE_INSTRUCTIONS.request });
+    // The request-step instruction is appended after the request (it scopes the first move's goal).
+    expect(msgs.at(-1)).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
   });
 });

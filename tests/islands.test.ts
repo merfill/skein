@@ -28,8 +28,6 @@ describe("islands: the closed vocabulary", () => {
       expect(island.id).toBe(id);
       expect(island.label).not.toBe("");
       expect(island.what).not.toBe("");
-      expect(island.criterion).not.toBe("");
-      expect(island.directive).not.toBe("");
       for (const edge of island.next) {
         expect(isIsland(edge.to)).toBe(true);
         expect(edge.when).not.toBe("");
@@ -38,11 +36,20 @@ describe("islands: the closed vocabulary", () => {
     expect(isIsland("atlantis")).toBe(false);
   });
 
-  it("renders each state's active directive in its description", () => {
+  it("scopes the write-class to Patch: the island delimits the apply surface", () => {
+    const write = new Set(["edit", "write", "apply_patch"]);
+    for (const id of ISLAND_IDS) {
+      const hasWrite = ISLANDS[id].applies.some((tool) => write.has(tool));
+      expect(hasWrite).toBe(id === "patch");
+    }
+    expect(ISLANDS.finish.applies).toEqual([]);
+  });
+
+  it("renders each state's description (State + Done, no Now)", () => {
     for (const id of ISLAND_IDS) {
       const description = stateDescription(ISLANDS[id]);
-      expect(description).toContain("Now:");
-      expect(description).toContain(ISLANDS[id].directive);
+      expect(description).toContain("State:");
+      expect(description).not.toContain("Now:");
     }
   });
 
@@ -65,8 +72,8 @@ describe("islands: the closed vocabulary", () => {
 
 describe("islands: the doxa authors the state at move", () => {
   it("maps a move call with its goal text into the IR", () => {
-    const proposal = toProposal("move", { state: "reconnaissance", what: "map the repo" }, "");
-    expect(proposal.action).toEqual({ operator: "move", state: "reconnaissance", what: "map the repo" });
+    const proposal = toProposal("move", { state: "orientation", what: "map the repo" }, "");
+    expect(proposal.action).toEqual({ operator: "move", state: "orientation", what: "map the repo" });
   });
 
   it("refuses an unknown island at parse (a structural error, not a gate)", () => {
@@ -88,17 +95,21 @@ describe("islands: the doxa authors the state at move", () => {
 });
 
 describe("islands: the projection highlights the state", () => {
-  it("projects the island and puts its description on the tape once (as a system turn)", () => {
+  it("projects the state's goal onto the tape once (as a user turn after the move)", () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const res = execAll(withGoal("recon", "true"), [request()], ws);
     const context = project(res.state);
     expect(context.situation).toBe("working");
-    expect(context.island).toBe("reconnaissance");
-    expect(islandOf(res.state)).toBe("reconnaissance");
-    const description = stateDescription(ISLANDS.reconnaissance);
-    expect(context.history.some((m) => m.role === "system" && m.text === description)).toBe(true);
+    expect(context.island).toBe("orientation");
+    expect(islandOf(res.state)).toBe("orientation");
+    // The state is a `Start state` marker; the goal follows as a `user` turn.
+    const marker = context.history.find((m) => m.role === "assistant" && m.text.startsWith("Start state"))?.text ?? "";
+    expect(marker).toBe("Start state Orientation");
+    const goal = context.history.find((m) => m.role === "user" && m.text.includes("recon"))?.text ?? "";
+    expect(goal).toContain("recon");
+    expect(goal).toContain("Done when: the project and its layout are known.");
     const messages = buildMessages(context);
-    expect(messages.some((message) => String(message.content) === description)).toBe(true);
+    expect(messages.some((message) => String(message.content) === goal)).toBe(true);
   });
 
   it("has no island on a fresh request", () => {

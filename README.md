@@ -136,8 +136,8 @@ traversal stack, and verification by an explicit check are documented below.
 - `docs/concepts.md` — conceptual overview (the tree, spine and arms, doxa/logos).
 - `docs/ir.md` — the IR: operations, state, and control (as-built).
 - `docs/ir_semantics.md` — the IR semantics (source of truth).
-- `docs/plans/traversal_stack_spec.md` — the traversal stack (spine and arms).
-- `docs/plans/step_reduction_plan.md` — step reduction and context format.
+- `docs/plans/archive/traversal_stack_spec.md` — the traversal stack (spine and arms).
+- `docs/plans/archive/step_reduction_plan.md` — step reduction and context format.
 - `docs/plans/implementation_plan.md` — overall plan, decisions, roadmap, status.
 - `docs/plans/archive/tier0_plan.md` — detailed Tier 0 spec.
 - `docs/plans/archive/user_approval_plan.md` — an arbiter records a user check.

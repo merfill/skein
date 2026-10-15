@@ -61,25 +61,22 @@ Current blocks:
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
 | B0 | Frame: a coding agent implemented as a state machine — stages of work with exit criteria, transitions as preconditions; files/directories on disk; independent calls are batched | `prompt_state_machine_concept` | in code |
-| B4 | The walk (`move { state, what }` declares the state AND its goal — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the candidate initial states (`Start`); the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
-| B6 | Request situation: the first move is `move { state, what }` (choose the starting state and its goal) or `decline`; literal command / workspace root / `cd <dir> &&` | `tools` §5.1 | in code |
+| B4 | The walk (`move { state, what, done }` declares the state, its goal and its stop condition — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the whole state set with a `Done` per state; the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
+| B6 | Request situation: choose the starting state (`move`, with `what`/`done` scoped to it) or `decline`; the startable states | `tools` §5.1 | in code |
 | B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
-| B8 | Working situation (imperative): work the state now; when the criterion holds, `stop` now (no criterion gate); a failed step is a different action; `move` while open is refused | `ir_semantics` §4.3–4.4 | in code |
-| B9 | Transition situation: the state is finished — `move { state, what }` to the next one, or `move { state: "handoff" }` to finish | `ir_semantics` §4.1 | in code |
-| B10 | Terminal situation: the hand-off state — call `stop` to finish the request | `ir_semantics` §4.4 | in code |
-| B13 | Output discipline: keep replies short; the tape is the only thing seen — never assume file/directory content from memory, read from disk; within the current state the tape is authoritative (do not re-read/re-derive); a finished state is elided into its closure line | `tests/prompt.test.ts` | in code |
+| B8 | Working situation **block** — superseded by `turnInstruction` (below): work the state now; when the criterion holds, `stop` (no criterion gate) | `ir_semantics` §4.3–4.4 | defined, not wired |
+| B9 | Transition situation: the finished states are on the tape above — choose the next state (`move`) or Finish and `stop` | `ir_semantics` §4.1 | in code |
+| B10 | Terminal situation: the Finish state — call `stop` to end the request | `ir_semantics` §4.4 | in code |
+| B13 | Output discipline: **removed** (the base prompt carries the contract) | — | cut |
 | B19 | The workspace is the source of truth — the change is already in the files; find it by reading the code and reproducing the failure; do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
 
-A state's description (`What / Done when / Now`, from `src/ir/islands.ts`) is shown **once**, when
-the state is entered: it is a `system` turn on the tape (right after the `move` result), not a
-per-turn injected block. `Now` is the state's **directive** (`Island.directive`) — an imperative
-for what to do here (active, not a passive constraint). A finished state (`transition` /
-`terminal`) does not carry it (its turns are elided into the closure line). A stalled state also
-gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8), and right after a tool result
-inside an open state the projection appends an **observation instruction** as the last system
-message (`Context.result`, `src/ir/project.ts`): **decide now** — criterion holds → `stop`; you
-can already name the exact change → make it this turn instead of reading to confirm; otherwise
-the one next action (a different one if the step failed).
+A state is rendered **on the tape**, not injected per turn: a `Start state <label>` marker (an
+`assistant` turn) followed by the state's goal as a `user` turn (`<what>` + `Done when: <done>.`).
+The request is a **temporary** `user` turn — shown when a state is chosen (`request` /
+`transition`), dropped while a state is worked. On an open state, the per-turn instruction is
+`turnInstruction` (appended last, temporary): `The state is done when "<criterion>". … if that
+already holds, call \`stop\` and nothing else — do not look ahead … otherwise take the single next
+step.` A stalled state also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
@@ -118,9 +115,9 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   when the state's criterion holds, `stop` it (no criterion gate). A `move` while the state is
   open is refused. `stop` closes the state and is the only closure.
 - **B9** (transition) is the forced decision after a `stop`: `move { state, what }` to the next
-  state (routes from B4), or `move { state: "handoff" }` when the work is done. Give `note` to
+  state (routes from B4), or `move { state: "finish" }` when the work is done. Give `note` to
   summarize the state being left.
-- **B10** (terminal) is the hand-off: call `stop` to finish the request.
+- **B10** (terminal) is the Finish state: call `stop` to finish the request.
 - **B18** gives short micro-examples of a move to anchor its form.
 - **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
   reasoning (to see code, `read`/`grep`/`webfetch`).
@@ -186,7 +183,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   and the bare `make -C testsuite one DIR=tests/basic` — with the bare command and only
   revised it late, turning most of the run into criterion churn. B7's interpretation bullet
   also gained the caveat. New live test `tests/live/root-cd.test.ts` (one call per layout).
-- **Phase 10 (2026-10-09).** Goal reduction (`docs/plans/goal_reduction_plan.md`): B3/B4/B6/
+- **Phase 10 (2026-10-09).** Goal reduction (`docs/plans/archive/goal_reduction_plan.md`): B3/B4/B6/
   B7/B11/B15 lose the criterion vocabulary. A goal is `what` with a plan
   seeded by the first `command`; `stop` closes it with no criterion gate; `revises`/
   `repeat_hypothesis`/`check_not_run`/`checkReady`/`nextAction`/`state` are gone. The
@@ -222,13 +219,13 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   invariant §1.4 requires. Motivated by a controlled A/B on `fix-ocaml-gc --net on` (see
   `docs/benches/best_bench.md`): with the index the model read and diffed more, made one edit
   and never stopped; without it — three edits, self-stop and half the cost.
-- **Phase 15 (2026-10-13).** State protocol (`docs/plans/state_protocol_plan.md`): the prompt
+- **Phase 15 (2026-10-13).** State protocol (`docs/plans/archive/state_protocol_plan.md`): the prompt
   now teaches the walk — `move` declares the state, a second turn concretizes that state's
   work (no sub-goals), `apply` works it, `stop` finishes it and forces the transition.
   Situations split five ways, with new blocks B8, B9 (transition), B10 (terminal); B4/B6/B7/B18
   reworded. The model declares the state and concretizes it in separate turns (a `move` ends the
   batch).
-- **Phase 16 (2026-10-13).** Goal-into-move (`docs/plans/goal_into_move_plan.md`): the goal
+- **Phase 16 (2026-10-13).** Goal-into-move (`docs/plans/archive/goal_into_move_plan.md`): the goal
   node and the separate concretization operator are gone — a state IS its goal.
   `move { state, what }` declares the state AND its goal; the plan hangs directly off the
   `move` and is seeded by the state's first ordinary `apply`. Situations become `request` /
@@ -243,6 +240,30 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   (`propose` → `toolNamesFor(applicable)` → `allowedTools`): on a transition only `move` is
   offered, so an `apply` at a transition cannot be called. B4/B9 gained the "trust the state's
   record" line.
+- **Phase 18 (2026-10-14).** The state directives moved to the **active** form (imperative), and
+  `Island.relief` was renamed to `Island.directive`, rendered in the state description as
+  `Now: …`. B6/B7/B8/B9/B10 and `observationInstruction` became direct instructions. B13 split:
+  do not invent content (memory) vs the current state's tape is authoritative (do not re-read).
+  B19 rewritten from a ban to a redirect, and the `git` line removed from the `bash` description.
+- **Phase 19 (2026-10-15).** The island delimits the **action surface**: `Island.applies` bounds
+  the apply-tools of an open state, the frontier carries it (`Applicable.applies`), `toolNamesFor`
+  binds the surface from it, and `classify` refuses a tool outside it (`not_in_state`). The
+  write-class (`edit`/`write`/`apply_patch`) is Patch's alone, so Localization cannot
+  pre-satisfy Patch (no empty-Patch loop). `observationInstruction` is island-aware (a state
+  without a write tool is told to `stop`), `nudge` composes the island directive, and
+  `Localization.directive` no longer edits. B19 drops "the change is already in the files"; B4
+  states that tools are state-scoped. See `docs/prompt_state_machine_concept.md` §4.2 and
+  `docs/ir_semantics.md` §2.5/§8.9.
+- **Phase 20 (2026-10-15).** A **state is a decision, not a tool call**: `move`/`stop` render as
+  `Start state <label>` / `Finish state <label> — <why>` markers with the goal as a `user` turn,
+  and the request is a temporary `user` turn shown only at a state decision (`request` /
+  `transition`); the `move` JSON result is gone. `turnInstruction` restates the state's criterion
+  and makes `stop` the expected move when it holds (`call \`stop\` and nothing else — do not look
+  ahead`); the `stop` tool description is the single line "call `stop` — and nothing else — when
+  the current state's Done criteria are met"; the `move` description scopes `done` to the state
+  (never a later state's work). The `transition`/`terminal` situations are now wired in
+  `buildMessages` (they were defined but never appended). See `docs/ir_semantics.md` §7 and
+  `docs/projection.md`.
 
 ## 5. Test map
 

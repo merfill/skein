@@ -132,10 +132,10 @@ the `thought` fix vs `th≈120 out≈200 finish=stop` after.
 ### Working-set policy simulation (offline)
 
 The long horizon is checked without a model: `tests/workingset.test.ts` drives a
-scripted proposer through the real loop and checks growth, cap eviction, re-acquisition,
-stale drop and compression. Limits (`turns`/`max`/`chars`) are passed via
-`AgentDeps.held` and varied in the tests; the metrics come from `tests/workset.ts` (the
-same as in the live dump). This validates the policy over hundreds of turns
+scripted proposer through the real loop and checks growth and the cut when a state closes
+(a state's turns stay on the tape while it is open and elide on `stop`; there is no working
+set — `recall`/`search` are nodes now, like any step); the metrics come from `tests/workset.ts`
+(the same as in the live dump). This validates the policy over hundreds of turns
 deterministically and for free, before the expensive live runs.
 
 ## 3.5 Sandbox (no Docker)

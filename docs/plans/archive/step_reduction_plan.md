@@ -6,7 +6,7 @@
 > `docs/projection.md`). The remaining subject — the base/node system prompt — is the next
 > stage.
 
-> English mirror of `docs/plans/step_reduction_plan_ru.md`.
+> English mirror of `docs/plans/archive/step_reduction_plan_ru.md`.
 > Basis — the `ref-localize` run analysis (`docs/benches/bench_report.md` §4.5) and the
 > doxa/logos principle discussion. Touches `docs/ir.md`, `docs/system_prompt.md`.
 >
@@ -164,7 +164,7 @@ reward 1. Online tests that assumed step-by-step execution were updated.
 was refuted at the reproduce step (runs `09:31`, `09:48`: `record_check` fail before the
 fix). Fix: the verdict is produced **only by an explicit check on the goal**
 (`run {target}`); a command match no longer promotes a run to a check
-(`docs/plans/traversal_stack_spec.md` §9). Offline: 240 passed. The fix is **kept** after
+(`docs/plans/archive/traversal_stack_spec.md` §9). Offline: 240 passed. The fix is **kept** after
 the A4 revert — the verdict is always produced by an explicit check on the goal.
 
 ### A5 — auto-running the objective criterion (rejected)
@@ -275,7 +275,7 @@ C remains.
   running a command is a side effect, so it must be decided whether that is allowed
   without a doxa turn.
 - **Open.** The context format's effect on the stable prefix/cache (Part B).
-- **Traversal spec:** `docs/plans/traversal_stack_spec{,_ru}.md` — spine and arms, plan
+- **Traversal spec:** `docs/plans/archive/traversal_stack_spec{,_ru}.md` — spine and arms, plan
   revisions (append-only), projection, invariants; §9 — verification only by an explicit
   check.
 

@@ -7,7 +7,9 @@ import {
   classification,
   cleanupWorkspaces,
   exec,
+  execAll,
   makeWorkspace,
+  move,
   read,
   recall,
   request,
@@ -16,21 +18,22 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-// A stored read body plus the action that produced it (an id with no stored body).
+// A stored read body plus the action that produced it (an id with no stored body), inside an
+// open state (recall is work of an open state).
 function seeded() {
   const { ws } = makeWorkspace(DEFAULT_FILES);
-  const read1 = exec(read("src/sum.mjs"), [request()], ws);
+  const read1 = execAll([move("orientation", "go"), read("src/sum.mjs")], [request()], ws);
   const observationId = read1.outcome.turn.nodeId!;
   const actionId = [...read1.state.nodes.values()].find((n) => n.kind === "action")!.id;
   return { ws, events: read1.events, state: read1.state, observationId, actionId };
 }
 
 describe("recall", () => {
-  it("OP-RC-1 by id returns the stored body and adds no node", () => {
+  it("OP-RC-1 by id returns the stored body and appends it to the state's tape", () => {
     const { ws, events, observationId } = seeded();
     const { outcome, events: after } = exec(recall(observationId), events, ws);
     expect(outcome.turn.text).toContain("export function sum");
-    expect(after).toHaveLength(events.length);
+    expect(after.length).toBeGreaterThan(events.length);
   });
 
   it("OP-RC-2 a window reports start/end/total and the continued cursor", () => {
@@ -65,19 +68,14 @@ describe("recall", () => {
     expect(outcome.turn.text).toMatch(/nothing to recall/);
   });
 
-  it("REF-RECALL-REPEAT refuses a bare recall of a body in view; a window is allowed", () => {
-    const { events, observationId } = seeded();
-    expect(classification(recall(observationId), events, [observationId]).reason).toMatch(
-      /repeated_action/,
-    );
-    expect(classification(recall(observationId, 2), events, [observationId]).accept).toBe(true);
+  it("REF-RC-STATE refuses a recall outside an open state", () => {
+    expect(classification(recall("obs:1"), [request()]).reason).toMatch(/no_state/);
   });
 
-  it("OP-RC-6 a recall never adds a node or edge to the journal", () => {
+  it("OP-RC-6 a recall appends an action + observation to the journal", () => {
     const { ws, events, observationId } = seeded();
     const before = fold(events);
     const after = fold([...events, ...exec(recall(observationId), events, ws).outcome.events]);
-    expect(after.nodes.size).toBe(before.nodes.size);
-    expect(after.edges.size).toBe(before.edges.size);
+    expect(after.nodes.size).toBeGreaterThan(before.nodes.size);
   });
 });

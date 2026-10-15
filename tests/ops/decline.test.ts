@@ -25,7 +25,7 @@ function startedRequest(): Event[] {
     request(),
     {
       type: "add_node",
-      node: { id: "m1", space: "work", kind: "move", label: "reconnaissance", payload: { state: "reconnaissance" }, seq: 1 },
+      node: { id: "m1", space: "work", kind: "move", label: "orientation", payload: { state: "orientation" }, seq: 1 },
     },
     { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
   ];
@@ -47,7 +47,7 @@ describe("decline", () => {
 
   it("REF-DC-NOTREQ refuses decline when the focus is not the request (OP-DC-1)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { events } = exec(move("reconnaissance"), [request()], ws, 0);
+    const { events } = exec(move("orientation"), [request()], ws, 0);
     const verdict = classification(decline("nah"), events);
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("not_request");

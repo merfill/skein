@@ -4,12 +4,12 @@
 >
 > Основание — принцип руки (`docs/concepts.md`, «Рука — это ReAct на месте») и аудит
 > `docs/ir_operations.md`, `docs/ir_semantics.md`, `docs/projection.md`,
-> `docs/plans/traversal_stack_spec.md` против `src/ir/*`, `src/tools/index.ts`,
+> `docs/plans/archive/traversal_stack_spec.md` против `src/ir/*`, `src/tools/index.ts`,
 > `src/loop/classify.ts`, `src/ir/project.ts`.
 
 Связанные: `docs/ir_semantics.md` (источник истины — этот план меняет его первым),
 `docs/ir_operations.md` (реестр операторов и покрытие), `docs/projection.md`,
-`docs/plans/traversal_stack_spec.md`, `docs/system_prompt.md`, `docs/tools.md`.
+`docs/plans/archive/traversal_stack_spec.md`, `docs/system_prompt.md`, `docs/tools.md`.
 
 ## 1. Контекст: что нашёл аудит
 

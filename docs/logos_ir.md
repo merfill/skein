@@ -11,7 +11,7 @@
 > what is "absent" or "not yet" (e.g. §4.5, §7) reflect the state at the time of writing;
 > since then the operator model (`move`/`apply`/`stop`/`decline` + read-only
 > `recall`/`search`), `no_progress` and the traversal stack have been implemented. The current
-> as-built is `docs/ir.md`; the state protocol is `docs/plans/state_protocol_plan.md`; the
+> as-built is `docs/ir.md`; the state protocol is `docs/plans/archive/state_protocol_plan.md`; the
 > superseded roadmap is `docs/plans/archive/logos_roadmap_plan.md`.
 >
 > **Stop closure (later).** The `achieved`/`achieved_under`/`refuted`/`under` machinery
@@ -545,7 +545,7 @@ collapses. Conceptually the tree is "ReAct unwound along a tree": the stack is a
 of frames — the **spine** — plus each level's siblings, the **arms**; it is
 `fold(journal)`, a derived value rather than independent state. This is a new part:
 currently Skein has no explicit "where we are in the tree". The full specification is
-`docs/plans/traversal_stack_spec.md`.
+`docs/plans/archive/traversal_stack_spec.md`.
 
 ### 5.5 Records of a change of answer
 

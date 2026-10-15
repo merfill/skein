@@ -13,81 +13,11 @@ import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
 import type { Proposer } from "./propose";
-import { LoopState, type HeldEntry, type LoopStateType } from "./state";
-
-// How long a body stays in the working set after the model fetched it with `recall {id}`,
-// and how many bodies it holds (docs §9). Retention is otherwise structural: the produced
-// results of every level on the branch stay in view until the parent closes. A fresh recall
-// refreshes the entry; eviction drops the least recently requested first. TTL 6 covers the
-// observed cross-level gaps — see tests/workingset.test.ts.
-//
-// The working set is bounded by the number of bodies only: every tool result is already
-// bounded per body by its own tool limit, so `MAX_HELD` times that is the ceiling. A total-character cap was removed: it silently dropped a body larger than
-// the cap (a source window being edited), which trapped the model in a `recall` loop
-// (docs/benches/bench_report.md §4.4).
-const HELD_TURNS = 6;
-const MAX_HELD = 5;
+import { LoopState, type LoopStateType } from "./state";
 
 // A move that changes the focus or ends the run: it must be the last call of a batch, so
 // everything the model emitted after it is dropped (the state it reasoned from is gone).
 const TERMINAL = new Set<Action["operator"]>(["move", "stop", "decline"]);
-
-// Upsert the fetched ids into the working set, each held for `turns` turns and refreshed
-// on every fetch. Level results do not go through here — they are kept structurally.
-function pinHeld(
-  held: readonly HeldEntry[],
-  ids: readonly string[],
-  turn: number,
-  turns: number,
-): HeldEntry[] {
-  const nextHeld = new Map(held.map((entry) => [entry.id, entry]));
-  for (const id of ids) nextHeld.set(id, { id, expiresAt: turn + turns, pinnedAt: turn });
-  return [...nextHeld.values()];
-}
-
-// A held read whose file has since changed is stale: it must not be shown as active
-// content (invariant). Run/check bodies carry no file ref, so they never go stale.
-function isStale(state: State, id: string): boolean {
-  const node = state.nodes.get(id);
-  if (node === undefined) return true;
-  const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
-  if (typeof payload?.ref !== "string" || typeof payload.version !== "string") return false;
-  return currentVersion(state, payload.ref) !== payload.version;
-}
-
-// Every goal on the branch (the roots) plus, for each, its plan items and their current
-// action alternative. A stage's evidence (the diff that localized the bug) must stay in
-// view while an ancestor on the branch is still open. A stopped sub-goal is no longer on
-// the branch, so its evidence leaves with it (its current alternative is a goal, not an
-// action, and is not followed) — the model re-fetches it with a `recall` call if needed.
-function branchSubtree(state: State, roots: readonly string[]): Set<string> {
-  const out = new Set<string>(roots);
-  for (const id of roots) {
-    const plan = planOf(state, id);
-    if (plan === undefined) continue;
-    out.add(plan);
-    for (const item of childrenOf(state, plan)) {
-      out.add(item);
-      const alt = lastChild(state, item);
-      const altNode = alt !== undefined ? state.nodes.get(alt) : undefined;
-      if (altNode?.kind === "action") out.add(alt as string);
-    }
-  }
-  return out;
-}
-
-// The result a run/read action produced (its newest `produces` child), so the current
-// level's evidence can be recalled without the model re-requesting it.
-function producedResultId(state: State, actionId: string): string | undefined {
-  let best: { seq: number; id: string } | undefined;
-  for (const edge of state.edges.values()) {
-    if (edge.kind !== "result" || edge.from !== actionId) continue;
-    const node = state.nodes.get(edge.to);
-    if (node === undefined) continue;
-    if (best === undefined || node.seq > best.seq) best = { seq: node.seq, id: edge.to };
-  }
-  return best?.id;
-}
 
 function describeTarget(action: Action): string {
   let target: string;
@@ -119,8 +49,6 @@ export interface AgentDeps {
   workspace: Workspace;
   maxTurns: number;
   noProgress?: number;
-  // Working-set limits (docs §9); overridable so tests can force eviction/expiry.
-  held?: { turns?: number; max?: number };
   // An external actor (a human or a program) may emit events before each turn — the seam
   // for future user intervention. Absent by default.
   arbiter?: (state: State, turn: number) => Event[];
@@ -144,8 +72,6 @@ export interface AgentResult {
 export function compileGraph(deps: AgentDeps) {
   const signatures: VersionCache = new Map();
   const noProgress = deps.noProgress ?? 10;
-  const heldTurns = deps.held?.turns ?? HELD_TURNS;
-  const maxHeld = deps.held?.max ?? MAX_HELD;
 
   const projectNode = (state: LoopStateType) => {
     // The external actor (if any) may react before the turn; its events join the journal
@@ -157,30 +83,14 @@ export function compileGraph(deps: AgentDeps) {
     let current = fold(drift, base);
     const focusDrift = focusEvents(current);
     if (focusDrift.length > 0) current = fold(focusDrift, current);
-    // A `recall`/`search` result creates no node, so it is not in the tree: append it as a
-    // transient assistant/tool pair for this turn only (docs/ir_revision.md §5.2). A
-    // command's result is already a `tool` message in the tape, so it is not appended again.
-    const lastToolTurn = [...state.recent].reverse().find((turn) => turn.kind === "tool");
-    const retrieval =
-      lastToolTurn !== undefined && lastToolTurn.nodeId === undefined && lastToolTurn.text !== ""
-        ? {
-            call: lastToolTurn.call ?? "retrieval",
-            name: lastToolTurn.callName ?? "recall",
-            args: lastToolTurn.callArgs ?? {},
-            output: lastToolTurn.text,
-            ...(lastToolTurn.error !== undefined ? { error: lastToolTurn.error } : {}),
-          }
-        : undefined;
-    // A structural move (create_goal/stop/decline/recall/search) refused by `classify` creates no
-    // node, so — like the retrieval result — it is appended as a transient assistant call + `tool`
-    // reason for the next turn, so the doxa sees why its move was refused (§2.7).
+    // A structural move (stop/decline/move) refused by `classify` creates no node, so it is
+    // appended as a transient assistant call + `tool` reason for the next turn, so the doxa
+    // sees why its move was refused (§2.7). A `recall`/`search` result is a node now, so it is
+    // on the tape like any observation — no transient pairing.
     const rejection = state.rejection ?? undefined;
     return {
       events: [...external, ...drift, ...focusDrift],
-      held: state.held.filter((entry) => entry.expiresAt >= state.turn),
-      queried: state.queried.filter((entry) => entry.expiresAt >= state.turn),
       context: project(current, {
-        ...(retrieval !== undefined ? { retrieval } : {}),
         ...(rejection !== undefined ? { rejection } : {}),
         stall: state.stall,
       }),
@@ -228,20 +138,12 @@ export function compileGraph(deps: AgentDeps) {
     // (create_goal/stop/decline) ends the batch (the rest of the message is dropped).
     const events: Event[] = [];
     const recent: LoopStateType["recent"] = [];
-    const moveKeys: string[] = [];
-    let held = state.held;
-    let queried = state.queried;
     let rejection: LoopStateType["rejection"] = null;
     let done = false;
     let stopReason: string | null = null;
     for (const action of proposals.actions) {
       const current = fold([...state.events, ...events]);
-      const classification = classify(
-        action,
-        current,
-        held.map((entry) => entry.id),
-        queried.map((entry) => entry.id),
-      );
+      const classification = classify(action, current);
       if (!classification.accept) {
         const reason = classification.reason ?? "rejected";
         const text = `rejected ${describeTarget(action)}: ${reason}`;
@@ -264,19 +166,6 @@ export function compileGraph(deps: AgentDeps) {
       const outcome = executeAction(action, current, deps.workspace, state.turn);
       events.push(...outcome.events);
       recent.push(outcome.turn);
-      // `recall {id}` pins the fetched body; a tool may also ask to pin a result it produced
-      // (e.g. the materialized content of a failed edit), so the next move does not re-read.
-      const recallId = action.operator === "recall" ? action.id : undefined;
-      const pinIds = [...(recallId !== undefined ? [recallId] : []), ...(outcome.pin ?? [])];
-      if (pinIds.length > 0) held = pinHeld(held, pinIds, state.turn, heldTurns);
-      if (recallId !== undefined) queried = pinHeld(queried, [recallId], state.turn, heldTurns);
-      // An accepted `recall`/`search` adds no node, so its signature is the only progress
-      // signal (§2.8).
-      if (action.operator === "recall") {
-        moveKeys.push(`recall:${action.id}:${action.start ?? ""}:${action.end ?? ""}`);
-      } else if (action.operator === "search") {
-        moveKeys.push(`search:${action.id}:${action.pattern}`);
-      }
       done = outcome.done;
       if (outcome.stopReason !== null) stopReason = outcome.stopReason;
       if (done) break;
@@ -288,10 +177,7 @@ export function compileGraph(deps: AgentDeps) {
       turn: state.turn + 1,
       done,
       stopReason,
-      held,
-      queried,
       rejection,
-      moveKey: moveKeys.join("|"),
     };
   };
 
@@ -300,7 +186,7 @@ export function compileGraph(deps: AgentDeps) {
     const current = fold(state.events);
     const rootId = current.rootId;
     if (rootId !== undefined) {
-      // The request ends when its terminal state (`handoff`) is stopped (there is no `stop`
+      // The request ends when its terminal state (`finish`) is stopped (there is no `stop`
       // on the request).
       const move = currentMove(current);
       const island = move !== undefined ? moveIsland(current, move) : undefined;
@@ -316,8 +202,8 @@ export function compileGraph(deps: AgentDeps) {
     // Closure wins over the budget: if the last allowed turn closed the request, that is
     // the honest verdict, not `max_turns`.
     if (state.turn >= deps.maxTurns) return { done: true, stopReason: "max_turns" };
-    // A retrieved fragment (`recall`/`search`) is progress even though it adds no node (§2.8).
-    const key = `${knowledgeKey(current)}|${state.moveKey}`;
+    // Progress is the knowledge in the tree (a new node); a recall/search is now a node too.
+    const key = knowledgeKey(current);
     if (key === state.progressKey) {
       const stall = state.stall + 1;
       if (stall >= noProgress) return { stall, done: true, stopReason: "no_progress" };

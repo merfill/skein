@@ -1,6 +1,6 @@
 # Skein — goal-into-move plan (the state carries its own goal)
 
-> English mirror of `docs/plans/goal_into_move_plan_ru.md`.
+> English mirror of `docs/plans/archive/goal_into_move_plan_ru.md`.
 > Status: **settled with the owner (2026-10-13); implementation in progress.** The goal node
 > and the `create_goal` operator are removed; the state (`move`) carries its own goal text and
 > owns the plan. Written to be self-contained: work can resume from it after a context reset.

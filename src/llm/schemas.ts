@@ -69,12 +69,13 @@ export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
     // Declare the state (island of work) the doxa will work in — the automaton's transition —
     // AND the state's goal text (`what`); the state IS its goal (docs/ir_semantics.md §4.1,
-    // docs/plans/goal_into_move_plan.md). `what` is required except for the terminal
-    // hand-off, which has no plan. `note` is an optional one-line summary of the state just
+    // docs/plans/archive/goal_into_move_plan.md). `what` is required except for the terminal
+    // Finish state, which has no plan. `note` is an optional one-line summary of the state just
     // finished.
     operator: z.literal("move"),
     state: z.enum(ISLAND_IDS),
     what: z.string(),
+    done: z.string().optional(),
     note: z.string().optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
@@ -169,6 +170,7 @@ export function modelCall(action: Action): ModelCall {
         args: {
           state: action.state,
           what: action.what,
+          ...(action.done !== undefined ? { done: action.done } : {}),
           ...(action.note !== undefined ? { note: action.note } : {}),
         },
       };

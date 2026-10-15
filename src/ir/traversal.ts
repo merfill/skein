@@ -9,7 +9,7 @@ import {
   unactionableOf,
   type State,
 } from "./graph";
-import { isTerminalIsland, type IslandId } from "./islands";
+import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
 import type { MovePayload } from "./types";
 
 export function stackOf(state: State): string[] {
@@ -34,8 +34,8 @@ export function moveIsland(state: State, id: string): IslandId | undefined {
   return movePayload(state, id)?.state;
 }
 
-// Is the state of this `move` finished? A state (including the terminal hand-off, which has
-// no plan) is finished when it is stopped — the doxa's `stop` is the only closure
+// Is the state of this `move` finished? A state (including the terminal Finish state, which
+// has no plan) is finished when it is stopped — the doxa's `stop` is the only closure
 // (docs/ir_semantics.md §2.5).
 export function isMoveFinished(state: State, id: string): boolean {
   return hasStopped(state, id);
@@ -115,6 +115,9 @@ export interface Applicable {
   move: boolean;
   // Work the open state: the first `apply` seeds the plan, later ones extend it.
   apply: boolean;
+  // The apply-tools admissible in the focused state (the island's `applies`); empty unless
+  // `apply`. The model surface is bound from this (src/llm/tools.ts:toolNamesFor).
+  applies: readonly string[];
   return: boolean;
   stop: boolean;
   // Decline to formulate a state (a non-actionable request); only at the request.
@@ -128,6 +131,7 @@ export function applicable(state: State, focusId: string | undefined): Applicabl
   const none: Applicable = {
     move: false,
     apply: false,
+    applies: [],
     return: false,
     stop: false,
     decline: false,
@@ -155,7 +159,14 @@ export function applicable(state: State, focusId: string | undefined): Applicabl
       return { ...none, focus: focusId, move: true };
     }
     // An open state: work it (the first `apply` seeds the plan) or stop it.
-    return { ...none, focus: focusId, apply: true, stop: true };
+    const island = moveIsland(state, focusId);
+    return {
+      ...none,
+      focus: focusId,
+      apply: true,
+      applies: island !== undefined ? ISLANDS[island].applies : [],
+      stop: true,
+    };
   }
 
   return none;

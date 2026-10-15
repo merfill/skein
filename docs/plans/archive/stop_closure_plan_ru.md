@@ -7,7 +7,7 @@
 > Реализуется по шагам; после каждого шага дерево зелёное.
 
 Связанное: `docs/ir_semantics.md` (источник истины — менять вместе с кодом),
-`docs/ir_operations.md`, `docs/projection.md`, `docs/plans/traversal_stack_spec.md`,
+`docs/ir_operations.md`, `docs/projection.md`, `docs/plans/archive/traversal_stack_spec.md`,
 `docs/system_prompt.md`, `docs/tools.md`. История:
 `docs/plans/archive/ir_operations_revision_plan.md` §2.4 (исходное «stop только на
 addressed-запросе»), коммит `ad28337` (стоп arbiter-цели, породивший premature stop).
@@ -165,7 +165,7 @@ arbiter-подцель и сразу её остановила; движок п�
   докса предлагает, движок гейтит, `stop` закрывает.
 - `docs/tools{,_ru}.md` — `run {target}` (критерий фокусной цели) и код выхода как факт
   pass/fail.
-- `docs/plans/traversal_stack_spec{,_ru}.md` §9 — верификация = код выхода целевого прогона.
+- `docs/plans/archive/traversal_stack_spec{,_ru}.md` §9 — верификация = код выхода целевого прогона.
 - `docs/plans/implementation_plan{,_ru}.md` — отметить работу сделанной; обновить §3.
 - `docs/benches/bench_report{,_ru}.md` — отметить фикс premature stop и повторный прогон
   `fix-ocaml-gc` в песочнице.

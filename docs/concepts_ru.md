@@ -1,7 +1,7 @@
 # Skein — агент кодирования с детерминированным IR-контекстом
 
 > **Заметка (протокол состояний).** Детали дерева/обхода/проекции здесь предшествуют
-> редизайну **протокола состояний** (`docs/plans/state_protocol_plan_ru.md`): обход теперь —
+> редизайну **протокола состояний** (`docs/plans/archive/state_protocol_plan_ru.md`): обход теперь —
 > машина состояний по островам — `move` объявляет состояние И его текст цели (`what`), первый
 > `apply` засевает его план, `stop` завершает и вынуждает переход, а терминальное
 > состояние завершает запрос. Текущая форма — `docs/ir_semantics_ru.md`; as-built —
@@ -150,7 +150,7 @@ project → propose → classify → execute → progress
 Ни стек, ни курсор не хранятся: стек — свёртка `descend`/`return` по журналу, курсор
 выводится из плана. Значит `same events → same context`. История (исполненные пункты,
 наблюдения, запуски-критерии) на спине не держится — она в дереве и достаётся **по
-адресу** (`recall { id }`). Полная модель — `docs/plans/traversal_stack_spec_ru.md`.
+адресу** (`recall { id }`). Полная модель — `docs/plans/archive/traversal_stack_spec_ru.md`.
 
 ## Проекция
 
@@ -212,5 +212,5 @@ project → propose → classify → execute → progress
 
 Tier 0 (багфикс по падающему тесту) и рабочий граф Tier 1 реализованы; текущий IR —
 `docs/ir_ru.md`, семантика — `docs/ir_semantics_ru.md`, стек обхода —
-`docs/plans/traversal_stack_spec_ru.md`, работа по сокращению шагов —
-`docs/plans/step_reduction_plan_ru.md`.
+`docs/plans/archive/traversal_stack_spec_ru.md`, работа по сокращению шагов —
+`docs/plans/archive/step_reduction_plan_ru.md`.

@@ -1,6 +1,6 @@
 # Skein — observation plan (changes outside the engine)
 
-> Russian mirror — `docs/plans/observation_plan_ru.md`.
+> Russian mirror — `docs/plans/archive/observation_plan_ru.md`.
 
 Related: `docs/concepts.md` (first principle), `docs/design_review.md` (R3),
 `docs/plans/archive/check_soundness_plan.md`. Overall plan —

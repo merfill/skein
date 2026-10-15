@@ -29,18 +29,9 @@ export interface ExecOutcome {
     text: string;
     nodeId?: string;
     error?: string;
-    // The rendered call of a move that leaves no node (a `recall`/`search`), so the projection shows
-    // what was asked rather than a bare operator name (the assistant's own history).
-    call?: string;
-    // The structured call behind `call`, so the projection can emit a native `tool` result.
-    callName?: string;
-    callArgs?: Record<string, unknown>;
   };
   done: boolean;
   stopReason: string | null;
-  // Result ids the loop must pin into the working set (`shown`) after this turn, so the
-  // evidence the next move needs stays in view without a re-read (tools §4.3).
-  pin?: string[];
 }
 
 // Per-tool inline budgets (docs/ir_semantics.md §7). The `read` window is small (8K) so one
@@ -783,12 +774,13 @@ export function executeAction(
   // A state: the doxa declared the island of work it will work in AND the state's goal text
   // (`what`). The states are the request's flat children (`move` edges); a new move is a
   // sibling of the previous state (docs/ir_semantics.md §4.1). The plan hangs directly off
-  // the `move` — there is no goal node (docs/plans/goal_into_move_plan.md) — and is seeded
+  // the `move` — there is no goal node (docs/plans/archive/goal_into_move_plan.md) — and is seeded
   // by the first `apply`.
   const buildMove = (spec: MovePayload & { call?: unknown }): string => {
     const moveSeq = next();
     const id = `w:move:${moveSeq}`;
     const payload: Record<string, unknown> = { state: spec.state, what: spec.what };
+    if (spec.done !== undefined && spec.done !== "") payload.done = spec.done;
     if (spec.note !== undefined && spec.note !== "") payload.note = spec.note;
     if (spec.call !== undefined) payload.call = spec.call;
     events.push({
@@ -972,40 +964,48 @@ export function executeAction(
   };
 
   switch (action.operator) {
-    case "recall": {
-      const text = runRecall(state, action, workspace);
-      const turn = proposalTurn(clip(text));
-      const call = modelCall(action);
-      return {
-        events,
-        turn: { ...turn, call: recallCall(action), callName: call.name, callArgs: call.args },
-        done: false,
-        stopReason: null,
-      };
-    }
-
+    case "recall":
     case "search": {
-      const text = runSearch(state, action, workspace);
-      const turn = proposalTurn(clip(text));
-      const call = modelCall(action);
-      return {
-        events,
-        turn: { ...turn, call: searchCall(action), callName: call.name, callArgs: call.args },
-        done: false,
-        stopReason: null,
-      };
+      // A recall/search reads a stored body and now leaves a node (an action + its observation,
+      // placed under the state's plan like any step), so the fetched window stays on the state's
+      // tape until the state is stopped — no transient pair and no working-set TTL
+      // (docs/ir_semantics.md §7).
+      const focus = currentFocus(state);
+      if (focus === undefined) return fail(`${action.operator} failed: no current state`);
+      const text = clip(
+        action.operator === "recall" ? runRecall(state, action, workspace) : runSearch(state, action, workspace),
+      );
+      const command = action.operator === "recall" ? recallCall(action) : searchCall(action);
+      const actionId = buildActionItem(command, command, { call: modelCall(action) });
+      placeMove(focus, actionId);
+      const observationSeq = next();
+      const observationId = `obs:${observationSeq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: observationId,
+          space: "work",
+          kind: "observation",
+          label: command,
+          payload: { output: text },
+          seq: observationSeq,
+        },
+      });
+      addEdge({ kind: "llm" }, actionId, observationId, "result");
+      return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
     }
 
     case "move": {
       // Declare the state: a `move` node (carrying the state's goal text) hung off the
       // request as a flat child (`move` relation). The states are siblings, never nested;
       // the focus descends into the new state (docs/ir_semantics.md §4.1). The plan is left
-      // empty — the next turn's first `apply` seeds it (docs/plans/goal_into_move_plan.md).
+      // empty — the next turn's first `apply` seeds it (docs/plans/archive/goal_into_move_plan.md).
       const root = state.rootId;
       if (root === undefined) return fail("move failed: no request");
       const moveId = buildMove({
         state: action.state,
         what: action.what,
+        done: action.done,
         note: action.note,
         call: modelCall(action),
       });
@@ -1049,7 +1049,7 @@ export function executeAction(
     case "stop": {
       // The doxa's closure. On an open state a `stop` node hung off the `move` via the `stop`
       // relation records the closure; the engine returns to the state and the doxa makes the
-      // transition decision. On the terminal state (`handoff`, which has no plan) the `stop`
+      // transition decision. On the terminal state (`finish`, which has no plan) the `stop`
       // ends the request (docs/ir_semantics.md §4.4).
       const focus = currentFocus(state);
       if (focus === undefined) return fail("stop applies to an open state or the terminal state");
@@ -1368,7 +1368,6 @@ export function executeAction(
             turn: proposalTurn(bounded(full), observationId),
             done: false,
             stopReason: null,
-            pin: [observationId],
           };
         }
         const updated = original.replace(apply.find, apply.replace);

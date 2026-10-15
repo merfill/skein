@@ -20,7 +20,7 @@ import {
   run,
 } from "../ops/helpers";
 
-// The synthetic live gate for the state protocol (docs/plans/state_protocol_plan.md §12).
+// The synthetic live gate for the state protocol (docs/plans/archive/state_protocol_plan.md §12).
 // Build a projection OFFLINE (exactly what the engine would show) and assert the SHAPE of the
 // live model's next move at each focus: a fresh request chooses a state (`move`); a fresh
 // state gets its first plan item (`apply`); an open state whose criterion holds is stopped;
@@ -75,7 +75,7 @@ function buildSteps(): Step[] {
   // A fresh state (declared, no goal yet): concretize its work.
   {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("reconnaissance", "map the repo"), [request("Fix the failing test.")], ws);
+    const moved = exec(move("orientation", "map the repo"), [request("Fix the failing test.")], ws);
     steps.push({
       name: "move-concretize",
       context: projectAt(moved.events),
@@ -118,7 +118,7 @@ function buildSteps(): Step[] {
   // The terminal state: stop to finish the request.
   {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("handoff"), [request("Done.")], ws);
+    const moved = exec(move("finish"), [request("Done.")], ws);
     steps.push({
       name: "terminal-stop",
       context: projectAt(moved.events),
@@ -128,7 +128,7 @@ function buildSteps(): Step[] {
 
   // A moved-and-opened state: its island instruction names the state.
   {
-    const events = stateIn("reconnaissance");
+    const events = stateIn("orientation");
     steps.push({
       name: "goal-island-known",
       context: projectAt(events),

@@ -62,12 +62,13 @@ const patchParams = z.object({
   strip: z.number().int().nonnegative().optional(),
 });
 // The state: the island of work the doxa will work in AND the state's goal text (`what`) —
-// the state IS its goal (docs/plans/goal_into_move_plan.md). `what` is optional in the tool
-// schema because the terminal hand-off has no plan; `classify` requires it for every other
+// the state IS its goal (docs/plans/archive/goal_into_move_plan.md). `what` is optional in the tool
+// schema because the terminal Finish state has no plan; `classify` requires it for every other
 // state.
 const moveParams = z.object({
   state: z.enum(ISLAND_IDS),
   what: z.string().optional(),
+  done: z.string().optional(),
   note: z.string().optional(),
 });
 const stopParams = z.object({ why: z.string().optional() });
@@ -79,7 +80,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state (the island of work) you will work in AND its goal: move { state, what }. Use it at the request to pick the FIRST state of the work (one of ${ISLAND_IDS.join(", ")}), and again after you have stopped a state to choose the next one — the transition is a fresh move. what = the concrete goal of THIS state (not the whole task); it is required except for handoff. After the move, give the state's FIRST plan item as an ordinary tool call (read/grep/list/edit/write/bash/webfetch/apply_patch); further items are the tool calls you make next, in order. A command runs from the WORKSPACE ROOT; if the project lives in a subdirectory (seen with list, or named in the request, e.g. \`ocaml/\`), prefix the command with \`cd <dir> &&\` (or pass workdir). A state's work is done when its criterion holds; stop it, then move on. To finish the whole work, move to the hand-off state and stop there. After a \`stop\`, \`move\` is the ONLY accepted move — \`apply\` is refused until you move. Give note (optional) to summarize the state you are leaving. Refused if: a state is still open — work it to its criterion and stop it first (state_open); or the goal text is missing (empty_what).`,
+      `Declare the state you will work in and its goal and stop condition: move { state, what, done }. Call \`move\` alone — never batch it with other calls. what = the goal of this state; done = the knowledge that closes THIS state — its own "Done:" line restated for the request, never the whole task and never a later state's work. At most 12 words each.`,
     schema: moveParams,
   },
   {
@@ -144,8 +145,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   },
   {
     name: "stop",
-    description:
-      "Stop: finish the current state. On an open goal it closes the state's work — the closure and its reason sit at the goal, not as a plan item — and the engine returns you to the state so you can move to the next one. On the terminal hand-off state it ends the request (there is no stop on the request, and no stop on the request when a state has not been worked).",
+    description: "Call `stop` — and nothing else — when the current state's Done criteria are met.",
     schema: stopParams,
   },
   {
@@ -194,22 +194,45 @@ export const APPLY_TOOL_NAMES = new Set([
 
 // The tools the model surface offers for a given frontier (`applicable`): the doxa only ever
 // sees the moves the engine would accept, so a refused move cannot be called at all
-// (docs/ir_semantics.md §2.6). `recall`/`search` are read-only and always available.
+// (docs/ir_semantics.md §2.6). `recall`/`search` are read-only and always available. The apply
+// vocabulary is the frontier's `applies` (the focused island's tools): when omitted, the full
+// registry is bound (direct `invokeTools` callers, tests).
 export function toolNamesFor(frontier: {
   move: boolean;
   apply: boolean;
   stop: boolean;
   decline: boolean;
+  applies?: readonly string[];
 }): string[] {
-  const names = new Set<string>(["recall", "search"]);
+  const names = new Set<string>();
   if (frontier.move) names.add("move");
   if (frontier.stop) names.add("stop");
   if (frontier.decline) names.add("decline");
-  if (frontier.apply) for (const name of APPLY_TOOL_NAMES) names.add(name);
+  if (frontier.apply) {
+    // Recall/search read stored results into the open state's tape; they are offered only
+    // while a state is open (with the apply surface and `stop`).
+    names.add("recall");
+    names.add("search");
+    for (const name of frontier.applies ?? APPLY_TOOL_NAMES) names.add(name);
+  }
   return PROPOSAL_TOOLS.filter((tool) => names.has(tool.function.name)).map(
     (tool) => tool.function.name,
   );
 }
+
+// The IR apply-tool → native tool name (the two differ only for `fetch` ↔ `webfetch`). Used to
+// check an already-mapped action against a state's `applies` (`src/loop/classify.ts`).
+const APPLY_TOOL_NATIVE: Record<string, string> = {
+  read: "read",
+  grep: "grep",
+  list: "list",
+  edit: "edit",
+  write: "write",
+  bash: "bash",
+  fetch: "webfetch",
+  apply_patch: "apply_patch",
+};
+export const nativeToolName = (tool: string): string => APPLY_TOOL_NATIVE[tool] ?? tool;
 
 // Map a native tool call (`name` + `args`) into the IR `Apply`. One vocabulary for a
 // standalone tool call and for the seed carried inside `create_goal`.
@@ -272,6 +295,7 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         operator: "move",
         state: a.state,
         what: typeof a.what === "string" ? a.what : "",
+        ...(typeof a.done === "string" ? { done: a.done } : {}),
         ...pick("note"),
       };
       break;

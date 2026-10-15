@@ -1,6 +1,6 @@
 # Skein — план наблюдения (изменения вне движка)
 
-> Английское зеркало — `docs/plans/observation_plan.md`.
+> Английское зеркало — `docs/plans/archive/observation_plan.md`.
 
 Связанные: `docs/concepts_ru.md` (первый принцип), `docs/design_review_ru.md`
 (R3), `docs/plans/archive/check_soundness_plan_ru.md`. Общий план —

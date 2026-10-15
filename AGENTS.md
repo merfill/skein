@@ -26,11 +26,23 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
   They cost minutes and money — never start one on your own initiative.
 - see `docs/testing.md` for the live gate and benches
 
+## Bench / replay tools (do not reinvent)
+
+- `bench/rollout.ts <run> [--turns N] [--dry]` — build a FRESH tape with the current projection
+  (`runAgent` → `project`/`buildMessages`) and roll N live turns forward; each tool result is
+  taken positionally from `<run>`'s recorded observations (`bash` from the recording; the file
+  tools run against the task's mini spec tree). Prints per-turn tokens + reasoning.
+- `bench/turn.ts <run> --rebuild --turns A-B` — replay recorded turns over the RECORDED history
+  (the tape is the old one; only the base prompt is current — not a from-scratch tape).
+- `bench/replay.ts <run>` — replay recorded contexts through the live model as-is.
+- `tests/sandbox/live-trace.ts` — full live rollout on the virtual `fix-ocaml-gc` spec workspace.
+- `--dry` (where offered) reconstructs the context and prints it with no model call — free.
+
 ## Invariants (do not break)
 
 - a state is closed only by the doxa's `stop` (a `has_stopped` edge on the `move`); there is
   no criterion gate — cycle / premature-stop detection is deferred
-  (`docs/plans/goal_reduction_plan.md`);
+  (`docs/plans/archive/goal_reduction_plan.md`);
 - the request ends when its goal is stopped (there is no `stop` on the request);
 - a `stale` fact is never shown as active content;
 - `project` is deterministic: same events → same `Context`;

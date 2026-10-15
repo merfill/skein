@@ -61,23 +61,18 @@ export function execAll(
   return last;
 }
 
-export function classification(
-  action: Action,
-  events: readonly Event[],
-  held: readonly string[] = [],
-  queried: readonly string[] = [],
-): Classification {
-  return classify(action, fold(events), held, queried);
+export function classification(action: Action, events: readonly Event[]): Classification {
+  return classify(action, fold(events));
 }
 
 // Declare a state (the transition) with its goal text.
-export function move(state: IslandId = "reconnaissance", what = "do it"): Action {
+export function move(state: IslandId = "orientation", what = "do it"): Action {
   return { operator: "move", state, what };
 }
 
 // A state plus its first plan item, as one turn pair (the move, then the first `apply` that
 // seeds the plan).
-export function withGoal(what: string, command?: string, state: IslandId = "reconnaissance"): Action[] {
+export function withGoal(what: string, command?: string, state: IslandId = "orientation"): Action[] {
   return [move(state, what), run(command ?? "true")];
 }
 

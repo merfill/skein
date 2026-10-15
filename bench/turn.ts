@@ -87,14 +87,21 @@ function loadRows(path: string): Row[] {
 }
 
 // The frontier a situation implies (`src/ir/project.ts:situationOf` + `traversal.applicable`);
-// the trace does not store `applicable`, so the tool surface is reconstructed from this.
-function frontierFor(situation: Situation) {
+// the trace does not store `applicable`, so the tool surface is reconstructed from this and the
+// focused island (the apply vocabulary).
+function frontierFor(situation: Situation, island?: IslandId) {
   switch (situation) {
     case "request":
       return { move: true, apply: false, stop: false, decline: true };
     case "plan":
     case "working":
-      return { move: false, apply: true, stop: true, decline: false };
+      return {
+        move: false,
+        apply: true,
+        stop: true,
+        decline: false,
+        ...(island !== undefined ? { applies: ISLANDS[island].applies } : {}),
+      };
     case "terminal":
       return { move: false, apply: false, stop: true, decline: false };
     case "transition":
@@ -103,8 +110,8 @@ function frontierFor(situation: Situation) {
   }
 }
 
-function toolsFor(situation: Situation): string[] {
-  return toolNamesFor(frontierFor(situation));
+function toolsFor(situation: Situation, island?: IslandId): string[] {
+  return toolNamesFor(frontierFor(situation, island));
 }
 
 function toBaseMessage(message: RenderedMessage): BaseMessage {
@@ -146,43 +153,51 @@ function applyPatch(messages: RenderedMessage[], patch: PatchOp[]): RenderedMess
   return out;
 }
 
-// The island of the current state, read from the last `move` call on the recorded history.
-function lastIslandOf(history: TapeMessage[]): IslandId | undefined {
+// The focused state, read from the last `move` call on the recorded history.
+function lastMoveOf(history: TapeMessage[]):
+  | { island: IslandId; what?: string; done?: string }
+  | undefined {
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const message = history[i]!;
     const calls = message.calls ?? (message.call !== undefined ? [message.call] : []);
     for (const call of calls) {
       if (call.name !== "move") continue;
-      const state = (call.args as { state?: unknown }).state;
-      if (typeof state === "string" && state in ISLANDS) return state as IslandId;
+      const args = call.args as { state?: unknown; what?: unknown; done?: unknown };
+      if (typeof args.state !== "string" || !(args.state in ISLANDS)) continue;
+      return {
+        island: args.state as IslandId,
+        ...(typeof args.what === "string" ? { what: args.what } : {}),
+        ...(typeof args.done === "string" ? { done: args.done } : {}),
+      };
     }
   }
   return undefined;
 }
 
 // `--rebuild`: re-render the prompt from the CURRENT code over the recorded `history` — the
-// state description (from the island of the last `move`) and the situation/observation
-// instructions are recomputed, so a prompt edit can be tested on a recorded run without a new
-// run. Needs a `sandbox-tasks` trace (it carries `history`). `--patch` is not applied here; use
-// `--append-system` to add a message after the rebuilt tail.
+// state description (from the island of the last `move` and its concretized what/done) and the
+// situation/observation instructions are recomputed, so a prompt edit can be tested on a
+// recorded run without a new run. Needs a `sandbox-tasks` trace (it carries `history`).
 function rebuildMessages(row: Row): BaseMessage[] {
   if (row.history === undefined) throw new Error("--rebuild needs a trace with `history` (sandbox-tasks)");
-  const island = lastIslandOf(row.history);
+  const move = lastMoveOf(row.history);
+  const island = move?.island;
   const history: TapeMessage[] = row.history.map((message) =>
     island !== undefined && message.role === "system" && message.text.startsWith("State: ")
-      ? { ...message, text: stateDescription(ISLANDS[island]) }
+      ? { ...message, text: stateDescription(ISLANDS[island], move?.what, move?.done) }
       : message,
   );
   const last = history.at(-1);
   const result =
     row.situation === "working" && last?.role === "tool" && island !== undefined
-      ? observationInstruction()
+      ? observationInstruction(ISLANDS[island].applies)
       : undefined;
   const context: Context = {
     history,
     situation: row.situation,
     constraints: row.constraints ?? [],
     ...(island !== undefined ? { island } : {}),
+    ...(move?.done !== undefined && move.done !== "" ? { done: move.done } : {}),
     ...(result !== undefined ? { result } : {}),
   };
   return buildMessages(context);
@@ -235,6 +250,7 @@ const settings = loadSettings();
 const modelName = flag("--model") ?? settings.model;
 const repeat = Math.max(1, Number(flag("--repeat") ?? "1") || 1);
 const showReasoning = process.argv.includes("--reasoning");
+const showResponses = process.argv.includes("--responses");
 const dumpPath = flag("--dump");
 const dry = process.argv.includes("--dry");
 const useRebuild = process.argv.includes("--rebuild");
@@ -246,14 +262,41 @@ if (useRebuild && patchFile !== undefined) {
 const label = (action: Action): string =>
   action.operator === "apply" ? `apply:${action.action.tool}` : action.operator;
 
-// A fresh model per call that also captures the provider's hidden reasoning text
-// (`choices[0].message.reasoning`), the way `tests/sandbox/live.ts` does.
-function makeRenderer(sink: string[]) {
+interface Attempt {
+  finish?: string;
+  reasoning: string;
+  content: string;
+  keys: string;
+}
+
+// A fresh model per call that also captures each raw response body (one per model attempt —
+// the `invokeTools` truncation retry re-invokes, so this shows the retry too): the provider's
+// hidden reasoning (`choices[0].message.reasoning`) and the visible content/finish_reason.
+function makeRenderer(sink: string[], attempts: Attempt[] = []) {
   const hooks = {
     onResponseBody: (body: unknown): void => {
-      const value = (body as { choices?: { message?: { reasoning?: unknown } }[] } | undefined)?.choices?.[0]
-        ?.message?.reasoning;
-      if (typeof value === "string" && value !== "") sink.push(value);
+      const choice = (
+        body as
+          | {
+              choices?: {
+                finish_reason?: unknown;
+                message?: { reasoning?: unknown; reasoning_content?: unknown; content?: unknown };
+              }[];
+            }
+          | undefined
+      )?.choices?.[0];
+      const message = choice?.message ?? {};
+      const reasoningRaw = message.reasoning ?? message.reasoning_content;
+      const reasoning = typeof reasoningRaw === "string" ? reasoningRaw : "";
+      const raw = message.content;
+      const content = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
+      if (reasoning !== "") sink.push(reasoning);
+      attempts.push({
+        ...(typeof choice?.finish_reason === "string" ? { finish: choice.finish_reason } : {}),
+        reasoning,
+        content,
+        keys: Object.keys(message).join(","),
+      });
     },
   };
   return {
@@ -277,9 +320,13 @@ for (const turn of turns) {
   // trace's tool_calls/tool_call_id even in `--dry`, so a wrong patch/trace surfaces without a
   // model call.
   const patched = useRebuild ? undefined : patch.length > 0 ? applyPatch(row.messages, patch) : row.messages;
-  const messages = useRebuild ? rebuildMessages(row) : patched!.map(toBaseMessage);
+  let messages = useRebuild ? rebuildMessages(row) : patched!.map(toBaseMessage);
   if (useRebuild && appendSystem !== undefined) messages.push(new SystemMessage(appendSystem));
-  const allowedTools = toolsFor(row.situation);
+  if (process.argv.includes("--no-request")) messages = messages.filter((m) => m.getType() !== "human");
+  if (process.argv.includes("--no-turn-system")) {
+    while (messages.length > 0 && messages[messages.length - 1]!.getType() === "system") messages.pop();
+  }
+  const allowedTools = toolsFor(row.situation, lastMoveOf(row.history ?? [])?.island);
 
   if (dumpPath !== undefined) {
     const target = turns.length === 1 ? dumpPath : `${dumpPath}.t${turn}`;
@@ -301,7 +348,8 @@ for (const turn of turns) {
   );
   for (let run = 0; run < repeat; run += 1) {
     const reasoning: string[] = [];
-    const { model, rebuild } = makeRenderer(reasoning);
+    const attempts: Attempt[] = [];
+    const { model, rebuild } = makeRenderer(reasoning, attempts);
     const meter = new TurnMeter();
     let finish: string | undefined;
     try {
@@ -318,9 +366,16 @@ for (const turn of turns) {
       });
       console.log(
         `  #${run} actions=${proposal.actions.map(label).join("+")} thought=${proposal.thought.length} ` +
-          `out=${meter.outputTokens} reason=${meter.reasoningTokens} in=${meter.inputTokens} finish=${finish ?? "?"}`,
+          `out=${meter.outputTokens} reason=${meter.reasoningTokens} in=${meter.inputTokens} calls=${meter.calls} finish=${finish ?? "?"}`,
       );
       console.log(`     args=${JSON.stringify(proposal.actions).slice(0, 6000)}`);
+      if (showResponses) {
+        attempts.forEach((a, i) => {
+          const body = (a.reasoning || a.content).replace(/\s+/g, " ").trim();
+          console.log(`     attempt#${i} finish=${a.finish ?? "?"} keys=[${a.keys}] rlen=${a.reasoning.length} clen=${a.content.length}`);
+          console.log(`       ${body.slice(-1400)}`);
+        });
+      }
       const text = reasoning.join("\n").replace(/\s+/g, " ").trim();
       if (showReasoning && text !== "") console.log(`     reasoning: ${text}`);
     } catch (error) {

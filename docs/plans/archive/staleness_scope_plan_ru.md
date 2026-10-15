@@ -3,7 +3,7 @@
 > Английское зеркало — `docs/plans/archive/staleness_scope_plan.md`.
 
 Связанные: `docs/design_review_ru.md` (R3b),
-`docs/plans/archive/check_soundness_plan_ru.md`, `docs/plans/observation_plan_ru.md`.
+`docs/plans/archive/check_soundness_plan_ru.md`, `docs/plans/archive/observation_plan_ru.md`.
 Общий план — `docs/plans/implementation_plan_ru.md`.
 
 Статус: реализован (см. §8).

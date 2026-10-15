@@ -6,7 +6,7 @@ import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools, type ToolsOptions } from "../llm/structured";
 import { toolNamesFor } from "../llm/tools";
-import { BASE_PROMPT, NODE_INSTRUCTIONS } from "./prompt";
+import { BASE_PROMPT, NODE_INSTRUCTIONS, REQUEST_INSTRUCTION, turnInstruction } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
 
@@ -42,15 +42,10 @@ function toMessage(message: TapeMessage): BaseMessage {
 }
 
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
-// the tape itself, then — appended AT THE END — the instruction for the current situation. That
-// instruction is temporary: it is not part of the history (it is re-derived from the situation
-// each turn, it never accumulates). docs/ir_semantics §7.
+// the tape itself. No instruction is appended per turn: the base prompt carries the contract and
+// the tape carries the state (a clean transcript, like a plain coding agent; docs/ir_semantics §7).
 export function buildMessages(context: Context): BaseMessage[] {
   const messages: BaseMessage[] = [new SystemMessage(BASE_PROMPT)];
-  // A soft attractor on a stalled goal: the projection nudges the doxa to decide (§2.8).
-  if (context.nudge !== undefined) {
-    messages.push(new SystemMessage(context.nudge));
-  }
   for (const constraint of context.constraints) {
     messages.push(
       new SystemMessage(
@@ -59,10 +54,21 @@ export function buildMessages(context: Context): BaseMessage[] {
     );
   }
   for (const message of context.history) messages.push(toMessage(message));
-  // The observation step: right after a tool result, tell the model to read it and decide.
-  if (context.result !== undefined) messages.push(new SystemMessage(context.result));
-  // The situation's instruction, appended last (temporary — never stored in the history).
-  messages.push(new SystemMessage(NODE_INSTRUCTIONS[context.situation]));
+  // The request-step instruction: scope the first `move`'s `what` (the state's goal, not the
+  // task). Then the open-state recency nudge: one line, every work turn (never stored).
+  // The request instruction scopes the first `move`; the plan hint drives the state's first
+  // step; the open-state nudge restates the goal each work turn (all per turn, never stored).
+  if (context.situation === "request") {
+    messages.push(new SystemMessage(REQUEST_INSTRUCTION));
+  } else if (context.situation === "plan") {
+    messages.push(new SystemMessage(NODE_INSTRUCTIONS.plan));
+  } else if (context.situation === "working") {
+    messages.push(new SystemMessage(turnInstruction(context.island, context.done)));
+  } else if (context.situation === "transition") {
+    messages.push(new SystemMessage(NODE_INSTRUCTIONS.transition));
+  } else if (context.situation === "terminal") {
+    messages.push(new SystemMessage(NODE_INSTRUCTIONS.terminal));
+  }
   return messages;
 }
 

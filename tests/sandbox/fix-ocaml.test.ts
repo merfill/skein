@@ -11,13 +11,13 @@ afterEach(cleanupSandboxes);
 // (docs/testing_ru.md §3). The trajectory is a scripted `Action` sequence, so a failure
 // points at the engine (classify / refusal / termination), not at the model's wording.
 
-const toWork: Action = { operator: "move", state: "reconnaissance", what: "fix the RLE sweep regression so the compiler bootstraps" };
+const toWork: Action = { operator: "move", state: "orientation", what: "fix the RLE sweep regression so the compiler bootstraps" };
 const goal: Action = {
   operator: "apply",
   action: { tool: "bash", command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
 };
 const stopState: Action = { operator: "stop", why: "the state is done" };
-const toEnd: Action = { operator: "move", state: "handoff", what: "" };
+const toEnd: Action = { operator: "move", state: "finish", what: "" };
 const stopRequest: Action = { operator: "stop", why: "the goal is done" };
 
 const objective: Action[] = [

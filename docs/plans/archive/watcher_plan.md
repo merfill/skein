@@ -2,7 +2,7 @@
 
 > Russian mirror — `docs/plans/archive/watcher_plan_ru.md`.
 
-Related: `docs/plans/observation_plan.md` (§8), `docs/concepts.md` (first
+Related: `docs/plans/archive/observation_plan.md` (§8), `docs/concepts.md` (first
 principle), `docs/ir.md` §5. Overall plan — `docs/plans/implementation_plan.md`.
 
 Status: implemented (see §7).

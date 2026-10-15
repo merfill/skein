@@ -1,8 +1,8 @@
 # Skein — goal reduction plan (the minimal goal)
 
-> English mirror of `docs/plans/goal_reduction_plan_ru.md`.
+> English mirror of `docs/plans/archive/goal_reduction_plan_ru.md`.
 > Status: **planning — awaiting approval.** No code until the owner signs off.
-> Supersedes the goal/plan/closure parts of `docs/plans/traversal_stack_spec.md` and the
+> Supersedes the goal/plan/closure parts of `docs/plans/archive/traversal_stack_spec.md` and the
 > criterion gate of `docs/ir_semantics.md` §2.2/§4.3; touching `AGENTS.md`.
 
 ## 1. Purpose
@@ -108,7 +108,7 @@ The IR stays monotone (design principle: the context is a projection, facts are 
 10. **Docs** — `docs/ir_semantics{,_ru}.md` (§2.2, §2.4–2.6, §4.1–4.3, §6),
     `docs/tools{,_ru}.md` (§2.1, §2.2, §4.3, §4.7, §5.1), `docs/system_prompt{,_ru}.md`,
     `docs/ir_operations{,_ru}.md` (operator registry), `docs/walkthrough{,_ru}.md`,
-    `docs/plans/traversal_stack_spec{,_ru}.md` (mark the criterion parts superseded),
+    `docs/plans/archive/traversal_stack_spec{,_ru}.md` (mark the criterion parts superseded),
     `docs/benches/bench_report{,_ru}.md` (note the model change), **`AGENTS.md`** (rewrite the
     stop invariant: a goal closes by `stop`; no criterion gate).
 11. **Tests** — `tests/ops/{create_goal,stop,applicable,traversal,derivation,decline}.test.ts`,

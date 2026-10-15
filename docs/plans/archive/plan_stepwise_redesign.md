@@ -109,7 +109,7 @@ not needed.
 - Drop the now-unused `fold` import if it becomes unused.
 - Rewrite tests that assumed the auto-run (`tests/loop.test.ts` where the plan ran in the
   same turn) to step-by-step execution.
-- `docs/plans/step_reduction_plan{,_ru}.md`: mark A4 **reverted** (next to A5), with the
+- `docs/plans/archive/step_reduction_plan{,_ru}.md`: mark A4 **reverted** (next to A5), with the
   reason (it violates step-by-step; it created the funnel).
 
 **Check:** typecheck + offline green.
@@ -167,7 +167,7 @@ not needed.
 ### Step 5 — documentation
 - `docs/ir_semantics{,_ru}.md`: I1–I6 in §2 (nodes/plan), §4 (operators), invariants.
 - `docs/ir{,_ru}.md` §2/§5: `done_when`, plan, `create_goal`, "an item is only an action".
-- `docs/plans/traversal_stack_spec{,_ru}.md`: I1–I6 explicit; step-by-step traversal.
+- `docs/plans/archive/traversal_stack_spec{,_ru}.md`: I1–I6 explicit; step-by-step traversal.
 - `docs/concepts{,_ru}.md`: "plan = string + first step" if needed.
 
 ## 5. File map
@@ -180,7 +180,7 @@ not needed.
   `tests/workingset.test.ts`, `tests/live/ir_operations_step.test.ts`,
   `tests/prompt.test.ts`.
 - Docs: `docs/ir_semantics{,_ru}.md`, `docs/ir{,_ru}.md`,
-  `docs/plans/traversal_stack_spec{,_ru}.md`, `docs/plans/step_reduction_plan{,_ru}.md`,
+  `docs/plans/archive/traversal_stack_spec{,_ru}.md`, `docs/plans/archive/step_reduction_plan{,_ru}.md`,
   `docs/system_prompt{,_ru}.md`, `docs/concepts{,_ru}.md`.
 
 ## 6. Bench status (paused)

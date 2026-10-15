@@ -79,7 +79,7 @@
   снимок всего воркспейса, поэтому любое изменение (включая импортируемый модуль)
   гасит проверку. Точность через граф импортов отложена
   (`docs/plans/archive/staleness_scope_plan_ru.md`).
-- Внешние изменения — в `docs/plans/observation_plan_ru.md`.
+- Внешние изменения — в `docs/plans/archive/observation_plan_ru.md`.
 
 ## 7. Порядок работ
 

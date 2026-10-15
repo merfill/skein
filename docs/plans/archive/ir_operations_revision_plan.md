@@ -4,12 +4,12 @@
 >
 > Basis — the arm principle (`docs/concepts.md`, "The arm is ReAct in place") and the
 > audit of `docs/ir_operations.md`, `docs/ir_semantics.md`, `docs/projection.md`,
-> `docs/plans/traversal_stack_spec.md` against `src/ir/*`, `src/tools/index.ts`,
+> `docs/plans/archive/traversal_stack_spec.md` against `src/ir/*`, `src/tools/index.ts`,
 > `src/loop/classify.ts`, `src/ir/project.ts`.
 
 Related: `docs/ir_semantics.md` (source of truth — this plan changes it first),
 `docs/ir_operations.md` (operator registry and coverage), `docs/projection.md`,
-`docs/plans/traversal_stack_spec.md`, `docs/system_prompt.md`, `docs/tools.md`.
+`docs/plans/archive/traversal_stack_spec.md`, `docs/system_prompt.md`, `docs/tools.md`.
 
 ## 1. Context: what the audit found
 

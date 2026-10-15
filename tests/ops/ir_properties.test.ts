@@ -19,7 +19,7 @@ function mulberry32(seed: number): () => number {
 
 // Generate a random but LEGAL IR tree under the current semantics: a state (`move`) holds a
 // plan of items, each item holds command alternatives; a state closes by a `stop` relation;
-// structural edges form a forest (docs/ir_revision.md §2, docs/plans/goal_into_move_plan.md).
+// structural edges form a forest (docs/ir_revision.md §2, docs/plans/archive/goal_into_move_plan.md).
 function generate(seed: number): Event[] {
   const rng = mulberry32(seed);
   const events: Event[] = [];

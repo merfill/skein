@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fold } from "../src/ir/graph";
 import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { NODE_INSTRUCTIONS } from "../src/loop/prompt";
+import { turnInstruction } from "../src/loop/prompt";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
@@ -48,16 +48,15 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(project(fold([request()])).history.map(shape)).toEqual([{ role: "user", text: "solve the task" }]);
   });
 
-  it("move + create_goal and action/observation -> assistant.call + tool pairs", () => {
+  it("move -> Start state marker + goal; action/observation -> assistant.call + tool pairs", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The move and each plan item are native calls + tool results.
+    // The state is a decision, not a tool call: a `Start state` marker and the goal as a `user`
+    // turn, then each plan item as a native call + tool result.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
+      ["assistant", null, false],
       ["user", null, false],
-      ["assistant", "move", false],
-      ["tool", null, true],
-      ["system", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
       ["assistant", "read", false],
@@ -65,16 +64,16 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
   });
 
-  it("stop -> the finished state's move result carries its closure (no assistant text)", () => {
+  it("stop -> the finished state collapses to its Start/goal/Finish triple", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
     expect(ctx.history.map(shape)).toEqual([
+      { role: "assistant", text: "Start state Orientation" },
+      { role: "user", text: "do it\nDone when: the project and its layout are known." },
+      { role: "assistant", text: "Finish state Orientation — done" },
       { role: "user", text: "solve the task" },
-      { role: "assistant", call: "move" },
-      { role: "tool", answers: true },
     ]);
-    expect(ctx.history.at(-1)?.text).toContain("finished — done");
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {
@@ -99,7 +98,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     // ...but the tape has exactly one assistant.tool_calls per move (goal + seed + read),
     // never a message tagged `item`/`file`/`plan`.
     expect(new Set(project(res.state).history.map((m) => m.role))).toEqual(
-      new Set(["user", "assistant", "tool", "system"]),
+      new Set(["user", "assistant", "tool"]),
     );
   });
 });
@@ -151,7 +150,7 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(() => buildMessages(ctx)).toThrow(/without a callId/);
   });
 
-  it("is the base + one system per constraint, then the tape, then the situation instruction", async () => {
+  it("is the base + one system per constraint, then the tape, then the open-state nudge", async () => {
     const context: Context = {
       history: [{ role: "user", text: "fix" }],
       situation: "working",
@@ -162,6 +161,6 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
-    expect(msgs[3]?.content).toBe(NODE_INSTRUCTIONS.working);
+    expect(msgs[3]?.content).toBe(turnInstruction());
   });
 });
