@@ -78,11 +78,14 @@ function goalStep(op: Action, w: Workspace) {
 const REQ = { role: "user", content: "solve the task" };
 
 // The tape of `request` + `move("orientation","do it")` + its first plan item (`true`):
-// the state every state-level op starts from. A state is a `Start state` marker + the goal as
-// a `user` turn; the plan items are native call/result pairs.
+// the state every state-level op starts from. The request leads the tape; a state is a
+// `Start state` marker, the state's instruction and the goal as a `user` turn; the plan items
+// are native call/result pairs.
 const GOAL_PREFIX = [
+  REQ,
   { role: "assistant", content: "Start state Orientation" },
-  { role: "user", content: expect.stringContaining("do it") },
+  { role: "system", content: expect.stringContaining("Explore the repository") },
+  { role: "user", content: expect.stringContaining("map the project") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -103,8 +106,10 @@ describe("move: before [request] -> delta -> after", () => {
     expect(kinds(res)).toEqual(["action", "plan", "item", "observation"]);
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
+      REQ,
       { role: "assistant", content: "Start state Orientation" },
-      { role: "user", content: expect.stringContaining("green") },
+      { role: "system", content: expect.stringContaining("Explore the repository") },
+      { role: "user", content: expect.stringContaining("map the project") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -140,7 +145,9 @@ describe("move: before [request] -> delta -> after", () => {
     const texts = after.map((entry) => entry.content ?? "").join("\n");
     expect(texts).toContain("Finish state Localization — the line is named");
     expect(texts).not.toContain("false");
-    expect(after.at(-3)).toEqual({
+    expect(
+      after.find((entry) => entry.content === "Finish state Localization — the line is named"),
+    ).toEqual({
       role: "assistant",
       content: "Finish state Localization — the line is named",
     });
@@ -402,7 +409,7 @@ describe("recall / search: they leave a node on the state's tape", () => {
     expect(after.at(-1)?.content).toContain("MATCH one");
   });
 
-  it("refusals carry the reason: stop at the request, and an empty move", async () => {
+  it("refusals carry the reason: stop at the request, and a malformed move", async () => {
     const req = request();
     const stop = { operator: "stop" as const };
     const stopCls = classification(stop, [req]);
@@ -423,19 +430,19 @@ describe("recall / search: they leave a node on the state's tape", () => {
         tool_call_id: "call:rejected",
       },
     ]);
-    const empty: Action = { operator: "move", state: "orientation", what: "" };
-    const emptyCls = classification(empty, [req]);
-    expect(emptyCls.accept).toBe(false);
-    const emptyCall = modelCall(empty);
+    const bad = { operator: "move", state: "atlantis" } as unknown as Action;
+    const badCls = classification(bad, [req]);
+    expect(badCls.accept).toBe(false);
+    const badCall = modelCall(bad);
     expect(
       (
         await tapeOf(
           project(fold([req]), {
-            rejection: { text: `rejected ${emptyCall.name}: ${emptyCls.reason}`, name: emptyCall.name, args: emptyCall.args },
+            rejection: { text: `rejected ${badCall.name}: ${badCls.reason}`, name: badCall.name, args: badCall.args },
           }),
         )
       ).at(-1)?.content,
-    ).toMatch(/^rejected move: empty_what/);
+    ).toMatch(/^rejected move: empty_state/);
   });
 });
 
@@ -445,10 +452,11 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
+      REQ,
       { role: "assistant", content: "Start state Orientation" },
-      { role: "user", content: expect.stringContaining("do it") },
+      { role: "system", content: expect.stringContaining("Explore the repository") },
+      { role: "user", content: expect.stringContaining("map the project") },
       { role: "assistant", content: "Finish state Orientation — done" },
-      { role: "user", content: "solve the task" },
     ]);
   });
 

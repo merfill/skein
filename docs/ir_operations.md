@@ -48,7 +48,7 @@ refusals (the catalogue), `PRJ` projection points (referenced).
 | Kind | Payload | Role |
 |---|---|---|
 | `request` | `{text}` | raw motivation; the root; walked as a sequence of states; it ends when the terminal state is stopped |
-| `move` | `{state, note?}` | the doxa's declared state (island); a flat child of the request |
+| `move` | `{state, what}` | the doxa's declared state (island) and its goal; a flat child of the request |
 | `goal` | `{what}` | the concrete work of one state (`move.goal`) |
 | `plan` | — | ordered container of a goal's items (`items`); the LAST item is current |
 | `item` | — | ordered container of a step's alternatives (`alts`: actions); the LAST is current |
@@ -108,15 +108,14 @@ never nested under it.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| open a state | focus is the request with no `move` yet | add `move` (`state`, `what`, `note?`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state`, `empty_what` | `OP-MV-1` |
-| transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `empty_what`, `state_open` | `OP-MV-2` |
+| open a state | focus is the request with no `move` yet | add `move` (`state`, `what`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state` | `OP-MV-1` |
+| transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `state_open` | `OP-MV-2` |
 | terminal | the state is `finish` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
-| carry the summary | any of the above, `note` present | the `note` is stored on the `move` and rendered into the `Finish state` marker of the state being left | the finished state's turns are elided, its marker remains | — | `OP-MV-4` |
 
-- **Projection** (`PRJ-MV`): the tape gains a `Start state <label>` marker (an `assistant` turn)
-  and the state's goal as a `user` turn (the request concretized). Once the state is stopped it
-  renders a `Finish state <label> — <why>` marker (from the `move.stop` relation); the state's own
-  plan turns are elided (§7 of the semantics).
+- **Projection** (`PRJ-MV`): the tape gains a `Start state <label>` marker (an `assistant` turn),
+  the state's `instruction` (a `system` turn) and the state's goal as a `user` turn
+  (`what: <the island's goal>`). Once the state is stopped it renders a `Finish state <label> —
+  <why>` marker (from the `move.stop` relation); the state's own plan turns are elided (§7).
 - **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
   **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
   it) and where to go next. `what` is required except for the terminal `finish`.
@@ -371,7 +370,6 @@ by the engine (`src/tools/index.ts`): its non-execution is recorded as an `actio
 | Reason (token) | Trigger | Operator | ID |
 |---|---|---|---|
 | `empty_state` | malformed `move` (unknown `state`) | `move` | `REF-MV-EMPTY` |
-| `empty_what` | a non-terminal `move` with no goal text | `move` | `REF-MV-WHAT` |
 | `no_state` | `apply` when the focus is not an open state (the request, or a finished state) | apply | `REF-AP-NO-STATE` |
 | `no_state` | `apply` when the focus is not an open state | apply | `REF-NO-STATE` |
 | `not_in_state` | `apply` choosing a tool outside the focused state's island `applies` | apply | `REF-NOT-IN-STATE` |
@@ -431,7 +429,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 
 | Spec ID | Offline test | Live |
 |---|---|---|
-| `OP-MV-1..4` | `tests/ops/move.test.ts` | steps `request-choose-state`, `transition-move`, `terminal-stop` |
+| `OP-MV-1..3` | `tests/ops/move.test.ts` | steps `request-choose-state`, `transition-move`, `terminal-stop` |
 | `OP-CG-1` | `tests/ops/apply.test.ts` | steps `move-concretize`, `goal-stop` |
 | `OP-AP-READ-1..8` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
 | `OP-AP-GREP-1..6` | `tests/ops/apply.test.ts` | scenario `locate-across-files` |
@@ -445,7 +443,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-SR-1..7` | `tests/ops/search.test.ts` | scenario `retrieve-at-scale` |
 | `TR-1..9` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `continue-open-goal` |
 | `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-MV-EMPTY`, `REF-MV-WHAT`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
+| `REF-MV-EMPTY`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
 | `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
 | `REF-NOT-IN-STATE` | `tests/ops/applicable.test.ts` | — |
 | `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RC-STATE` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |

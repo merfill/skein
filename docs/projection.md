@@ -16,15 +16,15 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 ## 2. Roles and the moves
 
-- `system` — the base prompt, the constraints, and the current situation's instruction (appended
-  last, temporary);
-- `user` — the request (shown at a state decision) and each state's goal;
+- `system` — the base prompt, the constraints, each state's `instruction` (shown once at entry),
+  and the current situation's instruction (appended last, temporary);
+- `user` — the request (leads the tape, every turn) and each state's goal;
 - `assistant` — the state markers and the doxa's calls;
 - `tool` — command results.
 
 | Turn | Messages |
 |---|---|
-| `move` | a **state is a decision, not a tool call**: an `assistant` marker `Start state <label>`, then the state's goal as a `user` turn (the request concretized: `what`, then `Done when: <done>.`). The request turn is **temporary** — shown when a state is chosen (the initial request and each `transition`), dropped while a state is worked |
+| `move` | a **state is a decision, not a tool call**: an `assistant` marker `Start state <label>`, then the state's `instruction` as a `system` turn, then the state's goal as a `user` turn (`what: <the island's goal>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
 | `stop` | the state's closure, rendered as an `assistant` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
@@ -32,23 +32,24 @@ a projection, not an accumulating transcript. The same events always give the sa
 Every plan item is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
 state's plan. A command that ran and mutated a file (an edit) has no observation, so its `tool`
 message reads `mutated <path>`. A state is the triple `Start state <label>` / goal / `Finish
-state <label>` and, while open, its plan. The `Finish state` marker carries **only** the label,
-the `stop` reason and the `note` the model passed on the move that left it — never the list of
-changed files: a state that runs a build mutates thousands of artifacts.
+state <label>` and, while open, its plan. The `Finish state` marker carries **only** the label
+and the `stop` reason — never the list of changed files: a state that runs a build mutates
+thousands of artifacts.
 
 ## 3. The tape is built by walking the tree
 
-- the request is a `user` turn shown when a state is chosen (`request` / `transition`), not a
-  permanent turn;
+- the request is the first `user` turn (right after the base prompt), on every turn;
 - its states (`move` children) render in order: an **open** state renders its `Start state`
-  marker, its goal (`user`), and then its plan items in order (the first `apply` seeds the plan);
-  a **finished** state — the current one awaiting the transition, or one already left behind —
-  collapses to its triple `Start state <label>` / goal / `Finish state <label> — <why>`. No plan
-  turns and no separate `stop` message remain;
+  marker, its `instruction` (`system`) and its goal (`user`), then its plan items in order (the
+  first `apply` seeds the plan); a **finished** state — the current one awaiting the transition,
+  or one already left behind — collapses to `Start state <label>` / `instruction` / goal /
+  `Finish state <label> — <why>`. No plan turns and no separate `stop` message remain;
+- the doxa's `move.what`/`move.notes` are **not** shown: a state's goal comes from its island
+  definition (`Island.what`), and the request's presumptions are not carried as `notes`;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns leave the tape;
   only its triple remains. Only the view goes, not the data: the tree stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
-  the tape; its meaning lives in the `why` fields and the `move` `note`.
+  the tape; its meaning lives in the `why` fields.
 
 ## 4. Markers and addresses
 

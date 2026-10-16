@@ -23,11 +23,10 @@ const TRANSITIONS = (() => {
 
 // The states, rendered from the island list (single source): each is a goal (`what`) and the
 // knowledge that closes it (`done`). The base prompt carries the whole set, once.
-const STATES = ISLAND_ORDER.map((id) => {
-  const island = ISLANDS[id];
-  const done = island.criterion !== "" ? ` Done: ${island.criterion}.` : "";
-  return `- ${island.label} — ${island.what}.${done}`;
-}).join("\n");
+// The states are the map: each is its kind of work (`what`). The stop criterion is NOT here —
+// it is delivered per turn in the focused state's hint (see `turnInstruction`), so it appears
+// once, at the highest recency, and never duplicates the map.
+const STATES = ISLAND_ORDER.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 
 // The states a request can start in, shown in the request hint. There is no START node in the
 // graph, so the list is explicit: add a state here to offer it at the request.
@@ -36,24 +35,20 @@ const renderStates = (ids: readonly IslandId[]): string =>
   ids.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 const START_STATES = renderStates(START_ISLANDS);
 
-// How to set the state's `what`/`done` — the source differs by situation. At the request there is
-// no previous state, so the goal is the request concretized onto the state you enter. At a
-// transition the source is the state you just finished (its `Finish` line): the new goal carries
-// its result forward; the request is only the overall context.
-const REQUEST_WHAT_DONE =
-  "Set `what` and `done` for this request: `what` = the request's goal for the state you enter " +
-  "— name the specific failure, area or file the request points to; `done` = the knowledge that " +
-  "closes THAT state for this request. One short sentence each — up to ~20 words; do not restate " +
-  "the whole task, but carry the request's specifics.";
+// How to set the state's `notes` at the request — the state's goal and criterion are its own
+// (from the island); the request only contributes presumptions to verify. At a transition the
+// source is the state you just finished (its `Finish` line); the request is the overall context.
+const REQUEST_NOTES =
+  "Take the state's own goal as it stands — do not fold the request into `what`; leave `done` out " +
+  "(the state's default criterion applies). `notes` = what the request presumes about this state, " +
+  "in the context of orienting in the project (the area, subsystem, files or the acceptance " +
+  "command it points to) — carried in as an assumption to verify against the project, since the " +
+  "request may be wrong. One short line — up to ~20 words.";
 
 // S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
 // tool descriptions — those ship in the request's `tools` field (the single source is the
 // registry, `PROPOSAL_TOOLS`). Stable, so a good cache prefix.
 export const BASE_BLOCKS: readonly PromptBlock[] = [
-  {
-    id: "B0",
-    text: `You are a coding agent. You work in a small set of states — each a step of the work with its own goal — and the engine records your moves. Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result.`,
-  },
   {
     id: "B4",
     text: `You are always in exactly one state; the state is its goal.
@@ -64,18 +59,16 @@ ${STATES}
 Work the state — your tool calls are its steps — until its goal is reached, then \`stop\`. The engine returns you to it; then \`move\` to the next one, or to Finish and \`stop\` to end the request.
 
 Transitions — move on as soon as the condition holds:
-${TRANSITIONS}`,
-  },
-  {
-    id: "B19",
-    text: `The workspace is the source of truth: read the code and run it to see what happens. Do not look for a change history.`,
+${TRANSITIONS}
+
+IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure.`,
   },
 ];
 
-// S2 — the request scenario (a fresh request: choose the first state, or decline). It scopes
-// `what`: the goal of the state you enter, never the whole task — so an Orientation goal cannot
-// absorb the bug-hunt the request mentions (docs/ir_semantics.md §2.5). Rendered as a system
-// message right after the request, per turn (never stored).
+// S2 — the request scenario (a fresh request: choose the first state, or decline). It carries the
+// request's presumptions into the state as `notes`; the state's own goal and criterion stand as-is
+// (docs/ir_semantics.md §2.5). Rendered as a system message right after the request, per turn
+// (never stored).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B6",
@@ -84,7 +77,7 @@ const REQUEST_BLOCKS: readonly PromptBlock[] = [
 Startable states:
 ${START_STATES}
 
-${REQUEST_WHAT_DONE}`,
+${REQUEST_NOTES}`,
   },
 ];
 
@@ -107,10 +100,10 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
 ];
 
 // S5 — the finished-state scenario: the tape above carries the record (each finished state is a
-// `Start state` / goal / `Finish state` triple) and the user's request. The hint points the doxa
-// at the JUST-FINISHED state's `Finish` line as the source of the new state's what/done (the
-// request is only context), and names the states reachable from the focused one. Dynamic, like
-// `turnInstruction`.
+// `Start state` / goal / `Finish state` triple) and the user's request. The hint names the states
+// reachable from the focused one and carries the request's presumptions into the next state as
+// `notes` — the next state's OWN goal stands as-is (never carried from the `Finish` line).
+// Dynamic, like `turnInstruction`.
 export function transitionInstruction(island?: IslandId): string {
   const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
   const candidates = [...new Set<IslandId>([...targets, TERMINAL_ISLAND])];
@@ -122,7 +115,7 @@ export function transitionInstruction(island?: IslandId): string {
   return [
     `${head} From it and the user's request, choose the next state: call \`move\` to enter it; if the work is done, \`move\` to Finish and \`stop\` there.`,
     `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
-    `Set \`what\`/\`done\` from that result: \`what\` = the concrete continuation of the state you just finished — the failure, area or file its \`Finish\` line names; \`done\` = the knowledge that closes THIS state. One short sentence each — up to ~20 words.`,
+    `Take the next state's own goal as it stands — do not fold the finished state's result or the request into \`what\`; leave \`done\` out (the state's default criterion applies). \`notes\` = what the request and the just-finished result presume about this state — carried in as assumptions to verify against the project. One short line — up to ~20 words.`,
   ].join("\n\n");
 }
 
@@ -158,7 +151,7 @@ export function turnInstruction(island?: IslandId, done?: string): string {
     criterion !== ""
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
-  return `${lead} When it holds, \`stop\` — and nothing else; do not over-work the state.`;
+  return `${lead} When it holds, \`stop\` — and nothing else; a strong suspicion is enough, do not verify to be sure (a wrong call is caught later), do not over-work the state, and do not do a later state's work.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

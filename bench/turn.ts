@@ -34,7 +34,7 @@ import type { Action, Proposals } from "../src/llm/schemas";
 import { toolNamesFor } from "../src/llm/tools";
 import { loadSettings } from "../src/config/settings";
 import { ISLANDS, stateDescription, type IslandId } from "../src/ir/islands";
-import { observationInstruction, type Context, type Situation, type TapeMessage } from "../src/ir/project";
+import { type Context, type Situation, type TapeMessage } from "../src/ir/project";
 import { buildMessages } from "../src/loop/propose";
 import { TurnMeter } from "./metrics";
 
@@ -207,18 +207,12 @@ function rebuildMessages(row: Row): BaseMessage[] {
       ? { ...message, text: stateDescription(ISLANDS[island], move?.what, move?.done) }
       : message,
   );
-  const last = history.at(-1);
-  const result =
-    row.situation === "working" && last?.role === "tool" && island !== undefined
-      ? observationInstruction(ISLANDS[island].applies)
-      : undefined;
   const context: Context = {
     history,
     situation: row.situation,
     constraints: row.constraints ?? [],
     ...(island !== undefined ? { island } : {}),
     ...(move?.done !== undefined && move.done !== "" ? { done: move.done } : {}),
-    ...(result !== undefined ? { result } : {}),
   };
   return buildMessages(context);
 }

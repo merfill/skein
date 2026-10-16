@@ -53,7 +53,7 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
 
-### 2.1 `move { state, what, note? }`
+### 2.1 `move { state, what }`
 
 - `state` — the island of work to work in, one of the names the base prompt lists
   (`reconnaissance`, `localization`, `patch`, `verification`, …); an authored label, never a
@@ -61,8 +61,6 @@ operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the
   current state is `stop`ped).
 - `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
   the terminal `finish` state (which has no goal).
-- `note?` — an optional one-line summary of the state just finished; it rides into that state's
-  `Finish state` marker on the tape.
 
 Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
 focus becomes a `move` node and the plan hangs directly off it. The next move is the state's

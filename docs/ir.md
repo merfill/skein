@@ -34,9 +34,9 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
 
 - `request.payload = { text }` — raw motivation, the root. Walked as a sequence of states;
   declined (`unactionable`) if not actionable; no plan, no `stop`;
-- `move.payload = { state, what, note? }` — the declared state (island of work) AND the state's
-  own goal text (`what`; a state IS its goal, so the plan hangs directly off the `move`); a flat
-  child of the request; `note` summarizes the state just finished;
+- `move.payload = { state, what }` — the declared state (island of work) AND the state's own goal
+  text (`what`; a state IS its goal, so the plan hangs directly off the `move`); a flat child of
+  the request;
 - `plan`/`item` — containers; the order of children is the order of relation addition, and
   the **last** child is the current item/alternative;
 - `action.payload` carries the command (and, for an edit, `find`/`replace`; for a run, a
@@ -80,7 +80,7 @@ state closes only through the doxa's `stop`.
 
 `src/llm/schemas.ts`, `src/tools/index.ts`, the gate `src/loop/classify.ts`:
 
-- **`move`** `{ state, what, note? }` — declares the state to work in (the automaton's
+- **`move`** `{ state, what }` — declares the state to work in (the automaton's
   transition) AND the state's own goal text (`what`; required except for the terminal state); a
   state IS its goal, so the plan hangs directly off the `move` and the first `apply` seeds it.
   Legal at a fresh request or at a finished state; the states are flat children of the request.
@@ -93,7 +93,7 @@ state closes only through the doxa's `stop`.
 - **`recall` / `search`** — read-only addressing of a stored result's body (window / pattern).
 
 The gate in `classify` handles only the structural moves (`state_open`, `no_state`,
-`empty_state`, `empty_what`, `not_addressed`, `not_request`, `interpreted`, empty fields); the
+`empty_state`, `not_addressed`, `not_request`, `interpreted`, empty fields); the
 command guards (`repeated_action`, `stale_base`, `constraint_violation`, empty command) live in
 the engine and produce observations (`src/tools/index.ts`).
 
@@ -115,11 +115,11 @@ tape of `user`/`assistant`/`tool` turns (rebuilt from the tree), the current sit
 (`request`/`plan`/`working`/`transition`/`terminal`), the admissible moves, and the constraints. `src/loop/propose.ts`
 assembles the model messages: the base prompt, the constraints, the history, and — appended last
 (temporary) — the current situation's instruction. A state is a decision, not a tool call: it is
-rendered as a `Start state <label>` marker (an `assistant` turn) plus its goal as a `user` turn
-(the request concretized); a finished state collapses to its triple `Start state <label>` / goal /
-`Finish state <label> — <why>` (the `stop` reason, read from the `move.stop` relation) — the plan
-turns leave the tape. The request is a temporary `user` turn, shown when a state is chosen
-(`request`/`transition`). The `tool` messages
+rendered as a `Start state <label>` marker (an `assistant` turn), the state's `instruction` (a
+`system` turn), and its goal as a `user` turn (`what: <the island's goal>`); a finished state
+collapses to `Start state <label>` / `instruction` / goal / `Finish state <label> — <why>` (the
+`stop` reason, read from the `move.stop` relation) — the plan turns leave the tape. The request is
+the second message of the tape (right after the base prompt), on every turn. The `tool` messages
 carry the bounded inline body (an inspection result's head, a command's tail, when large); the
 full body is addressed by id via `recall`/`search`. A structural move refused by `classify`
 creates no node, so its reason is appended as a transient `tool` message for the next turn. The

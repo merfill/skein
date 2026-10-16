@@ -781,7 +781,7 @@ export function executeAction(
     const id = `w:move:${moveSeq}`;
     const payload: Record<string, unknown> = { state: spec.state, what: spec.what };
     if (spec.done !== undefined && spec.done !== "") payload.done = spec.done;
-    if (spec.note !== undefined && spec.note !== "") payload.note = spec.note;
+    if (spec.notes !== undefined && spec.notes !== "") payload.notes = spec.notes;
     if (spec.call !== undefined) payload.call = spec.call;
     events.push({
       type: "add_node",
@@ -1006,7 +1006,7 @@ export function executeAction(
         state: action.state,
         what: action.what,
         done: action.done,
-        note: action.note,
+        notes: action.notes,
         call: modelCall(action),
       });
       addEdge({ kind: "llm" }, root, moveId, "move");

@@ -1,5 +1,5 @@
 import { currentFocus, hasStopped, unactionableOf, type State } from "../ir/graph";
-import { ISLANDS, isIsland, isTerminalIsland } from "../ir/islands";
+import { ISLANDS, isIsland } from "../ir/islands";
 import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import { nativeToolName } from "../llm/tools";
 import type { Action } from "../llm/schemas";
@@ -31,16 +31,6 @@ export function classify(action: Action, state: State): Classification {
 
   if (action.operator === "move") {
     if (!isIsland(action.state)) return reject("empty_state: move needs a state");
-    // The state's goal text is required (`what`), except for the terminal Finish state, which
-    // has no plan and is closed directly (docs/plans/archive/goal_into_move_plan.md).
-    if (!isTerminalIsland(action.state) && action.what.trim() === "") {
-      return reject("empty_what: name the state's goal in `what`");
-    }
-    // The state's stop criterion is required too (except for the terminal Finish, which is closed
-    // directly): the state must know when it is done (docs/ir_semantics.md §4.1).
-    if (!isTerminalIsland(action.state) && (action.done ?? "").trim() === "") {
-      return reject("empty_done: name the state's stop criterion in `done`");
-    }
     if (node?.kind === "request") {
       if (unactionableOf(state, current as string) !== undefined) {
         return reject("interpreted: the request is already declined");

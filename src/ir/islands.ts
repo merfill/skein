@@ -23,6 +23,8 @@ export interface Island {
   what: string;
   // The state of knowledge that shows you are done here.
   criterion: string;
+  // How to act in this state — the engine's instruction, rendered once when the state is entered.
+  instruction: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: the write-class
   // (`edit`/`write`/`apply_patch`) lives in Patch alone. The island still never closes a state
@@ -43,32 +45,44 @@ export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
     id: "orientation",
     label: "Orientation",
-    what: "where I am: the project and its layout",
-    criterion: "the project and its layout are known",
+    what: "map the project — its repository root, how it is built and how it is checked",
+    criterion:
+      "the repository root, the build and acceptance commands (or that the project has none), " +
+      "and whether the project is under version control are known",
+    instruction:
+      "Explore the repository with the search tools: read the project's documentation (README, HACKING) " +
+      "to find the repository root, how it is built, and how it is checked. Do not hunt the defect, " +
+      "reproduce the failure, or compare with an upstream reference.",
     applies: INSPECT,
-    next: [{ to: "localization", when: "the project and its layout are known" }],
+    next: [{ to: "localization", when: "the project is mapped" }],
   },
   localization: {
     id: "localization",
     label: "Localization",
-    what: "locate the failure in the tree — where it originates",
-    criterion: "the failure is located — the file(s) and the offending code are named",
+    what: "find the failure in the code",
+    criterion: "the file(s) of the suspected defect are named, with the coordinates or not",
+    instruction:
+      "Read the suspect code and compare it with its siblings — the other loops that walk the " +
+      "same structure (the same pools or heap); a different advance or encoding there is the signal. " +
+      "Name the file(s) and lines. Do not prove the defect, apply a fix, or compare with an upstream reference.",
     applies: INSPECT,
-    next: [{ to: "patch", when: "the failure is located" }],
+    next: [{ to: "patch", when: "the coordinates are named" }],
   },
   patch: {
     id: "patch",
     label: "Patch",
     what: "apply the located fix",
     criterion: "the fix is applied in the workspace",
+    instruction: "Apply the located fix in the workspace — the minimal change.",
     applies: PATCH_TOOLS,
     next: [{ to: "verification", when: "the fix is applied in the workspace" }],
   },
   verification: {
     id: "verification",
     label: "Verification",
-    what: "confirm the change by running the request's acceptance command",
+    what: "confirm the fix by running the request's acceptance command",
     criterion: "the request's acceptance command now passes",
+    instruction: "Run the request's acceptance command and read its result.",
     applies: INSPECT,
     next: [
       { to: "finish", when: "the acceptance command passes" },
@@ -80,6 +94,7 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Finish",
     what: "finish the request",
     criterion: "",
+    instruction: "The work is done; finish the request.",
     applies: [],
     next: [],
   },

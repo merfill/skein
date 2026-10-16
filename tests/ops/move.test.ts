@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { planOf } from "../../src/ir/graph";
-import { project } from "../../src/ir/project";
 import { currentMove, isMoveFinished, moveIsland } from "../../src/ir/traversal";
 import {
   DEFAULT_FILES,
@@ -69,33 +68,10 @@ describe("move", () => {
     expect(isMoveFinished(stopped.state, moveId)).toBe(true);
   });
 
-  it("OP-MV-4 carries the note into the finished state's compaction line", () => {
-    const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find it"), run("true")], [request()], ws);
-    const stopped = exec({ operator: "stop", why: "the line is named" }, opened.events, ws);
-    const moved = exec(
-      { operator: "move", state: "patch", what: "apply the fix", note: "named p += Whsize_hd(hd)" },
-      stopped.events,
-      ws,
-    );
-    const texts = project(moved.state).history.map((message) => message.text).join("\n");
-    expect(texts).toContain("Finish state Localization — the line is named");
-    expect(texts).toContain("(note: named p += Whsize_hd(hd))");
-  });
-
   it("REF-MV-EMPTY rejects a move without a state", () => {
     const verdict = classification({ operator: "move", state: "atlantis" } as never, [request()]);
     expect(verdict.accept).toBe(false);
     expect(verdict.reason).toContain("empty_state");
-  });
-
-  it("REF-MV-WHAT rejects a non-terminal move with no goal text", () => {
-    const verdict = classification(
-      { operator: "move", state: "orientation", what: "   " },
-      [request()],
-    );
-    expect(verdict.accept).toBe(false);
-    expect(verdict.reason).toContain("empty_what");
   });
 
   it("DER-STATE-1 a state is finished only when it is stopped", () => {

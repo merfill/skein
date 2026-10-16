@@ -48,7 +48,7 @@
 | Kind | Payload | Роль |
 |---|---|---|
 | `request` | `{text}` | сырая мотивация; корень; проходится как последовательность состояний; завершается, когда остановлено терминальное состояние |
-| `move` | `{state, note?}` | объявленное доксой состояние (остров); плоский ребёнок запроса |
+| `move` | `{state, what}` | объявленное доксой состояние (остров) и его цель; плоский ребёнок запроса |
 | `goal` | `{what}` | конкретная работа одного состояния (`move.goal`) |
 | `plan` | — | упорядоченный контейнер пунктов цели (`items`); ПОСЛЕДНИЙ пункт — текущий |
 | `item` | — | упорядоченный контейнер альтернатив пункта (`alts`: действия); ПОСЛЕДНЯЯ — текущая |
@@ -107,15 +107,14 @@
 
 | Случай | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
-| открыть состояние | фокус — запрос ещё без `move` | добавить `move` (`state`, `what`, `note?`); связь `move` request → move; `descend` | состояние объявлено; фокус → `move`; план пуст до первого `apply` | `empty_state`, `empty_what` | `OP-MV-1` |
-| переход к следующему состоянию | текущее состояние **завершено** (остановлено) | добавить `move` (новый ребёнок запроса, сиблинг предыдущего состояния); `return` из завершённого состояния, затем `descend` | завершённое состояние оставлено позади; фокус → новый `move` | `empty_state`, `empty_what`, `state_open` | `OP-MV-2` |
+| открыть состояние | фокус — запрос ещё без `move` | добавить `move` (`state`, `what`); связь `move` request → move; `descend` | состояние объявлено; фокус → `move`; план пуст до первого `apply` | `empty_state` | `OP-MV-1` |
+| переход к следующему состоянию | текущее состояние **завершено** (остановлено) | добавить `move` (новый ребёнок запроса, сиблинг предыдущего состояния); `return` из завершённого состояния, затем `descend` | завершённое состояние оставлено позади; фокус → новый `move` | `empty_state`, `state_open` | `OP-MV-2` |
 | терминал | состояние — `finish` | как выше (без `what`); терминальное состояние принимает `stop` напрямую (`OP-ST`) | переход в терминал — знак конца | `empty_state` | `OP-MV-3` |
-| пронести сводку | любой из случаев, есть `note` | `note` сохраняется на `move` и рендерится в маркер `Finish state` оставляемого состояния | ходы завершённого состояния элиминируются, его маркер остаётся | — | `OP-MV-4` |
 
-- **Projection** (`PRJ-MV`): лента получает маркер `Start state <label>` (`assistant`) и цель
-  состояния ходом `user` (запрос, конкретизированный). Когда состояние остановлено, рендерится
-  маркер `Finish state <label> — <why>` (из связи `move.stop`); ходы плана состояния
-  элиминируются (§7 семантики).
+- **Projection** (`PRJ-MV`): лента получает маркер `Start state <label>` (`assistant`), инструкцию
+  состояния (`system`) и цель состояния ходом `user` (`what: <цель острова>`). Когда состояние
+  остановлено, рендерится маркер `Finish state <label> — <why>` (из связи `move.stop`); ходы плана
+  состояния элиминируются (§7 семантики).
 - **Notes.** `move` отклоняется, пока состояние ещё открыто (`state_open`). Движок **не**
   гейтит `move` по критерию: докса решает, когда состояние завершено (она его `stop`ит) и куда
   идти дальше. `what` обязателен, кроме терминального `finish`.
@@ -368,7 +367,6 @@ upstream-изменение, полученное через `fetch`.
 | Причина (токен) | Триггер | Оператор | ID |
 |---|---|---|---|
 | `empty_state` | некорректный `move` (неизвестный `state`) | `move` | `REF-MV-EMPTY` |
-| `empty_what` | нетерминальный `move` без текста цели | `move` | `REF-MV-WHAT` |
 | `no_state` | `apply`, когда фокус — не открытое состояние (запрос или завершённое состояние) | apply | `REF-AP-NO-STATE` |
 | `no_state` | `apply`, когда фокус — не открытое состояние | apply | `REF-NO-STATE` |
 | `state_open` | `move`, пока текущее состояние ещё открыто (не остановлено) | move | `REF-STATE-OPEN` |
@@ -427,7 +425,7 @@ upstream-изменение, полученное через `fetch`.
 
 | ID спеки | Offline-тест | Live |
 |---|---|---|
-| `OP-MV-1..4` | `tests/ops/move.test.ts` | шаги `request-choose-state`, `transition-move`, `terminal-stop` |
+| `OP-MV-1..3` | `tests/ops/move.test.ts` | шаги `request-choose-state`, `transition-move`, `terminal-stop` |
 | `OP-CG-1` | `tests/ops/apply.test.ts` | шаги `move-concretize`, `goal-stop` |
 | `OP-AP-READ-1..8` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
 | `OP-AP-GREP-1..6` | `tests/ops/apply.test.ts` | сценарий `locate-across-files` |
@@ -442,7 +440,7 @@ upstream-изменение, полученное через `fetch`.
 | `TR-1..9` | `tests/ops/traversal.test.ts` | шаги `apply-next-action`, `continue-open-goal` |
 | `OP-CG-1` | `tests/ops/apply.test.ts` | шаг `move-concretize` |
 | `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-MV-EMPTY`, `REF-MV-WHAT`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
+| `REF-MV-EMPTY`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
 | `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
 | `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RC-STATE` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |

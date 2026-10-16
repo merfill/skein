@@ -54,10 +54,10 @@ describe("the message tape under a long horizon", () => {
     );
 
     expect(lengths.length).toBeGreaterThan(30);
-    // The request turn is dropped; the declared state adds the `Start state` marker and the
-    // goal turn (+1 net of the dropped request); each later command appends an assistant call
-    // and a tool result.
-    expect(lengths[1]).toBe((lengths[0] ?? 0) + 1);
+    // The request turn stays; the declared state adds the `Start state` marker, the state's
+    // instruction and the goal turn (+3); each later command appends an assistant call and a
+    // tool result.
+    expect(lengths[1]).toBe((lengths[0] ?? 0) + 3);
     for (let i = 2; i < lengths.length; i += 1) {
       expect(lengths[i]).toBe((lengths[i - 1] ?? 0) + 2);
     }

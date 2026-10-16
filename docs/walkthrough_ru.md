@@ -4,9 +4,9 @@
 > (`move`) И ЕСТЬ его цель. `move { state, what, done }` объявляет остров работы, цель состояния
 > (`what`) и условие остановки (`done`); план состояния висит прямо на `move` и засевается первым
 > обычным `apply`; `stop` закрывает состояние и вынуждает переход; `stop` терминального состояния
-> (`finish`) завершает запрос. Контекст — лента сообщений, а состояние рендерится тройкой
-> `Start state <label>` / цель / `Finish state <label> — <why>` (запрос — временный `user`-ход,
-> показываемый на решении о состоянии). Актуальная форма — `docs/ir_semantics_ru.md`,
+> (`finish`) завершает запрос. Контекст — лента сообщений, а состояние рендерится как
+> `Start state <label>` / инструкция / цель / `Finish state <label> — <why>` (запрос — второе
+> сообщение ленты, на каждом ходу). Актуальная форма — `docs/ir_semantics_ru.md`,
 > справочник операторов — `docs/ir_operations_ru.md`, планы дизайна —
 > `docs/plans/archive/goal_into_move_plan_ru.md` и `docs/plans/archive/state_protocol_plan_ru.md`;
 > as-built — `docs/ir_ru.md`.

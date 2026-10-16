@@ -71,9 +71,9 @@ Current blocks:
 | B19 | The workspace is the source of truth — the change is already in the files; find it by reading the code and reproducing the failure; do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
 
 A state is rendered **on the tape**, not injected per turn: a `Start state <label>` marker (an
-`assistant` turn) followed by the state's goal as a `user` turn (`<what>` + `Done when: <done>.`).
-The request is a **temporary** `user` turn — shown when a state is chosen (`request` /
-`transition`), dropped while a state is worked. On an open state, the per-turn instruction is
+`assistant` turn), the state's `instruction` (a `system` turn), and the state's goal as a `user`
+turn (`what: <the island's goal>`). The request **leads** the tape — the second message, right
+after the base prompt — on every turn. On an open state, the per-turn instruction is
 `turnInstruction` (appended last, temporary): `This state's done criterion: "<criterion>". When it
 holds, \`stop\` — and nothing else; do not over-work the state.` A stalled state also gets a soft
 nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
@@ -115,8 +115,7 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   when the state's criterion holds, `stop` it (no criterion gate). A `move` while the state is
   open is refused. `stop` closes the state and is the only closure.
 - **B9** (transition) is the forced decision after a `stop`: `move { state, what }` to the next
-  state (routes from B4), or `move { state: "finish" }` when the work is done. Give `note` to
-  summarize the state being left.
+  state (routes from B4), or `move { state: "finish" }` when the work is done.
 - **B10** (terminal) is the Finish state: call `stop` to finish the request.
 - **B18** gives short micro-examples of a move to anchor its form.
 - **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
@@ -274,6 +273,15 @@ agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contr
   state's `Finish state <label>` line as the **source** of `what`/`done`. The `stop` description =
   the state's outcome (no "next state"), `why` required; `done` is required on `move`. Details and
   the run — `docs/benches/best_bench.md` §"Latest version"; the tape — `docs/projection.md`.
+- **Phase 22 (2026-10-16).** The **tape shape** changed (`src/ir/project.ts`): the request
+  **leads** the tape (the second message, right after the base prompt) on **every** turn; a state
+  renders `Start state <label>` (`ai`) + `Island.instruction` (`system`) + `what: <Island.what>`
+  (`user`); the doxa's `move.what`/`move.notes` are no longer shown. New per-island `instruction`
+  (`src/ir/islands.ts`) says how to act in the state — Orientation reads the project's docs;
+  Localization compares the suspect code with its **siblings** (the other loops over the same
+  structure) and does not chase an upstream reference. The `turnInstruction` criterion and the
+  `stop` description are also touched. The step-by-step method and rationale —
+  `docs/state_testing_ru.md`.
 
 ## 5. Test map
 

@@ -55,16 +55,16 @@ export type Provenance =
 
 // The state the doxa declared it will work in (docs/ir_semantics.md §2.5). `state` is
 // authored and never changes; `what` is the state's own goal text (a state IS its goal —
-// there is no separate goal node, docs/plans/archive/goal_into_move_plan.md); `note` is an optional
-// one-line summary of the state just finished, carried into its compaction line
-// (docs/plans/archive/state_protocol_plan.md §4a).
+// there is no separate goal node, docs/plans/archive/goal_into_move_plan.md).
 export interface MovePayload {
   state: IslandId;
   what: string;
   // The state's stop condition, concretized by the doxa in the request's terms (a state
   // attribute like `what`); the island's generic criterion is the fallback.
   done?: string;
-  note?: string;
+  // Presumptions carried into the state from the request (the area/subsystem/files it points
+  // to), to be verified against the tree — never a goal or a criterion.
+  notes?: string;
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):

@@ -24,8 +24,8 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toBe(BASE_BLOCKS.map((block) => block.text).join("\n\n"));
   });
 
-  it("carries the agent preamble and the state graph", () => {
-    expect(BASE_PROMPT).toContain("a small set of states");
+  it("carries the state-machine preamble and the state graph", () => {
+    expect(BASE_PROMPT).toContain("exactly one state");
     expect(BASE_PROMPT).toContain("Orientation");
     expect(BASE_PROMPT).toContain("Verification");
   });
@@ -34,11 +34,12 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toContain("the state is its goal");
     expect(BASE_PROMPT).not.toContain("create_goal");
     expect(BASE_PROMPT).toContain("States:");
-    // Each state is described by its goal and the knowledge that closes it.
-    expect(BASE_PROMPT).toMatch(/- Orientation — .*Done: .*\./);
+    // The map lists each state's kind of work; the criterion is delivered per turn, not here.
+    expect(BASE_PROMPT).toMatch(/- Orientation — .+\./);
+    expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/Localization — the project and its layout are known/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the coordinates are named/);
     expect(BASE_PROMPT).toMatch(/Finish is terminal/);
   });
 
@@ -87,10 +88,10 @@ describe("system prompt: tool contract", () => {
     expect(bash?.function.description).toMatch(/pipefail/i);
   });
 
-  it("keeps `stop` about this state's criterion, with its outcome as the record", () => {
+  it("keeps `stop` about this state's criterion, with what it established as the record", () => {
     const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
-    expect(stop?.function.description).toMatch(/Done when/i);
-    expect(stop?.function.description).toMatch(/outcome/i);
+    expect(stop?.function.description).toMatch(/criterion/i);
+    expect(stop?.function.description).toMatch(/established/i);
     expect(stop?.function.description).not.toMatch(/next state/i);
     const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
     expect(required).toContain("why");
@@ -174,13 +175,13 @@ describe("tool surface: no drift to a removed tool", () => {
     );
   });
 
-  it("keeps webfetch a plain reference (no diff/localization steering)", () => {
+  it("keeps webfetch a plain read-only file (no diff/localization/reference steering)", () => {
     const webfetch = PROPOSAL_TOOLS.find((tool) => tool.function.name === "webfetch");
     const description = webfetch?.function.description ?? "";
-    // webfetch only acquires read-only reference evidence; the localization/diff playbook was
-    // removed as a crutch that steered the model into a wrong-version whole-file diff.
-    expect(description).toMatch(/reference evidence/i);
-    expect(description).not.toMatch(/diff|localiz|same version|drift/i);
+    // webfetch only acquires a read-only file; every diff/localization/reference-evidence
+    // heuristic was removed as a crutch that steered the model into a wrong-version diff.
+    expect(description).toMatch(/read-only file/i);
+    expect(description).not.toMatch(/diff|localiz|reference evidence|same version|drift/i);
   });
 
   it("mentions no removed tool anywhere the model reads", () => {
@@ -276,17 +277,6 @@ describe("context format: tape", () => {
     expect(() => buildMessages({ ...context, history: [{ role: "tool", text: "x" }] })).toThrow(
       /without a callId/,
     );
-  });
-
-  it("appends the open-state nudge on a work turn (the observation is not rendered)", () => {
-    const withResult: Context = {
-      ...context,
-      result: "A tool call just returned — read its result above.",
-    };
-    const msgs = buildMessages(withResult);
-    expect(msgs.at(-1)).toBeInstanceOf(SystemMessage);
-    expect(String(msgs.at(-1)?.content)).toBe(turnInstruction());
-    expect(msgs.some((m) => /read its result/i.test(String(m.content)))).toBe(false);
   });
 
   it("appends the request instruction after the request (scopes the first move's goal)", () => {

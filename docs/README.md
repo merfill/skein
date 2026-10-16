@@ -34,6 +34,10 @@ original and a Russian mirror named with the `_ru` suffix.
 - [prompt_state_machine_concept.md](prompt_state_machine_concept.md) ·
   [RU](prompt_state_machine_concept_ru.md) — the agent's prompt as a state machine (states,
   criteria, transitions, constraints); draft.
+- [states_ru.md](states_ru.md) — the states' goals and acceptance criteria (RU-only draft).
+- [state_testing_ru.md](state_testing_ru.md) — testing the state prompts step by step on a live
+  task: the container, `bench/step.ts`, the tape per situation, results and open problems
+  (RU-only draft).
 - [context_design.md](context_design.md) · [RU](context_design_ru.md) — the design rationale
   for the projection (working memory, alternatives).
 
@@ -54,7 +58,7 @@ original and a Russian mirror named with the `_ru` suffix.
   transition on `stop`, a terminal state (done; extended by goal-into-move).
 - [plans/archive/goal_into_move_plan.md](plans/archive/goal_into_move_plan.md) ·
   [RU](plans/archive/goal_into_move_plan_ru.md) — the goal moves into `move` (done; the tape
-  renders a state as `Start state` / goal / `Finish state` markers).
+  renders a state as `Start state` / instruction / goal / `Finish state` markers).
 - [plans/archive/state_transitions_plan.md](plans/archive/state_transitions_plan.md) ·
   [RU](plans/archive/state_transitions_plan_ru.md) — the state's goal as the state-change move
   (superseded by the state protocol).

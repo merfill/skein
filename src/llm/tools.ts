@@ -63,14 +63,13 @@ const patchParams = z.object({
 });
 // The state: the island of work the doxa will work in AND the state's goal text (`what`) and its
 // stop criterion (`done`) — the state IS its goal (docs/plans/archive/goal_into_move_plan.md).
-// `what` is optional in the tool schema because the terminal Finish state has no plan; `done` is
-// required (the provider forces the model to state the criterion; leave it empty for Finish).
-// `classify` requires both non-empty for every other state (empty_what / empty_done).
+// Only `state` is required: `what` falls back to the island's goal and `done` to its criterion
+// when omitted. `notes` carries the request's presumptions (assumptions to verify) into the state.
 const moveParams = z.object({
   state: z.enum(ISLAND_IDS),
   what: z.string().optional(),
-  done: z.string(),
-  note: z.string().optional(),
+  done: z.string().optional(),
+  notes: z.string().optional(),
 });
 const stopParams = z.object({ why: z.string() });
 const declineParams = z.object({ why: z.string().optional() });
@@ -81,7 +80,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state you will work in and its goal and stop condition: move { state, what, done }. Call \`move\` alone — never batch it with other calls. what = the goal of this state; done = the knowledge that closes THIS state — at the start, restated from the request; at a transition, carried from the state you just finished (its "Finish:" line). Never restate the whole task and never do a later state's work. done is required for every state except the terminal Finish (leave it empty there). One short sentence each — up to ~20 words.`,
+      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object this state works on — optional; leave it out and the state's default goal applies. done = the knowledge that closes THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do a later state's work — name the place, do not derive the fix. notes = what the request presumes about this state, carried in as an assumption to verify against the tree. One short sentence each — up to ~20 words.`,
     schema: moveParams,
   },
   {
@@ -93,13 +92,13 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "search",
     description:
-      "Search INSIDE a stored result (an earlier observation), by id, for a regular expression — return matching line windows as plain text (line-numbered), with before/after context (default 3/3). Use it to locate a marker in a big stored output (a diff, a log, a build log) without paging it line by line; this searches stdout AND stderr of a stored run. It is not `grep` (which searches workspace files): the target here is one stored result id. A very broad pattern returns few candidates — narrow it.",
+      "Search INSIDE a stored result (an earlier observation), by id, for a regular expression — return matching line windows as plain text (line-numbered), with before/after context (default 3/3). Use it to locate a marker in a big stored output (a log, a build log, a command output) without paging it line by line; this searches stdout AND stderr of a stored run. It is not `grep` (which searches workspace files): the target here is one stored result id. A very broad pattern returns few candidates — narrow it.",
     schema: searchParams,
   },
   {
     name: "read",
     description:
-      "Read a file from the local filesystem (filePath). Returns at most ~8K chars; offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). Use grep to find content in large files. A larger file reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window in an unchanged world is a repeat (refused): recall the stored result by id instead. Refused if the file does not exist.",
+      "Read a file from the local filesystem (filePath). Returns at most ~8K chars; offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). Use grep to find content in large files. A larger file reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window when nothing has been modified is a repeat (refused): recall the stored result by id instead. Refused if the file does not exist.",
     schema: readParams,
   },
   {
@@ -117,37 +116,37 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "edit",
     description:
-      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique; it does not create files — use write for that. Refused if: oldString is not found; the file changed since its last read (stale_base) — read it first; a constraint forbids the path; or the file does not exist.",
+      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique; it does not create files — use write for that. Refused if: oldString is not found; the file was modified since its last read (stale_base) — read it first; a constraint forbids the path; or the file does not exist.",
     schema: editParams,
   },
   {
     name: "bash",
     description:
-      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command in an unchanged world is refused as a repeat.",
+      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat.",
     schema: bashParams,
   },
   {
     name: "write",
     description:
-      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. Overwriting requires that the file was read and is unchanged since (stale_base otherwise); prefer edit for a small change. Refused if a constraint forbids the path.",
+      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. Overwriting requires that the file was read and has not been modified since (stale_base otherwise); prefer edit for a small change. Refused if a constraint forbids the path.",
     schema: writeParams,
   },
   {
     name: "webfetch",
     description:
-      "Fetches content from a URL and saves it into the workspace as read-only reference evidence (default path .skein/ref/<slug>), to read alongside the tree. Refused if: the target path is outside the workspace or already exists; a constraint forbids it; or the download fails (non-2xx/timeout).",
+      "Fetches content from a URL and saves it into the workspace as a read-only file. Refused if: the target path is outside the workspace or already exists; a constraint forbids it; or the download fails (non-2xx/timeout).",
     schema: fetchParams,
   },
   {
     name: "apply_patch",
     description:
-      "Apply a unified diff to the workspace, e.g. an upstream change obtained with fetch (patch, optional strip; default patch -p1). Refused if the patch does not apply cleanly. Records the edited files.",
+      "Apply a unified diff to the workspace (patch, optional strip; default patch -p1). Refused if the patch does not apply cleanly. Records the edited files.",
     schema: patchParams,
   },
   {
     name: "stop",
     description:
-      `Call \`stop\` — and nothing else — when this state's \`Done when\` criterion holds. why = the state's outcome: what you found or changed (the file, the function, the line, the exact change or command), not just "done".`,
+      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context; a strong suspicion is enough — do not verify to be sure. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to a later state or to the task's problem.`,
     schema: stopParams,
   },
   {
@@ -298,7 +297,7 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         state: a.state,
         what: typeof a.what === "string" ? a.what : "",
         ...(typeof a.done === "string" ? { done: a.done } : {}),
-        ...pick("note"),
+        ...pick("notes"),
       };
       break;
     case "recall":

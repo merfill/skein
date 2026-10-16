@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fold } from "../src/ir/graph";
+import { ISLANDS } from "../src/ir/islands";
 import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
 import { turnInstruction } from "../src/loop/prompt";
@@ -55,7 +56,9 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     // The state is a decision, not a tool call: a `Start state` marker and the goal as a `user`
     // turn, then each plan item as a native call + tool result.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
+      ["user", null, false],
       ["assistant", null, false],
+      ["system", null, false],
       ["user", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
@@ -69,23 +72,12 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
     expect(ctx.history.map(shape)).toEqual([
-      { role: "assistant", text: "Start state Orientation" },
-      { role: "user", text: "do it\nDone when: the project and its layout are known." },
-      { role: "assistant", text: "Finish state Orientation — done" },
       { role: "user", text: "solve the task" },
+      { role: "assistant", text: "Start state Orientation" },
+      { role: "system", text: ISLANDS.orientation.instruction },
+      { role: "user", text: "what: map the project — its repository root, how it is built and how it is checked" },
+      { role: "assistant", text: "Finish state Orientation — done" },
     ]);
-  });
-
-  it("does not double the period when the doxa's `done` already ends with one", () => {
-    const w = makeWorkspace(DEFAULT_FILES).ws;
-    const first = execAll(
-      [{ operator: "move", state: "orientation", what: "map it", done: "the layout is known." }],
-      [request()],
-      w,
-    );
-    const ctx = project(first.state);
-    const goal = ctx.history.find((m) => m.role === "user" && m.text.startsWith("map it"))?.text ?? "";
-    expect(goal).toBe("map it\nDone when: the layout is known.");
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {
@@ -110,7 +102,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     // ...but the tape has exactly one assistant.tool_calls per move (goal + seed + read),
     // never a message tagged `item`/`file`/`plan`.
     expect(new Set(project(res.state).history.map((m) => m.role))).toEqual(
-      new Set(["user", "assistant", "tool"]),
+      new Set(["user", "assistant", "system", "tool"]),
     );
   });
 });

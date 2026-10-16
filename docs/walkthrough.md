@@ -5,8 +5,8 @@
 > (`what`) and its stop condition (`done`); the state's plan hangs directly off the `move` and is
 > seeded by its first ordinary `apply`; `stop` closes the state and forces the transition; the
 > terminal (`finish`) move's `stop` ends the request. The context is a message tape, and a state
-> renders as a `Start state <label>` / goal / `Finish state <label> — <why>` triple (the request
-> is a temporary `user` turn shown at a state decision). The current shape is `docs/ir_semantics.md`,
+> renders as `Start state <label>` / `instruction` / goal / `Finish state <label> — <why>` (the
+> request leads the tape as the second message, on every turn). The current shape is `docs/ir_semantics.md`,
 > the operator reference is `docs/ir_operations.md`, the design plans are
 > `docs/plans/archive/goal_into_move_plan.md` and `docs/plans/archive/state_protocol_plan.md`; the
 > as-built is `docs/ir.md`.

@@ -175,12 +175,14 @@ describe("projection (the message tape)", () => {
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");
     expect(context.history.map((message) => message.role)).toEqual([
+      "user",
       "assistant",
+      "system",
       "user",
       "assistant",
       "tool",
     ]);
-    expect(context.history[0]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toBe("Start state Orientation");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
     expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);
@@ -285,7 +287,7 @@ describe("record_rejection", () => {
         type: "record_rejection",
         tool: "move",
         target: "state:patch",
-        reason: "empty_what",
+        reason: "state_open",
         turn: 6,
       },
     ]);

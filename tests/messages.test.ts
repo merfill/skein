@@ -59,52 +59,55 @@ function journal(): Event[] {
 }
 
 describe("message wrappers: the wire JSON of the tape", () => {
-  it("the state is a Start marker + goal, results are tool messages, the request is dropped", async () => {
+  it("the request leads the tape, then the state's Start marker + instruction + goal, results are tool messages", async () => {
     const base = fold(journal());
     const drift = focusEvents(base);
     const msgs = await wire(buildMessages(project(drift.length > 0 ? fold(drift, base) : base)));
 
     expect(msgs.map((m) => m.role)).toEqual([
       "system", // base
+      "user", // the request (leads the tape)
       "assistant", // the state's `Start state` marker
-      "user", // the state's goal (what/done), concretized from the request
+      "system", // the state's instruction
+      "user", // the state's goal (`what:` from the state definition)
       "assistant", "tool", // the first plan item (ls)
       "assistant", "tool", // edit
       "assistant", "tool", // read
       "system", // the open-state nudge (appended last, temporary)
     ]);
-    // The temporary request turn is gone; the only user turn is the state's concretized goal.
+    // The request is the first user turn; the second is the state's goal.
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
-    expect(userTexts).toEqual([expect.stringContaining("green")]);
+    expect(userTexts[0]).toContain("fix the bug");
+    expect(userTexts[1]).toContain("map the project");
     // A native call keeps its content empty (the call is in `tool_calls`).
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);
 
     // The state is a decision, not a tool call: a `Start state` marker, no tool_calls.
-    expect(msgs[1]?.content).toBe("Start state Orientation");
-    expect(msgs[1]?.tool_calls).toBeUndefined();
+    expect(msgs[2]?.content).toBe("Start state Orientation");
+    expect(msgs[2]?.tool_calls).toBeUndefined();
 
     // The state's first plan item is an ordinary `bash` call + its observation.
-    expect(msgs[3]?.tool_calls?.[0]?.function.name).toBe("bash");
-    expect(msgs[3]?.tool_calls?.[0]?.id).toBe("a1");
-    expect(msgs[4]).toMatchObject({ role: "tool", tool_call_id: "a1" });
-    expect(String(msgs[4]?.content)).toContain("[o1] exit 0");
+    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("bash");
+    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a1");
+    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a1" });
+    expect(String(msgs[6]?.content)).toContain("[o1] exit 0");
 
     // A plain command move is its own tool call.
-    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("edit");
-    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a2");
-    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a2" });
-    expect(String(msgs[6]?.content)).toContain("edit failed: find not found");
+    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("edit");
+    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a2");
+    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a2" });
+    expect(String(msgs[8]?.content)).toContain("edit failed: find not found");
 
     // The alternative is a plain native call: no marker, and the failure body rides only in
     // its own `tool` result (never duplicated into an assistant message).
-    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("read");
-    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a3");
-    const tape = msgs.slice(1);
+    expect(msgs[9]?.tool_calls?.[0]?.function.name).toBe("read");
+    expect(msgs[9]?.tool_calls?.[0]?.id).toBe("a3");
+    const tape = msgs.slice(2);
     const tapeText = tape.map((m) => String(m.content)).join("\n");
     expect(tapeText).not.toContain("alternative to step");
     expect(tapeText.split("--- current content of ocaml/x.c").length - 1).toBe(1);
-    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a3" });
+    expect(msgs[10]).toMatchObject({ role: "tool", tool_call_id: "a3" });
   });
 
   it("a refused structural move is an assistant call + a tool reason", async () => {

@@ -232,10 +232,10 @@ describe("classify", () => {
     expect(
       classify({ operator: "apply", action: { tool: "bash", command: "node --test" } }, moved),
     ).toEqual({ accept: true });
-    // A non-terminal move must name the state's goal in `what`.
+    // A move must name a known state.
     expect(
-      classify({ operator: "move", state: "orientation", what: " " }, fold([req])).reason,
-    ).toContain("empty_what");
+      classify({ operator: "move", state: "atlantis" } as never, fold([req])).reason,
+    ).toContain("empty_state");
     // At the request there is no state yet: an apply outside a state is refused.
     expect(
       classify({ operator: "apply", action: { tool: "bash", command: "node --test" } }, fold([req])).reason,
@@ -651,14 +651,17 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; the move is a `Start state` marker + the goal as a
-    // user turn (the request turn is dropped); the first apply seeds the plan.
+    // A fresh request is a single user turn; the move adds the `Start state` marker, the state's
+    // instruction and the goal as a user turn (the request leads the tape); the first apply seeds
+    // the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["assistant", "user"]);
-    expect(roles[2]).toEqual(["assistant", "user", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "assistant", "system", "user"]);
+    expect(roles[2]).toEqual(["user", "assistant", "system", "user", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
+      "user",
       "assistant",
+      "system",
       "user",
       "assistant",
       "tool",
@@ -1020,13 +1023,15 @@ describe("runAgent", () => {
     ]);
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");
-    expect(context.history[0]?.role).toBe("assistant");
-    expect(context.history[0]?.text).toBe("Start state Orientation");
+    expect(context.history[0]?.role).toBe("user"); // the request leads the tape
+    expect(context.history[1]?.role).toBe("assistant");
+    expect(context.history[1]?.text).toBe("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
-    // The state IS its goal: the goal (the move's `what`) is the `user` turn, not a create_goal.
-    const goal = context.history.find((message) => message.role === "user")?.text ?? "";
-    expect(goal).toContain("green");
+    // The state IS its goal: the goal (the state's own `what`) is a `user` turn after the request.
+    const goal =
+      context.history.map((message) => message.text).find((text) => text.includes("map the project")) ?? "";
+    expect(goal).toContain("map the project");
   });
 
   it("refuses a repeated read and names the stored result", async () => {
