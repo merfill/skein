@@ -163,7 +163,7 @@ export function compileGraph(deps: AgentDeps) {
         if (TERMINAL.has(action.operator)) break;
         continue;
       }
-      const outcome = executeAction(action, current, deps.workspace, state.turn);
+      const outcome = executeAction(action, current, deps.workspace, state.turn, proposals.reasoning);
       events.push(...outcome.events);
       recent.push(outcome.turn);
       done = outcome.done;

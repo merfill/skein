@@ -157,4 +157,41 @@ describe("message wrappers: the wire JSON of the tape", () => {
     const bashId = bash?.tool_calls?.[0]?.id;
     expect(msgs.some((m) => m.role === "tool" && m.tool_call_id === bashId)).toBe(true);
   });
+
+  it("a turn's reasoning rides its assistant tool message (the wire adapter relocates it)", async () => {
+    const events: Event[] = [
+      { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 } },
+      node("m1", "move", "localization", 1, {
+        state: "localization",
+        what: "find the failure",
+        call: { name: "move", args: { state: "localization", what: "find the failure" } },
+      }),
+      edge("em", "r1", "m1", "move"),
+      node("p1", "plan", "plan", 2),
+      edge("hp", "m1", "p1", "plan"),
+      edge("it1", "p1", "i1", "items"),
+      node("i1", "item", "step", 3),
+      node("a1", "action", "grep", 4, {
+        command: "grep",
+        turn: 0,
+        reasoning: "the tail advance looks wrong",
+        call: { name: "grep", args: { pattern: "sweep" } },
+      }),
+      edge("al1", "i1", "a1", "alts"),
+      node("o1", "observation", "grep", 5, { command: "grep", exitCode: 0, output: "x\n" }),
+      edge("ro1", "a1", "o1", "result"),
+    ];
+    const base = fold(events);
+    const drift = focusEvents(base);
+    const context = project(drift.length > 0 ? fold(drift, base) : base);
+    // The projection carries the turn's reasoning on its assistant message...
+    const assistant = context.history.find(
+      (m) => m.role === "assistant" && ((m.calls?.length ?? 0) > 0 || m.call !== undefined),
+    );
+    expect(assistant?.reasoning).toBe("the tail advance looks wrong");
+    // ...and it renders as that message's text (the wire adapter moves it to `reasoning_content`).
+    const msgs = await wire(buildMessages(context));
+    const callMsg = msgs.find((m) => m.tool_calls?.[0]?.function.name === "grep");
+    expect(String(callMsg?.content)).toBe("the tail advance looks wrong");
+  });
 });

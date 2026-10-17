@@ -44,6 +44,10 @@ export interface TapeMessage {
   calls?: ToolCall[];
   // A tool result: the id of the assistant call it answers.
   callId?: string;
+  // The doxa's hidden reasoning for the turn this assistant message carries (the batch's
+  // action nodes' `payload.reasoning`). Rendered as `content` and relocated to the provider's
+  // reasoning field by the wire adapter (`src/llm/provider.ts`); never a user-visible answer.
+  reasoning?: string;
 }
 
 export interface Context {
@@ -233,22 +237,27 @@ function renderPlan(state: State, moveId: string, out: TapeMessage[]): void {
   if (plan === undefined) return;
   let pending: { id: string; name: string; args: Record<string, unknown>; text: string }[] = [];
   let pendingTurn: number | undefined;
+  // The reasoning of the batch being assembled (one per turn); shown on its assistant message.
+  let pendingReasoning: string | undefined;
   const flush = (): void => {
     if (pending.length === 0) return;
+    const reasoning = pendingReasoning !== undefined ? { reasoning: pendingReasoning } : {};
     if (pending.length === 1) {
       const only = pending[0] as (typeof pending)[number];
-      out.push({ role: "assistant", text: "", call: { id: only.id, name: only.name, args: only.args } });
+      out.push({ role: "assistant", text: "", call: { id: only.id, name: only.name, args: only.args }, ...reasoning });
       out.push({ role: "tool", text: only.text, callId: only.id });
     } else {
       out.push({
         role: "assistant",
         text: "",
         calls: pending.map((call) => ({ id: call.id, name: call.name, args: call.args })),
+        ...reasoning,
       });
       for (const call of pending) out.push({ role: "tool", text: call.text, callId: call.id });
     }
     pending = [];
     pendingTurn = undefined;
+    pendingReasoning = undefined;
   };
   childrenOf(state, plan).forEach((itemId) => {
     const alts = childrenOf(state, itemId);
@@ -260,6 +269,8 @@ function renderPlan(state: State, moveId: string, out: TapeMessage[]): void {
         const call = asCall(alt);
         const text = `[${resultId}] ${actionResultText(state, altId)}`;
         const marker = index > 0 ? `${altMarker(state, itemId, alts[index - 1] as string)}\n` : "";
+        const rawReasoning = nodePayload(alt)?.reasoning;
+        const reasoning = typeof rawReasoning === "string" && rawReasoning !== "" ? rawReasoning : undefined;
         if (call === undefined) {
           // A legacy node (no recorded call) carries the rendered label and marker as text.
           flush();
@@ -271,12 +282,18 @@ function renderPlan(state: State, moveId: string, out: TapeMessage[]): void {
         if (typeof turn !== "number") {
           // No turn stamp: render as its own single call (the pre-batch shape).
           flush();
-          out.push({ role: "assistant", text: "", call: { id: altId, ...call } });
+          out.push({
+            role: "assistant",
+            text: "",
+            call: { id: altId, ...call },
+            ...(reasoning !== undefined ? { reasoning } : {}),
+          });
           out.push({ role: "tool", text, callId: altId });
           return;
         }
         if (pending.length > 0 && pendingTurn !== turn) flush();
         pendingTurn = turn;
+        if (reasoning !== undefined) pendingReasoning = reasoning;
         pending.push({ id: altId, name: call.name, args: call.args, text });
       }
     });

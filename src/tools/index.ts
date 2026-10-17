@@ -649,6 +649,9 @@ export function executeAction(
   state: State,
   workspace: Workspace,
   turn: number,
+  // The doxa's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
+  // action nodes so the projection can show it back on the tape next turn (`docs/ir_semantics §7`).
+  reasoning?: string,
 ): ExecOutcome {
   let counter = state.seq;
   const next = (): number => {
@@ -764,7 +767,7 @@ export function executeAction(
         space: "work",
         kind: "action",
         label: label ?? command,
-        payload: { command, turn, ...(extra ?? {}) },
+        payload: { command, turn, ...(reasoning !== undefined ? { reasoning } : {}), ...(extra ?? {}) },
         seq: actionSeq,
       },
     });

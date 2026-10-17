@@ -214,4 +214,7 @@ export type Proposal = z.infer<typeof proposalSchema>;
 export interface Proposals {
   thought: string;
   actions: Action[];
+  // The model's hidden reasoning for this move, when the provider surfaced it (`provider.ts`).
+  // Journalled on the turn's action nodes and shown back on the tape next turn.
+  reasoning?: string;
 }

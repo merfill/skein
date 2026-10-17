@@ -20,20 +20,22 @@ writes `opencode.txt`).
 
 | # | date (UTC) | agent | task | condition | reward | steps | tool calls | in | out (vis + rea) | cache | time | run dir |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **★** | 2026-10-15 | Skein | `fix-ocaml-gc` | **net on** — **latest version** (observable state criteria; reworked `stop`, nudge and transition hint) | **1** | 52 | 53 | 950,833 | 69,562 (7,019 + 62,543) | 88% | — | `bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc` |
-| 1 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
-| 2 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
-| 3 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
-| 4 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748,329 | 15,834 (2,720 + 13,114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
-| 5 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † — **best Skein by cost** | **1** | 33 | 33 | 702,152 | 23,003 (2,898 + 20,105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
-| 6 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
-| 7 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **new architecture (goal-into-move)** | **1** | 52 | 71 | 507,700 | 23,758 (5,040 + 18,718) | 63% | — | `bench/runs/sandbox-tasks/2026-10-13T11-39-19-740Z-fix-ocaml-gc` |
-| 8 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net off** † — **best net off by cost** | **1** | 45 | 45 | 981,165 | 81,294 (3,577 + 77,717) | 92% | — | `bench/runs/sandbox-tasks/2026-10-11T13-50-03-723Z-fix-ocaml-gc` |
-| 9 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net off** † — **new architecture (goal-into-move)** | **1** | 49 | 72 | 537,153 | 44,498 (5,044 + 39,454) | 64% | — | `bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc` |
-| 10 | 2026-10-13 | Skein | `fix-ocaml-gc` | **net on** † — **anti-VCS prompt cleanup (B19 + B7)** | **1** | 46 | 66 | 761,596 | 48,548 (4,699 + 43,849) | 83% | — | `bench/runs/sandbox-tasks/2026-10-13T19-02-00-767Z-fix-ocaml-gc` |
+| **★** | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — **reasoning on the tape: best Skein by cost and by input; input 4.7× smaller than opencode-off** | **1** | 27 | 34 | 159,475 | 10,681 (2,901 + 7,780) | 72% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-582Z-fix-ocaml-gc` |
+| 1 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 34 | 44 | 173,000 | 14,923 (3,296 + 11,627) | 71% | — | `bench/runs/sandbox-tasks/2026-10-17T04-57-57-012Z-fix-ocaml-gc` |
+| 2 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 32 | 40 | 222,135 | 14,603 (3,274 + 11,329) | 75% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-598Z-fix-ocaml-gc` |
+| 3 | 2026-10-15 | Skein | `fix-ocaml-gc` | **net on** — observable state criteria; reworked `stop`, nudge and transition hint (formerly ★) | **1** | 52 | 53 | 950,833 | 69,562 (7,019 + 62,543) | 88% | — | `bench/runs/sandbox-tasks/2026-10-15T19-24-07-130Z-fix-ocaml-gc` |
+| 4 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **best net on and best Skein by cost without reasoning on the tape (Phase 18: active directives)** | **1** | 29 | 37 | 252,551 | 16,198 (3,177 + 13,021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
+| 5 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
+| 6 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
+| 7 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
+| 8 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748,329 | 15,834 (2,720 + 13,114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
+| 9 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** † | **1** | 33 | 33 | 702,152 | 23,003 (2,898 + 20,105) | 88% | — | `bench/runs/sandbox-tasks/2026-10-11T13-21-36-838Z-fix-ocaml-gc` |
+| 10 | 2026-10-11 | Skein | `fix-ocaml-gc` | **net on** | **1** | 35 | 35 | 908,678 | 57,946 (2,947 + 54,999) | 91% | — | `bench/runs/sandbox-tasks/2026-10-11T05-13-47-307Z-fix-ocaml-gc` |
 
-Rows **`08-40`** (net on, 50 steps, no cost recorded), **`07-02`** (net off, 13.78₽) and
-**`18-30`** (net on, 12.68₽) fell out of the top-10 by the rule (more expensive / no cost) —
+Rows that fell out of the top-10 this time: **`2026-10-13T11-39-19`** (net on, goal-into-move,
+52 steps), **`2026-10-11T13-50-03`** (net off, 45 steps) and **`2026-10-13T11-51-44`** (net off,
+goal-into-move, 49 steps). Earlier: **`19-02`** (net on, 46 steps, 6.97₽), **`08-40`** (net on,
+50 steps, no cost recorded), **`07-02`** (net off, 13.78₽) and **`18-30`** (net on, 12.68₽) —
 their write-ups remain in the sections below.
 
 **Condition notes.** † — a run **after the oracle was removed**: the task verifier (including
@@ -56,6 +58,44 @@ churns through `bash` and burns reasoning. Offline the gap is even wider: **open
 Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
+
+## Latest version (2026-10-17) — reasoning on the tape (A/B)
+
+`fix-ocaml-gc --net off` (†), reward **1**, `request_addressed`, 0 refusals. The doxa now sees
+**its own previous reasoning** on the tape — like opencode (Vercel AI SDK) / OpenAI Agents SDK.
+
+**What was built.** A provider adapter (`src/llm/provider.ts`) round-trips `reasoning_content`
+(RouterAI returns `reasoning`, which LangChain drops), the engine journals a turn's reasoning on
+its action nodes (`payload.reasoning`), the projection shows it on the turn's assistant message;
+the feature is **on** by default, `SKEIN_REASONING_TAPE=false` is an A/B switch.
+
+**Runs (net off, †, all reward 1):**
+
+| run | steps | calls | in | out (vis + rea) | cache | ₽ | Localization closed |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| **runB** `05-16-41-582` (★) | **27** | 34 | **159,475** | 10,681 (2,901 + 7,780) | 72% | **1.60** | t11 |
+| run1 `04-57-57-012` (#1) | 34 | 44 | 173,000 | 14,923 (3,296 + 11,627) | 71% | 2.00 | t14 |
+| runA `05-16-41-598` (#2) | 32 | 40 | 222,135 | 14,603 (3,274 + 11,329) | 75% | 2.09 | t14 |
+
+**Against opencode-off (†, row #8):** input **159–222k vs 748,329** — **3.4–4.7×** smaller at the
+same reward. This is structural: Skein's tape is a projection of the IR (closed states elided,
+observations bounded), whereas opencode re-sends the whole transcript and its reasoning verbatim.
+The state enter/exit overhead (5 `move` + 5 `stop` = 10 of runB's 34 calls) is the protocol's
+price; it pays for itself because each state keeps its own cheap, drift-free tape.
+
+**A/B (reasoning on/off; same code and harness, only `SKEIN_REASONING_TAPE` changes):**
+
+| | Localization closed (t) | Localization reasoning | Run reasoning | fresh input | ₽ |
+|---|---|---|---|---|---|
+| **ON** (K=4) | 14, 15, 14, 11 | ~6.5k (median) | ~10.2k | ~49k | ~1.9 |
+| **OFF** (K=3) | 14, 11, 14 | ~11.4k (median) | ~25.7k | ~49k | ~3.1 |
+
+**Conclusion.** Reasoning on the tape does **not** move when Localization closes (median turns =
+11 in both): the original hypothesis — "late closure because the model cannot see its own
+conclusion" — **was not confirmed**; the old baseline n=30 was a harness artifact (`bench/step.ts`
+vs the full engine loop). But the feature yields **~2.5× less reasoning and ~40% lower cost**: the
+added context almost all lands in `cacheRead` (fresh input equal at ~49k), while reasoning tokens
+(output, the expensive tier) drop. So it is kept as the **default**.
 
 ## Latest version (2026-10-15) — observable state criteria
 
@@ -281,6 +321,7 @@ inside the task image; the task's own verifier scores the result (`check.code = 
   above.
 - The `net off` pair (Skein and opencode, marker †) is **done**; the honest 2×2 is above.
   Implemented: `sandbox-run.ts --net off` (host `fetch`/background `run` via the allowlist proxy).
-- Next: work out **why** Skein spends ~2.5× the reasoning with network (goal-into-move: 18,718
-  vs opencode 7,388) and ~3× without (39,454 vs 13,114), and add other agents/tasks. The offline
-  gap's evolution: ~5.9× (goal-based) → **~3.0×** (goal-into-move).
+- The offline-reasoning gap is **closed**: the net-off evolution ~5.9× (goal-based) → ~3.0×
+  (goal-into-move) → **~0.8×** (2026-10-17, reasoning on the tape: Skein ~10.2k vs opencode-off
+  13,114). The remaining **input** gap now favours Skein thanks to the projection (159–222k vs
+  748,329).

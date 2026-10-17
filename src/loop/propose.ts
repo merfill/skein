@@ -23,8 +23,10 @@ function toMessage(message: TapeMessage): BaseMessage {
     const calls =
       message.calls ?? (message.call !== undefined ? [message.call] : []);
     if (calls.length > 0) {
+      // The turn's reasoning rides as the message text; the wire adapter relocates it to the
+      // provider's reasoning field (`src/llm/provider.ts`), never a visible answer.
       return new AIMessage({
-        content: message.text,
+        content: message.reasoning ?? message.text,
         tool_calls: calls.map((call) => ({ name: call.name, args: call.args, id: call.id, type: "tool_call" })),
       });
     }

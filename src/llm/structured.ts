@@ -319,6 +319,15 @@ function toolCallsOf(response: unknown): { name: string; args: unknown }[] {
   return out;
 }
 
+// The model's hidden reasoning, when the provider surfaced it. langchain-openai maps the
+// canonical `reasoning_content` field into `additional_kwargs`; `client.ts` normalizes
+// RouterAI's `reasoning` onto that name.
+function reasoningOf(response: unknown): string | undefined {
+  const value = (response as { additional_kwargs?: { reasoning_content?: unknown } } | undefined)
+    ?.additional_kwargs?.reasoning_content;
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
 export async function invokeTools(
   model: BaseChatModel,
   messages: BaseMessage[],
@@ -365,7 +374,8 @@ export async function invokeTools(
       try {
         // Every call in the message is a move; the engine decides and runs them in order.
         const actions = calls.map((call) => toProposal(call.name, call.args, "").action);
-        return { thought: messageText(response), actions };
+        const reasoning = reasoningOf(response);
+        return { thought: messageText(response), actions, ...(reasoning !== undefined ? { reasoning } : {}) };
       } catch (error) {
         // A malformed call (unknown tool, args that fail the schema) gets one repair round,
         // as the JSON path does, instead of sinking the whole run as `llm_error`.

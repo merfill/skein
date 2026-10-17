@@ -186,6 +186,18 @@ live gate only when `SKEIN_LIVE=true`.
 
 **Deferred (backlog):**
 
+- **Streaming the model response (next).** Model calls are currently **non-streaming**
+  (`ChatOpenAI.invoke`); the provider reasoning adapter (`src/llm/provider.ts`) normalizes only a
+  complete JSON response (it rewrites `init.body` and returns a `new Response`), so the
+  `reasoning_content` round-trip only works without streaming. Streaming is needed to: (a) avoid
+  gateway idle-timeouts on long reasoning (the response is silent until the end); (b) show and
+  interrupt generation; (c) keep the reasoning round-trip where it arrives as deltas
+  (`delta.reasoning`) and/or is required (Anthropic extended thinking, OpenAI o-series, Gemini
+  `thought`). Reasoning-on-the-tape is already the default (see `docs/benches/best_bench.md`,
+  section 2026-10-17). It means rewriting the adapter to **accumulate deltas**
+  (`reasoning`/`content`/`tool_calls`) instead of rewriting the whole body, and probably
+  revisiting the truncation retries (`invokeTools`). Verify on `fix-ocaml-gc` (K≥3), comparing
+  turns and cost (opencode works via streaming — `docs/state_testing_ru.md`).
 - **Possible tools.** `write` is done. Still candidates, by size of the gap: `edit` by
   range / `multiedit` (find/replace breaks on ambiguous or duplicated fragments);
   `web_fetch` (docs, error analysis — currently reachable through `run`/`curl`, so low
