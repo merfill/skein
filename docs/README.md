@@ -51,6 +51,9 @@ original and a Russian mirror named with the `_ru` suffix.
 ## Plans
 
 - `plans/` — active plans (`implementation_plan`).
+- [plans/ai_sdk_migration_plan.md](plans/ai_sdk_migration_plan.md) ·
+  [RU](plans/ai_sdk_migration_plan_ru.md) — migrate the model layer to the Vercel AI SDK,
+  keeping LangGraph and the IR (proposed).
 - `plans/archive/` — completed or superseded plans, kept for the record.
 - [plans/archive/state_protocol_plan.md](plans/archive/state_protocol_plan.md) ·
   [RU](plans/archive/state_protocol_plan_ru.md) — the state protocol redesign: states as the
