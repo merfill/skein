@@ -31,6 +31,9 @@
 2. **Оффлайн-переигрыш записанного хода** — `bench/turn.ts` (в репозитории). Берёт уже
    **записанную** ленту хода, правит сообщение (например, строку критерия) и снова зовёт
    модель — **без контейнера**. Дёшево; для сравнения формулировок на одном и том же входе.
+3. **Replay записанной ленты через `runAgent`** — `seed`/`startTurn` + контейнер. Нужен, когда
+   проверяешь **переходы движка** (`stop`/`move`, откат неверного Patch): ручной цикл `propose`
+   обходит `executeNode`. Чеклист — §2.5.
 
 Правило: **не гонять контейнер на каждую правку текста** — только новый живой прогон.
 
@@ -105,6 +108,44 @@ TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
 прогон `run-loc-restart` (Localization → Patch → Verification), записанный пример
 `rec-orientation-182830` (Orientation t0–t4 с рассуждениями).
 
+### 2.5 Replay с записанной ленты (как гонять один ход)
+
+`bench/step.ts` переигрывает `seq` с нуля. Если проверяешь **переходы движка** (`stop`/`move`,
+откат неверного Patch), нужен replay **ленты через `runAgent`**, иначе хук в `executeNode`
+обходится. Для этого у `AgentInput` есть `seed` (готовый журнал) и `startTurn` (номер хода);
+`maxTurns` остаётся абсолютным.
+
+Чеклист:
+
+1. **Выбери run и точку входа.**
+   - второй вход в Localization — fold до `descend` после `move` (состояние
+     `plan / localization`);
+   - провал Verification (transition) — до `stop`-edge закрытой Verification;
+   - рабочая Verification после провала — до `result`-edge упавшего `bash`.
+2. **Приведи дерево к сиду.** Подними `dockerWorkspace` для `fix-ocaml-gc`; примени/откати
+   записанный `edit` (или `write`/`apply_patch`) так, чтобы файл соответствовал событиям.
+   Затем добавь в сид синтетический `mutate` с фактической версией файла (`workspace.version`).
+   Без этого IR и дерево расходятся, и следующий `edit` получает `stale_base`.
+3. **Запусти `runAgent({ propose, workspace, maxTurns }, { request, seed, startTurn })`.**
+   Не делай ручной цикл `propose`: переходы и откат живут в `executeNode`.
+4. **Поставь sentinel в `propose`.** Остановись, когда `context.island` достиг целевого
+   (например, `localization` после отката или `verification` перед сборкой) — так один прогон
+   не уходит в дорогой build.
+5. **Пиши `contexts/tNNN.txt`, `turns.ndjson`, `journal.ndjson`.** Смотри `reasoning`,
+   действия, `stop why`, `revert`; контекст — ровно то, что ушло модели.
+6. **K≥3 и один фактор за раз.** `SKEIN_STREAMING`, `SKEIN_TEMPERATURE` и правки промта —
+   отдельными плечами; иначе вывод будет не про тот фактор.
+
+Что ожидать после текущего фикса:
+
+- Verification провалилась → `stop` → `move` в Localization → движок пишет `revert` последнего
+  Patch: файл возвращается к pre-patch, версии в IR обновляются;
+- в открытой Localization блок говорит `This change has been reverted…` и
+  `A different change is required…`;
+- Patch применяет **другой** diff, а не вариант откатанного;
+- вторая ошибка Verification снова даёт `stop` → Localization → revert, без отладки и правок
+  внутри Verification.
+
 ## 3. Как формируется лента (что затирается, что добавляется)
 
 Лента строится `project` (`src/ir/project.ts`) и `buildMessages`
@@ -144,12 +185,19 @@ system — Previous failed attempt:
              <фактический replace>
            Verification: `<команда>` exited <N>
              <хвост вывода: segfault/ошибка>
-           Do not repeat this change; look elsewhere.
+           This change has been reverted in the workspace; the tree is back to its pre-patch state.
+           Do not repeat this change. A different change is required; it may be in the same file or even the same loop.
 ```
 
 Источник — не `why` доксы, а `payload.call` правки и последний проваленный `bash` в
 `verification` (`exitCode != 0`). Только последняя попытка; более ранние уже в ленте. Если Patch
 не менял файл — `Patch: no file changed.`
+
+Откат делает движок на переходе `Verification → Localization` по провалу: он пишет событие
+`revert` (файлы + новые версии) и возвращает дерево к pre-patch. Блок рендерится только для
+**текущей открытой** Localization. Если откат невозможен (например, `write`/`apply_patch` без
+preimage в Phase 1), блок говорит `The failed change is still in the workspace.` — не
+притворяйся, что оно откатано.
 
 **Открытое состояние** — после этого идут шаги плана: каждый ход доксы — пара
 `ai(tool_calls=[…])` + по одному `tool(результат)` на вызов.
@@ -230,9 +278,9 @@ ai — Finish state <Label> — <why из stop>
 - **Возврат в Localization несёт неудачную попытку (2026-10-17).** `renderState`
   (`src/ir/project.ts`) для **текущей открытой** Localization вставляет `system` сразу после
   `ai: Start state Localization`: фактическую правку последнего `patch` (из `payload.call`) и
-  последний проваленный прогон `verification` (`exitCode != 0`) с коротким хвостом вывода, плюс
-  «Do not repeat this change; look elsewhere». Раньше связь терялась: план закрытого состояния
-  элидировался, оставались только `why` доксы.
+  последний проваленный прогон `verification` (`exitCode != 0`) с коротким хвостом вывода; блок
+  переформулирован ниже (reverted / different change). Раньше связь терялась: план закрытого
+  состояния элидировался, оставались только `why` доксы.
   **Проверка без полного прогона** (по §2.3): записанный журнал прогона с циклом
   (`2026-10-17T08-04-06-897Z`) до повторного входа в Localization, на свежее дерево применена та
   же неудачная правка, три прохода Localization до `stop`. Контроль (без блока) повторно называл
@@ -249,7 +297,24 @@ ai — Finish state <Label> — <why из stop>
   один ремонт. Заодно: пустой `reasoning_content` отдаём обратно даже пустым (некоторые
   подрядчики требуют поле), а кросс-подрядчиковый mismatch «ход без reasoning → thinking»
   лечится одним повтором с выключенным thinking (`isReasoningContentRequired`).
-
+- **Откат проваленного Patch + выход из Verification (2026-10-17).**
+  - На переходе `Verification → Localization` по провалу движок откатывает последний Patch:
+    событие `revert` (`src/ir/events.ts`), `State.reverted` и обновление версий в `fold`
+    (`src/ir/graph.ts`), реализация — `src/ir/attempts.ts` (`isFailedVerificationMove`,
+    `revertLastPatch`, `revertFailedPatch`). Хук — в `executeNode` (`src/loop/graph.ts`).
+  - Блок `Previous failed attempt` теперь говорит, что правка откатана, и требует **другого**
+    изменения, а не «look elsewhere».
+  - В `turnInstruction` для Verification добавлено: при провале acceptance — `stop` и уход в
+    Localization, без отладки/правок в Verification.
+  - Для replay добавлены `AgentInput.seed`/`startTurn` (`src/loop/graph.ts`), чтобы гонять
+    `runAgent` с записанного журнала (см. §2.5).
+  - Тесты: `tests/revert.test.ts` (откат, версии, блок, conflict, успешная Verification,
+    интеграция через `runAgent`).
+  - **K=3 на `08-04-06`:** циклов **0/3**; верная правка — 1/3 при streaming on (temp 0.1),
+    2/3 при streaming off (temp 0.1), 2/3 при streaming off + temp 0. Неверный вариант —
+    free-ветка с оставленным `Whsize_hd` для live-блоков — сохраняется. Вторая ошибка
+    Verification (реальная сборка) даёт `stop` → Localization → `revert` без цикла.
+  - Phase 1 откатывает только `edit`; `write`/`apply_patch` возвращают conflict (Phase 2).
 
 ### Проблемы (на завтра)
 
@@ -290,9 +355,12 @@ ai — Finish state <Label> — <why из stop>
      `bash` пишет).
    Блок «Previous failed attempt» тут не сработал **не потому, что плохой**: он показывается
    только при повторном входе в Localization, а возврата не было.
-   Кандидат: на первом же неуспешном прогоне в Verification подсказка хода должна прямо
-   требовать `stop` и уход в Localization (не отлаживать здесь), и/или запретить write-class
-   через `bash` в Verification.
+   **Сделано:** на провале acceptance хинт Verification теперь прямо требует `stop` и уход в
+   Localization; вторая ошибка (реальная сборка) проверена — модель останавливается, движок
+   откатывает Patch. Осталось: (а) маскировка exit code (`make ...; echo $?`) — принципиальный
+   фикс не в промте, а в engine-owned acceptance observation (команду запускает движок, модель
+   не передаёт shell-строку); (б) после отката модель иногда выбирает вариант free-ветки вместо
+   хвоста `p += wh` — это вопрос Patch-таргетинга, а не цикла.
 
 ## 6. Журнал экспериментов (не повторять)
 
@@ -313,6 +381,11 @@ ai — Finish state <Label> — <why из stop>
 - **Оффлайн-переигрыш хода:** `bench/turn.ts` (по записанной ленте, без контейнера).
 - **Контейнер:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
 - **Исполнение действий:** `src/tools/index.ts` (`executeAction`).
+- **Откат проваленного Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
+  `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); событие `revert` —
+  `src/ir/events.ts`; `State.reverted` и версии — `src/ir/graph.ts`; хук — `src/loop/graph.ts`
+  (`executeNode`).
+- **Replay с ленты:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; чеклист — §2.5.
 - **Лента:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   инструкции — `src/loop/prompt/blocks.ts`, тексты островов — `src/ir/islands.ts`,
   описания инструментов — `src/llm/tools.ts`.
@@ -343,23 +416,29 @@ ai — Finish state <Label> — <why из stop>
 - **Закрыто:** «reasoning не на ленте → позднее закрытие» (дефолт, A/B — `docs/benches/best_bench_ru.md`, 2026-10-17).
 - **Сделано:** стриминг-транспорт; возврат в Localization с последней неудачной попыткой;
   провайдерская совместимость (нет `tool_choice`, пустой `reasoning_content`, thinking-off
-  fallback, transition-инструкция как `user`) — см. §5, §7.
-- **Живой статус (2026-10-17).** `fix-ocaml-gc --net on`, K=3: транспорт 3/3 без `llm_error`,
-  reward 1/3 (40 ходов; фейлы — `max_turns`=60 из-за Verification-ловушки, §5 п.7).
-  `--net off`: все попытки упирались в rate-limit апстрима, куда уводил `tool_choice: "required"`;
-  после отказа от `tool_choice` (правка A) нужно **перегнать 3×`--net off` в новой сессии** —
-  старые числа net-off (08:xx) к текущему коду уже не относятся.
+  fallback, transition-инструкция как `user`); откат проваленного Patch на
+  `Verification → Localization`; failure-stop в Verification; `seed`/`startTurn` для replay —
+  см. §5, §7.
+- **Живой статус (2026-10-17).** `fix-ocaml-gc --net on`, K=3 до фикса: транспорт 3/3 без
+  `llm_error`, reward 1/3 (фейлы — `max_turns`=60 из-за Verification-ловушки). После фикса
+  отката/стопа: **циклов 0/3**; верная правка 1/3 (streaming on, temp 0.1), 2/3 (streaming
+  off, temp 0.1) и 2/3 (streaming off, temp 0). Вторая ошибка Verification (реальная сборка)
+  даёт `stop` → Localization → `revert`.
 - **Осталось исследовать** (на `fix-ocaml-gc`, K≥3, в **одной** гарнитуре — §6):
-  1. **Verification-ловушка (главное).** На провале acceptance/сборки модель остаётся в
-     Verification, перезапускает `make`, отлаживает и даже правит через `bash` — до `max_turns`
-     (см. §5 п.7). Кандидат: подсказка хода на первом же неуспешном прогоне — «stop и уйди в
-     Localization, здесь не отлаживай/не правь»; плюс запрет write-class через `bash` в
-     Verification.
-  2. **Пере-вывод после находки.** run1 (`2026-10-17T04-57-57`): локализация нашла строку 650
-     на t14, а Patch ещё 5 ходов (t17–t21) перечитывал перед однострочной правкой. Кандидат —
-     нацелить Patch на прямое применение уже названных координат.
-  3. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
-     в run1 три ошибки cwd (t6/t17/t25) + три хода восстановления. Общий фикс: показывать cwd в
-     наблюдении `bash` или явно различать workspace root и repo root в промте. ~3 хода/прогон.
-  4. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
-  5. Тексты состояний Patch/Verification (`docs/states_ru.md` §2.3–2.5 пусты).
+  1. **Правильность Patch, не цикл.** После отката модель иногда выбирает вариант free-ветки
+     (`p += wh*(Wosize+1)` с оставленным `Whsize_hd` для live-блоков) вместо хвоста
+     `p += wh`. Это не зацикливание: Verification теперь закрывается и откатывает. Нужен
+     Patch-таргетинг: показывать `Previous failed attempt` и в Patch/transition, а не только
+     в Localization; требовать изменения, а не перестановки тех же строк.
+  2. **Exit-code masking.** Модель маскирует статус (`make ...; echo $?`, `|| true`), и
+     `lastFailingRun` может не увидеть провал. Принципиальный фикс — engine-owned acceptance
+     observation: команду запускает движок, модель не передаёт shell-строку; промт-строки и
+     guard'ы отвергнуты как костыли.
+  3. **Phase 2 отката.** `write`/`apply_patch` пока дают `revert_conflict`; нужен preimage
+     (`write`) и reverse patch (`apply_patch`), all-or-nothing.
+  4. **Харнесс.** Временный replay-цикл (`seed` + контейнер + reverse diff) перенести в
+     `bench/` как штатный инструмент; чеклист — §2.5.
+  5. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
+     общий фикс — показывать cwd в наблюдении `bash` или различать workspace/repo root.
+  6. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
+  7. Тексты состояний Patch/Verification (`docs/states_ru.md` §2.3–2.5 пусты).

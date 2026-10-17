@@ -141,6 +141,8 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(block?.text).toContain("exit 2");
     expect(block?.text).toContain("boom");
     expect(block?.text).toContain("Do not repeat this change");
+    expect(block?.text).toContain("The failed change is still in the workspace");
+    expect(block?.text).not.toContain("look elsewhere");
   });
 
   it("the first Localization has no failed-attempt block", () => {

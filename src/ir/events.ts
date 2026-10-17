@@ -51,6 +51,14 @@ export const eventSchema = z.discriminatedUnion("type", [
     version: z.string(),
     actionId: z.string(),
   }),
+  // The engine restored the files of a failed Patch to their pre-patch versions. The world
+  // state moves with the tree; the projection uses `patchMoveId` to say the change is gone.
+  z.object({
+    type: z.literal("revert"),
+    patchMoveId: z.string(),
+    files: z.array(z.object({ ref: z.string(), version: z.string() })),
+    reason: z.string().optional(),
+  }),
   z.object({
     type: z.literal("record_rejection"),
     tool: z.string(),

@@ -1,5 +1,6 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
+import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
@@ -57,6 +58,11 @@ export interface AgentDeps {
 export interface AgentInput {
   request: { id: string; text: string };
   constraints?: { id: string; label: string; forbid?: string[] }[];
+  // Resume from a recorded journal instead of seeding a fresh request. Used by the tape
+  // replay harnesses; the seed already carries the request node (and any constraints).
+  seed?: Event[];
+  // The turn number the resumed journal stopped at; `maxTurns` remains absolute.
+  startTurn?: number;
 }
 
 export interface AgentResult {
@@ -163,7 +169,19 @@ export function compileGraph(deps: AgentDeps) {
         if (TERMINAL.has(action.operator)) break;
         continue;
       }
-      const outcome = executeAction(action, current, deps.workspace, state.turn, proposals.reasoning);
+      // A failed Verification leaves a patch that is known not to work. Before the move back
+      // to Localization the engine restores the tree to its pre-patch state, so Localization
+      // reasons about the original code and Patch cannot no-op on the rejected change. The
+      // attempt itself stays on the tape (the revert is an engine event, not a tool call).
+      let target = current;
+      if (isFailedVerificationMove(current, action)) {
+        const revert = revertFailedPatch(current, deps.workspace);
+        if (revert.length > 0) {
+          events.push(...revert);
+          target = fold([...state.events, ...events]);
+        }
+      }
+      const outcome = executeAction(action, target, deps.workspace, state.turn, proposals.reasoning);
       events.push(...outcome.events);
       recent.push(outcome.turn);
       done = outcome.done;
@@ -233,7 +251,7 @@ export function compileGraph(deps: AgentDeps) {
 
 export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<AgentResult> {
   const graph = compileGraph(deps);
-  const seed: Event[] = [
+  const seed: Event[] = input.seed !== undefined ? [...input.seed] : [
     {
       type: "add_node",
       node: {
@@ -246,22 +264,33 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
       },
     },
   ];
-  for (const [index, constraint] of (input.constraints ?? []).entries()) {
-    seed.push({
-      type: "add_node",
-      node: {
-        id: constraint.id,
-        space: "work",
-        kind: "constraint",
-        label: constraint.label,
-        payload: { forbid: constraint.forbid ?? [] },
-        seq: index + 1,
-      },
-    });
+  if (input.seed === undefined) {
+    for (const [index, constraint] of (input.constraints ?? []).entries()) {
+      seed.push({
+        type: "add_node",
+        node: {
+          id: constraint.id,
+          space: "work",
+          kind: "constraint",
+          label: constraint.label,
+          payload: { forbid: constraint.forbid ?? [] },
+          seq: index + 1,
+        },
+      });
+    }
   }
 
   const final = await graph.invoke(
-    { events: seed, recent: [], turn: 0, done: false, stopReason: null, stopText: null, progressKey: "", stall: 0 },
+    {
+      events: seed,
+      recent: [],
+      turn: input.startTurn ?? 0,
+      done: false,
+      stopReason: null,
+      stopText: null,
+      progressKey: "",
+      stall: 0,
+    },
     { recursionLimit: deps.maxTurns * 5 + 20 },
   );
 

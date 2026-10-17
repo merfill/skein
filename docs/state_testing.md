@@ -29,6 +29,9 @@ content of `why`. Model — `routerai/~deepseek/deepseek-v4-flash-latest`, `SKEI
 2. **Offline replay of a recorded turn** — `bench/turn.ts` (in the repo). It takes an
    already-**recorded** turn's tape, edits a message (say, the criterion line) and calls the model
    again — **without a container**. Cheap; for comparing wordings on the same input.
+3. **Replay of a recorded tape through `runAgent`** — `seed`/`startTurn` + the container. Needed
+   when checking **engine transitions** (`stop`/`move`, reverting a failed Patch): a manual
+   `propose` loop bypasses `executeNode`. Checklist — §2.5.
 
 Rule: **do not run the container for every text edit** — only for a new live run.
 
@@ -104,6 +107,44 @@ Whole live runs live in `bench/runs/sandbox-tasks/<ts>-<name>/`. Examples: the f
 `run-loc-restart` (Localization → Patch → Verification), the recorded example
 `rec-orientation-182830` (Orientation t0–t4 with reasoning).
 
+### 2.5 Replaying a recorded tape (the current debugging method)
+
+`bench/step.ts` replays a `seq` from scratch. When the question is about **engine transitions**
+(`stop`/`move`, reverting a failed Patch), replay the **tape through `runAgent`**; otherwise the
+hook in `executeNode` is bypassed. `AgentInput.seed` (an existing journal) and `startTurn` (its
+turn number) resume the loop; `maxTurns` stays absolute.
+
+Checklist:
+
+1. **Pick the run and the cut point.**
+   - second entrance into Localization — fold through the `descend` after its `move`
+     (`plan / localization`);
+   - failed Verification (transition) — through the `stop` edge of the closed Verification;
+   - working Verification after a failure — through the `result` edge of the failed `bash`.
+2. **Make the tree match the seed.** Start `dockerWorkspace` for `fix-ocaml-gc`; apply/reverse the
+   recorded `edit` (or `write`/`apply_patch`) to match the events. Then append a synthetic
+   `mutate` with the actual file version (`workspace.version`). Without it the IR and the tree
+   diverge and the next `edit` gets `stale_base`.
+3. **Call `runAgent({ propose, workspace, maxTurns }, { request, seed, startTurn })`.** Do not
+   write a manual `propose` loop: transitions and the revert live in `executeNode`.
+4. **Put a sentinel in `propose`.** Stop when `context.island` reaches the target (e.g.
+   `localization` after the revert, or `verification` before a build) so one run does not enter an
+   expensive build.
+5. **Write `contexts/tNNN.txt`, `turns.ndjson`, `journal.ndjson`.** Read `reasoning`, the actions,
+   `stop why`, `revert`; the context is exactly what went to the model.
+6. **K≥3, one factor at a time.** `SKEIN_STREAMING`, `SKEIN_TEMPERATURE` and prompt edits are
+   separate arms; otherwise the conclusion is about the wrong factor.
+
+Expected after the current fix:
+
+- Verification fails → `stop` → `move` to Localization → the engine writes `revert` for the last
+  Patch, restores the pre-patch file and updates the IR versions;
+- the open Localization block says `This change has been reverted…` and
+  `A different change is required…`;
+- Patch applies **another** diff, not a variant of the reverted one;
+- a second Verification failure again gives `stop` → Localization → revert, with no debugging or
+  editing inside Verification.
+
 ## 3. How the tape is built (what is erased, what is added)
 
 The tape is built by `project` (`src/ir/project.ts`) and `buildMessages`
@@ -144,12 +185,19 @@ system — Previous failed attempt:
              <the actual replace>
            Verification: `<command>` exited <N>
              <output tail: segfault/error>
-           Do not repeat this change; look elsewhere.
+           This change has been reverted in the workspace; the tree is back to its pre-patch state.
+           Do not repeat this change. A different change is required; it may be in the same file or even the same loop.
 ```
 
 The source is not the doxa's `why` but `payload.call` of the change and the last failed `bash` in
 `verification` (`exitCode != 0`). The last attempt only; older ones are already on the tape. A
 Patch that changed no file renders `Patch: no file changed.`
+
+The engine performs the revert on the failure transition `Verification → Localization`: it emits a
+`revert` event (files + new versions) and restores the pre-patch tree. The block is rendered only
+for the **currently open** Localization. If the revert is impossible (e.g. `write`/`apply_patch`
+without a preimage in Phase 1), the block says `The failed change is still in the workspace.` — do
+not pretend it was reverted.
 
 **Open state** — after that come the plan's steps: each doxa turn is a pair
 `ai(tool_calls=[…])` + one `tool(result)` per call.
@@ -231,8 +279,8 @@ ai — Finish state <Label> — <why from stop>
 - **Returning to Localization carries the failed attempt (2026-10-17).** `renderState`
   (`src/ir/project.ts`), for the **current open** Localization, inserts a `system` right after
   `ai: Start state Localization`: the actual change of the last `patch` (from `payload.call`) and
-  the last failed run of `verification` (`exitCode != 0`) with a short output tail, plus "Do not
-  repeat this change; look elsewhere". Before, the link was lost: a closed state's plan is elided
+  the last failed run of `verification` (`exitCode != 0`) with a short output tail, plus the
+  reverted/different-change wording. Before, the link was lost: a closed state's plan is elided
   and only the doxa's `why` remained.
   **Checked without a full run** (§2.3): the recorded looping run (`2026-10-17T08-04-06-897Z`) up
   to its re-entry into Localization, the same failed edit applied to a fresh tree, three passes of
@@ -240,6 +288,25 @@ ai — Finish state <Label> — <why from stop>
   **2/3 closed on the right line** (`p += Whsize_hd(hd)` → `p += wh`, lines ~644–653/653), **1/3**
   did not close within 12 turns but also did **not** re-confirm the old hypothesis (it kept
   reading). The block is visible on the tape (`Previous failed attempt:`).
+- **Reverting the failed Patch and leaving Verification (2026-10-17).**
+  - On the failure transition `Verification → Localization` the engine reverts the last Patch: a
+    `revert` event (`src/ir/events.ts`), `State.reverted` and version updates in `fold`
+    (`src/ir/graph.ts`), implementation in `src/ir/attempts.ts`
+    (`isFailedVerificationMove`, `revertLastPatch`, `revertFailedPatch`). The hook is in
+    `executeNode` (`src/loop/graph.ts`).
+  - The `Previous failed attempt` block now says the change was reverted and requires a
+    **different** change, not "look elsewhere".
+  - `turnInstruction` for Verification now says: on a failed acceptance, `stop` and move to
+    Localization — do not debug or edit here.
+  - `AgentInput.seed`/`startTurn` (`src/loop/graph.ts`) resume `runAgent` from a recorded journal
+    (see §2.5).
+  - Tests: `tests/revert.test.ts` (revert, versions, block, conflict, passing Verification,
+    integration through `runAgent`).
+  - **K=3 on `08-04-06`:** cycles **0/3**; the correct edit — 1/3 with streaming on (temp 0.1),
+    2/3 with streaming off (temp 0.1), 2/3 with streaming off + temp 0. The wrong variant — the
+    free branch with `Whsize_hd` left for live blocks — persists. A second Verification failure
+    (real build) gives `stop` → Localization → `revert` without a cycle.
+  - Phase 1 reverts `edit` only; `write`/`apply_patch` return a conflict (Phase 2).
 
 ### Problems (for tomorrow)
 
@@ -279,8 +346,12 @@ ai — Finish state <Label> — <why from stop>
      `bash` can write).
    The "Previous failed attempt" block did not help **because it is only shown on re-entry into
    Localization**, and there was no re-entry.
-   Candidate: on the first failed run in Verification the turn hint should demand `stop` and a
-   move to Localization (do not debug here), and/or forbid write-class via `bash` in Verification.
+   **Done:** on a failed acceptance the Verification hint now demands `stop` and a move to
+   Localization; a second failure (real build) was checked — the model stops and the engine reverts
+   the Patch. Remaining: (a) exit-code masking (`make ...; echo $?`) — the principled fix is an
+   engine-owned acceptance observation (the engine runs the command; the model passes no shell
+   string), not prompt text; (b) after the revert the model sometimes chooses the free-branch
+   variant instead of the tail `p += wh` — a Patch-targeting issue, not a loop.
 
 ## 6. Experiment log (do not repeat)
 
@@ -301,6 +372,11 @@ ai — Finish state <Label> — <why from stop>
 - **Offline turn replay:** `bench/turn.ts` (from a recorded tape, no container).
 - **Container:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
 - **Action execution:** `src/tools/index.ts` (`executeAction`).
+- **Reverting a failed Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
+  `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); the `revert` event —
+  `src/ir/events.ts`; `State.reverted` and versions — `src/ir/graph.ts`; the hook —
+  `src/loop/graph.ts` (`executeNode`).
+- **Tape replay:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; checklist — §2.5.
 - **Tape:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   instructions — `src/loop/prompt/blocks.ts`, island texts — `src/ir/islands.ts`, tool
   descriptions — `src/llm/tools.ts`.
@@ -333,23 +409,30 @@ ai — Finish state <Label> — <why from stop>
 - **Closed:** "reasoning not on the tape → late closure" (shipped as the default, A/B — `docs/benches/best_bench.md`, 2026-10-17).
 - **Done:** the streaming transport; the failed-attempt record on returning to Localization; the
   meta-provider fixes (no `tool_choice`, empty `reasoning_content`, thinking-off fallback, the
-  transition instruction as `user`) — see §5, §7.
-- **Live status (2026-10-17).** `fix-ocaml-gc --net on`, K=3: transport 3/3 with no `llm_error`,
-  reward 1/3 (40 turns; the failures hit `max_turns`=60 because of the Verification trap, §5 p.7).
-  `--net off`: every attempt hit the upstream rate limit that `tool_choice: "required"` routed to;
-  after dropping `tool_choice` (fix A), **re-run 3×`--net off` in a new session** — the old
-  net-off numbers (08:xx) no longer describe the current code.
+  transition instruction as `user`); the revert of the failed Patch on
+  `Verification → Localization`; the failure-stop in Verification; `seed`/`startTurn` for replay —
+  see §5, §7.
+- **Live status (2026-10-17).** `fix-ocaml-gc --net on`, K=3 before the fix: transport 3/3 with no
+  `llm_error`, reward 1/3 (the failures hit `max_turns`=60 because of the Verification trap).
+  After the revert/stop fix: **cycles 0/3**; the correct edit 1/3 (streaming on, temp 0.1), 2/3
+  (streaming off, temp 0.1) and 2/3 (streaming off, temp 0). A second Verification failure (real
+  build) gives `stop` → Localization → `revert`.
 - **Still to investigate** (on `fix-ocaml-gc`, K≥3, in **one** harness — §6):
-  1. **Verification trap (the main one).** On a failed acceptance/build the model stays in
-     Verification, reruns `make`, debugs and even edits via `bash` — until `max_turns` (§5 p.7).
-     Candidate: on the first failed run the turn hint should demand `stop` and a move to
-     Localization (do not debug/edit here); plus forbid write-class via `bash` in Verification.
-  2. **Re-derivation after the finding.** run1 (`2026-10-17T04-57-57`): Localization found line 650
-     at t14, but Patch still re-read for 5 turns (t17–t21) before a one-line edit. A candidate —
-     aim Patch at directly applying the coordinates already named.
-  3. **Shell hygiene: cwd.** `bash` starts in the workspace root (`/app`), while the repo is in
-     `/app/ocaml`; in run1 there were three cwd errors (t6/t17/t25) + three recovery turns. A
-     general fix: show the cwd in the `bash` observation, or make the prompt clearly distinguish the
-     workspace root from the repo root. ~3 turns/run.
-  4. **Meta-doubt** (§5 p.4): does the `ai` marker `Start/Finish state` get in the way.
-  5. The Patch/Verification state texts (`docs/states_ru.md` §2.3–2.5 are empty).
+  1. **Patch correctness, not the loop.** After the revert the model sometimes chooses the
+     free-branch variant (`p += wh*(Wosize+1)` with `Whsize_hd` left for live blocks) instead of
+     the tail `p += wh`. This is not a loop: Verification now closes and reverts. Needs Patch
+     targeting: show `Previous failed attempt` in Patch/transition too, and require a change, not a
+     rearrangement of the same lines.
+  2. **Exit-code masking.** The model masks the status (`make ...; echo $?`, `|| true`), so
+     `lastFailingRun` may miss the failure. The principled fix is an engine-owned acceptance
+     observation: the engine runs the command; the model passes no shell string. Prompt lines and
+     guards are rejected as hacks.
+  3. **Phase 2 of the revert.** `write`/`apply_patch` currently return `revert_conflict`; need a
+     preimage (`write`) and a reverse patch (`apply_patch`), all-or-nothing.
+  4. **Harness.** Promote the temporary replay loop (`seed` + container + reverse diff) into
+     `bench/`; checklist — §2.5.
+  5. **Shell hygiene: cwd.** `bash` starts in the workspace root (`/app`), while the repo is in
+     `/app/ocaml`; a general fix: show the cwd in the `bash` observation or distinguish the
+     workspace/repo root.
+  6. **Meta-doubt** (§5 p.4): does the `ai` marker `Start/Finish state` get in the way.
+  7. The Patch/Verification state texts (`docs/states_ru.md` §2.3–2.5 are empty).

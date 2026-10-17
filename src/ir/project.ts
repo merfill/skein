@@ -184,7 +184,7 @@ function altMarker(state: State, itemId: string, prevId: string): string {
 
 // The native tool call a node recorded at write time (`payload.call`), if any. Nodes written
 // before the field existed fall back to text rendering.
-function asCall(node: Node | undefined): { name: string; args: Record<string, unknown> } | undefined {
+export function asCall(node: Node | undefined): { name: string; args: Record<string, unknown> } | undefined {
   const call = nodePayload(node)?.call as { name?: unknown; args?: unknown } | undefined;
   if (call === undefined || typeof call.name !== "string") return undefined;
   const args = typeof call.args === "object" && call.args !== null ? (call.args as Record<string, unknown>) : {};
@@ -203,7 +203,7 @@ function closureLine(state: State, moveId: string): string {
 }
 
 // The plan's action nodes, in plan order (docs/ir_semantics §2.3).
-function actionsOfMove(state: State, moveId: string): string[] {
+export function actionsOfMove(state: State, moveId: string): string[] {
   const plan = planOf(state, moveId);
   if (plan === undefined) return [];
   const actions: string[] = [];
@@ -216,7 +216,7 @@ function actionsOfMove(state: State, moveId: string): string[] {
 }
 
 // The last failing run of a state: the `bash` observation with the newest non-zero exit code.
-function lastFailingRun(state: State, moveId: string): { command: string; exitCode: number; tail: string } | undefined {
+export function lastFailingRun(state: State, moveId: string): { command: string; exitCode: number; tail: string } | undefined {
   let best: { seq: number; run: { command: string; exitCode: number; tail: string } } | undefined;
   for (const actionId of actionsOfMove(state, moveId)) {
     const result = resultChild(state, actionId);
@@ -285,7 +285,11 @@ function lastWrite(state: State, moveId: string): {
 function lastFailedAttempt(
   state: State,
   beforeMoveId: string,
-): { write: ReturnType<typeof lastWrite>; run: { command: string; exitCode: number; tail: string } } | undefined {
+): {
+  patchMoveId: string;
+  write: ReturnType<typeof lastWrite>;
+  run: { command: string; exitCode: number; tail: string };
+} | undefined {
   const rootId = state.rootId;
   if (rootId === undefined) return undefined;
   const moves = childrenOf(state, rootId);
@@ -306,11 +310,14 @@ function lastFailedAttempt(
   if (patchMove === undefined || verificationMove === undefined) return undefined;
   const run = lastFailingRun(state, verificationMove);
   if (run === undefined) return undefined;
-  return { write: lastWrite(state, patchMove), run };
+  return { patchMoveId: patchMove, write: lastWrite(state, patchMove), run };
 }
 
 // The engine-authored record of the failed attempt, carried into the next Localization state.
-function failedAttemptText(attempt: NonNullable<ReturnType<typeof lastFailedAttempt>>): string {
+function failedAttemptText(
+  attempt: NonNullable<ReturnType<typeof lastFailedAttempt>>,
+  reverted: boolean,
+): string {
   const lines = ["Previous failed attempt:"];
   if (attempt.write.path === "") {
     lines.push("  Patch: no file changed.");
@@ -331,7 +338,14 @@ function failedAttemptText(attempt: NonNullable<ReturnType<typeof lastFailedAtte
   if (attempt.run.tail !== "") {
     for (const line of attempt.run.tail.split("\n")) lines.push(`    ${line}`);
   }
-  lines.push("  Do not repeat this change; look elsewhere.");
+  lines.push(
+    reverted
+      ? "  This change has been reverted in the workspace; the tree is back to its pre-patch state."
+      : "  The failed change is still in the workspace.",
+  );
+  lines.push(
+    "  Do not repeat this change. A different change is required; it may be in the same file or even the same loop.",
+  );
   return lines.join("\n");
 }
 
@@ -357,7 +371,12 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
     stopOf(state, moveId) === undefined
   ) {
     const attempt = lastFailedAttempt(state, moveId);
-    if (attempt !== undefined) out.push({ role: "system", text: failedAttemptText(attempt) });
+    if (attempt !== undefined) {
+      out.push({
+        role: "system",
+        text: failedAttemptText(attempt, state.reverted.has(attempt.patchMoveId)),
+      });
+    }
   }
   // `system`: the engine's instruction for how to act in this state.
   if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });

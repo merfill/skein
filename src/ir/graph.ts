@@ -27,6 +27,8 @@ export interface State {
   // world state: latest mutated version and first observed version per ref
   mutated: Map<string, string>;
   observed: Map<string, string>;
+  // Patch moves whose files the engine restored after a failed Verification.
+  reverted: Set<string>;
   lastMutationSeq: number;
   rootId?: string;
   seq: number;
@@ -42,6 +44,7 @@ export function emptyState(): State {
     branch: [],
     mutated: new Map(),
     observed: new Map(),
+    reverted: new Set(),
     lastMutationSeq: 0,
     seq: 0,
   };
@@ -159,6 +162,7 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     branch: [...base.branch],
     mutated: new Map(base.mutated),
     observed: new Map(base.observed),
+    reverted: new Set(base.reverted),
     lastMutationSeq: base.lastMutationSeq,
     rootId: base.rootId,
     seq: base.seq,
@@ -214,6 +218,12 @@ function applyEvent(state: State, event: Event): void {
     }
     case "mutate": {
       state.mutated.set(event.ref, event.version);
+      state.lastMutationSeq = state.seq;
+      break;
+    }
+    case "revert": {
+      for (const file of event.files) state.mutated.set(file.ref, file.version);
+      state.reverted.add(event.patchMoveId);
       state.lastMutationSeq = state.seq;
       break;
     }

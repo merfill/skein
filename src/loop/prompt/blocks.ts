@@ -151,7 +151,11 @@ export function turnInstruction(island?: IslandId, done?: string): string {
     criterion !== ""
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
-  return `${lead} When it holds, \`stop\` — and nothing else; a strong suspicion is enough, do not verify to be sure (a wrong call is caught later), do not over-work the state, and do not do a later state's work.`;
+  const failure =
+    island === "verification"
+      ? " If the acceptance command fails, `stop` with the failure now and move to Localization; do not debug or edit here."
+      : "";
+  return `${lead} When it holds, \`stop\` — and nothing else; a strong suspicion is enough, do not verify to be sure (a wrong call is caught later), do not over-work the state, and do not do a later state's work.${failure}`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {
