@@ -35,9 +35,9 @@ original and a Russian mirror named with the `_ru` suffix.
   [RU](prompt_state_machine_concept_ru.md) — the agent's prompt as a state machine (states,
   criteria, transitions, constraints); draft.
 - [states_ru.md](states_ru.md) — the states' goals and acceptance criteria (RU-only draft).
-- [state_testing_ru.md](state_testing_ru.md) — testing the state prompts step by step on a live
-  task: the container, `bench/step.ts`, the tape per situation, results and open problems
-  (RU-only draft).
+- [state_testing.md](state_testing.md) · [RU](state_testing_ru.md) — testing the state prompts
+  step by step on a live task: the container, `bench/step.ts`, the tape per situation, results
+  and open problems.
 - [context_design.md](context_design.md) · [RU](context_design_ru.md) — the design rationale
   for the projection (working memory, alternatives).
 
