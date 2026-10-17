@@ -16,15 +16,14 @@ export interface Settings {
   // completion-cap or a no-tool response is bounded separately and is not retried here.
   llmRetries: number;
   reasoningEffort: string;
-  // Whether the doxa's hidden reasoning is journalled and shown back on the tape (the
-  // provider adapter round-trips it, `src/llm/provider.ts`). Off for the controlled A/B that
+  // Whether the doxa's hidden reasoning is journalled and shown back on the tape (the AI SDK
+  // reasoning part round-trips it, `src/llm/client.ts`). Off for the controlled A/B that
   // isolates "reasoning on the tape" from the harness; the model still reasons either way.
   reasoningTape: boolean;
-  // Whether model calls are streamed on the wire (SSE); the engine concatenates the chunks
-  // back into one message (`src/llm/structured.ts` `callModel`). Streaming keeps the connection
-  // busy while the model emits a long hidden reasoning, so the gateway's idle timeout is not
-  // hit; the provider's reasoning arrives as `delta.reasoning` (`src/llm/provider.ts`). Off is
-  // the non-streaming fallback / A/B arm.
+  // Whether model calls are streamed on the wire; `streamText` assembles the reply
+  // (`src/llm/structured.ts` `callModel`). Streaming keeps the connection busy while the model
+  // emits a long hidden reasoning, so the gateway's idle timeout is not hit. Off is the
+  // non-streaming fallback / A/B arm.
   streaming: boolean;
   maxTurns: number;
   // Cap on a foreground `run`; a long verifier build may need more than the default

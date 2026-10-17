@@ -1,7 +1,11 @@
-import { ChatOpenAI } from "@langchain/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import type { LanguageModel } from "ai";
 
 import { loadSettings, type Settings } from "../config/settings";
-import { openaiCompatible, type ReasoningAdapter, type WireBody, type WireChunk, type WireResponse } from "./provider";
+
+// The OpenAI-compatible provider name. It is also the key `providerOptions` uses to add
+// fields to the request body (`src/llm/structured.ts`).
+export const PROVIDER_NAME = "routerai";
 
 /**
  * Provider body that turns reasoning off. DeepSeek needs `thinking.type` and
@@ -25,231 +29,42 @@ export function reasoningBody(effort: string): Record<string, unknown> {
   return effort === "none" ? reasoningOffBody(effort) : { reasoning: { effort } };
 }
 
-export interface ChatModelHooks {
-  // The (normalized) provider response body of every (non-streaming) call: telemetry that the
-  // parsed LangChain message still drops, such as the hidden reasoning text.
-  onResponseBody?: (body: unknown) => void;
-}
-
-// The reasoning seam: RouterAI (and any OpenAI-compatible backend) is the current provider.
-const reasoning = openaiCompatible;
-
-// --- Streaming (SSE) reasoning seam -----------------------------------------
-// A streamed call returns `text/event-stream`, one `data: {...}` chunk per event, so it cannot
-// be read as one JSON object. The adapter's per-delta hook (`fromChunk`) renames the provider's
-// reasoning as the chunks flow, and the same pass reassembles the full response (reasoning /
-// content / tool calls / finish / usage) so the `onResponseBody` telemetry hook keeps receiving
-// a non-stream-shaped body.
-
-interface StreamState {
-  reasoning: string;
-  content: string;
-  toolCalls: Map<number, { id?: string; name: string; args: string }>;
-  finishReason?: string;
-  usage?: unknown;
-  id?: unknown;
-  model?: unknown;
-}
-
-function accumulate(state: StreamState, chunk: WireChunk): void {
-  if (state.id === undefined && chunk.id !== undefined) state.id = chunk.id;
-  if (state.model === undefined && chunk.model !== undefined) state.model = chunk.model;
-  if (chunk.usage != null) state.usage = chunk.usage;
-  for (const choice of chunk.choices ?? []) {
-    if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
-    const delta = choice.delta;
-    if (delta === undefined) continue;
-    // `fromChunk` has already copied `delta.reasoning` onto `reasoning_content` when the tape
-    // adapter is on; when it is off the provider field is read directly for telemetry.
-    const reasoningDelta = delta.reasoning_content ?? delta.reasoning;
-    if (typeof reasoningDelta === "string") state.reasoning += reasoningDelta;
-    if (typeof delta.content === "string") state.content += delta.content;
-    const calls = delta.tool_calls;
-    if (Array.isArray(calls)) {
-      for (const call of calls as { index?: number; id?: unknown; function?: { name?: unknown; arguments?: unknown } }[]) {
-        const index = call.index ?? 0;
-        const current = state.toolCalls.get(index) ?? { name: "", args: "" };
-        if (typeof call.id === "string") current.id = call.id;
-        if (typeof call.function?.name === "string") current.name += call.function.name;
-        if (typeof call.function?.arguments === "string") current.args += call.function.arguments;
-        state.toolCalls.set(index, current);
-      }
-    }
+// RouterAI's wire body: the reasoning budget, plus two normalizations that keep the
+// assistant tool-turn shape LangChain used to produce. AI SDK emits `content: null` and
+// omits an empty `reasoning_content`; some subcontractors behind the meta-provider demand
+// both fields on every assistant tool turn in thinking mode ("must be passed back to the
+// API"). The reasoning itself already rides as an AI SDK `reasoning` part and is serialized
+// by the provider; this only fills the absent/empty cases.
+export function transformBody(
+  body: Record<string, unknown>,
+  effort: string,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...body, ...reasoningBody(effort) };
+  const messages = out.messages;
+  if (!Array.isArray(messages)) return out;
+  for (const raw of messages) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const message = raw as Record<string, unknown>;
+    if (message.role !== "assistant") continue;
+    const calls = message.tool_calls;
+    if (!Array.isArray(calls) || calls.length === 0) continue;
+    if (message.content === null || message.content === undefined) message.content = "";
+    if (typeof message.reasoning_content !== "string") message.reasoning_content = "";
   }
+  return out;
 }
 
-// The accumulated stream reshaped as the non-streaming response the telemetry consumers
-// expect (`choices[0].message.reasoning`, `choices[0].finish_reason`).
-function reassemble(state: StreamState): WireResponse {
-  const message: Record<string, unknown> = {
-    role: "assistant",
-    content: state.content,
-    reasoning: state.reasoning,
-    reasoning_content: state.reasoning,
-  };
-  if (state.toolCalls.size > 0) {
-    message.tool_calls = [...state.toolCalls.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([, call]) => ({
-        ...(call.id !== undefined ? { id: call.id } : {}),
-        type: "function",
-        function: { name: call.name, arguments: call.args },
-      }));
-  }
-  const choice: Record<string, unknown> = { index: 0, message };
-  if (state.finishReason !== undefined) choice.finish_reason = state.finishReason;
-  const body: Record<string, unknown> = { choices: [choice] };
-  if (state.id !== undefined) body.id = state.id;
-  if (state.model !== undefined) body.model = state.model;
-  if (state.usage != null) body.usage = state.usage;
-  return body as WireResponse;
-}
-
-// Rewrite one SSE line: a `data:` JSON chunk gets its reasoning normalized (`adapter`) and is
-// accumulated; every other line (comments, blank separators) passes through. The `[DONE]`
-// sentinel marks a complete stream: the hook fires there (not only on `flush`, which the SDK
-// skips when it cancels the stream at `[DONE]`).
-function handleSseLine(
-  line: string,
-  adapter: ReasoningAdapter | undefined,
-  state: StreamState,
-  complete: () => void,
-): string {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("data:")) return line;
-  const payload = trimmed.slice(5).trim();
-  if (payload === "[DONE]") {
-    complete();
-    return line;
-  }
-  if (payload === "") return line;
-  let chunk: WireChunk;
-  try {
-    chunk = JSON.parse(payload) as WireChunk;
-  } catch {
-    return line;
-  }
-  adapter?.fromChunk(chunk);
-  accumulate(state, chunk);
-  return adapter === undefined ? line : `data: ${JSON.stringify(chunk)}`;
-}
-
-// Pipe an SSE body through the line rewrite, accumulating state as it flows. The reassembled
-// body is handed to the telemetry hook once per call — on `[DONE]`, or on `flush` if the
-// provider ended the stream without the sentinel.
-function transformSse(
-  body: ReadableStream<Uint8Array>,
-  adapter: ReasoningAdapter | undefined,
-  onResponseBody: ((body: unknown) => void) | undefined,
-): ReadableStream<Uint8Array> {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  const state: StreamState = { reasoning: "", content: "", toolCalls: new Map() };
-  let buffer = "";
-  let fired = false;
-  const complete = (): void => {
-    if (fired) return;
-    fired = true;
-    onResponseBody?.(reassemble(state));
-  };
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        buffer += decoder.decode(chunk, { stream: true });
-        let index: number;
-        while ((index = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, index).replace(/\r$/, "");
-          buffer = buffer.slice(index + 1);
-          controller.enqueue(encoder.encode(`${handleSseLine(line, adapter, state, complete)}\n`));
-        }
-      },
-      flush(controller) {
-        buffer += decoder.decode();
-        if (buffer !== "") controller.enqueue(encoder.encode(handleSseLine(buffer, adapter, state, complete)));
-        complete();
-      },
-    }),
-  );
-}
-
-// A `fetch` around the real HTTP call that normalizes reasoning both ways, so the hidden
-// reasoning round-trips even though langchain-openai neither maps RouterAI's `reasoning` field
-// nor forwards a per-message reasoning field (`provider.ts`). Streaming is detected from the
-// outbound body (`stream: true`), since an SSE body cannot be read as one JSON object.
-function modelFetch(
-  baseFetch: typeof fetch,
-  adapter: ReasoningAdapter | undefined,
-  onResponseBody: ((body: unknown) => void) | undefined,
-): typeof fetch {
-  return (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    // Outbound: the projection carries the turn's reasoning as the assistant tool message's
-    // text; move it into the provider's field before the SDK serializes the body.
-    let outgoing = init;
-    let streaming = false;
-    if (typeof init?.body === "string") {
-      try {
-        const body = JSON.parse(init.body) as WireBody;
-        adapter?.toWire(body);
-        streaming = body.stream === true;
-        outgoing = { ...init, body: JSON.stringify(body) };
-      } catch {
-        // A non-JSON body is passed through untouched.
-      }
-    }
-    const response = await baseFetch(input, outgoing);
-    if (streaming) {
-      if (response.body === null || (adapter === undefined && onResponseBody === undefined)) return response;
-      const headers = new Headers(response.headers);
-      // The body is re-serialized, so the original length/encoding headers no longer hold.
-      headers.delete("content-length");
-      headers.delete("content-encoding");
-      headers.delete("transfer-encoding");
-      return new Response(transformSse(response.body, adapter, onResponseBody), {
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-      });
-    }
-    if (adapter === undefined && onResponseBody === undefined) return response;
-    // Inbound: normalize the provider's reasoning field to the name langchain-openai maps,
-    // then hand the rewritten body to its parser.
-    let json: WireResponse;
-    try {
-      json = (await response.clone().json()) as WireResponse;
-    } catch {
-      // A non-JSON body (an error page) is passed through untouched.
-      return response;
-    }
-    if (adapter === undefined) {
-      onResponseBody?.(json);
-      return response;
-    }
-    adapter.fromWire(json);
-    onResponseBody?.(json);
-    const headers = new Headers(response.headers);
-    headers.delete("content-length");
-    headers.delete("content-encoding");
-    headers.delete("transfer-encoding");
-    return new Response(JSON.stringify(json), { status: response.status, statusText: response.statusText, headers });
-  }) as typeof fetch;
-}
-
-export function createChatModel(settings: Settings = loadSettings(), hooks: ChatModelHooks = {}): ChatOpenAI {
-  const configuration: { baseURL: string; fetch?: typeof fetch } = {
+// The provider the doxa is called through. `includeUsage` asks the stream to carry usage;
+// reasoning arrives as an AI SDK `reasoning` part (both `reasoning` and `reasoning_content`
+// are read by `@ai-sdk/openai-compatible`). Temperature/token caps are per call
+// (`src/llm/structured.ts`), not model properties.
+export function createChatModel(settings: Settings = loadSettings()): LanguageModel {
+  const provider = createOpenAICompatible({
+    name: PROVIDER_NAME,
     baseURL: settings.apiUrl,
-    fetch: modelFetch(
-      globalThis.fetch,
-      settings.reasoningTape ? reasoning : undefined,
-      hooks.onResponseBody,
-    ),
-  };
-  return new ChatOpenAI({
     apiKey: settings.apiKey,
-    model: settings.model,
-    temperature: settings.temperature,
-    maxTokens: settings.maxTokens,
-    streaming: settings.streaming,
-    configuration,
-    modelKwargs: reasoningBody(settings.reasoningEffort),
+    includeUsage: true,
+    transformRequestBody: (body) => transformBody(body, settings.reasoningEffort),
   });
+  return provider(settings.model);
 }

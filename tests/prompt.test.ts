@@ -1,6 +1,6 @@
-import { AIMessage, HumanMessage, SystemMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
 
+import { ISLANDS } from "../src/ir/islands";
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS } from "../src/llm/tools";
 import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
@@ -103,6 +103,42 @@ describe("system prompt: tool contract", () => {
     expect(nudge).toMatch(/stop/i);
     expect(nudge).not.toMatch(/single next step/i);
     expect(nudge).not.toMatch(/next state/i);
+  });
+
+  it("places the per-state hint before the shared closure tail", () => {
+    const orientation = turnInstruction("orientation", "the repository root is known");
+    expect(orientation).toContain(ISLANDS.orientation.hint);
+    expect(orientation).toMatch(/pwd/);
+    expect(orientation).toMatch(/do not hunt the defect/i);
+    expect(orientation).toMatch(/strong suspicion/i);
+    expect(orientation).toMatch(/environment facts/i);
+    expect(orientation).toMatch(/observe them, do not assume them/i);
+    expect(orientation).toMatch(/run the command that prints them/i);
+
+    const localization = turnInstruction("localization", "the failure is located");
+    expect(localization).toContain(ISLANDS.localization.hint);
+    expect(localization).toMatch(/sibling walkers/i);
+
+    const patch = turnInstruction("patch", "the fix is applied");
+    expect(patch).toContain(ISLANDS.patch.hint);
+    expect(patch).toMatch(/Finish state Localization/);
+    expect(patch).toMatch(/Do not substitute a different line/);
+    expect(patch).toMatch(/remove an existing step/i);
+    expect(patch).toMatch(/Previous failed attempt/);
+    expect(patch).toMatch(/do not repeat that change/i);
+
+    const verification = turnInstruction("verification", "the acceptance command passes");
+    expect(verification).toContain(ISLANDS.verification.hint);
+    expect(verification).toMatch(/choose the next state/i);
+    expect(verification).toMatch(/patch/i);
+    expect(verification).toMatch(/localization/i);
+    expect(verification).toMatch(/wrong working directory/i);
+    expect(verification).toMatch(/fix the environment and retry/i);
+    expect(verification).toMatch(/literal retelling/i);
+    expect(verification).toMatch(/Do not interpret the code/i);
+    expect(verification).toMatch(/do not propose a fix/i);
+
+    expect(NODE_INSTRUCTIONS.terminal).toContain(ISLANDS.finish.hint);
   });
 
   it("keeps the stop condition in the working instruction (B8): a state closes by stop", () => {
@@ -254,22 +290,27 @@ describe("context format: tape", () => {
 
   it("lays the context out as a stable prefix, the constraints, the tape, then the open-state nudge", () => {
     const messages = buildMessages(context);
-    expect(messages[0]).toBeInstanceOf(SystemMessage);
-    expect(String(messages[0]?.content)).toBe(BASE_PROMPT);
-    expect(messages[1]).toBeInstanceOf(SystemMessage);
+    expect(messages[0]).toMatchObject({ role: "system", content: BASE_PROMPT });
+    expect(messages[1]?.role).toBe("system");
     expect(String(messages[1]?.content)).toContain("k1");
-    expect(messages[2]).toBeInstanceOf(HumanMessage);
-    expect(String(messages[2]?.content)).toContain("fix the failing test");
-    // A move is a native `assistant.tool_calls`; its result is a `tool` message answering it —
+    expect(messages[2]).toMatchObject({ role: "user", content: "fix the failing test" });
+    // A move is a native `tool-call` part; its result is a `tool` message answering it —
     // never a result smuggled in as a `user` turn (the old OBSERVATION hack, removed).
-    expect(messages[3]).toBeInstanceOf(AIMessage);
-    expect((messages[3] as AIMessage).tool_calls?.[0]?.name).toBe("bash");
-    expect(messages[4]).toBeInstanceOf(ToolMessage);
-    expect((messages[4] as ToolMessage).tool_call_id).toBe("c1");
-    expect(String(messages[4]?.content)).toContain("boom");
+    const assistant = messages[3]!;
+    expect(assistant.role).toBe("assistant");
+    const parts = Array.isArray(assistant.content) ? assistant.content : [];
+    expect(parts.find((part) => part.type === "tool-call")).toMatchObject({
+      toolName: "bash",
+      toolCallId: "c1",
+      input: { command: "node --test" },
+    });
+    const tool = messages[4]!;
+    expect(tool.role).toBe("tool");
+    const result = Array.isArray(tool.content) ? tool.content[0] : undefined;
+    expect(result).toMatchObject({ type: "tool-result", toolCallId: "c1" });
+    expect((result as { output?: { value?: string } }).output?.value).toContain("boom");
     // The open-state nudge is appended last (temporary — never in the history).
-    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
-    expect(String(messages.at(-1)?.content)).toBe(turnInstruction());
+    expect(messages.at(-1)).toMatchObject({ role: "system", content: turnInstruction() });
     expect(messages).toHaveLength(6);
   });
 
@@ -281,8 +322,7 @@ describe("context format: tape", () => {
 
   it("appends the request instruction after the request (scopes the first move's goal)", () => {
     const messages = buildMessages({ ...context, history: [], situation: "request" });
-    expect(String(messages.at(-1)?.content)).toBe(REQUEST_INSTRUCTION);
-    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
+    expect(messages.at(-1)).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
   });
 
   it("appends the transition instruction, naming the focused state's reachable next states", () => {
@@ -300,8 +340,10 @@ describe("context format: tape", () => {
     const messages = buildMessages(transition);
     // A `user` turn, not `system`: a trailing assistant text followed only by `system` is a
     // provider "prefix" and refuses the `move` function call.
-    expect(messages.at(-1)).toBeInstanceOf(HumanMessage);
-    expect(String(messages.at(-1)?.content)).toBe(transitionInstruction("orientation"));
-    expect(String(messages.at(-1)?.content)).toContain("Localization");
+    expect(messages.at(-1)).toMatchObject({
+      role: "user",
+      content: transitionInstruction("orientation"),
+    });
+    expect(String((messages.at(-1) as { content: string }).content)).toContain("Localization");
   });
 });

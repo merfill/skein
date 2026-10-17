@@ -137,7 +137,7 @@ if (dry) {
   console.log(`\n===== turn 0 (current request context) =====`);
   for (const message of buildMessages(context)) {
     const text = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-    console.log(`  [${message.getType()}] ${text === BASE_PROMPT ? "<base prompt>" : text.length > 110 ? `${text.slice(0, 110)}…` : text}`);
+    console.log(`  [${message.role}] ${text === BASE_PROMPT ? "<base prompt>" : text.length > 110 ? `${text.slice(0, 110)}…` : text}`);
   }
   console.log(`\nfirst recorded results:`);
   observations.slice(0, 4).forEach((text, i) => console.log(`  [${i}] ${text.replace(/\n/g, " ⏎ ").slice(0, 120)}`));
@@ -155,25 +155,27 @@ interface TurnLog {
 
 async function main(): Promise<void> {
   const reasoning: string[] = [];
-  const model = createChatModel(settings, {
-    onResponseBody: (body) => {
-      const message = (body as { choices?: { message?: { reasoning?: unknown; reasoning_content?: unknown } }[] })
-        ?.choices?.[0]?.message;
-      const raw = message?.reasoning ?? message?.reasoning_content;
-      if (typeof raw === "string" && raw !== "") reasoning.push(raw);
-    },
-  });
+  const model = createChatModel(settings);
   const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
-    createChatModel(
-      { ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
-      {},
-    );
+    createChatModel({
+      ...settings,
+      maxTokens,
+      ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+    });
 
   const logs: TurnLog[] = [];
   const propose = async (context: Context): Promise<Proposals> => {
     const meter = new TurnMeter();
     reasoning.length = 0;
-    const proposal = await proposeModel(model, context, { settings, rebuild, callbacks: [meter] });
+    const proposal = await proposeModel(model, context, {
+      settings,
+      rebuild,
+      usageHandlers: [meter],
+      onResponse: (response) => {
+        const raw = (response as { reasoning?: unknown }).reasoning;
+        if (typeof raw === "string" && raw !== "") reasoning.push(raw);
+      },
+    });
     logs.push({
       turn: logs.length,
       situation: context.situation,

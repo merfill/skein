@@ -2,8 +2,9 @@
 
 > Английское зеркало — `docs/plans/ai_sdk_migration_plan.md`.
 >
-> Статус: предложение; кода ещё нет. Объём: **только model layer**. IR, лента, цикл,
-> инструменты и LangGraph остаются.
+> Статус: реализовано; финальный live-батч `fix-ocaml-gc --net on` — 5/5
+> (`docs/benches/best_bench_ru.md`). Отдельный A/B streaming on/off остаётся по желанию.
+> Объём: **только model layer**. IR, лента, цикл, инструменты и LangGraph остаются.
 
 ## 1. Зачем
 

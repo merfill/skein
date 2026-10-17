@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     const meter = new TurnMeter();
     const started = Date.now();
     const proposal = await proposeModel(chat, context, {
-      callbacks: [meter],
+      usageHandlers: [meter],
     });
     const elapsedMs = Date.now() - started;
     proposals.push(...proposal.actions);

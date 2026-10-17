@@ -24,7 +24,7 @@ Skein — агент кодирования, у которого контекс�
 | Немонотонность кода | staleness по версии (хэш файла), без ручного отката |
 | Первый срез | багфикс по падающему тесту; критерий — тестовая команда |
 | Оркестрация | LangGraph.js (`@langchain/langgraph`) |
-| LLM | как в Ankyra: OpenAI-совместимый endpoint, размышления включены (дефолт `low`; тяжёлые задачи — `high` на прогон); секреты — только в `.env` |
+| LLM | как в Ankyra: OpenAI-совместимый endpoint; model layer — Vercel AI SDK (`@ai-sdk/openai-compatible`); размышления включены (дефолт `low`; тяжёлые задачи — `high` на прогон); секреты — только в `.env` |
 | Критерий | `done_when` цели — буквальная команда; её `exitCode` (0 = pass) — единственный факт pass/fail |
 | Закрытие | рамка закрывается только `stop` доксы (пока принимается, лишь когда критерий прошёл); запрос заканчивается, когда его цель остановлена |
 
@@ -183,29 +183,45 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `docs/plans/archive/ir_revision_implementation_plan_ru.md`. Прежние формулировки формы в этом
   разделе — история.
 
-- **Стриминг ответа модели (2026-10-17, сделано).** Вызовы идут через `model.stream()`: движок
-  сам склеивает чанки (`callModel`, `src/llm/structured.ts`) вместо `_generate`-ветки
-  `ChatOpenAI`, поэтому не тянется внутренний подсчёт токенов (`getNumTokens` → fetch
-  `tiktoken.pages.dev`) и нет лишней сетевой зависимости. Тумблер `SKEIN_STREAMING` (дефолт on);
-  off — прежний не-стриминговый `invoke`. Адаптер (`src/llm/provider.ts`) получил `fromChunk`:
-  построчно переименовывает `delta.reasoning` → `reasoning_content` (RouterAI), который мапит
-  langchain-openai. Fetch (`src/llm/client.ts`) распознаёт SSE по `init.body.stream` и на том же
-  проходе копит `reasoning`/`content`/`tool_calls`/`finish_reason`/`usage`, отдавая
-  `onResponseBody` восстановленное не-стрим-тело (телеметрия не изменилась). Провайдер шлёт
-  usage/cost в терминальном чанке (проверено на захвате opencode SSE). Живой A/B
-  `fix-ocaml-gc --net off` (K=3 на плечо) — транспорт работает, reasoning снова на ленте,
-  `llm_error` нет, стоимость не хуже; разбор — `docs/benches/best_bench_ru.md` (2026-10-17).
-  Показ/прерывание генерации — отдельно. Тумблер и правки — `src/llm/client.ts`,
-  `src/llm/structured.ts`, `src/llm/provider.ts`, `src/config/settings.ts`.
+- **Model layer на Vercel AI SDK + стриминг (2026-10-17, сделано).** `src/llm/client.ts` —
+  `createOpenAICompatible`; `buildMessages` → AI SDK `ModelMessage[]`; `invokeTools`/
+  `invokeStructured` → `generateText`/`streamText`; инструменты — AI SDK `tool()` из тех же
+  zod-схем; reasoning и usage берутся из результата SDK. Старый LangChain-адаптер
+  (`src/llm/provider.ts`), SSE-парсер и `onResponseBody` удалены; `@langchain/openai` убран из
+  зависимостей. `SKEIN_STREAMING` (дефолт on) выбирает `streamText` против `generateText`;
+  `SKEIN_REASONING_TAPE` по-прежнему управляет показом reasoning на ленте. Тесты/бенчи
+  обновлены; план и статус — `docs/plans/ai_sdk_migration_plan_ru.md`.
+- **Literal Verification why + failed-attempt block (2026-10-17, сделано).** `stop.why` у
+  Verification — буквальный пересказ ошибки: команда, exit status, фактический текст; без
+  диагноза кода и без «почему фикс не сработал». `Previous failed attempt` в открытых
+  Localization и Patch собирается из модельного `why` упавшей Verification и фактического diff
+  последнего Patch; механический `lastFailingRun`/`git`/exit в блок не попадает. Блок говорит
+  `has been reverted` и `Do not repeat this change`; masked exit-0 с `stop.why` тоже виден.
+  Тесты — `tests/revert.test.ts`, `tests/tape_render.test.ts`.
+- **Verification → Patch + revert (2026-10-17, сделано).** `ISLANDS.verification.next` включает
+  Patch: если координаты Localization ещё верны, а не сработала только правка, модель может идти
+  прямо в Patch. `isFailedVerificationMove` откатывает failed Patch на оба перехода
+  (`Patch`/`Localization`), поэтому Patch стартует с pre-patch дерева и с блоком. Live-проверка:
+  в финальном батче run5 выбрал `verification → patch`, сделал один revert и починил tail;
+  в отдельных stage-сэмплах модель чаще выбирала Localization. Тесты — `tests/revert.test.ts`.
+- **Per-state hints (2026-10-17, сделано).** `Island.hint` для каждого состояния + общий
+  closure-хвост: Orientation — `pwd`/build/check; Localization — sibling walkers; Patch —
+  «только названное изменение / не повторять failed attempt»; Verification —
+  pass/fail/environment; Finish — `stop`. `turnInstruction` больше не смешивает состояния;
+  тесты — `tests/prompt.test.ts`, `docs/system_prompt_ru.md`.
+- **Финальный live-батч (2026-10-17, сделано).** `fix-ocaml-gc --net on`, 5 параллельных:
+  **5/5 `reward=1`**, 29–50 ходов, **7.315₽** суммарно (1.031–2.521₽ на прогон); 999 544 in
+  (79.7% cache), 47 325 out (28 462 reasoning). Токены и разбор — `docs/benches/best_bench_ru.md`.
 
-Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
-live-гейт только при `SKEIN_LIVE=true`.
+Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
+offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с явного разрешения владельца.
 
 **Отложено (бэклог):**
 
 - **Показ/прерывание генерации (стриминг-UX).** Стриминг сделан как транспорт (см. выше), но
   токены наружу не отдаются: чтобы показывать и прерывать вывод, нужно потреблять
-  `handleLLMNewToken`/`model.stream()` на уровне цикла, а не только склеивать. Отложено.
+  потреблять `textStream`/`fullStream` AI SDK на уровне цикла, а не только собирать результат.
+  Отложено.
 
 - **Возможные инструменты.** `write` сделан. Кандидаты по величине пробела: `edit` по
   диапазону / `multiedit` (find/replace ломается на неоднозначных/повторяющихся
@@ -279,3 +295,6 @@ CSP/арифметика, UI, мультиязычность, несколько
   варианты: (A) вернуть `note`-цепочку, (B) расширить orientation до «где лежит изменение»,
   (C) сделать первый шаг локализации «найти затронутые файлы». Доказательства:
   `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / виртуальная спека).
+  **Обновление 2026-10-17:** финальный батч `fix-ocaml-gc --net on` — 5/5
+  (`docs/benches/best_bench_ru.md`); per-state hints, literal `why` и `Previous failed attempt`
+  в Patch сделали передачу рабочей в этой серии. Вопрос оставлен как история и для проверки на K>5.

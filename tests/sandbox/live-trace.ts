@@ -38,7 +38,7 @@ async function main(): Promise<void> {
     // Log the full model-facing context content (rendered messages) alongside the raw inputs.
     const messages = buildMessages(context);
     const rendered = messages.map((message) => ({
-      type: message.getType(),
+      type: message.role === "user" ? "human" : message.role === "assistant" ? "ai" : message.role,
       content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
     }));
     const chars = promptText(context).length;
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
     );
     const before = snapshot(meter);
-    const proposal = await proposeModel(model, context, { settings, rebuild, callbacks: [meter] });
+    const proposal = await proposeModel(model, context, { settings, rebuild, usageHandlers: [meter] });
     const usage = delta(snapshot(meter), before);
     const action = proposal.actions[0]!;
     const tool = action.operator === "apply" ? action.action.tool : action.operator;

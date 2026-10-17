@@ -25,6 +25,10 @@ export interface Island {
   criterion: string;
   // How to act in this state — the engine's instruction, rendered once when the state is entered.
   instruction: string;
+  // The per-turn hint for an open state: what to do or avoid in THIS state. `turnInstruction`
+  // places it after the state's criterion and before the shared closure rule. It is not the
+  // state's goal (`what`) and not the one-time `instruction`.
+  hint: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: the write-class
   // (`edit`/`write`/`apply_patch`) lives in Patch alone. The island still never closes a state
@@ -53,6 +57,9 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Explore the repository with the search tools: read the project's documentation (README, HACKING) " +
       "to find the repository root, how it is built, and how it is checked. Do not hunt the defect, " +
       "reproduce the failure, or compare with an upstream reference.",
+    hint:
+      "Establish the absolute repository root with `pwd` (or a command that prints it), not from the " +
+      "request or documentation; map how the project is built and checked. Do not hunt the defect.",
     applies: INSPECT,
     next: [{ to: "localization", when: "the project is mapped" }],
   },
@@ -65,6 +72,9 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Read the suspect code and compare it with its siblings — the other loops that walk the " +
       "same structure (the same pools or heap); a different advance or encoding there is the signal. " +
       "Name the file(s) and lines. Do not prove the defect, apply a fix, or compare with an upstream reference.",
+    hint:
+      "Name the file(s) and the line; compare the suspect code with the sibling walkers of the same " +
+      "structure. Do not apply the fix or edit the tree.",
     applies: INSPECT,
     next: [{ to: "patch", when: "the coordinates are named" }],
   },
@@ -74,6 +84,10 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "apply the located fix",
     criterion: "the fix is applied in the workspace",
     instruction: "Apply the located fix in the workspace — the minimal change.",
+    hint:
+      "Apply only the change named in the `Finish state Localization` line; edit that line. Do not " +
+      "substitute a different line, remove an existing step, or edit sibling walkers. If a " +
+      "`Previous failed attempt` block is present, do not repeat that change; apply a different one.",
     applies: PATCH_TOOLS,
     next: [{ to: "verification", when: "the fix is applied in the workspace" }],
   },
@@ -83,10 +97,21 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "confirm the fix by running the request's acceptance command",
     criterion: "the request's acceptance command now passes",
     instruction: "Run the request's acceptance command and read its result.",
+    hint:
+      "Run the request's acceptance command and read its result. If it passes, `stop`. If it ran " +
+      "and failed (build or tests), `stop`; choose the next state: `patch` when the Localization " +
+      "coordinates still hold and only the change failed, `localization` when the failure puts the " +
+      "diagnosis in doubt. `why` = a literal retelling of the failure: the command, its exit status, " +
+      "and the actual error/output (quote the first real error, not the whole tail). Do not " +
+      "interpret the code, do not propose a fix, and do not say whether the patch is wrong. If it " +
+      "could not run because the environment is not " +
+      "ready — wrong working directory, missing testsuite/build artifacts, or `ocamltest` missing — " +
+      "do not stop: fix the environment and retry.",
     applies: INSPECT,
     next: [
       { to: "finish", when: "the acceptance command passes" },
-      { to: "localization", when: "it fails" },
+      { to: "patch", when: "it fails but the localization coordinates still hold — only the change was wrong" },
+      { to: "localization", when: "it fails and the diagnosis is in doubt" },
     ],
   },
   finish: {
@@ -95,6 +120,7 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "finish the request",
     criterion: "",
     instruction: "The work is done; finish the request.",
+    hint: "Call `stop` now to end the request.",
     applies: [],
     next: [],
   },

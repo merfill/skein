@@ -45,8 +45,8 @@ export interface TapeMessage {
   // A tool result: the id of the assistant call it answers.
   callId?: string;
   // The doxa's hidden reasoning for the turn this assistant message carries (the batch's
-  // action nodes' `payload.reasoning`). Rendered as `content` and relocated to the provider's
-  // reasoning field by the wire adapter (`src/llm/provider.ts`); never a user-visible answer.
+  // action nodes' `payload.reasoning`). Rendered as the assistant turn's `reasoning` part
+  // (`src/loop/propose.ts`); never a user-visible answer.
   reasoning?: string;
 }
 
@@ -279,8 +279,10 @@ function lastWrite(state: State, moveId: string): {
   return found;
 }
 
-// The most recent patch -> verification pair before `beforeMoveId` whose verification ended
-// with a failing run: the engine's record that this change was already tried and did not help.
+// The most recent patch -> verification pair before `beforeMoveId` whose verification was
+// stopped: the engine's record that this change was already tried and did not help. The
+// failure explanation is the doxa's `stop.why` on the Verification move — the model's concise
+// account of what broke — not the mechanical last failing command and its tail.
 // Only the last attempt is kept; older ones are already on the tape.
 function lastFailedAttempt(
   state: State,
@@ -288,7 +290,7 @@ function lastFailedAttempt(
 ): {
   patchMoveId: string;
   write: ReturnType<typeof lastWrite>;
-  run: { command: string; exitCode: number; tail: string };
+  why: string;
 } | undefined {
   const rootId = state.rootId;
   if (rootId === undefined) return undefined;
@@ -308,12 +310,14 @@ function lastFailedAttempt(
     }
   }
   if (patchMove === undefined || verificationMove === undefined) return undefined;
-  const run = lastFailingRun(state, verificationMove);
-  if (run === undefined) return undefined;
-  return { patchMoveId: patchMove, write: lastWrite(state, patchMove), run };
+  const stop = stopOf(state, verificationMove);
+  if (stop === undefined) return undefined;
+  const rawWhy = payloadOf(state, stop)?.why;
+  const why = typeof rawWhy === "string" ? rawWhy : "";
+  return { patchMoveId: patchMove, write: lastWrite(state, patchMove), why };
 }
 
-// The engine-authored record of the failed attempt, carried into the next Localization state.
+// The engine-authored record of the failed attempt, carried into the next Localization/Patch.
 function failedAttemptText(
   attempt: NonNullable<ReturnType<typeof lastFailedAttempt>>,
   reverted: boolean,
@@ -334,10 +338,9 @@ function failedAttemptText(
       lines.push("    (applied a patch)");
     }
   }
-  lines.push(`  Verification: \`${attempt.run.command}\` exited ${attempt.run.exitCode}`);
-  if (attempt.run.tail !== "") {
-    for (const line of attempt.run.tail.split("\n")) lines.push(`    ${line}`);
-  }
+  lines.push(
+    `  Verification: ${attempt.why !== "" ? attempt.why : "the acceptance command failed."}`,
+  );
   lines.push(
     reverted
       ? "  This change has been reverted in the workspace; the tree is back to its pre-patch state."
@@ -364,9 +367,10 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   // `ai`: the state marker (the engine's synthetic turn opening the state).
   out.push({ role: "assistant", text: `Start state ${label}` });
   // The failed attempt that sent the run back here: the actual change and the run it broke.
-  // Only for the OPEN, current Localization (the last attempt only; older ones are on the tape).
+  // Shown for the OPEN, current Localization and Patch (the last attempt only; older ones are
+  // on the tape). Patch needs it at the moment of editing, not only Localization at re-entry.
   if (
-    island === "localization" &&
+    (island === "localization" || island === "patch") &&
     moveId === currentMove(state) &&
     stopOf(state, moveId) === undefined
   ) {

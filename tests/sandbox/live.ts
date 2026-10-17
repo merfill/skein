@@ -41,22 +41,21 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   const dir = options.dir ?? join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}`);
   mkdirSync(dir, { recursive: true });
 
-  // The provider's hidden reasoning text (`choices[0].message.reasoning`) is dropped by the
-  // parsed message; capture it turn by turn so a run stays debuggable.
+  // The provider's hidden reasoning is on the assembled reply; capture it turn by turn so a
+  // run stays debuggable.
   let currentTurn = 0;
-  const captureReasoning = (body: unknown): void => {
-    const message = (body as { choices?: { message?: { reasoning?: unknown } }[] }).choices?.[0]?.message;
-    const reasoning = message?.reasoning;
-    if (typeof reasoning === "string" && reasoning !== "") {
+  const captureReasoning = (reasoning: string): void => {
+    if (reasoning !== "") {
       writeFileSync(join(dir, "reasoning.ndjson"), `${JSON.stringify({ turn: currentTurn, reasoning })}\n`, { flag: "a" });
     }
   };
-  const model = createChatModel(settings, { onResponseBody: captureReasoning });
+  const model = createChatModel(settings);
   const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
-    createChatModel(
-      { ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
-      { onResponseBody: captureReasoning },
-    );
+    createChatModel({
+      ...settings,
+      maxTokens,
+      ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+    });
 
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
@@ -70,13 +69,23 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     // must be logged explicitly or the trace shows a blank `ai` turn (the command lives in
     // `tool_calls`, the result in the following `tool` turn).
     const rendered = messages.map((message) => {
-      const call = (message as { tool_calls?: { name: string; args: unknown; id: string }[] }).tool_calls;
-      const callId = (message as { tool_call_id?: string }).tool_call_id;
+      const type = message.role === "user" ? "human" : message.role === "assistant" ? "ai" : message.role;
+      if (typeof message.content === "string") {
+        return { type, content: message.content };
+      }
+      const calls = message.content
+        .filter((part) => part.type === "tool-call")
+        .map((part) => ({ name: part.toolName, args: part.input, id: part.toolCallId }));
+      const result = message.content.find((part) => part.type === "tool-result");
+      const content = message.content
+        .filter((part) => part.type === "text" || part.type === "reasoning")
+        .map((part) => part.text)
+        .join("");
       return {
-        type: message.getType(),
-        content: typeof message.content === "string" ? message.content : JSON.stringify(message.content),
-        ...(call !== undefined ? { tool_calls: call } : {}),
-        ...(callId !== undefined ? { tool_call_id: callId } : {}),
+        type,
+        content,
+        ...(calls.length > 0 ? { tool_calls: calls } : {}),
+        ...(result !== undefined ? { tool_call_id: result.toolCallId } : {}),
       };
     });
     const chars = promptText(context).length;
@@ -104,7 +113,11 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     const proposal = await proposeModel(model, context, {
       settings,
       rebuild,
-      callbacks: [meter],
+      usageHandlers: [meter],
+      onResponse: (response) => {
+        const reasoning = (response as { reasoning?: unknown }).reasoning;
+        if (typeof reasoning === "string") captureReasoning(reasoning);
+      },
       // Surface every thrown call (including ones a retry recovers from) so provider
       // instability is visible in the run log instead of only on the final give-up.
       onError: (error) => {

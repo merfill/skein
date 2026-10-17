@@ -391,8 +391,9 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
 плоскому function-инструменту на операцию (`move`, `recall`, `search`, `read`,
-`grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`), а `invokeTools` в `src/llm/structured.ts`
-биндит их (без принудительного `tool_choice` — см. `docs/state_testing_ru.md` §7), читает `tool_calls[0]` и маппит в IR `Action`.
+`grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`). `invokeTools` в `src/llm/structured.ts`
+биндит их как AI SDK tools (без принудительного `tool_choice` — см. `docs/state_testing_ru.md` §7),
+маппит возвращённые tool calls в IR `Action`, а usage/reasoning берёт из результата AI SDK.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
 плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял
 модель думать сильно больше на тяжёлых ходах (и упираться в cap, чьи ретраи
@@ -408,8 +409,10 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 `stopText` (`result.json`/`metrics.json` прогона), а не только в транзиентный ход.
 
 `invokeStructured` остаётся общим JSON-путём (схема в промпте, `response_format:
-json_object`, ручной разбор, поднятый cap при обрыве, один repair-раунд); он покрыт
-офлайн в `tests/structured.test.ts` и агентом не используется.
+json_object` через provider options, ручной разбор, поднятый cap при обрыве, один
+repair-раунд); он покрыт офлайн в `tests/structured.test.ts` mock-моделью AI SDK и агентом
+не используется. Сам wire-формат закреплён `tests/wire.ts`: реальная сериализация
+`@ai-sdk/openai-compatible` через stub `fetch`.
 
 ## 9. Ключи и секреты
 

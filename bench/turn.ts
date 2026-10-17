@@ -20,16 +20,10 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import {
-  AIMessage,
-  HumanMessage,
-  SystemMessage,
-  ToolMessage,
-  type BaseMessage,
-} from "@langchain/core/messages";
+import type { ModelMessage } from "ai";
 
 import { createChatModel } from "../src/llm/client";
-import { invokeTools } from "../src/llm/structured";
+import { invokeTools, type ModelReply } from "../src/llm/structured";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toolNamesFor } from "../src/llm/tools";
 import { loadSettings } from "../src/config/settings";
@@ -114,23 +108,69 @@ function toolsFor(situation: Situation, island?: IslandId): string[] {
   return toolNamesFor(frontierFor(situation, island));
 }
 
-function toBaseMessage(message: RenderedMessage): BaseMessage {
-  if (message.type === "human") return new HumanMessage(message.content);
-  if (message.type === "system") return new SystemMessage(message.content);
+function toolNamesOf(messages: readonly RenderedMessage[]): Map<string, string> {
+  const names = new Map<string, string>();
+  for (const message of messages) {
+    for (const call of message.tool_calls ?? []) names.set(call.id, call.name);
+  }
+  return names;
+}
+
+function toModelMessage(message: RenderedMessage, names: Map<string, string>): ModelMessage {
+  if (message.type === "human") return { role: "user", content: message.content };
+  if (message.type === "system") return { role: "system", content: message.content };
   if (message.type === "tool") {
     if (message.tool_call_id === undefined) {
       throw new Error(`rendered tool message without tool_call_id: ${message.content.slice(0, 60)}`);
     }
-    return new ToolMessage({ content: message.content, tool_call_id: message.tool_call_id });
+    return {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: message.tool_call_id,
+          toolName: names.get(message.tool_call_id) ?? "tool",
+          output: { type: "text", value: message.content },
+        },
+      ],
+    };
   }
   const calls = (message.tool_calls ?? []).map((call) => ({
-    name: call.name,
-    args: (typeof call.args === "string" ? JSON.parse(call.args) : call.args) as Record<string, unknown>,
-    id: call.id,
-    type: "tool_call" as const,
+    type: "tool-call" as const,
+    toolCallId: call.id,
+    toolName: call.name,
+    input: (typeof call.args === "string" ? JSON.parse(call.args) : call.args) as Record<string, unknown>,
   }));
-  if (calls.length > 0) return new AIMessage({ content: message.content, tool_calls: calls });
-  return new AIMessage(message.content);
+  if (calls.length > 0) {
+    return {
+      role: "assistant",
+      content: [
+        ...(message.content !== "" ? [{ type: "reasoning" as const, text: message.content }] : []),
+        ...calls,
+      ],
+    };
+  }
+  return { role: "assistant", content: message.content };
+}
+
+function toModelMessages(messages: readonly RenderedMessage[]): ModelMessage[] {
+  const names = toolNamesOf(messages);
+  return messages.map((message) => toModelMessage(message, names));
+}
+
+function textOf(message: ModelMessage): string {
+  if (typeof message.content === "string") return message.content;
+  return message.content
+    .map((part) => {
+      if (part.type === "text" || part.type === "reasoning") return part.text;
+      if (part.type === "tool-call") return `-> call ${part.toolName}(${JSON.stringify(part.input)}) [id ${part.toolCallId}]`;
+      if (part.type === "tool-result") {
+        const output = part.output as { value?: unknown } | undefined;
+        return `(answers ${part.toolCallId}) ${typeof output?.value === "string" ? output.value : JSON.stringify(output?.value ?? "")}`;
+      }
+      return "";
+    })
+    .join("\n");
 }
 
 function applyPatch(messages: RenderedMessage[], patch: PatchOp[]): RenderedMessage[] {
@@ -198,7 +238,7 @@ function lastMoveOf(history: TapeMessage[]):
 // state description (from the island of the last `move` and its concretized what/done) and the
 // situation/observation instructions are recomputed, so a prompt edit can be tested on a
 // recorded run without a new run. Needs a `sandbox-tasks` trace (it carries `history`).
-function rebuildMessages(row: Row): BaseMessage[] {
+function rebuildMessages(row: Row): ModelMessage[] {
   if (row.history === undefined) throw new Error("--rebuild needs a trace with `history` (sandbox-tasks)");
   const move = lastMoveOf(row.history);
   const island = move?.island;
@@ -287,39 +327,27 @@ interface Attempt {
 // the `invokeTools` truncation retry re-invokes, so this shows the retry too): the provider's
 // hidden reasoning (`choices[0].message.reasoning`) and the visible content/finish_reason.
 function makeRenderer(sink: string[], attempts: Attempt[] = []) {
-  const hooks = {
-    onResponseBody: (body: unknown): void => {
-      const choice = (
-        body as
-          | {
-              choices?: {
-                finish_reason?: unknown;
-                message?: { reasoning?: unknown; reasoning_content?: unknown; content?: unknown };
-              }[];
-            }
-          | undefined
-      )?.choices?.[0];
-      const message = choice?.message ?? {};
-      const reasoningRaw = message.reasoning ?? message.reasoning_content;
-      const reasoning = typeof reasoningRaw === "string" ? reasoningRaw : "";
-      const raw = message.content;
-      const content = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
-      if (reasoning !== "") sink.push(reasoning);
-      attempts.push({
-        ...(typeof choice?.finish_reason === "string" ? { finish: choice.finish_reason } : {}),
-        reasoning,
-        content,
-        keys: Object.keys(message).join(","),
-      });
-    },
+  const onResponse = (response: unknown): void => {
+    const reply = response as ModelReply;
+    const reasoning = reply.reasoning ?? "";
+    if (reasoning !== "") sink.push(reasoning);
+    attempts.push({
+      finish: reply.finishReason,
+      reasoning,
+      content: reply.text,
+      keys: Object.keys(reply).join(","),
+    });
   };
   return {
-    model: createChatModel({ ...settings, model: modelName }, hooks),
+    model: createChatModel({ ...settings, model: modelName }),
     rebuild: (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
-      createChatModel(
-        { ...settings, model: modelName, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
-        hooks,
-      ),
+      createChatModel({
+        ...settings,
+        model: modelName,
+        maxTokens,
+        ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+      }),
+    onResponse,
   };
 }
 
@@ -334,24 +362,22 @@ for (const turn of turns) {
   // trace's tool_calls/tool_call_id even in `--dry`, so a wrong patch/trace surfaces without a
   // model call.
   const patched = useRebuild ? undefined : patch.length > 0 ? applyPatch(row.messages, patch) : row.messages;
-  let messages = useRebuild ? rebuildMessages(row) : patched!.map(toBaseMessage);
-  if (useRebuild && appendSystem !== undefined) messages.push(new SystemMessage(appendSystem));
-  if (process.argv.includes("--no-request")) messages = messages.filter((m) => m.getType() !== "human");
+  let messages = useRebuild ? rebuildMessages(row) : toModelMessages(patched!);
+  if (useRebuild && appendSystem !== undefined) messages.push({ role: "system", content: appendSystem });
+  if (process.argv.includes("--no-request")) messages = messages.filter((m) => m.role !== "user");
   if (process.argv.includes("--no-turn-system")) {
-    while (messages.length > 0 && messages[messages.length - 1]!.getType() === "system") messages.pop();
+    while (messages.length > 0 && messages[messages.length - 1]!.role === "system") messages.pop();
   }
   const allowedTools = toolsFor(row.situation, lastMoveOf(row.history ?? [])?.island);
 
   if (dumpPath !== undefined) {
     const target = turns.length === 1 ? dumpPath : `${dumpPath}.t${turn}`;
-    const text = (message: BaseMessage): string =>
-      typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-    writeFileSync(target, messages.map((m) => `===== ${m.getType()} =====\n${text(m)}`).join("\n\n"));
+    writeFileSync(target, messages.map((m) => `===== ${m.role} =====\n${textOf(m)}`).join("\n\n"));
   }
   if (dry) {
     console.log(
       `dry t${row.turn} situation=${row.situation} mode=${useRebuild ? "rebuild" : "patch"} ` +
-        `tools=[${allowedTools.join(",")}] messages=[${messages.map((message) => message.getType()).join(",")}]`,
+        `tools=[${allowedTools.join(",")}] messages=[${messages.map((message) => message.role).join(",")}]`,
     );
     continue;
   }
@@ -363,20 +389,20 @@ for (const turn of turns) {
   for (let run = 0; run < repeat; run += 1) {
     const reasoning: string[] = [];
     const attempts: Attempt[] = [];
-    const { model, rebuild } = makeRenderer(reasoning, attempts);
+    const { model, rebuild, onResponse } = makeRenderer(reasoning, attempts);
     const meter = new TurnMeter();
     let finish: string | undefined;
+    const respond = (response: unknown): void => {
+      finish = (response as ModelReply).finishReason;
+      onResponse(response);
+    };
     try {
       const proposal: Proposals = await invokeTools(model, messages, {
         settings,
         rebuild,
-        callbacks: [meter],
+        usageHandlers: [meter],
         allowedTools,
-        onResponse: (response) => {
-          const value = (response as { response_metadata?: { finish_reason?: unknown } } | undefined)
-            ?.response_metadata?.finish_reason;
-          if (typeof value === "string") finish = value;
-        },
+        onResponse: respond,
       });
       console.log(
         `  #${run} actions=${proposal.actions.map(label).join("+")} thought=${proposal.thought.length} ` +

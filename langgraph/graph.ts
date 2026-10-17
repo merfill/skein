@@ -14,6 +14,7 @@ import {
   graphCounts,
   sum,
   TurnMeter,
+  langChainUsage,
   type TurnRecord,
 } from "../bench/metrics";
 import { loadSettings, type Settings } from "../src/config/settings";
@@ -21,7 +22,7 @@ import type { Event } from "../src/ir/events";
 import { childrenOf, fold, stateOf } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
-import type { Action, Proposal } from "../src/llm/schemas";
+import type { Action, Proposals } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, promptText } from "../src/loop/propose";
@@ -177,19 +178,24 @@ export const skein = {
 
     const proposals: Action[] = [];
     const turns: Omit<TurnRecord, "accepted">[] = [];
-    const propose = async (context: Context): Promise<Proposal> => {
+    const propose = async (context: Context): Promise<Proposals> => {
       const contextChars = promptText(context).length;
       console.log(
         `SKEIN_CONTEXT ${JSON.stringify({ turn: turns.length, chars: contextChars, context })}`,
       );
       const meter = new TurnMeter();
       const started = Date.now();
-      let proposal: Proposal;
+      let proposal: Proposals;
       try {
         proposal = await invokeTools(model, buildMessages(context), {
-          callbacks: [...inherited, meter],
+          usageHandlers: [...inherited.map(langChainUsage), meter],
           settings,
-          rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens }),
+          rebuild: (maxTokens, opts) =>
+            createChatModel({
+              ...settings,
+              maxTokens,
+              ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+            }),
           onError: (error, phase) => {
             console.log(
               `SKEIN_LLM_ERROR ${JSON.stringify({
@@ -212,12 +218,13 @@ export const skein = {
         throw error;
       }
       console.log(
-        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, action: proposal.action })}`,
+        `SKEIN_PROPOSAL ${JSON.stringify({ turn: turns.length, thought: proposal.thought, actions: proposal.actions, action: proposal.actions[0] })}`,
       );
-      proposals.push(proposal.action);
+      proposals.push(...proposal.actions);
+      const first = proposal.actions[0];
       turns.push({
         turn: turns.length,
-        action: actionName(proposal.action),
+        action: first !== undefined ? actionName(first) : "none",
         contextChars,
         inputTokens: meter.inputTokens,
         outputTokens: meter.outputTokens,

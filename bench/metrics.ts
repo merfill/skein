@@ -2,11 +2,13 @@
 // per-call token/cache usage (via a LangChain callback), context size, and the
 // work-graph node/action counts.
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import { AIMessage } from "@langchain/core/messages";
 import type { ChatGeneration, LLMResult } from "@langchain/core/outputs";
 
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import type { Action } from "../src/llm/schemas";
+import type { ModelReply } from "../src/llm/structured";
 
 export interface UsageLike {
   input_tokens?: number;
@@ -113,6 +115,57 @@ export class TurnMeter extends BaseCallbackHandler {
     }
     this.usage.push(usage.raw);
   }
+
+  // The AI SDK path (`src/llm/structured.ts`) reports one assembled reply per model call.
+  record(reply: ModelReply): void {
+    this.calls += 1;
+    this.inputTokens += reply.usage.inputTokens ?? 0;
+    this.outputTokens += reply.usage.outputTokens ?? 0;
+    this.reasoningTokens += reply.usage.outputTokenDetails.reasoningTokens ?? 0;
+    this.cacheRead += reply.usage.inputTokenDetails.cacheReadTokens ?? 0;
+    this.cacheWrite += reply.usage.inputTokenDetails.cacheWriteTokens ?? 0;
+    const cost = (reply.rawUsage as { cost?: unknown } | undefined)?.cost;
+    if (typeof cost === "number") {
+      this.costRub += cost;
+      this.costCalls += 1;
+    }
+    this.usage.push(reply.rawUsage);
+  }
+
+  handleUsage = (reply: unknown): void => this.record(reply as ModelReply);
+}
+
+// A LangChain callback handler (Harbor's inherited handlers; `TurnMeter`'s legacy path)
+// exposed as an AI SDK usage handler. The synthetic `LLMResult` carries the same message
+// shape the LangChain model path used to produce.
+export function langChainUsage(callback: unknown): { handleUsage(reply: ModelReply): Promise<void> } {
+  return {
+    async handleUsage(reply) {
+      const handler = callback as { handleLLMEnd?: (output: LLMResult) => unknown };
+      if (typeof handler.handleLLMEnd !== "function") return;
+      const message = new AIMessage({
+        content: reply.text,
+        usage_metadata: {
+          input_tokens: reply.usage.inputTokens ?? 0,
+          output_tokens: reply.usage.outputTokens ?? 0,
+          total_tokens: reply.usage.totalTokens ?? 0,
+          input_token_details: {
+            cache_read: reply.usage.inputTokenDetails.cacheReadTokens ?? 0,
+            cache_creation: reply.usage.inputTokenDetails.cacheWriteTokens ?? 0,
+          },
+          output_token_details: {
+            reasoning: reply.usage.outputTokenDetails.reasoningTokens ?? 0,
+          },
+        },
+        response_metadata: { finish_reason: reply.finishReason, usage: reply.rawUsage },
+      });
+      const output = {
+        generations: [[{ text: reply.text, message }]],
+        llmOutput: reply.rawUsage,
+      } as unknown as LLMResult;
+      await handler.handleLLMEnd(output);
+    },
+  };
 }
 
 export function actionName(action: Action): string {

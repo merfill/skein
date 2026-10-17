@@ -38,10 +38,12 @@ export function lastPatchBefore(state: State, beforeMoveId: string): string | un
 }
 
 // A move out of a closed Verification whose acceptance run failed. The engine reverts the
-// preceding Patch before the move, so Localization sees the tree the failed change started
-// from; the tape keeps the attempt record (Start/Finish and the failed run).
+// preceding Patch before the move, so Localization OR Patch sees the tree the failed change
+// started from; the tape keeps the attempt record (Start/Finish and the failed run).
 export function isFailedVerificationMove(state: State, action: Action): boolean {
-  if (action.operator !== "move" || action.state !== "localization") return false;
+  if (action.operator !== "move" || (action.state !== "localization" && action.state !== "patch")) {
+    return false;
+  }
   const move = currentMove(state);
   if (move === undefined) return false;
   if (moveIsland(state, move) !== "verification" || !isMoveFinished(state, move)) return false;

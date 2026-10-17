@@ -22,7 +22,7 @@ projection function are the protocol.
 | Code non-monotonicity | staleness by version (file hash), no manual retraction |
 | First slice | bugfix by a failing test; the criterion is the test command |
 | Orchestration | LangGraph.js (`@langchain/langgraph`) |
-| LLM | as in Ankyra: OpenAI-compatible endpoint, reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
+| LLM | as in Ankyra: OpenAI-compatible endpoint; model layer — the Vercel AI SDK (`@ai-sdk/openai-compatible`); reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
 | Criterion | a goal's `done_when` is a literal command; its `exitCode` (0 = pass) is the only pass/fail fact |
 | Closure | a frame closes only by the doxa's `stop` (for now accepted only once the criterion passed); a request ends when its goal is stopped |
 
@@ -181,28 +181,46 @@ Beyond Tier 0, the current line adds:
   `docs/ir_semantics.md`; rollout — `docs/plans/archive/ir_revision_implementation_plan.md`. The
   earlier shape statements in this section are history.
 
-- **Streaming the model response (2026-10-17, done).** Calls go through `model.stream()` and the
-  engine concatenates the chunks itself (`callModel`, `src/llm/structured.ts`) instead of the
-  `ChatOpenAI` `_generate` branch, so the internal token count (`getNumTokens` → a
-  `tiktoken.pages.dev` fetch) is never triggered. Toggle `SKEIN_STREAMING` (default on); off is
-  the old non-streaming `invoke`. The adapter (`src/llm/provider.ts`) gained `fromChunk`: it
-  renames `delta.reasoning` → `reasoning_content` per SSE line (RouterAI's field, the one
-  langchain-openai maps). The fetch (`src/llm/client.ts`) detects SSE from `init.body.stream`
-  and, in the same pass, accumulates `reasoning`/`content`/`tool_calls`/`finish_reason`/`usage`,
-  handing `onResponseBody` a reconstructed non-stream body (telemetry unchanged). The provider
-  sends usage/cost in the terminal chunk (confirmed on the captured opencode SSE). Live A/B
-  `fix-ocaml-gc --net off` (K=3 per arm) — the transport works, reasoning is back on the tape, no
-  `llm_error`, cost no worse; analysis — `docs/benches/best_bench.md` (2026-10-17). Generation
-  display/interrupt is separate.
+- **Model layer on the Vercel AI SDK + streaming (2026-10-17, done).** `src/llm/client.ts` —
+  `createOpenAICompatible`; `buildMessages` → AI SDK `ModelMessage[]`; `invokeTools`/
+  `invokeStructured` → `generateText`/`streamText`; tools — AI SDK `tool()` from the same zod
+  schemas; reasoning and usage come from the SDK result. The old LangChain adapter
+  (`src/llm/provider.ts`), the SSE parser and `onResponseBody` are gone; `@langchain/openai` is
+  removed. `SKEIN_STREAMING` (default on) chooses `streamText` vs `generateText`;
+  `SKEIN_REASONING_TAPE` still controls whether reasoning is shown on the tape. Tests/benches
+  updated; plan/status — `docs/plans/ai_sdk_migration_plan.md`.
+- **Literal Verification why + failed-attempt block (2026-10-17, done).** Verification's
+  `stop.why` is a literal retelling of the error: the command, exit status, actual text; no code
+  diagnosis and no "why the fix did not work". `Previous failed attempt` in the open Localization
+  and Patch is built from the model's `why` of the failed Verification and the actual diff of the
+  last Patch; the mechanical `lastFailingRun`/`git`/exit no longer leaks into the block. It says
+  `has been reverted` and `Do not repeat this change`; a masked exit-0 with `stop.why` is also
+  visible. Tests — `tests/revert.test.ts`, `tests/tape_render.test.ts`.
+- **Verification → Patch + revert (2026-10-17, done).** `ISLANDS.verification.next` includes
+  Patch: when the Localization coordinates still hold and only the change failed, the model may go
+  straight back to Patch. `isFailedVerificationMove` reverts the failed Patch on both targets
+  (`Patch`/`Localization`), so Patch starts from the pre-patch tree and with the block. Live:
+  run5 of the final batch chose `verification → patch`, made one revert and fixed the tail; in
+  separate stage samples the model more often chose Localization. Tests — `tests/revert.test.ts`.
+- **Per-state hints (2026-10-17, done).** `Island.hint` per state + a shared closure tail:
+  Orientation — `pwd`/build/check; Localization — sibling walkers; Patch — "only the named change
+  / do not repeat the failed attempt"; Verification — pass/fail/environment; Finish — `stop`.
+  `turnInstruction` no longer mixes states; tests — `tests/prompt.test.ts`,
+  `docs/system_prompt.md`.
+- **Final live batch (2026-10-17, done).** `fix-ocaml-gc --net on`, 5 parallel: **5/5
+  `reward=1`**, 29–50 steps, **7.315₽** total (1.031–2.521₽ per run); 999,544 in (79.7% cache),
+  47,325 out (28,462 reasoning). Tokens and analysis — `docs/benches/best_bench.md`.
 
-Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
-live gate only when `SKEIN_LIVE=true`.
+Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
+— offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit
+go-ahead.
 
 **Deferred (backlog):**
 
 - **Generation display/interrupt (streaming UX).** Streaming is in place as transport (above),
   but tokens are not surfaced: showing and interrupting the output needs the loop to consume
-  `handleLLMNewToken`/`model.stream()` rather than only concatenating. Deferred.
+  consume the AI SDK `textStream`/`fullStream` at the loop level rather than only assembling the
+  result. Deferred.
 - **Possible tools.** `write` is done. Still candidates, by size of the gap: `edit` by
   range / `multiedit` (find/replace breaks on ambiguous or duplicated fragments);
   `web_fetch` (docs, error analysis — currently reachable through `run`/`curl`, so low
@@ -272,3 +290,7 @@ CSP/arithmetic, UI, multilinguality, multiple LLM providers.
   is gone. Not yet fixed; options: (A) restore the `note` chain, (B) widen orientation to "where
   the change belongs", (C) make localization's first step "locate the touched files". Evidence:
   `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / virtual spec).
+  **Update 2026-10-17:** the final `fix-ocaml-gc --net on` batch is 5/5
+  (`docs/benches/best_bench.md`); per-state hints, the literal `why` and the
+  `Previous failed attempt` block in Patch made the handoff work in this series. The question is
+  kept as history and for a K>5 check.

@@ -1,3 +1,4 @@
+import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
 import { ISLAND_IDS } from "../ir/islands";
@@ -171,6 +172,22 @@ export const PROPOSAL_TOOLS: OpenAITool[] = DEFINITIONS.map((definition) => ({
     parameters: parametersOf(definition.schema),
   },
 }));
+
+// The AI SDK tool set for the names on the model surface. The zod schemas stay the single
+// source: the AI SDK validates the model's call against them before it reaches `toProposal`.
+// There is no `execute` — a call is the structured-output channel for the proposed `Action`,
+// never a tool the SDK runs (`stopWhen: stepCountIs(1)` in `structured.ts`).
+export function proposalTools(names?: ReadonlySet<string>): ToolSet {
+  const tools: ToolSet = {};
+  for (const definition of DEFINITIONS) {
+    if (names !== undefined && !names.has(definition.name)) continue;
+    tools[definition.name] = tool({
+      description: definition.description,
+      inputSchema: definition.schema,
+    });
+  }
+  return tools;
+}
 
 function parseArgs(args: unknown): Record<string, unknown> {
   if (typeof args === "string") {

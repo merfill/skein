@@ -16,6 +16,10 @@ Higher is better, in this order:
 One row per run. The run dir holds the trace (`metrics.json`, `result.json`; opencode also
 writes `opencode.txt`).
 
+> **2026-10-17, final batch:** 5/5 `fix-ocaml-gc --net on`, 29–50 steps,
+> **1.031–2.521₽** — see the final batch below. The leaderboard below is historical; the new
+> best net-on is run4 `26-682` (1.031₽ / 32 steps) and run3 `25-612` (1.036₽ / 29 steps).
+
 ## Leaderboard
 
 | # | date (UTC) | agent | task | condition | reward | steps | tool calls | in | out (vis + rea) | cache | time | run dir |
@@ -59,7 +63,55 @@ Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it 
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
 
-## Latest version (2026-10-17) — reasoning on the tape (A/B)
+## Final batch (2026-10-17) — literal why, failed-attempt block, Verification→Patch
+
+`fix-ocaml-gc --net on`, 5 parallel runs. **5/5 `reward=1`**, `request_addressed`, 0 refusals,
+no `max_turns` and no final transport `llm_error`. This is the best net-on batch so far:
+29–50 steps, **1.031–2.521₽**; all five runs are cheaper than the old net-on #4 (2.645₽).
+
+| run | steps | calls | in | fresh | cache | hit | out (vis + rea) | reason/out | ₽ | run dir |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|
+| run1 `23-095` | 31 | 31 | 168,981 | 40,469 | 128,512 | 76.1% | 9,662 (3,358 + 6,304) | 65.2% | 1.465 | `2026-10-17T18-13-23-095Z-fix-ocaml-gc` |
+| run2 `24-334` | 31 | 32 | 196,317 | 37,472 | 158,845 | 80.9% | 7,441 (3,940 + 3,501) | 47.1% | 1.263 | `2026-10-17T18-13-24-334Z-fix-ocaml-gc` |
+| run3 `25-612` | 29 | 29 | 169,773 | 32,176 | 137,597 | 81.0% | 5,703 (3,009 + 2,694) | 47.2% | 1.036 | `2026-10-17T18-13-25-612Z-fix-ocaml-gc` |
+| run4 `26-682` | 32 | 32 | 165,380 | 35,207 | 130,173 | 78.7% | 4,914 (3,147 + 1,767) | 36.0% | 1.031 | `2026-10-17T18-13-26-682Z-fix-ocaml-gc` |
+| run5 `27-653` | 50 | 50 | 299,093 | 57,304 | 241,789 | 80.8% | 19,605 (5,409 + 14,196) | 72.4% | 2.521 | `2026-10-17T18-13-27-653Z-fix-ocaml-gc` |
+| **total** | **173** | **174** | **999,544** | **202,628** | **796,916** | **79.7%** | **47,325 (18,863 + 28,462)** | **60.1%** | **7.315** | — |
+
+Averages: 5,778 input/turn, 274 output/turn, 165 reasoning/turn, 0.0423₽/turn, 1.463₽/run.
+Context peak — 58,331 chars (run1). run5 — 34.5% of the cost and 49.9% of all reasoning.
+
+**What changed.**
+
+- **Verification `stop.why` is a literal retelling.** The command, exit status and actual error
+  text; no code diagnosis and no "why the fix did not work". The model no longer writes "the
+  applied patch is wrong" in place of the error.
+- **`Previous failed attempt` in Localization and Patch** now uses the **model's `why`** from the
+  failed Verification and the actual diff of the last Patch; the mechanical
+  `lastFailingRun`/`git`/exit no longer leaks into the block. It says `has been reverted` and
+  `Do not repeat this change`.
+- **`Verification → Patch`** is a new edge: when the Localization coordinates still hold and only
+  the change failed, the model may go straight back to Patch. `isFailedVerificationMove` reverts
+  the failed Patch on both targets (`Patch`/`Localization`). run5 used it
+  (`verification → patch → verification`, 1 revert, 50 steps); runs 1–4 were direct.
+- **Per-state `Island.hint` + shared closure tail:** Orientation — `pwd`/build/check; Localization
+  — sibling walkers; Patch — "only the named change, do not repeat the failed attempt";
+  Verification — pass/fail/environment; Finish — `stop`. `turnInstruction` no longer mixes states.
+- **Model layer — AI SDK:** `createOpenAICompatible`, `generateText`/`streamText`, reasoning/usage
+  from the SDK; the LangChain adapter and SSE parser are gone, `@langchain/openai` removed.
+  `SKEIN_STREAMING` (default on) chooses `streamText`; reasoning on the tape remains
+  `SKEIN_REASONING_TAPE`.
+- Tests: **336 passed** offline; typecheck clean. Plan/status — `docs/plans/ai_sdk_migration_plan.md`.
+
+**Stage probe of the edge.** In two separate stage samples of sample1 (`624–627`) and then in
+five more, the model chose Localization (2/2 and 5/5) despite the edge: at Verification it sees
+the literal error and the closed Patch, but not the failed diff. In the full run5 the edge did
+fire. One batch is not a statistic; the important part is that Localization closes after the
+failure and Patch with the block applies the right tail.
+
+Logs: `/tmp/opencode/fix-ocaml-final/run{1..5}.log`.
+
+## Previous version (2026-10-17) — reasoning on the tape (A/B)
 
 `fix-ocaml-gc --net off` (†), reward **1**, `request_addressed`, 0 refusals. The doxa now sees
 **its own previous reasoning** on the tape — like opencode (Vercel AI SDK) / OpenAI Agents SDK.

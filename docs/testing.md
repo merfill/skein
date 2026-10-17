@@ -405,8 +405,11 @@ the run. Only when the retries and the repair rounds are exhausted does the loop
 (the run trace's `result.json`/`metrics.json`), not only in a transient turn.
 
 `invokeStructured` remains the generic JSON path (schema spelled out in the prompt,
-`response_format: json_object`, manual parse, raised cap on a completion cut, one repair
-round); it is covered offline in `tests/structured.test.ts` and used by no agent path.
+`response_format: json_object` through the provider options, manual parse, raised cap on a
+completion cut, one repair round); it is covered offline in `tests/structured.test.ts` with
+an AI SDK mock model and used by no agent path. The wire format itself is pinned by
+`tests/wire.ts`, which drives the real `@ai-sdk/openai-compatible` serialization through a
+stub `fetch`.
 
 ## 9. Keys and secrets
 

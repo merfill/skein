@@ -39,12 +39,20 @@ mkdirSync(join(dir, "contexts"), { recursive: true });
 const render = (ctx: Context): string =>
   buildMessages(ctx)
     .map((message) => {
-      const calls = (message as { tool_calls?: { name: string; args: unknown }[] }).tool_calls;
-      const callId = (message as { tool_call_id?: string }).tool_call_id;
-      const lines = [`===== ${message.getType()} =====`];
-      if (typeof message.content === "string" && message.content !== "") lines.push(message.content);
-      for (const call of calls ?? []) lines.push(`-> call ${call.name}(${JSON.stringify(call.args)})`);
-      if (callId !== undefined) lines.push(`(answers ${callId})`);
+      const lines = [`===== ${message.role} =====`];
+      if (typeof message.content === "string") {
+        if (message.content !== "") lines.push(message.content);
+      } else {
+        for (const part of message.content) {
+          if (part.type === "text" || part.type === "reasoning") {
+            if (part.text !== "") lines.push(part.text);
+          } else if (part.type === "tool-call") {
+            lines.push(`-> call ${part.toolName}(${JSON.stringify(part.input)})`);
+          } else if (part.type === "tool-result") {
+            lines.push(`(answers ${part.toolCallId})`);
+          }
+        }
+      }
       return lines.join("\n");
     })
     .join("\n\n");
@@ -67,12 +75,7 @@ async function main(): Promise<void> {
 
   const settings = loadSettings();
   const reasoning: string[] = [];
-  const model = createChatModel(settings, {
-    onResponseBody: (body: unknown) => {
-      const message = (body as { choices?: { message?: { reasoning?: unknown } }[] }).choices?.[0]?.message;
-      if (typeof message?.reasoning === "string" && message.reasoning !== "") reasoning.push(message.reasoning);
-    },
-  });
+  const model = createChatModel(settings);
 
   const seed = [
     {
@@ -103,7 +106,14 @@ async function main(): Promise<void> {
 
     reasoning.length = 0;
     const meter = new TurnMeter();
-    const proposals = await propose(model, context, { settings, callbacks: [meter] });
+    const proposals = await propose(model, context, {
+      settings,
+      usageHandlers: [meter],
+      onResponse: (response) => {
+        const raw = (response as { reasoning?: unknown }).reasoning;
+        if (typeof raw === "string" && raw !== "") reasoning.push(raw);
+      },
+    });
     writeFileSync(
       join(dir, "turns.ndjson"),
       `${JSON.stringify({ turn, situation: context.situation, island: context.island, actions: proposals.actions, reasoning: reasoning.join("\n") })}\n`,

@@ -80,19 +80,19 @@ async function main(): Promise<void> {
   }
 
   const reasoning: string[] = [];
-  const capture = (body: unknown): void => {
-    const message = (body as { choices?: { message?: { reasoning?: unknown } }[] }).choices?.[0]?.message;
-    if (typeof message?.reasoning === "string" && message.reasoning !== "") {
-      reasoning.push(message.reasoning);
-      writeFileSync(join(dir, "reasoning.ndjson"), `${JSON.stringify({ reasoning: message.reasoning })}\n`, { flag: "a" });
+  const capture = (text: string): void => {
+    if (text !== "") {
+      reasoning.push(text);
+      writeFileSync(join(dir, "reasoning.ndjson"), `${JSON.stringify({ reasoning: text })}\n`, { flag: "a" });
     }
   };
-  const model = createChatModel(settings, { onResponseBody: capture });
+  const model = createChatModel(settings);
   const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) =>
-    createChatModel(
-      { ...settings, maxTokens, ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}) },
-      { onResponseBody: capture },
-    );
+    createChatModel({
+      ...settings,
+      maxTokens,
+      ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+    });
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const interactive = !auto && process.stdin.isTTY === true;
@@ -100,12 +100,21 @@ async function main(): Promise<void> {
   let turn = 0;
 
   const render = (message: ReturnType<typeof buildMessages>[number]): string => {
-    const calls = (message as { tool_calls?: { name: string; args: unknown }[] }).tool_calls;
-    const callId = (message as { tool_call_id?: string }).tool_call_id;
-    const lines = [`===== ${message.getType()} =====`];
-    if (typeof message.content === "string" && message.content !== "") lines.push(message.content);
-    for (const call of calls ?? []) lines.push(`-> call ${call.name}(${JSON.stringify(call.args)})`);
-    if (callId !== undefined) lines.push(`(answers ${callId})`);
+    const type = message.role === "user" ? "human" : message.role === "assistant" ? "ai" : message.role;
+    const lines = [`===== ${type} =====`];
+    if (typeof message.content === "string") {
+      if (message.content !== "") lines.push(message.content);
+    } else {
+      for (const part of message.content) {
+        if (part.type === "text" || part.type === "reasoning") {
+          if (part.text !== "") lines.push(part.text);
+        } else if (part.type === "tool-call") {
+          lines.push(`-> call ${part.toolName}(${JSON.stringify(part.input)})`);
+        } else if (part.type === "tool-result") {
+          lines.push(`(answers ${part.toolCallId})`);
+        }
+      }
+    }
     return lines.join("\n");
   };
 
@@ -132,7 +141,11 @@ async function main(): Promise<void> {
     const proposals: Proposals = await proposeModel(model, context, {
       settings,
       rebuild,
-      callbacks: [meter],
+      usageHandlers: [meter],
+      onResponse: (response) => {
+        const text = (response as { reasoning?: unknown }).reasoning;
+        if (typeof text === "string") capture(text);
+      },
       onError: (error) => console.error(`[step] llm call failed: ${error instanceof Error ? error.message : String(error)}`),
     });
     console.info(`   → ${proposals.actions.map(label).join(" + ")}`);

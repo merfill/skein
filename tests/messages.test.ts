@@ -189,9 +189,11 @@ describe("message wrappers: the wire JSON of the tape", () => {
       (m) => m.role === "assistant" && ((m.calls?.length ?? 0) > 0 || m.call !== undefined),
     );
     expect(assistant?.reasoning).toBe("the tail advance looks wrong");
-    // ...and it renders as that message's text (the wire adapter moves it to `reasoning_content`).
+    // ...and the provider serializes it as the assistant turn's reasoning field, never as
+    // visible content (AI SDK `reasoning` part -> `reasoning_content`).
     const msgs = await wire(buildMessages(context));
     const callMsg = msgs.find((m) => m.tool_calls?.[0]?.function.name === "grep");
-    expect(String(callMsg?.content)).toBe("the tail advance looks wrong");
+    expect(callMsg?.content).toBe("");
+    expect(callMsg?.reasoning_content).toBe("the tail advance looks wrong");
   });
 });

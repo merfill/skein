@@ -16,6 +16,10 @@
 Один прогон — одна строка. В каталоге прогона лежит трасса (`metrics.json`, `result.json`;
 opencode пишет ещё `opencode.txt`).
 
+> **2026-10-17, финальный батч:** 5/5 `fix-ocaml-gc --net on`, 29–50 шагов,
+> **1.031–2.521₽** — см. «Финальный батч» ниже. Таблица ниже — исторический топ-10;
+> новый лучший net-on — run4 `26-682` (1.031₽ / 32 шага) и run3 `25-612` (1.036₽ / 29 шагов).
+
 ## Таблица
 
 | # | дата (UTC) | агент | задача | режим | reward | шагов | вызовов | in | out (виз + реа) | cache | время | каталог |
@@ -38,7 +42,55 @@ goal-into-move, 49 шагов). Ранее выпали: **`19-02`** (net on, 46
 (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
 12.68₽) — их описания остались в разделах ниже.
 
-## Последняя версия (2026-10-17) — reasoning на ленте (A/B)
+## Финальный батч (2026-10-17) — literal why, failed-attempt block, Verification→Patch
+
+`fix-ocaml-gc --net on`, 5 параллельных прогонов. **5/5 `reward=1`**, `request_addressed`,
+0 отказов, без `max_turns` и без финальных transport `llm_error`. Это текущий лучший
+net-on батч: 29–50 шагов, **1.031–2.521₽**; все пять прогонов дешевле прежнего
+net-on #4 (2.645₽).
+
+| прогон | шагов | вызовов | in | fresh | cache | hit | out (виз + реа) | reason/out | ₽ | каталог |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|
+| run1 `23-095` | 31 | 31 | 168 981 | 40 469 | 128 512 | 76.1% | 9 662 (3 358 + 6 304) | 65.2% | 1.465 | `2026-10-17T18-13-23-095Z-fix-ocaml-gc` |
+| run2 `24-334` | 31 | 32 | 196 317 | 37 472 | 158 845 | 80.9% | 7 441 (3 940 + 3 501) | 47.1% | 1.263 | `2026-10-17T18-13-24-334Z-fix-ocaml-gc` |
+| run3 `25-612` | 29 | 29 | 169 773 | 32 176 | 137 597 | 81.0% | 5 703 (3 009 + 2 694) | 47.2% | 1.036 | `2026-10-17T18-13-25-612Z-fix-ocaml-gc` |
+| run4 `26-682` | 32 | 32 | 165 380 | 35 207 | 130 173 | 78.7% | 4 914 (3 147 + 1 767) | 36.0% | 1.031 | `2026-10-17T18-13-26-682Z-fix-ocaml-gc` |
+| run5 `27-653` | 50 | 50 | 299 093 | 57 304 | 241 789 | 80.8% | 19 605 (5 409 + 14 196) | 72.4% | 2.521 | `2026-10-17T18-13-27-653Z-fix-ocaml-gc` |
+| **итого** | **173** | **174** | **999 544** | **202 628** | **796 916** | **79.7%** | **47 325 (18 863 + 28 462)** | **60.1%** | **7.315** | — |
+
+Средние: 5 778 input/ход, 274 output/ход, 165 reasoning/ход, 0.0423₽/ход, 1.463₽/прогон.
+Пик контекста — 58 331 chars (run1). run5 — 34.5% стоимости и 49.9% всего reasoning.
+
+**Что изменилось.**
+
+- **Verification `stop.why` — literal retelling.** Команда, exit status и фактический текст
+  ошибки; без диагноза кода и без «почему фикс не сработал». Модель больше не пишет
+  «the applied patch is wrong» вместо ошибки.
+- **`Previous failed attempt` в Localization и Patch** теперь берёт **модельный `why`** упавшей
+  Verification и фактический diff последнего Patch; механический `lastFailingRun`/`git`/exit
+  в блок не попадает. Блок говорит `has been reverted` и `Do not repeat this change`.
+- **`Verification → Patch`** — новое ребро: если координаты Localization ещё верны, а не сработала
+  только правка, модель может идти прямо в Patch. `isFailedVerificationMove` откатывает
+  неудачный Patch на оба перехода (`Patch`/`Localization`). В run5 модель так и сделала:
+  `verification → patch → verification`, 1 revert, 50 ходов; runs 1–4 — прямые.
+- **Per-state `Island.hint` + общий closure-хвост:** Orientation — `pwd`/build/check; Localization —
+  sibling walkers; Patch — «только названное изменение, не повторять failed attempt»;
+  Verification — pass/fail/environment; Finish — `stop`. `turnInstruction` больше не смешивает
+  состояния.
+- **Model layer — AI SDK:** `createOpenAICompatible`, `generateText`/`streamText`, reasoning/usage
+  из SDK; LangChain-адаптер и SSE-парсер удалены, `@langchain/openai` убран. `SKEIN_STREAMING`
+  (дефолт on) выбирает `streamText`; reasoning на ленте по-прежнему `SKEIN_REASONING_TAPE`.
+- Тесты: **336 passed** офлайн; typecheck чистый. План/статус — `docs/plans/ai_sdk_migration_plan_ru.md`.
+
+**Stage-проверка ребра.** На двух отдельных stage-сэмплах sample1 (`624–627`) и затем на пяти
+модель выбирала Localization (2/2 и 5/5), несмотря на доступное ребро: в Verification она видит
+literal-ошибку и закрытый Patch, но не failed diff. В полном run5 ребро всё же сработало.
+Один батч — не статистика; важно, что Localization после ошибки закрывается, а Patch с блоком
+даёт верный tail.
+
+Логи: `/tmp/opencode/fix-ocaml-final/run{1..5}.log`.
+
+## Предыдущая версия (2026-10-17) — reasoning на ленте (A/B)
 
 `fix-ocaml-gc --net off` (†), reward **1**, `request_addressed`, 0 отказов. Докса теперь видит
 на ленте **свои прошлые рассуждения** — как в opencode (Vercel AI SDK) / OpenAI Agents SDK.

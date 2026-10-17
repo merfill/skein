@@ -2,8 +2,9 @@
 
 > Russian mirror — `docs/plans/ai_sdk_migration_plan_ru.md`.
 >
-> Status: proposed; no code yet. Scope: the **model layer only**. The IR, the tape, the loop,
-> the tools and LangGraph stay.
+> Status: implemented; the final live `fix-ocaml-gc --net on` batch is 5/5
+> (`docs/benches/best_bench.md`). A dedicated streaming on/off A/B remains optional.
+> Scope: the **model layer only**. The IR, the tape, the loop, the tools and LangGraph stay.
 
 ## 1. Why
 

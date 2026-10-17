@@ -74,9 +74,12 @@ A state is rendered **on the tape**, not injected per turn: a `Start state <labe
 `assistant` turn), the state's `instruction` (a `system` turn), and the state's goal as a `user`
 turn (`what: <the island's goal>`). The request **leads** the tape — the second message, right
 after the base prompt — on every turn. On an open state, the per-turn instruction is
-`turnInstruction` (appended last, temporary): `This state's done criterion: "<criterion>". When it
-holds, \`stop\` — and nothing else; do not over-work the state.` A stalled state also gets a soft
-nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
+`turnInstruction` (appended last, temporary): the state's done criterion, then the state's
+`hint` (`ISLANDS[island].hint` — what to do or avoid in this state), then the shared closure rule:
+`When it holds, stop — and nothing else. A strong suspicion is enough for the code judgment;
+environment facts (the repository root, paths, versions) must be observed, not assumed — run the
+command that prints them.` Orientation's hint establishes the absolute root with `pwd`. A stalled
+state also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a

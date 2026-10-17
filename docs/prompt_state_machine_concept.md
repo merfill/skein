@@ -276,7 +276,7 @@ Reconnaissance → Reproduction → Localization       (defect)
 Reconnaissance → Design/Planning                   (feature/multi-step)
 Localization → Reference acquisition → Localization (external truth needed, bounded)
 Localization/Design/Planning → Patch → Verification
-Verification(failure) → Localization               (corrective cycle)
+Verification(failure) → Patch/Localization         (corrective cycle; Patch when the coordinates still hold)
 Verification(success) → Hand-off → Goal
 * → Environment triage → *                         (floating)
 ```
@@ -284,7 +284,7 @@ Verification(success) → Hand-off → Goal
 Properties of the graph:
 
 - **few transitions** — the route is derived, not listed;
-- **almost everything flows to the goal** — two allowed cycles (failure→localization,
+- **almost everything flows to the goal** — two allowed cycles (failure→patch/localization,
   environment);
 - **branches by kind of task** — a defect goes through reproduction, a feature through design.
 

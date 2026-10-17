@@ -109,7 +109,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     );
   });
 
-  it("re-entering Localization carries the last failed patch and its failing run", () => {
+  it("re-entering Localization carries the last failed patch and the model's failure why", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     let step = execAll(withGoal("do it", "true"), [request()], w);
     step = exec({ operator: "stop", why: "mapped" }, step.events, w);
@@ -138,8 +138,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(block?.text).toContain("Patch: src/sum.mjs");
     expect(block?.text).toContain("return a - b;");
     expect(block?.text).toContain("return a + b;");
-    expect(block?.text).toContain("exit 2");
-    expect(block?.text).toContain("boom");
+    expect(block?.text).toContain("Verification: still fails");
     expect(block?.text).toContain("Do not repeat this change");
     expect(block?.text).toContain("The failed change is still in the workspace");
     expect(block?.text).not.toContain("look elsewhere");
@@ -173,7 +172,10 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
 
   it("assistant call -> role assistant, empty content, a well-formed tool_call", async () => {
     const ctx: Context = {
-      history: [{ role: "assistant", text: "", call: { id: "c1", name: "bash", args: { command: "ls" } } }],
+      history: [
+        { role: "assistant", text: "", call: { id: "c1", name: "bash", args: { command: "ls" } } },
+        { role: "tool", text: "ok", callId: "c1" },
+      ],
       situation: "working",
       constraints: [],
     };

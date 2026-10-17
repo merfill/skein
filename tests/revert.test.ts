@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { lastPatchBefore, revertFailedPatch, revertLastPatch } from "../src/ir/attempts";
+import { isFailedVerificationMove, lastPatchBefore, revertFailedPatch, revertLastPatch } from "../src/ir/attempts";
 import { currentVersion, fold } from "../src/ir/graph";
 import { project } from "../src/ir/project";
 import { currentMove } from "../src/ir/traversal";
@@ -64,8 +64,46 @@ describe("revert: failed Patch -> Localization", () => {
       message.text.startsWith("Previous failed attempt:"),
     );
     expect(block?.text).toContain("has been reverted in the workspace");
+    expect(block?.text).toContain("Verification: still fails");
     expect(block?.text).toContain("A different change is required");
     expect(block?.text).not.toContain("look elsewhere");
+  });
+
+  it("re-entering Patch carries the failed attempt block", () => {
+    const { ws, events, state, patchMoveId } = failedAttempt();
+    const outcome = revertLastPatch(state, patchMoveId, ws);
+    const localization = exec(move("localization", "find again"), [...events, ...outcome.events], ws);
+    const stopped = exec({ operator: "stop", why: "named again" }, localization.events, ws);
+    const patch = exec(move("patch", "fix again"), stopped.events, ws);
+    const history = project(patch.state).history;
+    const starts = history
+      .map((message, index) => (message.role === "assistant" && message.text === "Start state Patch" ? index : -1))
+      .filter((index) => index >= 0);
+    expect(starts).toHaveLength(2);
+    const block = history.slice(starts[1]! + 1).find((message) => message.text.startsWith("Previous failed attempt:"));
+    expect(block?.text).toContain("has been reverted in the workspace");
+    expect(block?.text).toContain("Verification: still fails");
+    expect(block?.text).toContain("Do not repeat this change");
+  });
+
+  it("keeps the doxa's failure why even when the run exited 0", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    let step = execAll(withGoal("do it", "true"), [request()], ws);
+    step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
+    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, ws);
+    step = exec({ operator: "stop", why: "named" }, step.events, ws);
+    step = execAll([move("patch", "fix it"), edit("src/sum.mjs", "return a - b;", "return a + b;")], step.events, ws);
+    step = exec({ operator: "stop", why: "changed" }, step.events, ws);
+    step = execAll([move("verification", "check it"), run("true")], step.events, ws);
+    step = exec({ operator: "stop", why: "acceptance failed: tests/basic failed" }, step.events, ws);
+    // No revert: exit 0 means the engine sees no failed run. The model's why still explains
+    // the failure, and the block must carry it.
+    const moved = exec(move("localization", "find again"), step.events, ws);
+    const block = project(moved.state).history.find((message) =>
+      message.text.startsWith("Previous failed attempt:"),
+    );
+    expect(block?.text).toContain("Verification: acceptance failed: tests/basic failed");
+    expect(block?.text).toContain("The failed change is still in the workspace");
   });
 
   it("does not revert a passing Verification", () => {
@@ -95,6 +133,39 @@ describe("revert: failed Patch -> Localization", () => {
     const { state, patchMoveId } = failedAttempt();
     const verification = currentMove(state) as string;
     expect(lastPatchBefore(state, verification)).toBe(patchMoveId);
+  });
+
+  it("treats a move to Patch as a failed Verification move", () => {
+    const { state } = failedAttempt();
+    expect(isFailedVerificationMove(state, move("patch", "fix again"))).toBe(true);
+  });
+
+  it("the loop reverts before the move to Patch", async () => {
+    const { ws, events } = failedAttempt();
+    expect(ws.read("src/sum.mjs")).toContain("return a + b;");
+    const result = await runAgent(
+      {
+        propose: async () => ({
+          thought: "verification failed; the coordinates still hold",
+          actions: [move("patch", "fix again")],
+        }),
+        workspace: ws,
+        maxTurns: 2,
+      },
+      { request: { id: "r1", text: "fix it" }, seed: events, startTurn: 1 },
+    );
+    expect(result.events.some((event) => event.type === "revert")).toBe(true);
+    expect(ws.read("src/sum.mjs")).toContain("return a - b;");
+    const history = project(fold(result.events)).history;
+    const starts = history
+      .map((message, index) => (message.role === "assistant" && message.text === "Start state Patch" ? index : -1))
+      .filter((index) => index >= 0);
+    const lastStart = starts.at(-1);
+    expect(lastStart).toBeDefined();
+    const block = history.slice((lastStart as number) + 1).find((message) =>
+      message.text.startsWith("Previous failed attempt:"),
+    );
+    expect(block?.text).toContain("has been reverted in the workspace");
   });
 
   it("the loop reverts before the move to Localization", async () => {

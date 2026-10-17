@@ -80,8 +80,7 @@ function flag(name: string): string | undefined {
 }
 
 function finishOf(response: unknown): string | undefined {
-  const value = (response as { response_metadata?: { finish_reason?: unknown } } | undefined)
-    ?.response_metadata?.finish_reason;
+  const value = (response as { finishReason?: unknown } | undefined)?.finishReason;
   return typeof value === "string" ? value : undefined;
 }
 
@@ -116,9 +115,15 @@ for (const turn of turns) {
   let lastFinish: string | undefined;
   try {
     const proposal: Proposals = await proposeModel(model, turn.context, {
-      callbacks: [meter],
+      usageHandlers: [meter],
       settings,
-      rebuild: (maxTokens) => createChatModel({ ...settings, maxTokens, model: modelName }),
+      rebuild: (maxTokens, opts) =>
+        createChatModel({
+          ...settings,
+          maxTokens,
+          model: modelName,
+          ...(opts?.reasoningOff === true ? { reasoningEffort: "none" } : {}),
+        }),
       onResponse: (response) => {
         lastFinish = finishOf(response);
         if (lastFinish !== undefined) finishes.set(lastFinish, (finishes.get(lastFinish) ?? 0) + 1);

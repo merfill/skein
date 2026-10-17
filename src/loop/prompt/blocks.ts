@@ -123,7 +123,7 @@ export function transitionInstruction(island?: IslandId): string {
 const TERMINAL_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B10",
-    text: `This is Finish. Call \`stop\` now to end the request.`,
+    text: `This is Finish. ${ISLANDS.finish.hint}`,
   },
 ];
 
@@ -151,11 +151,8 @@ export function turnInstruction(island?: IslandId, done?: string): string {
     criterion !== ""
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
-  const failure =
-    island === "verification"
-      ? " If the acceptance command fails, `stop` with the failure now and move to Localization; do not debug or edit here."
-      : "";
-  return `${lead} When it holds, \`stop\` — and nothing else; a strong suspicion is enough, do not verify to be sure (a wrong call is caught later), do not over-work the state, and do not do a later state's work.${failure}`;
+  const hint = island !== undefined ? ISLANDS[island].hint : "";
+  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. A strong suspicion is enough for the code judgment — do not verify to be sure (a wrong call is caught later). Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them. Do not over-work the state, and do not do a later state's work.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

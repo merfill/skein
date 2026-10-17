@@ -72,9 +72,12 @@
 (ход `assistant`), инструкция состояния (ход `system`) и цель состояния ходом `user`
 (`what: <цель острова>`). Запрос — **вверху** ленты (второе сообщение, сразу после базового
 промпта), на каждом ходу. На открытом состоянии пошаговая инструкция — `turnInstruction`
-(в конце, временно): `This state's done criterion: "<criterion>". When it holds, \`stop\` — and
-nothing else; do not over-work the state.` Застрявшее состояние также получает мягкий пинок
-(`Context.nudge`, `docs/ir_semantics_ru.md` §2.8).
+(в конце, временно): критерий состояния, затем `hint` состояния (`ISLANDS[island].hint` — что
+делать или чего избегать именно здесь), затем общее closure-правило: `When it holds, stop — and
+nothing else. A strong suspicion is enough for the code judgment; environment facts (the
+repository root, paths, versions) must be observed, not assumed — run the command that prints
+them.` Hint Orientation устанавливает абсолютный корень через `pwd`. Застрявшее состояние также
+получает мягкий пинок (`Context.nudge`, `docs/ir_semantics_ru.md` §2.8).
 
 Удалены в «opencode-style» сокращении (Фаза 11): **B3/B4/B5** (свёрнуты), **B8** (политика
 VCS), **B9** (внешний референс / diff-плейбук), **B11** (цикл ревизии), **B15** (stop — теперь

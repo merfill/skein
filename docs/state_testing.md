@@ -137,7 +137,8 @@ Checklist:
 
 Expected after the current fix:
 
-- Verification fails → `stop` → `move` to Localization → the engine writes `revert` for the last
+- Verification fails → `stop` → `move` to Patch or Localization (the model chooses; Patch when the
+  coordinates still hold) → the engine writes `revert` for the last
   Patch, restores the pre-patch file and updates the IR versions;
 - the open Localization block says `This change has been reverted…` and
   `A different change is required…`;
@@ -173,9 +174,9 @@ system   — <island instruction: how to act in this state>
 user     — what: <island.what>
 ```
 
-**Returning to Localization after a failure** (the current open state only): right after
-`ai: Start state Localization` comes another `system` — the **last** failed attempt, assembled by
-logos from the journal:
+**Returning to Localization or Patch after a failure** (the current open state only): right after
+`ai: Start state Localization`/`Start state Patch` comes another `system` — the **last** failed
+attempt, assembled by logos from the journal:
 
 ```
 system — Previous failed attempt:
@@ -183,19 +184,19 @@ system — Previous failed attempt:
              <the actual find from edit>
              ->
              <the actual replace>
-           Verification: `<command>` exited <N>
-             <output tail: segfault/error>
+           Verification: <literal retelling of the failure: command, exit, actual error>
            This change has been reverted in the workspace; the tree is back to its pre-patch state.
            Do not repeat this change. A different change is required; it may be in the same file or even the same loop.
 ```
 
-The source is not the doxa's `why` but `payload.call` of the change and the last failed `bash` in
-`verification` (`exitCode != 0`). The last attempt only; older ones are already on the tape. A
-Patch that changed no file renders `Patch: no file changed.`
+The source is the change's `payload.call` and the doxa's `stop.why` on the failed `verification`
+— a literal retelling of the failure (command, exit, actual error), not a code diagnosis and not
+the mechanical last failing command/tail. The last attempt only; older ones are already on the
+tape. A Patch that changed no file renders `Patch: no file changed.`
 
-The engine performs the revert on the failure transition `Verification → Localization`: it emits a
-`revert` event (files + new versions) and restores the pre-patch tree. The block is rendered only
-for the **currently open** Localization. If the revert is impossible (e.g. `write`/`apply_patch`
+The engine performs the revert on the failure transition `Verification → Patch/Localization`: it emits a
+`revert` event (files + new versions) and restores the pre-patch tree. The block is rendered for
+the **currently open** Localization or Patch. If the revert is impossible (e.g. `write`/`apply_patch`
 without a preimage in Phase 1), the block says `The failed change is still in the workspace.` — do
 not pretend it was reverted.
 
@@ -269,17 +270,18 @@ ai — Finish state <Label> — <why from stop>
   opencode wins not by layout but by behavior: it reads the code widely and **compares the
   "sibling" loops**, and carries through to the tests; it needs no oracle (network off).
 - **Reasoning on the tape (2026-10-17, default).** The doxa now sees its own previous reasoning on
-  the tape: the provider adapter (`src/llm/provider.ts`) round-trips `reasoning_content`, the
+  the tape: the AI SDK (`@ai-sdk/openai-compatible`) round-trips reasoning
+  (`reasoning`/`reasoning_content`), the
   engine journals a turn's reasoning on its action nodes (`payload.reasoning`), the projection
   shows it on the turn's assistant message; on by default, `SKEIN_REASONING_TAPE=false` is an A/B
   switch. A controlled A/B on the full loop (`sandbox-run`, `--net off`, K=3–4): **the moment
   Localization closes does not change** (ON t14,15,14,11 / OFF t14,11,14), but reasoning is ~2.5×
   lower and cost ~40% lower (the added context lands in `cacheRead`, fresh input equal at ~49k).
   Details — `docs/benches/best_bench.md`, section "2026-10-17".
-- **Returning to Localization carries the failed attempt (2026-10-17).** `renderState`
-  (`src/ir/project.ts`), for the **current open** Localization, inserts a `system` right after
-  `ai: Start state Localization`: the actual change of the last `patch` (from `payload.call`) and
-  the last failed run of `verification` (`exitCode != 0`) with a short output tail, plus the
+- **Returning to Localization/Patch carries the failed attempt (2026-10-17).** `renderState`
+  (`src/ir/project.ts`), for the **current open** Localization and Patch, inserts a `system` right
+  after `ai: Start state …`: the actual change of the last `patch` (from `payload.call`) and the
+  model's `stop.why` of the failed `verification` (literal: command/exit/actual text), plus the
   reverted/different-change wording. Before, the link was lost: a closed state's plan is elided
   and only the doxa's `why` remained.
   **Checked without a full run** (§2.3): the recorded looping run (`2026-10-17T08-04-06-897Z`) up
@@ -289,15 +291,17 @@ ai — Finish state <Label> — <why from stop>
   did not close within 12 turns but also did **not** re-confirm the old hypothesis (it kept
   reading). The block is visible on the tape (`Previous failed attempt:`).
 - **Reverting the failed Patch and leaving Verification (2026-10-17).**
-  - On the failure transition `Verification → Localization` the engine reverts the last Patch: a
+  - On the failure transition `Verification → Patch/Localization` the engine reverts the last Patch: a
     `revert` event (`src/ir/events.ts`), `State.reverted` and version updates in `fold`
     (`src/ir/graph.ts`), implementation in `src/ir/attempts.ts`
     (`isFailedVerificationMove`, `revertLastPatch`, `revertFailedPatch`). The hook is in
     `executeNode` (`src/loop/graph.ts`).
-  - The `Previous failed attempt` block now says the change was reverted and requires a
-    **different** change, not "look elsewhere".
-  - `turnInstruction` for Verification now says: on a failed acceptance, `stop` and move to
-    Localization — do not debug or edit here.
+  - The `Previous failed attempt` block now says the change was reverted, shows the model's
+    literal `why` from the failed Verification, and requires a **different** change, not
+    "look elsewhere"; it is rendered in the open Localization and Patch.
+  - The Verification hint now says: on a failed acceptance, `stop` with a literal `why` and
+    choose `patch` when the Localization coordinates still hold, otherwise `localization`;
+    environment failures are not a `stop` — fix and retry; no debugging/editing in Verification.
   - `AgentInput.seed`/`startTurn` (`src/loop/graph.ts`) resume `runAgent` from a recorded journal
     (see §2.5).
   - Tests: `tests/revert.test.ts` (revert, versions, block, conflict, passing Verification,
@@ -307,6 +311,9 @@ ai — Finish state <Label> — <why from stop>
     free branch with `Whsize_hd` left for live blocks — persists. A second Verification failure
     (real build) gives `stop` → Localization → `revert` without a cycle.
   - Phase 1 reverts `edit` only; `write`/`apply_patch` return a conflict (Phase 2).
+  - **Final `fix-ocaml-gc --net on` batch (2026-10-17):** 5/5 `reward=1`, 29–50 steps, 7.315₽;
+    run5 used `Verification → Patch` directly (one revert), the others were direct. Tokens —
+    `docs/benches/best_bench.md`.
 
 ### Problems (for tomorrow)
 
@@ -344,11 +351,11 @@ ai — Finish state <Label> — <why from stop>
    - run `10-33-08`: configure, make, gdb, valgrind, `runtime/ocamlrund`, and it **edits the file
      via `bash`** (`python3`/`perl`) inside Verification (write tools are not offered there, but
      `bash` can write).
-   The "Previous failed attempt" block did not help **because it is only shown on re-entry into
-   Localization**, and there was no re-entry.
-   **Done:** on a failed acceptance the Verification hint now demands `stop` and a move to
-   Localization; a second failure (real build) was checked — the model stops and the engine reverts
-   the Patch. Remaining: (a) exit-code masking (`make ...; echo $?`) — the principled fix is an
+   The "Previous failed attempt" block did not help **because it was only shown on re-entry into
+   Localization**, and there was no re-entry; it is now also rendered in the open Patch.
+   **Done:** on a failed acceptance the Verification hint demands a literal `why` and a choice of
+   `Patch`/`Localization` (Patch when the coordinates still hold); a second failure (real build)
+   was checked — the model stops and the engine reverts the Patch. Remaining: (a) exit-code masking (`make ...; echo $?`) — the principled fix is an
    engine-owned acceptance observation (the engine runs the command; the model passes no shell
    string), not prompt text; (b) after the revert the model sometimes chooses the free-branch
    variant instead of the tail `p += wh` — a Patch-targeting issue, not a loop.
@@ -382,17 +389,14 @@ ai — Finish state <Label> — <why from stop>
   descriptions — `src/llm/tools.ts`.
 - **Records:** `bench/runs/sandbox-tasks/` (a full-path example — `run-loc-restart`, a recorded
   example — `rec-orientation-182830`).
-- **Provider reasoning adapter:** `src/llm/provider.ts` (`openaiCompatible`: `toWire`/`fromWire`/`fromChunk`),
-  wired in `src/llm/client.ts` (`modelFetch`, `SKEIN_REASONING_TAPE`); a turn's reasoning field —
-  `payload.reasoning` (`src/tools/index.ts`, `executeAction`), rendering — `src/ir/project.ts`
-  (`renderPlan`), `src/loop/propose.ts` (`toMessage`), read back from the response —
-  `src/llm/structured.ts` (`invokeTools`). The switch and A/B — `docs/benches/best_bench.md`
-  (2026-10-17).
-- **Transport — streaming:** `model.stream()` + chunk concatenation — `src/llm/structured.ts`
-  (`callModel`, `invokeWithRetry`); SSE parsing and delta accumulation
-  (`reasoning`/`content`/`tool_calls`/`usage`) — `src/llm/client.ts` (`transformSse`); toggle
-  `SKEIN_STREAMING` (default on, `src/config/settings.ts`). `SKEIN_REASONING_TAPE=false` — the
-  same tap without the rename.
+- **Reasoning via the AI SDK:** `src/llm/client.ts` (`createOpenAICompatible`, `transformBody`);
+  a turn's reasoning field — `payload.reasoning` (`src/tools/index.ts`, `executeAction`),
+  rendering — `src/ir/project.ts` (`renderPlan`), `src/loop/propose.ts` (the reasoning part),
+  read back from the response — `src/llm/structured.ts` (`invokeTools`). `SKEIN_REASONING_TAPE`;
+  `provider.ts` is removed.
+- **Transport — streaming:** `streamText`/`generateText` — `src/llm/structured.ts` (`callModel`,
+  `invokeWithRetry`); `SKEIN_STREAMING` (default on, `src/config/settings.ts`).
+  `SKEIN_REASONING_TAPE=false` keeps reasoning off the tape. There is no SSE parser/`transformSse`.
 - **Meta-provider (RouterAI) and subcontractors.** We do **not** force `tool_choice` (opencode
   does not either): `required` routes the request to thinking upstreams that either reject it
   (`Thinking mode does not support this tool_choice`) or are rate-limited
@@ -402,7 +406,7 @@ ai — Finish state <Label> — <why from stop>
   turns may land on different subcontractors — one without reasoning, the next in thinking — and
   the latter demands `reasoning_content` that never existed (an empty value is rejected too); the
   fallback retries once with thinking off (`isReasoningContentRequired`). An empty
-  `reasoning_content` on a tool turn is always sent back (`toWire`).
+  `reasoning_content` on a tool turn is always sent back (`transformBody`).
 
 ## 8. Next steps
 
@@ -410,7 +414,7 @@ ai — Finish state <Label> — <why from stop>
 - **Done:** the streaming transport; the failed-attempt record on returning to Localization; the
   meta-provider fixes (no `tool_choice`, empty `reasoning_content`, thinking-off fallback, the
   transition instruction as `user`); the revert of the failed Patch on
-  `Verification → Localization`; the failure-stop in Verification; `seed`/`startTurn` for replay —
+  `Verification → Patch/Localization`; the failure-stop in Verification; `seed`/`startTurn` for replay —
   see §5, §7.
 - **Live status (2026-10-17).** `fix-ocaml-gc --net on`, K=3 before the fix: transport 3/3 with no
   `llm_error`, reward 1/3 (the failures hit `max_turns`=60 because of the Verification trap).
@@ -421,8 +425,8 @@ ai — Finish state <Label> — <why from stop>
   1. **Patch correctness, not the loop.** After the revert the model sometimes chooses the
      free-branch variant (`p += wh*(Wosize+1)` with `Whsize_hd` left for live blocks) instead of
      the tail `p += wh`. This is not a loop: Verification now closes and reverts. Needs Patch
-     targeting: show `Previous failed attempt` in Patch/transition too, and require a change, not a
-     rearrangement of the same lines.
+     targeting: the `Previous failed attempt` block is now also rendered in the open Patch;
+     remaining: require a change, not a rearrangement of the same lines.
   2. **Exit-code masking.** The model masks the status (`make ...; echo $?`, `|| true`), so
      `lastFailingRun` may miss the failure. The principled fix is an engine-owned acceptance
      observation: the engine runs the command; the model passes no shell string. Prompt lines and
