@@ -132,6 +132,25 @@ system   — <инструкция острова: как действовать
 user     — what: <цель острова (island.what)>
 ```
 
+**Возврат в Localization после провала** (только текущее открытое состояние): сразу после
+`ai: Start state Localization` идёт ещё одно `system` — **последняя** неудачная попытка, собранная
+логосом из журнала:
+
+```
+system — Previous failed attempt:
+           Patch: runtime/shared_heap.c
+             <фактический find из edit>
+             ->
+             <фактический replace>
+           Verification: `<команда>` exited <N>
+             <хвост вывода: segfault/ошибка>
+           Do not repeat this change; look elsewhere.
+```
+
+Источник — не `why` доксы, а `payload.call` правки и последний проваленный `bash` в
+`verification` (`exitCode != 0`). Только последняя попытка; более ранние уже в ленте. Если Patch
+не менял файл — `Patch: no file changed.`
+
 **Открытое состояние** — после этого идут шаги плана: каждый ход доксы — пара
 `ai(tool_calls=[…])` + по одному `tool(результат)` на вызов.
 
@@ -208,6 +227,29 @@ ai — Finish state <Label> — <why из stop>
   локализации не меняется** (ON t14,15,14,11 / OFF t14,11,14), но reasoning ~2.5× меньше и
   стоимость ~40% ниже (добавленный контекст уходит в `cacheRead`, fresh-вход равен ≈49k).
   Детали — `docs/benches/best_bench_ru.md`, раздел «2026-10-17».
+- **Возврат в Localization несёт неудачную попытку (2026-10-17).** `renderState`
+  (`src/ir/project.ts`) для **текущей открытой** Localization вставляет `system` сразу после
+  `ai: Start state Localization`: фактическую правку последнего `patch` (из `payload.call`) и
+  последний проваленный прогон `verification` (`exitCode != 0`) с коротким хвостом вывода, плюс
+  «Do not repeat this change; look elsewhere». Раньше связь терялась: план закрытого состояния
+  элидировался, оставались только `why` доксы.
+  **Проверка без полного прогона** (по §2.3): записанный журнал прогона с циклом
+  (`2026-10-17T08-04-06-897Z`) до повторного входа в Localization, на свежее дерево применена та
+  же неудачная правка, три прохода Localization до `stop`. Контроль (без блока) повторно называл
+  строку 644 и зацикливался; с блоком: **2/3 закрылись на верной строке** (`p += Whsize_hd(hd)`
+  → `p += wh`, строки ~644–653/653), **1/3** не закрылась за 12 ходов, но и **не** подтвердила
+  старую гипотезу (продолжала читать). Блок виден на ленте (`Previous failed attempt:`).
+- **Транспорт — стриминг (2026-10-17).** `model.stream()` + склейка чанков (`callModel`),
+  SSE-адаптер `fromChunk`, `SKEIN_STREAMING` (дефолт on). Стримим явно, а не через
+  `ChatOpenAI{streaming:true}`: `_generate`-ветка тянет `getNumTokens` → fetch
+  `tiktoken.pages.dev`. Подробности — §7 и `docs/plans/implementation_plan_ru.md`.
+- **Мета-провайдер: `tool_choice` больше не форсим (2026-10-17).** `required` уводил маршрут на
+  thinking-апстримы, которые отвергали его или были под лимитом; opencode его тоже не ставит.
+  Теперь `bindTools(tools)` без `tool_choice`, а текстовый ответ вместо вызова чинит штатный
+  один ремонт. Заодно: пустой `reasoning_content` отдаём обратно даже пустым (некоторые
+  подрядчики требуют поле), а кросс-подрядчиковый mismatch «ход без reasoning → thinking»
+  лечится одним повтором с выключенным thinking (`isReasoningContentRequired`).
+
 
 ### Проблемы (на завтра)
 
@@ -234,6 +276,23 @@ ai — Finish state <Label> — <why из stop>
 5. **Verification дорогой**: каждый ход переигрывает весь `seq` в свежем контейнере, поэтому
    `configure`/`make` в `seq` исполняется заново каждый ход.
 6. **EN-зеркало и индекс** (`docs/README.md`) — сделано (`docs/state_testing.md`).
+7. **Verification-ловушка: после провала сборки модель остаётся в Verification и жжёт бюджет
+   (2026-10-17, главное).** Живые `--net on`, K=3: **1/3** reward=1 (40 ходов, верная правка
+   хвоста `p += Whsize_hd(hd)` → `p += wh`); **2/3** — `max_turns`=60, транспортных
+   `llm_error` нет. В обоих фейлах локализация снова назвала **free-run строку**
+   (`p += wh * Wosize_hd(hd)`), Patch правил её, хвост `p += Whsize_hd(hd)` остался → сборка
+   падает с тем же segfault. Дальше модель **не закрывает Verification и не уходит в
+   Localization**:
+   - run `10-20-26`: `./configure`, затем **19× `make -j16`** (t29,33,36,39,42,44,46,48–59)
+     вперемешку с чтением исходников; acceptance-команду так и не запустил;
+   - run `10-33-08`: configure, make, gdb, valgrind, `runtime/ocamlrund`, и **правит файл через
+     `bash`** (`python3`/`perl`) внутри Verification (write-инструменты там не предлагаются, но
+     `bash` пишет).
+   Блок «Previous failed attempt» тут не сработал **не потому, что плохой**: он показывается
+   только при повторном входе в Localization, а возврата не было.
+   Кандидат: на первом же неуспешном прогоне в Verification подсказка хода должна прямо
+   требовать `stop` и уход в Localization (не отлаживать здесь), и/или запретить write-class
+   через `bash` в Verification.
 
 ## 6. Журнал экспериментов (не повторять)
 
@@ -259,25 +318,48 @@ ai — Finish state <Label> — <why из stop>
   описания инструментов — `src/llm/tools.ts`.
 - **Записи:** `bench/runs/sandbox-tasks/` (пример полного пути — `run-loc-restart`,
   пример записи — `rec-orientation-182830`).
-- **Провайдерский адаптер reasoning:** `src/llm/provider.ts` (`openaiCompatible`: `toWire`/`fromWire`),
-  подключён в `src/llm/client.ts` (`reasoningFetch`, `SKEIN_REASONING_TAPE`); поле reasoning хода —
+- **Провайдерский адаптер reasoning:** `src/llm/provider.ts` (`openaiCompatible`: `toWire`/`fromWire`/`fromChunk`),
+  подключён в `src/llm/client.ts` (`modelFetch`, `SKEIN_REASONING_TAPE`); поле reasoning хода —
   `payload.reasoning` (`src/tools/index.ts`, `executeAction`), рендер — `src/ir/project.ts`
   (`renderPlan`), `src/loop/propose.ts` (`toMessage`), возврат из ответа — `src/llm/structured.ts`
   (`invokeTools`). Тумблер и A/B — `docs/benches/best_bench_ru.md` (2026-10-17).
+- **Транспорт — стриминг:** `model.stream()` + склейка чанков — `src/llm/structured.ts`
+  (`callModel`, `invokeWithRetry`); SSE-разбор и сбор дельт (`reasoning`/`content`/`tool_calls`/
+  `usage`) — `src/llm/client.ts` (`transformSse`); тумблер `SKEIN_STREAMING` (дефолт on,
+  `src/config/settings.ts`). `SKEIN_REASONING_TAPE=false` — тот же tap без переименования.
+- **Мета-провайдер (RouterAI) и подрядчики.** `tool_choice` **не форсим** (как opencode):
+  `required` уводит маршрут на thinking-апстримы, которые либо отвергают его
+  (`Thinking mode does not support this tool_choice`), либо под лимитом
+  (`deepseek/deepseek-v4.1-flash-1017 is temporarily rate-limited upstream`). Это **не прокси и
+  не движок**: наш клиент игнорирует `HTTP(S)_PROXY` (проверено с заведомо битым прокси), а тот
+  же body без `tool_choice` проходит. Ещё один эффект маршрутизации: соседние ходы могут попасть
+  к разным подрядчикам — один без reasoning, другой в thinking, и второй требует
+  `reasoning_content`, которого не было (пустое поле тоже не принимает); fallback — один повтор
+  с выключенным thinking (`isReasoningContentRequired`). Пустой `reasoning_content` для
+  tool-turn всегда отдаём обратно (`toWire`).
 
 ## 8. Следующие шаги
 
-- **Закрыто:** гипотеза «reasoning не на ленте → позднее закрытие». Реализовано как дефолт,
-  A/B — `docs/benches/best_bench_ru.md` (2026-10-17). Стриминг — в бэклоге
-  `docs/plans/implementation_plan_ru.md`.
+- **Закрыто:** «reasoning не на ленте → позднее закрытие» (дефолт, A/B — `docs/benches/best_bench_ru.md`, 2026-10-17).
+- **Сделано:** стриминг-транспорт; возврат в Localization с последней неудачной попыткой;
+  провайдерская совместимость (нет `tool_choice`, пустой `reasoning_content`, thinking-off
+  fallback, transition-инструкция как `user`) — см. §5, §7.
+- **Живой статус (2026-10-17).** `fix-ocaml-gc --net on`, K=3: транспорт 3/3 без `llm_error`,
+  reward 1/3 (40 ходов; фейлы — `max_turns`=60 из-за Verification-ловушки, §5 п.7).
+  `--net off`: все попытки упирались в rate-limit апстрима, куда уводил `tool_choice: "required"`;
+  после отказа от `tool_choice` (правка A) нужно **перегнать 3×`--net off` в новой сессии** —
+  старые числа net-off (08:xx) к текущему коду уже не относятся.
 - **Осталось исследовать** (на `fix-ocaml-gc`, K≥3, в **одной** гарнитуре — §6):
-  1. **Пере-вывод после находки.** run1 (`2026-10-17T04-57-57`): локализация нашла строку 650
-     на t14, а Patch ещё 5 ходов (t17–t21) перечитывал перед однострочной правкой. Воля к
-     уверенности, не текст критерия (§6). Кандидат — нацелить Patch на прямое применение уже
-     названных координат.
-  2. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
+  1. **Verification-ловушка (главное).** На провале acceptance/сборки модель остаётся в
+     Verification, перезапускает `make`, отлаживает и даже правит через `bash` — до `max_turns`
+     (см. §5 п.7). Кандидат: подсказка хода на первом же неуспешном прогоне — «stop и уйди в
+     Localization, здесь не отлаживай/не правь»; плюс запрет write-class через `bash` в
+     Verification.
+  2. **Пере-вывод после находки.** run1 (`2026-10-17T04-57-57`): локализация нашла строку 650
+     на t14, а Patch ещё 5 ходов (t17–t21) перечитывал перед однострочной правкой. Кандидат —
+     нацелить Patch на прямое применение уже названных координат.
+  3. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
      в run1 три ошибки cwd (t6/t17/t25) + три хода восстановления. Общий фикс: показывать cwd в
      наблюдении `bash` или явно различать workspace root и repo root в промте. ~3 хода/прогон.
-  3. **Meta-сомнение** (п.4): не мешает ли `ai`-маркер `Start/Finish state` (в run1 — t23, t28).
-  4. Тексты состояний Patch/Verification (`docs/states_ru.md` §2.3–2.5 пусты).
-  5. EN-зеркало и индекс в `docs/README.md` — сделано.
+  4. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
+  5. Тексты состояний Patch/Verification (`docs/states_ru.md` §2.3–2.5 пусты).

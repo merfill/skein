@@ -257,6 +257,59 @@ describe("tool calling", () => {
     ]);
   });
 
+  it("invokeTools drains the stream and concatenates the chunks when streaming is on", async () => {
+    const seen = { stream: 0, invoke: 0 };
+    // A minimal chunk whose `concat` merges content and tool calls, as langchain's chunks do.
+    const chunk = (content: string, toolCalls: unknown[]): Record<string, unknown> & { concat: (next: unknown) => unknown } => ({
+      content,
+      tool_calls: toolCalls,
+      concat(next) {
+        const other = next as { content: string; tool_calls: unknown[] };
+        return chunk(this.content + other.content, [...(this.tool_calls as unknown[]), ...other.tool_calls]);
+      },
+    });
+    const model = {
+      bindTools: () => ({
+        stream: async function* () {
+          seen.stream += 1;
+          yield chunk("do ", []);
+          yield chunk("it", [{ name: "list", args: {} }]);
+        },
+        invoke: async () => {
+          seen.invoke += 1;
+          throw new Error("must stream");
+        },
+      }),
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")], {
+      settings: { ...loadSettings(), streaming: true },
+    });
+    expect(proposal.thought).toBe("do it");
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
+    expect(seen).toEqual({ stream: 1, invoke: 0 });
+  });
+
+  it("invokeTools uses invoke when streaming is off", async () => {
+    const seen = { stream: 0, invoke: 0 };
+    const model = {
+      bindTools: () => ({
+        stream: async function* () {
+          seen.stream += 1;
+          yield { content: "", tool_calls: [], concat: () => undefined };
+        },
+        invoke: async () => {
+          seen.invoke += 1;
+          return { content: "", tool_calls: [{ name: "list", args: {} }] };
+        },
+      }),
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")], {
+      settings: { ...loadSettings(), streaming: false },
+    });
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
+    expect(seen).toEqual({ stream: 0, invoke: 1 });
+  });
+
   it("invokeTools binds only the allowed tools", async () => {
     let bound: string[] = [];
     const model = {
@@ -371,6 +424,47 @@ describe("tool calling", () => {
       invokeTools(model, [new HumanMessage("go")], { retries: 2, retryDelayMs: 0 }),
     ).rejects.toThrow("connection reset");
     expect(calls).toBe(3); // the first try plus two retries
+  });
+
+  it("invokeTools does not force tool_choice", async () => {
+    const bindings: unknown[] = [];
+    const model = {
+      bindTools: (_tools: unknown[], kwargs?: unknown) => {
+        bindings.push(kwargs);
+        return { invoke: async () => ({ content: "", tool_calls: [{ name: "list", args: {} }] }) };
+      },
+    } as unknown as BaseChatModel;
+    const proposal = await invokeTools(model, [new HumanMessage("go")]);
+    // Forcing `required` routes the meta-provider to thinking upstreams that reject it or are
+    // rate-limited; opencode does not force it either.
+    expect(bindings).toEqual([undefined]);
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
+  });
+
+  it("invokeTools retries with thinking off when the route demands reasoning it never got", async () => {
+    const rebuilds: { reasoningOff: boolean }[] = [];
+    const makeModel = (ok: boolean): unknown => ({
+      bindTools: () => ({
+        invoke: async () => {
+          if (!ok) {
+            throw new Error("The `reasoning_content` in the thinking mode must be passed back to the API.");
+          }
+          return { content: "", tool_calls: [{ name: "list", args: {} }] };
+        },
+      }),
+    });
+    const model = makeModel(false) as unknown as BaseChatModel;
+    const rebuild = (maxTokens: number, opts?: { reasoningOff?: boolean }) => {
+      rebuilds.push({ reasoningOff: opts?.reasoningOff === true });
+      return makeModel(true) as unknown as BaseChatModel;
+    };
+    const proposal = await invokeTools(model, [new HumanMessage("go")], {
+      settings: loadSettings(),
+      rebuild,
+      retries: 0,
+    });
+    expect(rebuilds).toEqual([{ reasoningOff: true }]);
+    expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "list" } });
   });
 
   it("invokeTools repairs once when the tool call is malformed", async () => {

@@ -132,6 +132,25 @@ system   — <island instruction: how to act in this state>
 user     — what: <island.what>
 ```
 
+**Returning to Localization after a failure** (the current open state only): right after
+`ai: Start state Localization` comes another `system` — the **last** failed attempt, assembled by
+logos from the journal:
+
+```
+system — Previous failed attempt:
+           Patch: runtime/shared_heap.c
+             <the actual find from edit>
+             ->
+             <the actual replace>
+           Verification: `<command>` exited <N>
+             <output tail: segfault/error>
+           Do not repeat this change; look elsewhere.
+```
+
+The source is not the doxa's `why` but `payload.call` of the change and the last failed `bash` in
+`verification` (`exitCode != 0`). The last attempt only; older ones are already on the tape. A
+Patch that changed no file renders `Patch: no file changed.`
+
 **Open state** — after that come the plan's steps: each doxa turn is a pair
 `ai(tool_calls=[…])` + one `tool(result)` per call.
 
@@ -209,6 +228,18 @@ ai — Finish state <Label> — <why from stop>
   Localization closes does not change** (ON t14,15,14,11 / OFF t14,11,14), but reasoning is ~2.5×
   lower and cost ~40% lower (the added context lands in `cacheRead`, fresh input equal at ~49k).
   Details — `docs/benches/best_bench.md`, section "2026-10-17".
+- **Returning to Localization carries the failed attempt (2026-10-17).** `renderState`
+  (`src/ir/project.ts`), for the **current open** Localization, inserts a `system` right after
+  `ai: Start state Localization`: the actual change of the last `patch` (from `payload.call`) and
+  the last failed run of `verification` (`exitCode != 0`) with a short output tail, plus "Do not
+  repeat this change; look elsewhere". Before, the link was lost: a closed state's plan is elided
+  and only the doxa's `why` remained.
+  **Checked without a full run** (§2.3): the recorded looping run (`2026-10-17T08-04-06-897Z`) up
+  to its re-entry into Localization, the same failed edit applied to a fresh tree, three passes of
+  Localization to `stop`. The control (no block) re-confirmed line 644 and looped; with the block
+  **2/3 closed on the right line** (`p += Whsize_hd(hd)` → `p += wh`, lines ~644–653/653), **1/3**
+  did not close within 12 turns but also did **not** re-confirm the old hypothesis (it kept
+  reading). The block is visible on the tape (`Previous failed attempt:`).
 
 ### Problems (for tomorrow)
 
@@ -235,6 +266,21 @@ ai — Finish state <Label> — <why from stop>
 5. **Verification is expensive**: each turn replays the whole `seq` in a fresh container, so
    `configure`/`make` in `seq` runs again on every turn.
 6. **EN mirror and index** (`docs/README.md`) — done (this file).
+7. **Verification trap: after a failed build the model stays in Verification and burns the budget
+   (2026-10-17, the main one).** Live `--net on`, K=3: **1/3** reward=1 (40 turns, the correct
+   tail fix `p += Whsize_hd(hd)` → `p += wh`); **2/3** `max_turns`=60, no transport `llm_error`.
+   In both failures Localization again named the **free-run line** (`p += wh * Wosize_hd(hd)`),
+   Patch changed it, the tail `p += Whsize_hd(hd)` was left → the same segfault. Then the model
+   **does not close Verification and does not return to Localization**:
+   - run `10-20-26`: `./configure`, then **19× `make -j16`** (t29,33,36,39,42,44,46,48–59)
+     interleaved with source reads; the acceptance command was never run;
+   - run `10-33-08`: configure, make, gdb, valgrind, `runtime/ocamlrund`, and it **edits the file
+     via `bash`** (`python3`/`perl`) inside Verification (write tools are not offered there, but
+     `bash` can write).
+   The "Previous failed attempt" block did not help **because it is only shown on re-entry into
+   Localization**, and there was no re-entry.
+   Candidate: on the first failed run in Verification the turn hint should demand `stop` and a
+   move to Localization (do not debug here), and/or forbid write-class via `bash` in Verification.
 
 ## 6. Experiment log (do not repeat)
 
@@ -260,28 +306,50 @@ ai — Finish state <Label> — <why from stop>
   descriptions — `src/llm/tools.ts`.
 - **Records:** `bench/runs/sandbox-tasks/` (a full-path example — `run-loc-restart`, a recorded
   example — `rec-orientation-182830`).
-- **Provider reasoning adapter:** `src/llm/provider.ts` (`openaiCompatible`: `toWire`/`fromWire`),
-  wired in `src/llm/client.ts` (`reasoningFetch`, `SKEIN_REASONING_TAPE`); a turn's reasoning field —
+- **Provider reasoning adapter:** `src/llm/provider.ts` (`openaiCompatible`: `toWire`/`fromWire`/`fromChunk`),
+  wired in `src/llm/client.ts` (`modelFetch`, `SKEIN_REASONING_TAPE`); a turn's reasoning field —
   `payload.reasoning` (`src/tools/index.ts`, `executeAction`), rendering — `src/ir/project.ts`
   (`renderPlan`), `src/loop/propose.ts` (`toMessage`), read back from the response —
   `src/llm/structured.ts` (`invokeTools`). The switch and A/B — `docs/benches/best_bench.md`
   (2026-10-17).
+- **Transport — streaming:** `model.stream()` + chunk concatenation — `src/llm/structured.ts`
+  (`callModel`, `invokeWithRetry`); SSE parsing and delta accumulation
+  (`reasoning`/`content`/`tool_calls`/`usage`) — `src/llm/client.ts` (`transformSse`); toggle
+  `SKEIN_STREAMING` (default on, `src/config/settings.ts`). `SKEIN_REASONING_TAPE=false` — the
+  same tap without the rename.
+- **Meta-provider (RouterAI) and subcontractors.** We do **not** force `tool_choice` (opencode
+  does not either): `required` routes the request to thinking upstreams that either reject it
+  (`Thinking mode does not support this tool_choice`) or are rate-limited
+  (`deepseek/deepseek-v4.1-flash-1017 is temporarily rate-limited upstream`). This is **not the
+  proxy and not the engine**: our client ignores `HTTP(S)_PROXY` (checked with a deliberately
+  broken proxy), and the same body without `tool_choice` passes. Another routing effect: adjacent
+  turns may land on different subcontractors — one without reasoning, the next in thinking — and
+  the latter demands `reasoning_content` that never existed (an empty value is rejected too); the
+  fallback retries once with thinking off (`isReasoningContentRequired`). An empty
+  `reasoning_content` on a tool turn is always sent back (`toWire`).
 
 ## 8. Next steps
 
-- **Closed:** the hypothesis "reasoning not on the tape → late closure". Shipped as the default,
-  A/B — `docs/benches/best_bench.md` (2026-10-17). Streaming is in the backlog —
-  `docs/plans/implementation_plan.md`.
+- **Closed:** "reasoning not on the tape → late closure" (shipped as the default, A/B — `docs/benches/best_bench.md`, 2026-10-17).
+- **Done:** the streaming transport; the failed-attempt record on returning to Localization; the
+  meta-provider fixes (no `tool_choice`, empty `reasoning_content`, thinking-off fallback, the
+  transition instruction as `user`) — see §5, §7.
+- **Live status (2026-10-17).** `fix-ocaml-gc --net on`, K=3: transport 3/3 with no `llm_error`,
+  reward 1/3 (40 turns; the failures hit `max_turns`=60 because of the Verification trap, §5 p.7).
+  `--net off`: every attempt hit the upstream rate limit that `tool_choice: "required"` routed to;
+  after dropping `tool_choice` (fix A), **re-run 3×`--net off` in a new session** — the old
+  net-off numbers (08:xx) no longer describe the current code.
 - **Still to investigate** (on `fix-ocaml-gc`, K≥3, in **one** harness — §6):
-  1. **Re-derivation after the finding.** run1 (`2026-10-17T04-57-57`): Localization found line 650
-     at t14, but Patch still re-read for 5 turns (t17–t21) before a one-line edit. The will to
-     certainty, not the criterion text (§6). A candidate — aim Patch at directly applying the
-     coordinates already named.
-  2. **Shell hygiene: cwd.** `bash` starts in the workspace root (`/app`), while the repo is in
+  1. **Verification trap (the main one).** On a failed acceptance/build the model stays in
+     Verification, reruns `make`, debugs and even edits via `bash` — until `max_turns` (§5 p.7).
+     Candidate: on the first failed run the turn hint should demand `stop` and a move to
+     Localization (do not debug/edit here); plus forbid write-class via `bash` in Verification.
+  2. **Re-derivation after the finding.** run1 (`2026-10-17T04-57-57`): Localization found line 650
+     at t14, but Patch still re-read for 5 turns (t17–t21) before a one-line edit. A candidate —
+     aim Patch at directly applying the coordinates already named.
+  3. **Shell hygiene: cwd.** `bash` starts in the workspace root (`/app`), while the repo is in
      `/app/ocaml`; in run1 there were three cwd errors (t6/t17/t25) + three recovery turns. A
      general fix: show the cwd in the `bash` observation, or make the prompt clearly distinguish the
      workspace root from the repo root. ~3 turns/run.
-  3. **Meta-doubt** (p.4): does the `ai` marker `Start/Finish state` get in the way (run1 — t23,
-     t28).
-  4. The Patch/Verification state texts (`docs/states_ru.md` §2.3–2.5 are empty).
-  5. EN mirror and index in `docs/README.md` — done.
+  4. **Meta-doubt** (§5 p.4): does the `ai` marker `Start/Finish state` get in the way.
+  5. The Patch/Verification state texts (`docs/states_ru.md` §2.3–2.5 are empty).

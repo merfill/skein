@@ -42,7 +42,7 @@ the current state (as-built), then the proposed changes.
 ## 2. Interface overview
 
 The model proposes an action through **native tool calls** (one flat function tool per
-operation, `tool_choice: "required"`); `src/llm/tools.ts` maps the call into the IR
+operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the IR
 `action`, one of the operators:
 
 | Operator | Purpose |

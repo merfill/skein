@@ -171,7 +171,7 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 `costRub`, `contextChars` `first/last/peak`; then the same split `byTool` and `byOperator`.
 
 - `llmCalls` — actual model invocations (a completion-cap bump or a repair round adds one).
-- `toolCalls` — one per turn (`tool_choice: "required"`); a **refused** proposal is still
+- `toolCalls` — one per turn (**no** forced `tool_choice`); a **refused** proposal is still
   a call (`accepted`/`refused` split it). Retries add `llmCalls`, not `toolCalls`.
 - `in` = fresh input + cache read (same convention as `bench/agents_compare.ts`, §6);
   `out` = visible output + reasoning.
@@ -389,7 +389,7 @@ limits, and the projection does not cut it (`docs/tools.md`).
 The agent proposes through **native tool calls**: `src/llm/tools.ts` defines one flat
 function tool per operation (`move`, `recall`, `search`, `read`, `grep`, `list`,
 `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`) and `src/llm/structured.ts` `invokeTools` binds them with
-`tool_choice: "required"`, reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
+no forced `tool_choice` (see `docs/state_testing.md` §7), reads `tool_calls[0]` and maps it to the IR `Action`. Flat,
 per-operation schemas matter: one deeply nested discriminated union came back flat
 (`operator` at the top level instead of nested under `action`), and JSON mode made the
 model reason far more on hard turns (and hit the completion cap, whose retries re-sent

@@ -131,7 +131,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   (`tests/coverage.test.ts`) и live step-тесты (`tests/live/ir_operations_step.test.ts`).
 - **Нативные tool calls (structured output)** — агент предлагает через плоские
   function-инструменты, сгенерированные из zod (`src/llm/tools.ts`); `invokeTools`
-  (`src/llm/structured.ts`) биндит их с `tool_choice: "required"`, маппит вызов в IR
+  (`src/llm/structured.ts`) биндит их (без принудительного `tool_choice`, как opencode), маппит вызов в IR
   `Action` и ремонтирует один битый/отсутствующий вызов. JSON-схема-в-промпте
   (`invokeStructured`) остаётся общим фолбэком. Это заменило одну глубокую
   discriminated-union, которая раздувала reasoning и упиралась в completion cap на
@@ -183,23 +183,29 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `docs/plans/archive/ir_revision_implementation_plan_ru.md`. Прежние формулировки формы в этом
   разделе — история.
 
+- **Стриминг ответа модели (2026-10-17, сделано).** Вызовы идут через `model.stream()`: движок
+  сам склеивает чанки (`callModel`, `src/llm/structured.ts`) вместо `_generate`-ветки
+  `ChatOpenAI`, поэтому не тянется внутренний подсчёт токенов (`getNumTokens` → fetch
+  `tiktoken.pages.dev`) и нет лишней сетевой зависимости. Тумблер `SKEIN_STREAMING` (дефолт on);
+  off — прежний не-стриминговый `invoke`. Адаптер (`src/llm/provider.ts`) получил `fromChunk`:
+  построчно переименовывает `delta.reasoning` → `reasoning_content` (RouterAI), который мапит
+  langchain-openai. Fetch (`src/llm/client.ts`) распознаёт SSE по `init.body.stream` и на том же
+  проходе копит `reasoning`/`content`/`tool_calls`/`finish_reason`/`usage`, отдавая
+  `onResponseBody` восстановленное не-стрим-тело (телеметрия не изменилась). Провайдер шлёт
+  usage/cost в терминальном чанке (проверено на захвате opencode SSE). Живой A/B
+  `fix-ocaml-gc --net off` (K=3 на плечо) — транспорт работает, reasoning снова на ленте,
+  `llm_error` нет, стоимость не хуже; разбор — `docs/benches/best_bench_ru.md` (2026-10-17).
+  Показ/прерывание генерации — отдельно. Тумблер и правки — `src/llm/client.ts`,
+  `src/llm/structured.ts`, `src/llm/provider.ts`, `src/config/settings.ts`.
+
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline-тесты,
 live-гейт только при `SKEIN_LIVE=true`.
 
 **Отложено (бэклог):**
 
-- **Стриминг ответа модели (следующее).** Сейчас вызовы модели **не-стриминговые**
-  (`ChatOpenAI.invoke`); провайдерский адаптер reasoning (`src/llm/provider.ts`) нормализует
-  только цельный JSON-ответ (переписывает `init.body` и возвращает `new Response`),
-  поэтому round-trip `reasoning_content` работает лишь без стрима. Стриминг нужен, чтобы:
-  (а) не упираться в idle-таймаут шлюза на длинном reasoning (ответ «молчит» до конца);
-  (б) показывать и прерывать генерацию; (в) сохранить round-trip reasoning там, где он
-  приходит дельтами (`delta.reasoning`) и/или обязателен (Anthropic extended thinking,
-  OpenAI o-series, Gemini `thought`). Reasoning-на-ленте уже сделан как дефолт (см.
-  `docs/benches/best_bench_ru.md`, раздел 2026-10-17). Потребует переписать адаптер на
-  **сбор дельт** (`reasoning`/`content`/`tool_calls`) вместо перезаписи цельного тела и,
-  вероятно, пересмотреть ретраи по truncation (`invokeTools`). Проверять на `fix-ocaml-gc`
-  (K≥3), сравнивая ходы и стоимость (opencode работает через стриминг — `docs/state_testing_ru.md`).
+- **Показ/прерывание генерации (стриминг-UX).** Стриминг сделан как транспорт (см. выше), но
+  токены наружу не отдаются: чтобы показывать и прерывать вывод, нужно потреблять
+  `handleLLMNewToken`/`model.stream()` на уровне цикла, а не только склеивать. Отложено.
 
 - **Возможные инструменты.** `write` сделан. Кандидаты по величине пробела: `edit` по
   диапазону / `multiedit` (find/replace ломается на неоднозначных/повторяющихся

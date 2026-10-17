@@ -47,13 +47,16 @@ afterEach(cleanupWorkspaces);
 
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
-  // Strip the leading system prefix (base + one message per constraint) and the TRAILING system
-  // messages (the observation instruction and the situation's instruction — both temporary, never
-  // in the history). A state's description is on the tape (shown once at entry), not stripped.
+  // Strip the leading system prefix (base + one message per constraint) and the TRAILING
+  // temporary instructions (the observation instruction and the situation's instruction, never
+  // in the history). The transition instruction is a `user` turn (a trailing assistant + system
+  // is a provider "prefix" and refuses the `move` call), so strip that one too. A state's
+  // description is on the tape (shown once at entry), not stripped.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
   while (end > start && all[end - 1]?.role === "system") end -= 1;
+  if (context.situation === "transition" && end > start && all[end - 1]?.role === "user") end -= 1;
   return all.slice(start, end);
 }
 

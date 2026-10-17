@@ -8,11 +8,14 @@ import { turnInstruction } from "../src/loop/prompt";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
+  edit,
   exec,
   execAll,
   makeWorkspace,
+  move,
   read,
   request,
+  run,
   withGoal,
 } from "./ops/helpers";
 import { compact, wire } from "./wire";
@@ -104,6 +107,48 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(new Set(project(res.state).history.map((m) => m.role))).toEqual(
       new Set(["user", "assistant", "system", "tool"]),
     );
+  });
+
+  it("re-entering Localization carries the last failed patch and its failing run", () => {
+    const w = makeWorkspace(DEFAULT_FILES).ws;
+    let step = execAll(withGoal("do it", "true"), [request()], w);
+    step = exec({ operator: "stop", why: "mapped" }, step.events, w);
+    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, w);
+    step = exec({ operator: "stop", why: "named" }, step.events, w);
+    step = execAll(
+      [move("patch", "fix it"), edit("src/sum.mjs", "return a - b;", "return a + b;")],
+      step.events,
+      w,
+    );
+    step = exec({ operator: "stop", why: "changed" }, step.events, w);
+    step = execAll([move("verification", "check it"), run("echo boom >&2; exit 2")], step.events, w);
+    step = exec({ operator: "stop", why: "still fails" }, step.events, w);
+    step = exec(move("localization", "find again"), step.events, w);
+
+    const history = project(step.state).history;
+    let start = -1;
+    for (let i = 0; i < history.length; i += 1) {
+      const message = history[i];
+      if (message?.role === "assistant" && message.text === "Start state Localization") start = i;
+    }
+    // The block rides the state entry, right after the (current) Start marker.
+    const block = history[start + 1];
+    expect(block?.role).toBe("system");
+    expect(block?.text.startsWith("Previous failed attempt:")).toBe(true);
+    expect(block?.text).toContain("Patch: src/sum.mjs");
+    expect(block?.text).toContain("return a - b;");
+    expect(block?.text).toContain("return a + b;");
+    expect(block?.text).toContain("exit 2");
+    expect(block?.text).toContain("boom");
+    expect(block?.text).toContain("Do not repeat this change");
+  });
+
+  it("the first Localization has no failed-attempt block", () => {
+    const w = makeWorkspace(DEFAULT_FILES).ws;
+    let step = execAll(withGoal("do it", "true"), [request()], w);
+    step = exec({ operator: "stop", why: "mapped" }, step.events, w);
+    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, w);
+    expect(project(step.state).history.some((m) => m.text.startsWith("Previous failed attempt:"))).toBe(false);
   });
 });
 

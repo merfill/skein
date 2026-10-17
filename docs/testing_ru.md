@@ -175,7 +175,7 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 
 - `llmCalls` — реальные вызовы модели (bump по completion-cap или repair-раунд добавляет
   один).
-- `toolCalls` — один на ход (`tool_choice: "required"`); **отклонённое** предложение —
+- `toolCalls` — один на ход (**без** принудительного `tool_choice`); **отклонённое** предложение —
   тоже вызов (разделяется на `accepted`/`refused`). Ретраи добавляют `llmCalls`, не
   `toolCalls`.
 - `in` = свежий ввод + чтение кэша (как в `bench/agents_compare.ts`, §6); `out` = видимый
@@ -392,7 +392,7 @@ bash bench/harbor/run.sh -d terminal-bench -i fix-ocaml-gc -k 2
 Агент предлагает через **нативные tool calls**: `src/llm/tools.ts` описывает по одному
 плоскому function-инструменту на операцию (`move`, `recall`, `search`, `read`,
 `grep`, `list`, `edit`, `write`, `run`, `fetch`, `apply_patch`, `stop`), а `invokeTools` в `src/llm/structured.ts`
-биндит их с `tool_choice: "required"`, читает `tool_calls[0]` и маппит в IR `Action`.
+биндит их (без принудительного `tool_choice` — см. `docs/state_testing_ru.md` §7), читает `tool_calls[0]` и маппит в IR `Action`.
 Плоские схемы на операцию важны: одна глубокая вложенная discriminated-union приходила
 плоской (`operator` на верхнем уровне вместо вложенного `action`), а JSON-режим заставлял
 модель думать сильно больше на тяжёлых ходах (и упираться в cap, чьи ретраи

@@ -298,7 +298,9 @@ describe("context format: tape", () => {
       constraints: [],
     };
     const messages = buildMessages(transition);
-    expect(messages.at(-1)).toBeInstanceOf(SystemMessage);
+    // A `user` turn, not `system`: a trailing assistant text followed only by `system` is a
+    // provider "prefix" and refuses the `move` function call.
+    expect(messages.at(-1)).toBeInstanceOf(HumanMessage);
     expect(String(messages.at(-1)?.content)).toBe(transitionInstruction("orientation"));
     expect(String(messages.at(-1)?.content)).toContain("Localization");
   });

@@ -56,10 +56,10 @@ export function buildMessages(context: Context): BaseMessage[] {
     );
   }
   for (const message of context.history) messages.push(toMessage(message));
-  // The request-step instruction: scope the first `move`'s `what` (the state's goal, not the
-  // task). Then the open-state recency nudge: one line, every work turn (never stored).
-  // The request instruction scopes the first `move`; the plan hint drives the state's first
-  // step; the open-state nudge restates the goal each work turn (all per turn, never stored).
+  // The situation instruction is appended last, per turn (never stored). The transition one is
+  // a `user` turn: a provider treats a trailing assistant text (the closed state's `Finish`
+  // line) followed only by a `system` message as a prefix/prefill and refuses the `move`
+  // function call; a `user` turn after it clears that rule (docs/ir_semantics §7).
   if (context.situation === "request") {
     messages.push(new SystemMessage(REQUEST_INSTRUCTION));
   } else if (context.situation === "plan") {
@@ -67,7 +67,7 @@ export function buildMessages(context: Context): BaseMessage[] {
   } else if (context.situation === "working") {
     messages.push(new SystemMessage(turnInstruction(context.island, context.done)));
   } else if (context.situation === "transition") {
-    messages.push(new SystemMessage(transitionInstruction(context.island)));
+    messages.push(new HumanMessage(transitionInstruction(context.island)));
   } else if (context.situation === "terminal") {
     messages.push(new SystemMessage(NODE_INSTRUCTIONS.terminal));
   }

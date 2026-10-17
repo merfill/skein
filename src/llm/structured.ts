@@ -106,6 +106,19 @@ function isCompletionCap(error: unknown): boolean {
   );
 }
 
+// The meta-provider may route one turn to a subcontractor that does not emit reasoning and the
+// next to a thinking-mode one, which then demands the previous turn's `reasoning_content` — a
+// field that never existed (an empty value is rejected too). No amount of resending fixes it;
+// turning thinking off for this call does.
+function isReasoningContentRequired(error: unknown): boolean {
+  const record = error as { message?: unknown; error?: { message?: unknown } } | undefined;
+  const text = [record?.message, record?.error?.message, String(error)]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ")
+    .toLowerCase();
+  return text.includes("reasoning_content") && text.includes("passed back");
+}
+
 function parseJson(text: string): unknown {
   const trimmed = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   let firstError: unknown;
@@ -135,6 +148,38 @@ function jsonSchemaText(schema: z.ZodTypeAny): string {
   }
 }
 
+// One assembled model reply. A streaming model (`stream`) is drained and its chunks
+// concatenated into the message `invoke` would have returned — keeping the connection busy
+// during a long hidden reasoning so the gateway's idle timeout is not hit. A model without
+// `stream` (test doubles) falls back to `invoke`.
+interface StreamableModel {
+  invoke(messages: BaseMessage[], options?: unknown): Promise<unknown>;
+  stream?(messages: BaseMessage[], options?: unknown): Promise<AsyncIterable<unknown>>;
+}
+
+// A streamed message chunk: chunks accumulate into the assembled message by concatenation.
+interface MessageChunk {
+  concat(chunk: MessageChunk): MessageChunk;
+}
+
+async function callModel(
+  target: StreamableModel,
+  messages: BaseMessage[],
+  invokeOptions: unknown,
+  streaming: boolean,
+): Promise<unknown> {
+  if (!streaming || typeof target.stream !== "function") {
+    return target.invoke(messages, invokeOptions);
+  }
+  let accumulated: MessageChunk | undefined;
+  for await (const chunk of await target.stream(messages, invokeOptions)) {
+    const next = chunk as MessageChunk;
+    accumulated = accumulated === undefined ? next : accumulated.concat(next);
+  }
+  if (accumulated === undefined) throw new Error("model returned no stream content");
+  return accumulated;
+}
+
 async function callJson(
   model: StructuredModel,
   schema: z.ZodTypeAny,
@@ -142,6 +187,7 @@ async function callJson(
   maxTokens: number | undefined,
   invokeOptions: unknown,
   options: StructuredOptions,
+  streaming: boolean,
   repair?: string,
 ): Promise<unknown> {
   const withSchema = [
@@ -174,11 +220,11 @@ async function callJson(
   }
   let response: unknown;
   try {
-    response = await target.invoke(withSchema, invokeOptions);
+    response = await callModel(target as unknown as StreamableModel, withSchema, invokeOptions, streaming);
   } catch (error) {
     if (isCompletionCap(error)) throw error;
     options.onError?.(error, "json");
-    response = await base.invoke(withSchema, invokeOptions);
+    response = await callModel(base as unknown as StreamableModel, withSchema, invokeOptions, streaming);
   }
   options.onResponse?.(response);
   // The provider's exact truncation signal: it ran out of the completion budget. Retry
@@ -224,7 +270,7 @@ export async function invokeStructured<T extends z.ZodTypeAny>(
   for (;;) {
     try {
       return schema.parse(
-        await callJson(target, schema, messages, maxTokens, invokeOptions, options, repair),
+        await callJson(target, schema, messages, maxTokens, invokeOptions, options, settings.streaming, repair),
       ) as z.infer<T>;
     } catch (error) {
       if (isCompletionCap(error) && raised < bumps) {
@@ -278,20 +324,23 @@ export interface ToolsOptions {
 const RETRY_DELAY_MS = 500;
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-// A provider hiccup surfaces as a thrown `invoke` (not a response). Resend the SAME request
-// with a small backoff; a non-transient error just wastes the retries and is then rethrown.
+// A provider hiccup surfaces as a thrown call (not a response). Resend the SAME request with a
+// small backoff; a non-transient error just wastes the retries and is then rethrown.
 async function invokeWithRetry(
-  bound: { invoke(messages: BaseMessage[], options?: unknown): Promise<unknown> },
+  bound: StreamableModel,
   messages: BaseMessage[],
   invokeOptions: unknown,
+  streaming: boolean,
   retries: number,
   delayMs: number,
   onError: ((error: unknown, phase: "tools") => void) | undefined,
 ): Promise<unknown> {
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await bound.invoke(messages, invokeOptions);
+      return await callModel(bound, messages, invokeOptions, streaming);
     } catch (error) {
+      // Deterministic for the route: let the caller switch reasoning instead of resending.
+      if (isReasoningContentRequired(error)) throw error;
       onError?.(error, "tools");
       if (attempt >= retries) throw error;
       if (delayMs > 0) await wait(delayMs * (attempt + 1));
@@ -299,12 +348,11 @@ async function invokeWithRetry(
   }
 }
 
-interface ToolCallingModel {
+interface ToolCallingModel extends StreamableModel {
   bindTools?(
     tools: unknown[],
     kwargs?: Record<string, unknown>,
-  ): { invoke(messages: BaseMessage[], options?: unknown): Promise<unknown> };
-  invoke(messages: BaseMessage[], options?: unknown): Promise<unknown>;
+  ): StreamableModel;
 }
 
 function toolCallsOf(response: unknown): { name: string; args: unknown }[] {
@@ -349,6 +397,7 @@ export async function invokeTools(
   let maxTokens: number | undefined;
   let raised = 0;
   let reasoningOff = false;
+  let reasoningFallback = false;
   let repair: HumanMessage | undefined;
   for (;;) {
     const base =
@@ -356,18 +405,32 @@ export async function invokeTools(
         ? options.rebuild(maxTokens ?? settings.maxTokens, reasoningOff ? { reasoningOff: true } : undefined)
         : model;
     const target = base as unknown as ToolCallingModel;
+    // No `tool_choice`: forcing `required` routes the meta-provider to thinking upstreams that
+    // either reject it or are rate-limited (docs/state_testing §7). The prompt asks for a call;
+    // a text reply is handled by the one-repair round below.
     const bound =
-      typeof target.bindTools === "function"
-        ? target.bindTools(tools as unknown[], { tool_choice: "required" })
-        : target;
-    const response = await invokeWithRetry(
-      bound,
-      repair === undefined ? messages : [...messages, repair],
-      invokeOptions,
-      retries,
-      retryDelayMs,
-      options.onError,
-    );
+      typeof target.bindTools === "function" ? target.bindTools(tools as unknown[]) : target;
+    let response: unknown;
+    try {
+      response = await invokeWithRetry(
+        bound,
+        repair === undefined ? messages : [...messages, repair],
+        invokeOptions,
+        settings.streaming,
+        retries,
+        retryDelayMs,
+        options.onError,
+      );
+    } catch (error) {
+      // Cross-subcontractor routing: the previous turn has no reasoning to echo back, so this
+      // thinking-mode route cannot serve the request. Retry once with thinking disabled.
+      if (!reasoningFallback && !reasoningOff && options.rebuild !== undefined && isReasoningContentRequired(error)) {
+        reasoningFallback = true;
+        reasoningOff = true;
+        continue;
+      }
+      throw error;
+    }
     options.onResponse?.(response);
     const calls = toolCallsOf(response);
     if (calls.length > 0) {

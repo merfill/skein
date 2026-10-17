@@ -202,6 +202,139 @@ function closureLine(state: State, moveId: string): string {
   return `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
 }
 
+// The plan's action nodes, in plan order (docs/ir_semantics §2.3).
+function actionsOfMove(state: State, moveId: string): string[] {
+  const plan = planOf(state, moveId);
+  if (plan === undefined) return [];
+  const actions: string[] = [];
+  for (const itemId of childrenOf(state, plan)) {
+    for (const altId of childrenOf(state, itemId)) {
+      if (state.nodes.get(altId)?.kind === "action") actions.push(altId);
+    }
+  }
+  return actions;
+}
+
+// The last failing run of a state: the `bash` observation with the newest non-zero exit code.
+function lastFailingRun(state: State, moveId: string): { command: string; exitCode: number; tail: string } | undefined {
+  let best: { seq: number; run: { command: string; exitCode: number; tail: string } } | undefined;
+  for (const actionId of actionsOfMove(state, moveId)) {
+    const result = resultChild(state, actionId);
+    if (result === undefined) continue;
+    const payload = payloadOf(state, result.id) ?? {};
+    if (typeof payload.exitCode !== "number" || payload.exitCode === 0) continue;
+    const call = asCall(state.nodes.get(actionId));
+    const fromArgs = call?.args.command;
+    const command =
+      typeof payload.command === "string"
+        ? payload.command
+        : typeof fromArgs === "string"
+          ? fromArgs
+          : (call?.name ?? "command");
+    const body =
+      typeof payload.error === "string" && payload.error !== ""
+        ? payload.error
+        : typeof payload.output === "string"
+          ? payload.output
+          : "";
+    const run = { command, exitCode: payload.exitCode, tail: tailLines(body) };
+    if (best === undefined || result.seq > best.seq) best = { seq: result.seq, run };
+  }
+  return best?.run;
+}
+
+function tailLines(text: string): string {
+  const lines = text.trimEnd().split("\n").filter((line) => line !== "");
+  const tail = lines.slice(Math.max(0, lines.length - 8)).join("\n");
+  return tail.length > 700 ? `…${tail.slice(tail.length - 700)}` : tail;
+}
+
+// The write a state actually performed (the last edit/write/apply_patch of its plan), from the
+// recorded call args. Empty `path` means the state changed no file.
+function lastWrite(state: State, moveId: string): {
+  path: string;
+  find?: string;
+  replace?: string;
+  content?: string;
+  patch?: string;
+} {
+  let found: { path: string; find?: string; replace?: string; content?: string; patch?: string } = { path: "" };
+  for (const actionId of actionsOfMove(state, moveId)) {
+    const call = asCall(state.nodes.get(actionId));
+    if (call === undefined) continue;
+    const args = call.args;
+    const path = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : "";
+    if (call.name === "edit") {
+      found = {
+        path,
+        find: typeof args.oldString === "string" ? args.oldString : "",
+        replace: typeof args.newString === "string" ? args.newString : "",
+      };
+    } else if (call.name === "write") {
+      found = { path, content: typeof args.content === "string" ? args.content : "" };
+    } else if (call.name === "apply_patch") {
+      found = { path, patch: typeof args.patch === "string" ? args.patch : "" };
+    }
+  }
+  return found;
+}
+
+// The most recent patch -> verification pair before `beforeMoveId` whose verification ended
+// with a failing run: the engine's record that this change was already tried and did not help.
+// Only the last attempt is kept; older ones are already on the tape.
+function lastFailedAttempt(
+  state: State,
+  beforeMoveId: string,
+): { write: ReturnType<typeof lastWrite>; run: { command: string; exitCode: number; tail: string } } | undefined {
+  const rootId = state.rootId;
+  if (rootId === undefined) return undefined;
+  const moves = childrenOf(state, rootId);
+  const end = moves.indexOf(beforeMoveId);
+  if (end < 0) return undefined;
+  let patchMove: string | undefined;
+  let verificationMove: string | undefined;
+  for (let i = 0; i < end; i += 1) {
+    const moveId = moves[i] as string;
+    const island = moveIsland(state, moveId);
+    if (island === "patch") {
+      patchMove = moveId;
+      verificationMove = undefined;
+    } else if (island === "verification" && patchMove !== undefined) {
+      verificationMove = moveId;
+    }
+  }
+  if (patchMove === undefined || verificationMove === undefined) return undefined;
+  const run = lastFailingRun(state, verificationMove);
+  if (run === undefined) return undefined;
+  return { write: lastWrite(state, patchMove), run };
+}
+
+// The engine-authored record of the failed attempt, carried into the next Localization state.
+function failedAttemptText(attempt: NonNullable<ReturnType<typeof lastFailedAttempt>>): string {
+  const lines = ["Previous failed attempt:"];
+  if (attempt.write.path === "") {
+    lines.push("  Patch: no file changed.");
+  } else {
+    lines.push(`  Patch: ${attempt.write.path}`);
+    if (attempt.write.find !== undefined) {
+      const indent = (text: string): string => text.replace(/^/gm, "    ");
+      lines.push(indent(attempt.write.find));
+      lines.push("    ->");
+      lines.push(indent(attempt.write.replace ?? ""));
+    } else if (attempt.write.content !== undefined) {
+      lines.push(`    (wrote ${attempt.write.content.length} chars)`);
+    } else if (attempt.write.patch !== undefined) {
+      lines.push("    (applied a patch)");
+    }
+  }
+  lines.push(`  Verification: \`${attempt.run.command}\` exited ${attempt.run.exitCode}`);
+  if (attempt.run.tail !== "") {
+    for (const line of attempt.run.tail.split("\n")) lines.push(`    ${line}`);
+  }
+  lines.push("  Do not repeat this change; look elsewhere.");
+  return lines.join("\n");
+}
+
 // Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
 // two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
 // (the `stop` reason). The goal is the state's OWN definition (`island.what`), a `user` turn;
@@ -216,6 +349,16 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
   // `ai`: the state marker (the engine's synthetic turn opening the state).
   out.push({ role: "assistant", text: `Start state ${label}` });
+  // The failed attempt that sent the run back here: the actual change and the run it broke.
+  // Only for the OPEN, current Localization (the last attempt only; older ones are on the tape).
+  if (
+    island === "localization" &&
+    moveId === currentMove(state) &&
+    stopOf(state, moveId) === undefined
+  ) {
+    const attempt = lastFailedAttempt(state, moveId);
+    if (attempt !== undefined) out.push({ role: "system", text: failedAttemptText(attempt) });
+  }
   // `system`: the engine's instruction for how to act in this state.
   if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
   // `user`: the state's own goal (from its definition); the doxa's `what`/`notes` are not shown.

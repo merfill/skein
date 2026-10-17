@@ -97,6 +97,31 @@ vs the full engine loop). But the feature yields **~2.5× less reasoning and ~40
 added context almost all lands in `cacheRead` (fresh input equal at ~49k), while reasoning tokens
 (output, the expensive tier) drop. So it is kept as the **default**.
 
+## Streaming transport (A/B), 2026-10-17
+
+`fix-ocaml-gc --net off` (†), K=3 per arm; one factor changes — `SKEIN_STREAMING` (on:
+`model.stream()` + chunk concatenation; off: the previous non-streaming `invoke`). The prompt and
+projection are the same (reasoning on the tape is on).
+
+| arm | reward | turns | ₽ | fresh input | reason |
+|---|---|---|---|---|---|
+| **ON** | 1, 1, **0** | 29, 31, **60** | 2.13, 1.92, 5.23 | 55.6k, 49.6k, 126.3k | 12.2k, 11.0k, 32.1k |
+| **OFF** | 1, 1, 1 | 32, 45, 30 | 1.98, 3.25, 1.62 | 53.1k, 72.3k, 46.7k | 10.0k, 20.3k, 7.4k |
+
+**Mechanics.** Reasoning arrives as deltas (`delta.reasoning`) and is renamed by the adapter
+(`fromChunk`); it is back on the tape (`payload.reasoning`, 56 records per run, `reasoning.ndjson`
+written). No `llm_error`; usage/cost come from the terminal chunk; the
+`finish_reason:"length"` retry fires (the ON failure: t58 `reason=8192` = the cap, then the brevity
+retry). No idle timeout was observed.
+
+**Verdict.** The transport works and is not worse by cost on successful runs; ON 2/3 vs OFF 3/3 is
+within noise (the single ON failure is a wrong patch → a verification→localization cycle, the same
+flakiness class as before; n is small). Kept **on by default**, `SKEIN_STREAMING=false` is the
+fallback/A-B arm.
+
+Runs: ON `2026-10-17T08-04-06-897Z`, `08-19-58-026Z`, `08-29-13-482Z`; OFF `08-10-30-333Z`,
+`08-38-55-578Z`, `08-49-29-101Z`.
+
 ## Latest version (2026-10-15) — observable state criteria
 
 `fix-ocaml-gc --net on`, reward **1**, `request_addressed`, 52 turns, 7.30₽

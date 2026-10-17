@@ -105,7 +105,7 @@ export function summarize(turns: TurnMetric[]): MetricsSummary {
   const totals: MetricTotals = {
     turns: turns.length,
     llmCalls: 0,
-    // A turn is one doxa move: one or more tool calls (tool_choice is "required"; a batch
+    // A turn is one doxa move: one or more tool calls (no forced tool_choice; a batch
     // may carry several). Retries within a turn add LLM calls, not tool calls.
     toolCalls: 0,
     accepted: 0,

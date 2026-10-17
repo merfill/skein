@@ -20,6 +20,12 @@ export interface Settings {
   // provider adapter round-trips it, `src/llm/provider.ts`). Off for the controlled A/B that
   // isolates "reasoning on the tape" from the harness; the model still reasons either way.
   reasoningTape: boolean;
+  // Whether model calls are streamed on the wire (SSE); the engine concatenates the chunks
+  // back into one message (`src/llm/structured.ts` `callModel`). Streaming keeps the connection
+  // busy while the model emits a long hidden reasoning, so the gateway's idle timeout is not
+  // hit; the provider's reasoning arrives as `delta.reasoning` (`src/llm/provider.ts`). Off is
+  // the non-streaming fallback / A/B arm.
+  streaming: boolean;
   maxTurns: number;
   // Cap on a foreground `run`; a long verifier build may need more than the default
   // (background jobs are uncapped and polled instead, docs/tools.md §4.7).
@@ -48,6 +54,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     llmRetries: num(env.SKEIN_LLM_RETRIES, 2),
     reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "low",
     reasoningTape: (env.SKEIN_REASONING_TAPE ?? "true").toLowerCase() !== "false",
+    streaming: (env.SKEIN_STREAMING ?? "true").toLowerCase() !== "false",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
     runTimeoutMs: num(env.SKEIN_RUN_TIMEOUT_MS, 120_000),
     live: (env.SKEIN_LIVE ?? "false").toLowerCase() === "true",

@@ -418,6 +418,12 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   `move.what`/`move.notes` are **not** shown: the goal comes from the island definition. The
   request is the second message of the tape (right after the base prompt), on **every** turn —
   never dropped;
+- **returning to Localization.** For the **current open** `localization` state, right after
+  `Start state` comes a `system` "Previous failed attempt" message: the actual change of the last
+  `patch` (from `payload.call`) and the last failed run of `verification` (`exitCode != 0`) with a
+  short output tail. It is a projection of existing events (`mutates`/`observation`), not a status
+  or a gate; `stop` still closes only by the doxa. Only the last attempt is shown (earlier ones
+  remain on the tape as `Finish` lines);
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
   observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
   `item`), so the first plan item is an ordinary tool call;

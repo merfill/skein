@@ -129,7 +129,7 @@ Beyond Tier 0, the current line adds:
   (`tests/coverage.test.ts`), and live step tests (`tests/live/ir_operations_step.test.ts`).
 - **Native tool calls (structured output)** — the agent proposes through flat function
   tools generated from zod (`src/llm/tools.ts`); `invokeTools`
-  (`src/llm/structured.ts`) binds them with `tool_choice: "required"`, maps the call to
+  (`src/llm/structured.ts`) binds them (no forced `tool_choice`, like opencode), maps the call to
   the IR `Action` and repairs one malformed/missing call. The JSON-schema-in-prompt path
   (`invokeStructured`) stays a generic fallback. This replaced the single nested
   discriminated union, which inflated reasoning and tripped the completion cap on hard
@@ -181,23 +181,28 @@ Beyond Tier 0, the current line adds:
   `docs/ir_semantics.md`; rollout — `docs/plans/archive/ir_revision_implementation_plan.md`. The
   earlier shape statements in this section are history.
 
+- **Streaming the model response (2026-10-17, done).** Calls go through `model.stream()` and the
+  engine concatenates the chunks itself (`callModel`, `src/llm/structured.ts`) instead of the
+  `ChatOpenAI` `_generate` branch, so the internal token count (`getNumTokens` → a
+  `tiktoken.pages.dev` fetch) is never triggered. Toggle `SKEIN_STREAMING` (default on); off is
+  the old non-streaming `invoke`. The adapter (`src/llm/provider.ts`) gained `fromChunk`: it
+  renames `delta.reasoning` → `reasoning_content` per SSE line (RouterAI's field, the one
+  langchain-openai maps). The fetch (`src/llm/client.ts`) detects SSE from `init.body.stream`
+  and, in the same pass, accumulates `reasoning`/`content`/`tool_calls`/`finish_reason`/`usage`,
+  handing `onResponseBody` a reconstructed non-stream body (telemetry unchanged). The provider
+  sends usage/cost in the terminal chunk (confirmed on the captured opencode SSE). Live A/B
+  `fix-ocaml-gc --net off` (K=3 per arm) — the transport works, reasoning is back on the tape, no
+  `llm_error`, cost no worse; analysis — `docs/benches/best_bench.md` (2026-10-17). Generation
+  display/interrupt is separate.
+
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run` — offline tests,
 live gate only when `SKEIN_LIVE=true`.
 
 **Deferred (backlog):**
 
-- **Streaming the model response (next).** Model calls are currently **non-streaming**
-  (`ChatOpenAI.invoke`); the provider reasoning adapter (`src/llm/provider.ts`) normalizes only a
-  complete JSON response (it rewrites `init.body` and returns a `new Response`), so the
-  `reasoning_content` round-trip only works without streaming. Streaming is needed to: (a) avoid
-  gateway idle-timeouts on long reasoning (the response is silent until the end); (b) show and
-  interrupt generation; (c) keep the reasoning round-trip where it arrives as deltas
-  (`delta.reasoning`) and/or is required (Anthropic extended thinking, OpenAI o-series, Gemini
-  `thought`). Reasoning-on-the-tape is already the default (see `docs/benches/best_bench.md`,
-  section 2026-10-17). It means rewriting the adapter to **accumulate deltas**
-  (`reasoning`/`content`/`tool_calls`) instead of rewriting the whole body, and probably
-  revisiting the truncation retries (`invokeTools`). Verify on `fix-ocaml-gc` (K≥3), comparing
-  turns and cost (opencode works via streaming — `docs/state_testing_ru.md`).
+- **Generation display/interrupt (streaming UX).** Streaming is in place as transport (above),
+  but tokens are not surfaced: showing and interrupting the output needs the loop to consume
+  `handleLLMNewToken`/`model.stream()` rather than only concatenating. Deferred.
 - **Possible tools.** `write` is done. Still candidates, by size of the gap: `edit` by
   range / `multiedit` (find/replace breaks on ambiguous or duplicated fragments);
   `web_fetch` (docs, error analysis — currently reachable through `run`/`curl`, so low
