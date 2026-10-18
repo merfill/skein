@@ -1,7 +1,7 @@
 # Skein — documentation
 
-Start here. This is the index of the documentation; every document has an English
-original and a Russian mirror named with the `_ru` suffix.
+Start here. This is the index of the documentation; every document exists in English
+and Russian, the Russian version in a file with the `_ru` suffix.
 
 > Русские зеркала — файлы с суффиксом `_ru` рядом с каждым документом.
 
@@ -11,6 +11,12 @@ original and a Russian mirror named with the `_ru` suffix.
   the IR, the projection.
 - [logos_ir.md](logos_ir.md) · [RU](logos_ir_ru.md) — the doxa/logos frame in depth.
 - [design_review.md](design_review.md) · [RU](design_review_ru.md) — design review notes.
+
+## Sessions (proposed)
+
+- [session_concepts.md](session_concepts.md) · [RU](session_concepts_ru.md) — sessions: why
+  continuity is needed, the container of units, the session agent, the hierarchical outline
+  (draft; no implementation).
 
 ## The IR (the engine's source of truth)
 
