@@ -61,7 +61,9 @@ Work the state — your tool calls are its steps — until its goal is reached, 
 Transitions — move on as soon as the condition holds:
 ${TRANSITIONS}
 
-IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure.`,
+IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure.
+
+The change must come from the located material. Do not synthesize, invent, or reconstruct values or artifacts to satisfy a count, a form, or an expected answer. A check that only reads your own output is not acceptance: compare against the source material.`,
   },
 ];
 
@@ -85,7 +87,10 @@ ${REQUEST_NOTES}`,
 const MOVE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
-    text: `Call a tool — the action that advances the goal above.`,
+    text:
+      `Call a tool — the action that advances the goal above. Inspection must not consume or ` +
+      `rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or ` +
+      `rewrite them, and prefer read-only modes.`,
   },
 ];
 
@@ -115,6 +120,11 @@ export function transitionInstruction(island?: IslandId): string {
   return [
     `${head} From it and the user's request, choose the next state: call \`move\` to enter it; if the work is done, \`move\` to Finish and \`stop\` there.`,
     `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
+    ...(island === "verification"
+      ? [
+          "After a failed acceptance, choose Patch by default: the located object is still the material, and the failure is in the produced change or result (value, length, format, span, assembly). Choose Localization only when the failure names a different object (a different file, function, record, or image), or the object was not found; a change that did not fix the symptom is not enough.",
+        ]
+      : []),
     `Take the next state's own goal as it stands — do not fold the finished state's result or the request into \`what\`; leave \`done\` out (the state's default criterion applies). \`notes\` = what the request and the just-finished result presume about this state — carried in as assumptions to verify against the project. One short line — up to ~20 words.`,
   ].join("\n\n");
 }
@@ -152,7 +162,7 @@ export function turnInstruction(island?: IslandId, done?: string): string {
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
   const hint = island !== undefined ? ISLANDS[island].hint : "";
-  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. A strong suspicion is enough for the code judgment — do not verify to be sure (a wrong call is caught later). Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them. Do not over-work the state, and do not do a later state's work.`;
+  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not re-verify the diagnosis; checking the form of the result you produce is part of the change. Inspection must not consume or rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or rewrite them, and prefer read-only modes. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them. Do not over-work the state, and do not do a later state's work.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

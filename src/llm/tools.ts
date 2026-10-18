@@ -1,7 +1,7 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
-import { ISLAND_IDS } from "../ir/islands";
+import { ISLAND_IDS, type IslandId } from "../ir/islands";
 import { actionSchema, applySchema, type Action, type Apply, type Proposal } from "./schemas";
 
 // Structured output via native tool calls (docs/testing_ru.md §8.1). The provider does
@@ -123,7 +123,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "bash",
     description:
-      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat.",
+      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat. The command may modify the workspace: for inspection, prefer read-only commands, and copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Changes belong to the change state.",
     schema: bashParams,
   },
   {
@@ -135,7 +135,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "webfetch",
     description:
-      "Fetches content from a URL and saves it into the workspace as a read-only file. Refused if: the target path is outside the workspace or already exists; a constraint forbids it; or the download fails (non-2xx/timeout).",
+      "Fetches content from a URL and saves it (with `path`, into the workspace; without `path`, to the engine-owned ref) as a read-only file. Refused if: the target path is outside the workspace or already exists; a constraint forbids it; or the download fails (non-2xx/timeout).",
     schema: fetchParams,
   },
   {
@@ -147,7 +147,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context; a strong suspicion is enough — do not verify to be sure. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to a later state or to the task's problem.`,
+      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context; a strong suspicion is enough for the diagnosis — do not re-verify the diagnosis; checking the form of the result you produce is part of the change. A form check is not provenance: the result must come from the source material; do not synthesize it to satisfy a form. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to a later state or to the task's problem.`,
     schema: stopParams,
   },
   {
@@ -177,12 +177,72 @@ export const PROPOSAL_TOOLS: OpenAITool[] = DEFINITIONS.map((definition) => ({
 // source: the AI SDK validates the model's call against them before it reaches `toProposal`.
 // There is no `execute` — a call is the structured-output channel for the proposed `Action`,
 // never a tool the SDK runs (`stopWhen: stepCountIs(1)` in `structured.ts`).
-export function proposalTools(names?: ReadonlySet<string>): ToolSet {
+const INSPECTION_BASH_SUFFIX =
+  "Inspection only in this state: do not create, modify, or delete files; do not open or run a " +
+  "tool in a read-write mode; copy raw artifacts before any command that may checkpoint, delete, " +
+  "or rewrite them; prefer read-only modes; do not use wildcard mutations.";
+const PATCH_BASH_SUFFIX =
+  "This state changes the target: make the change specific and targeted; do not use wildcard " +
+  "edits or deletes and do not touch unrelated files.";
+
+// The bash tool is dual-use (inspection and mutation). The state determines which contract the
+// model sees: inspection states get the read-only/preserve rule first; patch gets the targeted
+// change rule. Direct callers without an island keep the global description.
+function baseDescription(name: string): string {
+  return PROPOSAL_TOOLS.find((tool) => tool.function.name === name)?.function.description ?? "";
+}
+
+export function bashDescriptionFor(island?: IslandId): string {
+  const base = baseDescription("bash");
+  if (island === "patch") return `${PATCH_BASH_SUFFIX} ${base}`;
+  if (island === "orientation" || island === "localization" || island === "verification") {
+    return `${INSPECTION_BASH_SUFFIX} ${base}`;
+  }
+  return base;
+}
+
+const INSPECTION_WEBFETCH_SUFFIX =
+  "Inspection only in this state: omit `path` so the fetch goes to the engine-owned ref; do not " +
+  "create files in the work tree. It never overwrites.";
+const PATCH_WEBFETCH_SUFFIX =
+  "This state changes the target: use `path` only for an artifact the goal names; it creates a " +
+  "new workspace file and never overwrites.";
+const PATCH_EDIT_SUFFIX =
+  "This state changes the target: edit only the target the goal names; do not edit raw artifacts, " +
+  "unrelated files, or sibling code; make the replacement exact and targeted.";
+const PATCH_WRITE_SUFFIX =
+  "This state changes the target: write only the artifact the goal names, at its exact path; do " +
+  "not overwrite source or raw artifacts; prefer edit for a small change.";
+const PATCH_APPLY_PATCH_SUFFIX =
+  "This state changes the target: apply only the diff the goal names; do not delete or rename " +
+  "files outside the goal; check the patch paths; a wrong patch may not be revertible.";
+
+// The state-specific tool contract: `bash` is dual-use; `webfetch` creates a file; the write
+// tools exist only in Patch. The map is empty when no island is known (direct callers/tests),
+// which keeps the global descriptions.
+export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
+  if (island === undefined) return {};
+  const descriptions: Record<string, string> = {
+    bash: bashDescriptionFor(island),
+    webfetch: `${island === "patch" ? PATCH_WEBFETCH_SUFFIX : INSPECTION_WEBFETCH_SUFFIX} ${baseDescription("webfetch")}`,
+  };
+  if (island === "patch") {
+    descriptions.edit = `${PATCH_EDIT_SUFFIX} ${baseDescription("edit")}`;
+    descriptions.write = `${PATCH_WRITE_SUFFIX} ${baseDescription("write")}`;
+    descriptions.apply_patch = `${PATCH_APPLY_PATCH_SUFFIX} ${baseDescription("apply_patch")}`;
+  }
+  return descriptions;
+}
+
+export function proposalTools(
+  names?: ReadonlySet<string>,
+  descriptions?: Record<string, string>,
+): ToolSet {
   const tools: ToolSet = {};
   for (const definition of DEFINITIONS) {
     if (names !== undefined && !names.has(definition.name)) continue;
     tools[definition.name] = tool({
-      description: definition.description,
+      description: descriptions?.[definition.name] ?? definition.description,
       inputSchema: definition.schema,
     });
   }

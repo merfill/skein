@@ -39,7 +39,7 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the coordinates are named/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and its siblings are ruled out/);
     expect(BASE_PROMPT).toMatch(/Finish is terminal/);
   });
 
@@ -109,21 +109,19 @@ describe("system prompt: tool contract", () => {
     const orientation = turnInstruction("orientation", "the repository root is known");
     expect(orientation).toContain(ISLANDS.orientation.hint);
     expect(orientation).toMatch(/pwd/);
-    expect(orientation).toMatch(/do not hunt the defect/i);
-    expect(orientation).toMatch(/strong suspicion/i);
+    expect(orientation).toMatch(/do not hunt the target/i);
+    expect(orientation).toMatch(/do not re-verify the diagnosis/i);
     expect(orientation).toMatch(/environment facts/i);
     expect(orientation).toMatch(/observe them, do not assume them/i);
     expect(orientation).toMatch(/run the command that prints them/i);
 
     const localization = turnInstruction("localization", "the failure is located");
     expect(localization).toContain(ISLANDS.localization.hint);
-    expect(localization).toMatch(/sibling walkers/i);
+    expect(localization).toMatch(/sibling material/i);
 
     const patch = turnInstruction("patch", "the fix is applied");
     expect(patch).toContain(ISLANDS.patch.hint);
-    expect(patch).toMatch(/Finish state Localization/);
-    expect(patch).toMatch(/Do not substitute a different line/);
-    expect(patch).toMatch(/remove an existing step/i);
+    expect(patch).toMatch(/do not relocate the target/i);
     expect(patch).toMatch(/Previous failed attempt/);
     expect(patch).toMatch(/do not repeat that change/i);
 

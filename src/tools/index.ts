@@ -779,10 +779,13 @@ export function executeAction(
   // sibling of the previous state (docs/ir_semantics.md §4.1). The plan hangs directly off
   // the `move` — there is no goal node (docs/plans/archive/goal_into_move_plan.md) — and is seeded
   // by the first `apply`.
-  const buildMove = (spec: MovePayload & { call?: unknown }): string => {
+  const buildMove = (
+    spec: MovePayload & { call?: unknown },
+    extra?: Record<string, unknown>,
+  ): string => {
     const moveSeq = next();
     const id = `w:move:${moveSeq}`;
-    const payload: Record<string, unknown> = { state: spec.state, what: spec.what };
+    const payload: Record<string, unknown> = { state: spec.state, what: spec.what, ...(extra ?? {}) };
     if (spec.done !== undefined && spec.done !== "") payload.done = spec.done;
     if (spec.notes !== undefined && spec.notes !== "") payload.notes = spec.notes;
     if (spec.call !== undefined) payload.call = spec.call;
@@ -1005,13 +1008,29 @@ export function executeAction(
       // empty — the next turn's first `apply` seeds it (docs/plans/archive/goal_into_move_plan.md).
       const root = state.rootId;
       if (root === undefined) return fail("move failed: no request");
-      const moveId = buildMove({
-        state: action.state,
-        what: action.what,
-        done: action.done,
-        notes: action.notes,
-        call: modelCall(action),
-      });
+      // A Patch may change files in ways its call records cannot reverse (`bash`, `write`,
+      // `apply_patch`, deletions). Take a pre-patch artifact checkpoint and keep its opaque id
+      // on the move, so a failed Verification can restore exactly the paths that Patch touched.
+      // The id is an artifact address, not a truth: the projection ignores it, and an absent
+      // store just leaves the edit-only fallback.
+      let checkpoint: Record<string, unknown> = {};
+      if (action.state === "patch" && workspace.checkpoint !== undefined) {
+        try {
+          checkpoint = { checkpoint: workspace.checkpoint("pre-patch") };
+        } catch {
+          // The artifact store is optional; failing to snapshot must not fail the move.
+        }
+      }
+      const moveId = buildMove(
+        {
+          state: action.state,
+          what: action.what,
+          done: action.done,
+          notes: action.notes,
+          call: modelCall(action),
+        },
+        checkpoint,
+      );
       addEdge({ kind: "llm" }, root, moveId, "move");
       events.push(...descendTo(state, root, moveId));
       return {

@@ -363,6 +363,9 @@ export interface ToolsOptions {
   // The tool names the model surface may offer (the frontier, `toolNamesFor`). When omitted,
   // the full registry is bound (direct `invokeTools` callers, tests).
   allowedTools?: string[];
+  // Per-tool description overrides for the bound surface (e.g. the state-specific `bash`
+  // contract). Direct callers that omit it keep the global descriptions.
+  toolDescriptions?: Record<string, string>;
   // Retries for a THROWN provider call (network/5xx/rate limit): the same request is resent
   // up to this many extra times before the error is given up. Defaults to `settings.llmRetries`.
   retries?: number;
@@ -405,7 +408,7 @@ export async function invokeTools(
   const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
   const allowed =
     options.allowedTools !== undefined ? new Set(options.allowedTools) : undefined;
-  const tools = proposalTools(allowed);
+  const tools = proposalTools(allowed, options.toolDescriptions);
 
   let maxTokens: number | undefined;
   let raised = 0;

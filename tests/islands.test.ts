@@ -103,11 +103,11 @@ describe("islands: the projection highlights the state", () => {
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
     // The state is a `Start state` marker; the goal follows as a `user` turn.
-    const marker = context.history.find((m) => m.role === "assistant" && m.text.startsWith("Start state"))?.text ?? "";
+    const marker = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
     expect(marker).toBe("Start state Orientation");
     // The goal is the state's OWN definition (`island.what`), not the move's `what`.
     const goal = context.history.find((m) => m.role === "user" && m.text.startsWith("what:"))?.text ?? "";
-    expect(goal).toBe("what: map the project — its repository root, how it is built and how it is checked");
+    expect(goal).toBe("what: map the material and how success is judged");
     const messages = buildMessages(context);
     expect(messages.some((message) => String(message.content) === goal)).toBe(true);
   });

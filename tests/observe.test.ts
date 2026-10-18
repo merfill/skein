@@ -72,6 +72,28 @@ describe("reconcile", () => {
     );
   });
 
+  it("records a deletion of an active file once", () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const base = readFact(workspace.version("src/sum.mjs"));
+    const state = fold(base);
+
+    workspace.run("rm src/sum.mjs");
+    const events = reconcile(state, workspace);
+    expect(events).toEqual([
+      {
+        type: "mutate",
+        ref: "file:src/sum.mjs",
+        version: "absent",
+        actionId: "reconcile:file:src/sum.mjs",
+      },
+    ]);
+
+    const after = fold([...base, ...events]);
+    expect(currentVersion(after, "file:src/sum.mjs")).toBe("absent");
+    // The fact is already stale; the deletion is not re-emitted every turn.
+    expect(reconcile(after, workspace)).toEqual([]);
+  });
+
   it("ignores files not involved in current activity", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const state = fold(readFact(workspace.version("src/sum.mjs")));

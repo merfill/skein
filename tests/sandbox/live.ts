@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TurnMeter } from "../../bench/metrics";
@@ -38,7 +38,14 @@ export interface LiveTaskOptions {
 export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): Promise<LiveTaskResult> {
   const settings = loadSettings();
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = options.dir ?? join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}`);
+  // Parallel runs of the same task can share the millisecond timestamp; a unique suffix keeps
+  // each run's trace (contexts/metrics/result) separate instead of interleaving one directory.
+  let dir = options.dir ?? join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}`);
+  if (options.dir === undefined) {
+    for (let suffix = 1; existsSync(dir); suffix += 1) {
+      dir = join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}-${suffix}`);
+    }
+  }
   mkdirSync(dir, { recursive: true });
 
   // The provider's hidden reasoning is on the assembled reply; capture it turn by turn so a

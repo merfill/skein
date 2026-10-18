@@ -67,7 +67,7 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(msgs.map((m) => m.role)).toEqual([
       "system", // base
       "user", // the request (leads the tape)
-      "assistant", // the state's `Start state` marker
+      "system", // the state's `Start state` marker
       "system", // the state's instruction
       "user", // the state's goal (`what:` from the state definition)
       "assistant", "tool", // the first plan item (ls)
@@ -78,7 +78,7 @@ describe("message wrappers: the wire JSON of the tape", () => {
     // The request is the first user turn; the second is the state's goal.
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
     expect(userTexts[0]).toContain("fix the bug");
-    expect(userTexts[1]).toContain("map the project");
+    expect(userTexts[1]).toContain("map the material");
     // A native call keeps its content empty (the call is in `tool_calls`).
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);

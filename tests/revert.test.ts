@@ -4,7 +4,10 @@ import { isFailedVerificationMove, lastPatchBefore, revertFailedPatch, revertLas
 import { currentVersion, fold } from "../src/ir/graph";
 import { project } from "../src/ir/project";
 import { currentMove } from "../src/ir/traversal";
+import type { Action } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
+import type { Workspace } from "../src/tools/workspace";
+import { createCheckpoint } from "./sandbox/checkpoint";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
@@ -17,6 +20,7 @@ import {
   request,
   run,
   withGoal,
+  write,
 } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
@@ -38,6 +42,102 @@ function failedAttempt() {
   step = exec({ operator: "stop", why: "still fails" }, step.events, ws);
   return { ws, events: step.events, state: step.state, patchMoveId };
 }
+
+// A workspace with the harness's artifact store: entering Patch checkpoints the tree, so a
+// failed Verification can restore paths the applied calls cannot reconstruct.
+function checkpointedWorkspace(): { ws: Workspace } {
+  const { ws, root } = makeWorkspace(DEFAULT_FILES);
+  const checkpoint = createCheckpoint(root);
+  return {
+    ws: {
+      ...ws,
+      checkpoint: (label) => checkpoint.checkpoint(label),
+      restoreCheckpoint: (id, paths) => checkpoint.restore(id, paths),
+    },
+  };
+}
+
+function failedPatchOn(ws: Workspace, actions: readonly Action[]) {
+  let step = execAll(withGoal("do it", "true"), [request()], ws);
+  step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
+  step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, ws);
+  step = exec({ operator: "stop", why: "named" }, step.events, ws);
+  step = execAll([move("patch", "fix it"), ...actions], step.events, ws);
+  const patchMoveId = currentMove(step.state) as string;
+  step = exec({ operator: "stop", why: "changed" }, step.events, ws);
+  step = execAll([move("verification", "check it"), run("exit 2")], step.events, ws);
+  step = exec({ operator: "stop", why: "still fails" }, step.events, ws);
+  return { ws, events: step.events, state: step.state, patchMoveId };
+}
+
+function failedPatch(actions: readonly Action[]) {
+  const { ws } = checkpointedWorkspace();
+  return failedPatchOn(ws, actions);
+}
+
+describe("revert: checkpoint covers bash, write and deletions", () => {
+  it("restores a bash edit and a deletion, and removes a file the Patch created", () => {
+    const { ws, state, patchMoveId } = failedPatch([
+      run("sed -i 's/return a - b;/return a + b;/' src/sum.mjs"),
+      run("rm test/sum.test.mjs"),
+      write("out.txt", "new artifact\n"),
+    ]);
+    expect(ws.read("src/sum.mjs")).toContain("return a + b;");
+    expect(ws.exists("test/sum.test.mjs")).toBe(false);
+    expect(ws.exists("out.txt")).toBe(true);
+
+    const outcome = revertLastPatch(state, patchMoveId, ws);
+    expect(outcome.report.reverted).toBe(true);
+    expect(ws.read("src/sum.mjs")).toContain("return a - b;");
+    expect(ws.read("src/sum.mjs")).not.toContain("return a + b;");
+    expect(ws.exists("test/sum.test.mjs")).toBe(true);
+    expect(ws.exists("out.txt")).toBe(false);
+    expect(outcome.events[0]).toMatchObject({ type: "revert", patchMoveId });
+  });
+
+  it("names a bash change in the failed-attempt block instead of 'no file changed'", () => {
+    const { ws, events } = failedPatch([
+      run("sed -i 's/return a - b;/return a + b;/' src/sum.mjs"),
+    ]);
+    const moved = exec(move("localization", "find again"), events, ws);
+    const block = project(moved.state).history.find((message) =>
+      message.text.startsWith("Previous failed attempt:"),
+    );
+    expect(block?.text).toContain("Patch: src/sum.mjs");
+    expect(block?.text).toContain("sed -i");
+    expect(block?.text).not.toContain("no file changed");
+  });
+
+  it("without a checkpoint, write in a Patch is still a conflict", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const { state, patchMoveId } = failedPatchOn(ws, [write("out.txt", "new artifact\n")]);
+    const outcome = revertLastPatch(state, patchMoveId, ws);
+    expect(outcome.report.reverted).toBe(false);
+    expect(outcome.report.conflict).toContain("preimage");
+    expect(ws.exists("out.txt")).toBe(true);
+  });
+
+  it("the loop restores a bash change before the move to Patch", async () => {
+    const { ws, events } = failedPatch([
+      run("sed -i 's/return a - b;/return a + b;/' src/sum.mjs"),
+    ]);
+    expect(ws.read("src/sum.mjs")).toContain("return a + b;");
+    const result = await runAgent(
+      {
+        propose: async () => ({
+          thought: "verification failed; the coordinates still hold",
+          actions: [move("patch", "fix again")],
+        }),
+        workspace: ws,
+        maxTurns: 2,
+      },
+      { request: { id: "r1", text: "fix it" }, seed: events, startTurn: 1 },
+    );
+    expect(result.events.some((event) => event.type === "revert")).toBe(true);
+    expect(ws.read("src/sum.mjs")).toContain("return a - b;");
+    expect(ws.read("src/sum.mjs")).not.toContain("return a + b;");
+  });
+});
 
 describe("revert: failed Patch -> Localization", () => {
   it("restores the pre-patch text, journals a revert, and updates the world version", () => {
@@ -77,7 +177,7 @@ describe("revert: failed Patch -> Localization", () => {
     const patch = exec(move("patch", "fix again"), stopped.events, ws);
     const history = project(patch.state).history;
     const starts = history
-      .map((message, index) => (message.role === "assistant" && message.text === "Start state Patch" ? index : -1))
+      .map((message, index) => (message.role === "system" && message.text === "Start state Patch" ? index : -1))
       .filter((index) => index >= 0);
     expect(starts).toHaveLength(2);
     const block = history.slice(starts[1]! + 1).find((message) => message.text.startsWith("Previous failed attempt:"));
@@ -158,7 +258,7 @@ describe("revert: failed Patch -> Localization", () => {
     expect(ws.read("src/sum.mjs")).toContain("return a - b;");
     const history = project(fold(result.events)).history;
     const starts = history
-      .map((message, index) => (message.role === "assistant" && message.text === "Start state Patch" ? index : -1))
+      .map((message, index) => (message.role === "system" && message.text === "Start state Patch" ? index : -1))
       .filter((index) => index >= 0);
     const lastStart = starts.at(-1);
     expect(lastStart).toBeDefined();

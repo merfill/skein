@@ -3,7 +3,7 @@ import type { AssistantModelMessage, LanguageModel, ModelMessage, ToolModelMessa
 import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools, type ToolsOptions } from "../llm/structured";
-import { toolNamesFor } from "../llm/tools";
+import { toolDescriptionsFor, toolNamesFor } from "../llm/tools";
 import { BASE_PROMPT, NODE_INSTRUCTIONS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
@@ -138,6 +138,7 @@ export async function propose(
   return invokeTools(model, buildMessages(context), {
     ...options,
     ...(allowedTools !== undefined ? { allowedTools } : {}),
+    toolDescriptions: toolDescriptionsFor(context.island),
   });
 }
 

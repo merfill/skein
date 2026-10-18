@@ -86,9 +86,9 @@ const REQ = { role: "user", content: "solve the task" };
 // are native call/result pairs.
 const GOAL_PREFIX = [
   REQ,
-  { role: "assistant", content: "Start state Orientation" },
-  { role: "system", content: expect.stringContaining("Explore the repository") },
-  { role: "user", content: expect.stringContaining("map the project") },
+  { role: "system", content: "Start state Orientation" },
+  { role: "system", content: expect.stringContaining("Inspect the material") },
+  { role: "user", content: expect.stringContaining("map the material") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -110,9 +110,9 @@ describe("move: before [request] -> delta -> after", () => {
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      { role: "assistant", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Explore the repository") },
-      { role: "user", content: expect.stringContaining("map the project") },
+      { role: "system", content: "Start state Orientation" },
+      { role: "system", content: expect.stringContaining("Inspect the material") },
+      { role: "user", content: expect.stringContaining("map the material") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -146,13 +146,15 @@ describe("move: before [request] -> delta -> after", () => {
     // The finished state's plan and its command have left the tape; only the closure marker,
     // in the finished state's triple, remains.
     const texts = after.map((entry) => entry.content ?? "").join("\n");
-    expect(texts).toContain("Finish state Localization — the line is named");
+    expect(texts).toContain("Finish state Localization — your stop reason: the line is named");
     expect(texts).not.toContain("false");
     expect(
-      after.find((entry) => entry.content === "Finish state Localization — the line is named"),
+      after.find(
+        (entry) => entry.content === "Finish state Localization — your stop reason: the line is named",
+      ),
     ).toEqual({
-      role: "assistant",
-      content: "Finish state Localization — the line is named",
+      role: "system",
+      content: "Finish state Localization — your stop reason: the line is named",
     });
   });
 });
@@ -456,10 +458,10 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
       REQ,
-      { role: "assistant", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Explore the repository") },
-      { role: "user", content: expect.stringContaining("map the project") },
-      { role: "assistant", content: "Finish state Orientation — done" },
+      { role: "system", content: "Start state Orientation" },
+      { role: "system", content: expect.stringContaining("Inspect the material") },
+      { role: "user", content: expect.stringContaining("map the material") },
+      { role: "system", content: "Finish state Orientation — your stop reason: done" },
     ]);
   });
 

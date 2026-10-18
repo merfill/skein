@@ -655,12 +655,12 @@ describe("the message tape", () => {
     // instruction and the goal as a user turn (the request leads the tape); the first apply seeds
     // the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "assistant", "system", "user"]);
-    expect(roles[2]).toEqual(["user", "assistant", "system", "user", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
+    expect(roles[2]).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
-      "assistant",
+      "system",
       "system",
       "user",
       "assistant",
@@ -1024,14 +1024,14 @@ describe("runAgent", () => {
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");
     expect(context.history[0]?.role).toBe("user"); // the request leads the tape
-    expect(context.history[1]?.role).toBe("assistant");
+    expect(context.history[1]?.role).toBe("system");
     expect(context.history[1]?.text).toBe("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
     // The state IS its goal: the goal (the state's own `what`) is a `user` turn after the request.
     const goal =
-      context.history.map((message) => message.text).find((text) => text.includes("map the project")) ?? "";
-    expect(goal).toContain("map the project");
+      context.history.map((message) => message.text).find((text) => text.includes("map the material")) ?? "";
+    expect(goal).toContain("map the material");
   });
 
   it("refuses a repeated read and names the stored result", async () => {

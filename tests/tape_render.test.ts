@@ -60,7 +60,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     // turn, then each plan item as a native call + tool result.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
-      ["assistant", null, false],
+      ["system", null, false],
       ["system", null, false],
       ["user", null, false],
       ["assistant", "bash", false],
@@ -76,10 +76,10 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
     expect(ctx.history.map(shape)).toEqual([
       { role: "user", text: "solve the task" },
-      { role: "assistant", text: "Start state Orientation" },
+      { role: "system", text: "Start state Orientation" },
       { role: "system", text: ISLANDS.orientation.instruction },
-      { role: "user", text: "what: map the project — its repository root, how it is built and how it is checked" },
-      { role: "assistant", text: "Finish state Orientation — done" },
+      { role: "user", text: "what: map the material and how success is judged" },
+      { role: "system", text: "Finish state Orientation — your stop reason: done" },
     ]);
   });
 
@@ -129,7 +129,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     let start = -1;
     for (let i = 0; i < history.length; i += 1) {
       const message = history[i];
-      if (message?.role === "assistant" && message.text === "Start state Localization") start = i;
+      if (message?.role === "system" && message.text === "Start state Localization") start = i;
     }
     // The block rides the state entry, right after the (current) Start marker.
     const block = history[start + 1];

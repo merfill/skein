@@ -36,6 +36,8 @@ export interface OpenCodeOptions {
   model?: string;
   // opencode's reasoning variant (--variant); "low" keeps the comparison with Skein's low.
   reasoningEffort?: string;
+  // Agentic-step cap (opencode's `agent.build.steps`), to match Skein's `maxTurns`.
+  maxSteps?: number;
   // Wall-clock cap for the agent run (opencode's own loop has no turn cap).
   maxSeconds?: number;
   dir?: string;
@@ -69,9 +71,16 @@ export async function runOpenCodeTask(
     throw new Error(`opencode binary not found: ${opencodeBin} (set OPENCODE_BIN)`);
   }
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir =
+  // Parallel runs of the same task can share the millisecond timestamp; a unique suffix keeps
+  // each run's trace separate instead of interleaving one directory.
+  let dir =
     options.dir ??
     join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}-opencode-${options.network}`);
+  if (options.dir === undefined) {
+    for (let suffix = 1; existsSync(dir); suffix += 1) {
+      dir = join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}-opencode-${options.network}-${suffix}`);
+    }
+  }
   mkdirSync(dir, { recursive: true });
 
   const { root, request, check } = materializeTask(task);
@@ -83,9 +92,11 @@ export async function runOpenCodeTask(
   const api = new URL(settings.apiUrl);
   const apiPath = api.pathname.replace(/\/$/, "");
   const configPath = join(root, ".skein", "opencode.json");
+  const maxSteps = options.maxSteps;
   const buildConfig = (baseURL: string) => ({
     $schema: "https://opencode.ai/config.json",
     model,
+    ...(maxSteps !== undefined ? { agent: { build: { maxSteps } } } : {}),
     provider: {
       routerai: {
         npm: "@ai-sdk/openai-compatible",

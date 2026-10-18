@@ -16,6 +16,11 @@
 Один прогон — одна строка. В каталоге прогона лежит трасса (`metrics.json`, `result.json`;
 opencode пишет ещё `opencode.txt`).
 
+> **2026-10-18, terminal-bench breadth:** `db-wal-recovery`, `log-summary-date-ranges`,
+> `cobol-modernization`, `fix-code-vulnerability`, `password-recovery` — **5/5**;
+> `crack-7z-hash` — **3/3** завершившихся (2 прерваны). Обобщённые состояния + workspace
+> checkpoint/revert. См. «Батч 2026-10-18» ниже.
+
 > **2026-10-17, финальный батч:** 5/5 `fix-ocaml-gc --net on`, 29–50 шагов,
 > **1.031–2.521₽** — см. «Финальный батч» ниже. Таблица ниже — исторический топ-10;
 > новый лучший net-on — run4 `26-682` (1.031₽ / 32 шага) и run3 `25-612` (1.036₽ / 29 шагов).
@@ -41,6 +46,83 @@ opencode пишет ещё `opencode.txt`).
 goal-into-move, 49 шагов). Ранее выпали: **`19-02`** (net on, 46 шагов, 6.97₽), **`08-40`**
 (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
 12.68₽) — их описания остались в разделах ниже.
+
+## Батч 2026-10-18 — обобщённые состояния, checkpoint/revert, terminal-bench breadth
+
+> Это **не строки топ-10** (он про `fix-ocaml-gc`): сводка по остальным ported-задачам и по
+> инфраструктуре песочницы. Все прогоны — `tests/sandbox` (Docker, без Harbor), та же модель,
+> бюджет 40 ходов, если не указано иное.
+
+**Промт/проекция.** Четыре состояния обобщены без новых островов: Orientation — «map the
+material and how success is judged»; Localization — «find the target in the material»; Patch —
+«make the change the goal names»; Verification — «check the change against the goal's
+acceptance». Маркеры `Start state` / `Finish state` — `system`, закрытие —
+`Finish … — your stop reason: …`. Добавлены provenance/honesty-правило («не синтезировать
+значения; проверка, читающая только свой вывод, — не acceptance»), state-specific
+`bash`/`webfetch`/write-контракт (`toolDescriptionsFor`), preserve-инвариант («копируй raw-
+артефакты до команд, которые могут сделать checkpoint/удалить/перезаписать») и правило
+`Verification → Patch` по умолчанию в `transitionInstruction`.
+
+**Harness: workspace checkpoint.** Read-only снапшот task root:
+`<root>/.skein/checkpoints` — content-addressed блобы + hardlink-деревья `trees/<n>/`
+(initial после `setup`, далее per-turn), `restore.sh`/`README`; в контейнер монтируется
+read-only (docker `-v :ro`, bwrap `--ro-bind`). Недоступные host-процессу файлы (root-owned
+`john/run/john.log`) **пропускаются best-effort**: иначе snapshot падал и run завершался
+`llm_error` — это дало ложные 0/5 на crack в первом батче. Revert последнего Patch теперь
+восстанавливает **только изменённые им пути** (bash/write/apply_patch/удаления) из pre-patch
+checkpoint; `reconcile` пишет один `mutate absent` для исчезнувшего witnessed-файла.
+
+**Результаты (5×40, reward):**
+
+| задача | reward | шагов (диапазон) | in (fresh + cache, hit) | out (виз + реа) | ₽/прогон | ₽ итого |
+|---|---:|---:|---:|---:|---:|---:|
+| `db-wal-recovery` | 5/5 | 28.4 (23–38) | 143.1k (26.5k + 116.5k, 81%) | 9.0k (4.1k + 4.9k) | 1.160 | 5.801 |
+| `log-summary-date-ranges` | 5/5 | 18.6 (18–19) | 76.2k (18.7k + 57.5k, 76%) | 4.5k (2.9k + 1.6k) | 0.675 | 3.377 |
+| `cobol-modernization` | 5/5 | 32.4 (29–40) | 236.7k (46.9k + 189.8k, 80%) | 17.6k (6.6k + 11.1k) | 2.175 | 10.875 |
+| `fix-code-vulnerability` | 5/5 | 21.4 (20–23) | 103.9k (21.4k + 82.5k, 79%) | 3.4k (2.5k + 0.9k) | 0.655 | 3.277 |
+| `password-recovery` | 5/5 | 34.2 (25–40) | 234.1k (38.5k + 195.5k, 84%) | 11.5k (4.4k + 7.2k) | 1.590 | 7.948 |
+| `crack-7z-hash` | 3/3* | 30.7 (28–32) | 159.5k (27.4k + 132.2k, 83%) | 5.4k (3.2k + 2.2k) | 0.925 | 2.774 |
+
+\* crack: 3 завершившихся **после фикса** checkpoint; 2 из 5 убиты abort'ом. Первый батч (до
+фикса) дал 0/5 `llm_error` — это был баг harness, не задачи. Для чистого 5/5 нужен ещё прогон.
+
+**db-wal: два батча.** Checkpoint-only (до revert-интеграции): 5/5, **3.83₽**, 117 шагов,
+453.2k in (103.6k fresh + 349.6k cache, 77%), 25.7k out (14.8k + 11.0k). Checkpoint + revert:
+5/5, **5.80₽**, 142 шага, 715.4k in (132.7k + 582.7k, 81%), 44.8k out (20.5k + 24.3k). Рост —
+два recovery-прогона (30 и 38 шагов): в одном `sqlite3` удалил WAL и модель восстановила его из
+`trees/1`; в другом bash-XOR Patch провалил Verification, и checkpoint-revert вернул pre-patch
+WAL. Быстрые 3 прогона близки к checkpoint-only: 4.10k in/ход, 98 reason/ход, 0.0335₽/ход.
+
+**opencode в нашей песочнице (только local; Harbor не используем).** Цена opencode берётся из
+`reasoning.ndjson` (`usage.cost`, тот же провайдер/модель); для одного fix-ocaml-прогона цена не
+захвачена и оценена по тем же ставкам (15₽/1M fresh, 0.41₽/1M cache, 83₽/1M output — сходится с
+фактической ценой в пределах 0.03₽).
+
+| задача | агент | reward | шагов | in (fresh + cache, hit) | out (виз + реа) | ₽/прогон |
+|---|---|---:|---:|---:|---:|---:|
+| `password-recovery` | Skein (5) | 5/5 | 34.2 | 234.1k (38.5k + 195.5k, 84%) | 11.5k (4.4k + 7.2k) | 1.590 |
+| `password-recovery` | opencode (5) | 5/5 | 13.2 | 276.6k (24.8k + 251.8k, 91%) | 6.3k (2.0k + 4.3k) | 0.992 |
+| `fix-ocaml-gc` net on | Skein (5) | 4/5 | 37.8 | 272.1k (56.9k + 215.1k, 79%) | 15.8k (4.3k + 11.6k) | 2.235 |
+| `fix-ocaml-gc` net on | opencode (3) | 3/3 | 30.7 | 943.6k (30.9k + 912.7k, 97%) | 11.5k (3.4k + 8.1k) | ~1.79 |
+
+Вывод: opencode экономнее по шагам и итоговой цене (`password` −38%, `fix-ocaml` −20%), но
+тащит гораздо больше кешированного контекста; Skein дешевле **на шаг**, но делает больше шагов.
+Для `cobol`/`fix-code`/`log-summary`/`crack`/`db-wal` локальных opencode-прогонов нет —
+сравнение с Harbor исключено по указанию владельца; нужен отдельный локальный батч.
+
+**Что показали старые провалы.** `log-summary` (`06-26-26-152`) закрылся за 6 ходов: старый
+orientation→finish, «only move» на переходе и артефакт, объявленный готовым без наблюдения.
+Текущий промт дал 5/5 (18–19 ходов). `fix-code` false pass (`06-23-57`): `pytest` прошёл, а
+`report.jsonl` не создан; старый план закрытого состояния элидировал failed read. `cobol` 2/5 →
+5/5, `fix-code` 3/5 → 5/5, `password` 4/5 → 5/5 после обобщения состояний и бюджета 40.
+
+**Каталоги.** db-wal checkpoint-only: `2026-10-18T12-19-*`; db-wal checkpoint+revert:
+`2026-10-18T12-35-*`; log-summary: `12-56-*`; cobol: `13-06-*`/`13-08-*`/`13-09-*`; fix-code:
+`13-09-37`, `13-10-*`; password: `09-*`; crack: `13-14-51`, `13-15-04`, `13-15-42`; opencode
+password: `06-54-*`; opencode fix-ocaml: `2026-10-09T16-01`, `2026-10-11T06-05`, `06-30`.
+
+**Проверка.** `npm run typecheck` — зелёный; offline
+`SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **346 passed**.
 
 ## Финальный батч (2026-10-17) — literal why, failed-attempt block, Verification→Patch
 
@@ -497,6 +579,10 @@ goal-into-move (507k).
 
 ## Дальше
 
+- **2026-10-18:** checkpoint/revert и обобщённые состояния дали 5/5 на
+  db-wal/log-summary/cobol/fix-code/password; crack — 3/3 (нужен чистый 5/5). Локальные
+  opencode-прогоны есть только для password и fix-ocaml; для остальных задач сравнительный
+  ряд ещё не снят.
 - Добавлять других агентов/задачи по мере прогонов (`sandbox-tasks/`), держа топ-10 по
   правилу выше.
 - Пара `net off` (Skein и opencode, пометка †) **прогнана**; честная матрица 2×2 — выше.

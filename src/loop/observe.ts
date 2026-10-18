@@ -1,5 +1,5 @@
 import type { Event } from "../ir/events";
-import { witnessOf, type State } from "../ir/graph";
+import { currentVersion, witnessOf, type State } from "../ir/graph";
 import type { Workspace } from "../tools/workspace";
 
 export interface VersionCacheEntry {
@@ -39,7 +39,15 @@ export function reconcile(
   for (const [ref, versions] of activeRefs(state)) {
     if (!ref.startsWith("file:")) continue;
     const path = ref.slice("file:".length);
-    if (!workspace.exists(path)) continue;
+    // A witnessed file that disappeared is a change too: record it once (`absent`), so a fact
+    // that rested on it is no longer shown as actual. Without the guard the same `absent`
+    // would be re-emitted every turn.
+    if (!workspace.exists(path)) {
+      if (currentVersion(state, ref) !== "absent") {
+        events.push({ type: "mutate", ref, version: "absent", actionId: `reconcile:${ref}` });
+      }
+      continue;
+    }
 
     let signature: string;
     let version: string;

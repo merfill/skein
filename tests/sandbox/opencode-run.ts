@@ -4,7 +4,7 @@ import { TASKS } from "./tasks/registry";
 import { cleanupSandboxes } from "./workspace";
 
 // Live run of a ported terminal-bench task with opencode (the reference agent):
-//   npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off] [--seconds N]
+//   npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off] [--seconds N] [--steps N]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>-opencode-<net>/ and prints the token breakdown.
 // `--net off` still reaches the model API but denies the agent the rest of the internet
 // (docs/testing.md §3.6).
@@ -20,11 +20,13 @@ async function main(): Promise<void> {
   if (task === undefined) throw new Error(`unknown task ${id}; known: ${Object.keys(TASKS).join(", ")}`);
   const network = arg("--net", "on") === "off" ? "off" : "on";
   const seconds = Number(arg("--seconds", "2400"));
+  const steps = Number(arg("--steps", ""));
 
   const result = await runOpenCodeTask(task, {
     network,
     reasoningEffort: arg("--variant", "low"),
     maxSeconds: Number.isFinite(seconds) ? seconds : 2400,
+    ...(Number.isFinite(steps) && steps > 0 ? { maxSteps: steps } : {}),
   });
   const m = result.metric;
   console.info(

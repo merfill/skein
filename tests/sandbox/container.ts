@@ -18,6 +18,8 @@ export interface ContainerOptions {
   // The task WORKDIR inside the namespace; the host root is bind-mounted here.
   mountPoint?: string;
   runTimeoutMs?: number;
+  // Extra host paths mounted read-only inside the namespace (the checkpoint store).
+  roBinds?: { host: string; dest: string }[];
 }
 
 // Host system trees a command needs; bound read-only, when present.
@@ -32,6 +34,7 @@ export function containerWorkspace(root: string, options: ContainerOptions = {})
   // background poll waits as long as a foreground run would.
   const base = fsWorkspace(root, { runTimeoutMs: timeoutMs });
   const binds = SYSTEM_PATHS.filter((path) => existsSync(path)).flatMap((path) => ["--ro-bind", path, path]);
+  const roBinds = (options.roBinds ?? []).flatMap((entry) => ["--ro-bind", entry.host, entry.dest]);
 
   // The workspace root as the task sees it: `/app` -> ".", `/app/x` -> "x", relative paths
   // unchanged. Without this a `write { path: "/app/regex.txt" }` would be rejected as
@@ -62,6 +65,7 @@ export function containerWorkspace(root: string, options: ContainerOptions = {})
         "--bind",
         root,
         mount,
+        ...roBinds,
         "--chdir",
         cwd,
         "/bin/bash",

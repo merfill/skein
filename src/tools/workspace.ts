@@ -113,6 +113,12 @@ export interface Workspace {
   fetchTo(url: string, path: string): { path: string; bytes: number };
   // Apply a unified diff with `patch -p<strip>`; throws if it does not apply cleanly.
   applyPatch(patch: string, strip?: number): void;
+  // Optional artifact store (the sandbox harness). `checkpoint` captures the current tree and
+  // returns an opaque id; `restoreCheckpoint` puts the named files back as they were at that
+  // id. The engine uses it only for a preimage the applied calls cannot reconstruct (`bash`,
+  // `write`, `apply_patch`, deletions). A plain filesystem workspace does not implement it.
+  checkpoint?(label: string): string;
+  restoreCheckpoint?(id: string, paths: readonly string[]): { path: string; version: string }[];
 }
 
 const SKIP_DIRS = new Set([

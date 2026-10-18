@@ -22,6 +22,15 @@ export interface RevertOutcome {
 
 const refOf = (path: string): string => (path.startsWith("file:") ? path : `file:${path}`);
 
+// The refs one action mutated, from the `mutates` edges the engine recorded for it.
+function mutationRefs(state: State, actionId: string): string[] {
+  const refs: string[] = [];
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "mutates" && edge.from === actionId) refs.push(edge.to);
+  }
+  return refs;
+}
+
 // The last Patch before a state, or undefined when there is none.
 export function lastPatchBefore(state: State, beforeMoveId: string): string | undefined {
   const rootId = state.rootId;
@@ -50,14 +59,42 @@ export function isFailedVerificationMove(state: State, action: Action): boolean 
   return lastFailingRun(state, move) !== undefined;
 }
 
-// Reverse the edits of the last Patch. Phase 1 supports `edit`: the recorded find/replace is
-// enough to restore the pre-patch text without a snapshot. `write`/`apply_patch` need a
-// preimage (Phase 2), so a Patch containing them is left untouched and reported as a conflict.
+// Reverse the changes of the last Patch. When the workspace carries a checkpoint taken at the
+// Patch's entry (the harness's artifact store), every path the Patch mutated is restored to its
+// pre-patch content — `bash`, `write`, `apply_patch`, and deletions included. Without one (a
+// plain filesystem workspace, or a replayed journal), only `edit` can be reconstructed: its
+// recorded find/replace is enough to restore the pre-patch text, while `write`/`apply_patch`
+// need a preimage and are reported as a conflict.
 export function revertLastPatch(
   state: State,
   patchMoveId: string,
   workspace: Workspace,
 ): RevertOutcome {
+  const payload = state.nodes.get(patchMoveId)?.payload as { checkpoint?: unknown } | undefined;
+  const checkpoint = payload?.checkpoint;
+  if (typeof checkpoint === "string" && workspace.restoreCheckpoint !== undefined) {
+    const refs = new Set<string>();
+    for (const actionId of actionsOfMove(state, patchMoveId)) {
+      for (const ref of mutationRefs(state, actionId)) refs.add(ref);
+    }
+    if (refs.size > 0) {
+      const paths = [...refs].map((ref) => ref.replace(/^file:/, ""));
+      try {
+        const restored = workspace.restoreCheckpoint(checkpoint, paths);
+        if (restored.length > 0) {
+          const files = restored.map((entry) => ({ ref: refOf(entry.path), version: entry.version }));
+          return {
+            events: [{ type: "revert", patchMoveId, files, reason: "verification_failed" }],
+            report: { reverted: true, files },
+          };
+        }
+      } catch {
+        // An unknown or foreign checkpoint (e.g. a replay into a fresh store) must not restore
+        // the wrong tree: fall through to the reconstructable-edit path.
+      }
+    }
+  }
+
   const edits: { path: string; oldString: string; newString: string }[] = [];
   for (const actionId of actionsOfMove(state, patchMoveId)) {
     const call = asCall(state.nodes.get(actionId));

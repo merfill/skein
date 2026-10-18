@@ -94,7 +94,7 @@ describe("the message tape under a long horizon", () => {
     // `Start state` / goal / `Finish state` triple, remains.
     const last = contexts.at(-1);
     const texts = last?.history.map((message) => message.text).join("\n") ?? "";
-    expect(texts).toContain("Finish state Orientation — A is done");
+    expect(texts).toContain("Finish state Orientation — your stop reason: A is done");
     expect(texts).not.toContain("FIRSTCMD");
   }, 30_000);
 });

@@ -176,7 +176,7 @@ describe("projection (the message tape)", () => {
     expect(context.situation).toBe("working");
     expect(context.history.map((message) => message.role)).toEqual([
       "user",
-      "assistant",
+      "system",
       "system",
       "user",
       "assistant",

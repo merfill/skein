@@ -16,6 +16,11 @@ Higher is better, in this order:
 One row per run. The run dir holds the trace (`metrics.json`, `result.json`; opencode also
 writes `opencode.txt`).
 
+> **2026-10-18, terminal-bench breadth:** `db-wal-recovery`, `log-summary-date-ranges`,
+> `cobol-modernization`, `fix-code-vulnerability`, `password-recovery` — **5/5**;
+> `crack-7z-hash` — **3/3** completed (2 aborted). Generalized states + workspace
+> checkpoint/revert. See the 2026-10-18 batch below.
+
 > **2026-10-17, final batch:** 5/5 `fix-ocaml-gc --net on`, 29–50 steps,
 > **1.031–2.521₽** — see the final batch below. The leaderboard below is historical; the new
 > best net-on is run4 `26-682` (1.031₽ / 32 steps) and run3 `25-612` (1.036₽ / 29 steps).
@@ -62,6 +67,86 @@ churns through `bash` and burns reasoning. Offline the gap is even wider: **open
 Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
+
+## Batch 2026-10-18 — generalized states, checkpoint/revert, terminal-bench breadth
+
+> These are **not top-10 rows** (the leaderboard is `fix-ocaml-gc`): a summary of the other
+> ported tasks and of the sandbox infrastructure. All runs use `tests/sandbox` (Docker, no
+> Harbor), the same model, and a 40-step budget unless noted. Skein "steps" are LLM turns.
+
+**Prompt/projection.** The four states are generalized without new islands: Orientation — "map
+the material and how success is judged"; Localization — "find the target in the material";
+Patch — "make the change the goal names"; Verification — "check the change against the goal's
+acceptance". The `Start state` / `Finish state` markers are `system`, and closure reads
+`Finish … — your stop reason: …`. Added: the provenance/honesty rule ("do not synthesize values;
+a check that only reads your own output is not acceptance"), the state-specific
+`bash`/`webfetch`/write contract (`toolDescriptionsFor`), the preserve invariant ("copy raw
+artifacts before any command that may checkpoint, delete, or rewrite them"), and the default
+`Verification → Patch` rule in `transitionInstruction`.
+
+**Harness: workspace checkpoint.** A read-only snapshot of the task root at
+`<root>/.skein/checkpoints`: content-addressed blobs plus hardlinked trees `trees/<n>/` (initial
+after `setup`, then per turn), with `restore.sh`/`README`; mounted read-only into the container
+(docker `-v :ro`, bwrap `--ro-bind`). Files the host cannot read (a root-owned
+`john/run/john.log`) are **skipped best-effort**: otherwise the snapshot threw and the run ended
+as `llm_error` — that produced the false 0/5 on crack in the first batch. Reverting the last
+Patch now restores **only the paths it mutated** (bash/write/apply_patch/deletions) from the
+pre-patch checkpoint; `reconcile` records one `mutate absent` for a vanished witnessed file.
+
+**Results (5×40, reward):**
+
+| task | reward | steps (range) | in (fresh + cache, hit) | out (vis + rea) | ₽/run | ₽ total |
+|---|---:|---:|---:|---:|---:|---:|
+| `db-wal-recovery` | 5/5 | 28.4 (23–38) | 143.1k (26.5k + 116.5k, 81%) | 9.0k (4.1k + 4.9k) | 1.160 | 5.801 |
+| `log-summary-date-ranges` | 5/5 | 18.6 (18–19) | 76.2k (18.7k + 57.5k, 76%) | 4.5k (2.9k + 1.6k) | 0.675 | 3.377 |
+| `cobol-modernization` | 5/5 | 32.4 (29–40) | 236.7k (46.9k + 189.8k, 80%) | 17.6k (6.6k + 11.1k) | 2.175 | 10.875 |
+| `fix-code-vulnerability` | 5/5 | 21.4 (20–23) | 103.9k (21.4k + 82.5k, 79%) | 3.4k (2.5k + 0.9k) | 0.655 | 3.277 |
+| `password-recovery` | 5/5 | 34.2 (25–40) | 234.1k (38.5k + 195.5k, 84%) | 11.5k (4.4k + 7.2k) | 1.590 | 7.948 |
+| `crack-7z-hash` | 3/3* | 30.7 (28–32) | 159.5k (27.4k + 132.2k, 83%) | 5.4k (3.2k + 2.2k) | 0.925 | 2.774 |
+
+\* crack: 3 runs completed **after the checkpoint fix**; 2 of 5 were killed by an abort. The
+first batch (before the fix) was 0/5 `llm_error` — a harness bug, not a task failure. A clean
+5/5 still needs another run.
+
+**db-wal: two batches.** Checkpoint-only (before the revert integration): 5/5, **3.83₽**, 117
+steps, 453.2k in (103.6k fresh + 349.6k cache, 77%), 25.7k out (14.8k + 11.0k). Checkpoint +
+revert: 5/5, **5.80₽**, 142 steps, 715.4k in (132.7k + 582.7k, 81%), 44.8k out (20.5k + 24.3k).
+The increase comes from two recovery runs (30 and 38 steps): in one `sqlite3` deleted the WAL and
+the model restored it from `trees/1`; in the other a bash-XOR Patch failed Verification and the
+checkpoint revert restored the pre-patch WAL. The three quick runs match checkpoint-only:
+4.10k in/turn, 98 reason/turn, 0.0335₽/turn.
+
+**opencode in our sandbox (local only; Harbor excluded).** opencode's cost comes from
+`reasoning.ndjson` (`usage.cost`, same provider/model); one fix-ocaml run has no captured cost
+and is estimated with the same rates (15₽/1M fresh, 0.41₽/1M cache, 83₽/1M output — within
+0.03₽ of the reported cost).
+
+| task | agent | reward | steps | in (fresh + cache, hit) | out (vis + rea) | ₽/run |
+|---|---|---:|---:|---:|---:|---:|
+| `password-recovery` | Skein (5) | 5/5 | 34.2 | 234.1k (38.5k + 195.5k, 84%) | 11.5k (4.4k + 7.2k) | 1.590 |
+| `password-recovery` | opencode (5) | 5/5 | 13.2 | 276.6k (24.8k + 251.8k, 91%) | 6.3k (2.0k + 4.3k) | 0.992 |
+| `fix-ocaml-gc` net on | Skein (5) | 4/5 | 37.8 | 272.1k (56.9k + 215.1k, 79%) | 15.8k (4.3k + 11.6k) | 2.235 |
+| `fix-ocaml-gc` net on | opencode (3) | 3/3 | 30.7 | 943.6k (30.9k + 912.7k, 97%) | 11.5k (3.4k + 8.1k) | ~1.79 |
+
+opencode is more step- and cost-efficient (`password` −38%, `fix-ocaml` −20%) but carries far
+more cached context; Skein is cheaper **per step** but takes more steps. There are no local
+opencode runs for `cobol`/`fix-code`/`log-summary`/`crack`/`db-wal`; Harbor is excluded by the
+owner's instruction, so a separate local batch is needed for a fair comparison.
+
+**What the old failures showed.** `log-summary` (`06-26-26-152`) closed in 6 steps: the old
+orientation→finish, "only move" at the transition, and an artifact declared done without being
+observed. The current prompt gave 5/5 (18–19 steps). `fix-code` false pass (`06-23-57`):
+`pytest` passed while `report.jsonl` was missing; the old closed-state projection elided the
+failed read. `cobol` 2/5 → 5/5, `fix-code` 3/5 → 5/5, `password` 4/5 → 5/5 after generalizing
+the states and raising the budget to 40.
+
+**Run dirs.** db-wal checkpoint-only: `2026-10-18T12-19-*`; db-wal checkpoint+revert:
+`2026-10-18T12-35-*`; log-summary: `12-56-*`; cobol: `13-06-*`/`13-08-*`/`13-09-*`; fix-code:
+`13-09-37`, `13-10-*`; password: `09-*`; crack: `13-14-51`, `13-15-04`, `13-15-42`; opencode
+password: `06-54-*`; opencode fix-ocaml: `2026-10-09T16-01`, `2026-10-11T06-05`, `06-30`.
+
+**Checks.** `npm run typecheck` is green; offline
+`SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **346 passed**.
 
 ## Final batch (2026-10-17) — literal why, failed-attempt block, Verification→Patch
 
@@ -394,6 +479,10 @@ inside the task image; the task's own verifier scores the result (`check.code = 
 
 ## Next
 
+- **2026-10-18:** checkpoint/revert and the generalized states gave 5/5 on
+  db-wal/log-summary/cobol/fix-code/password; crack is 3/3 (a clean 5/5 is still needed). Local
+  opencode runs exist only for password and fix-ocaml; the other tasks do not yet have a local
+  comparison series.
 - Add other agents/tasks as they are run (`sandbox-tasks/`), keeping the top-10 by the rule
   above.
 - The `net off` pair (Skein and opencode, marker †) is **done**; the honest 2×2 is above.

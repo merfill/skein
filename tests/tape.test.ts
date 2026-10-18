@@ -125,14 +125,14 @@ describe("the tape: request and state", () => {
     // then each plan item as a native call + tool result.
     expect(roles(context.history)).toEqual([
       "user",
-      "assistant",
+      "system",
       "system",
       "user",
       "assistant",
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toContain("map the project");
+    expect(context.history[3]?.text).toContain("map the material");
     expect(context.history[4]?.text).toBe("[a1] make test");
     expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
   });
@@ -167,7 +167,7 @@ describe("the tape: commands and their outcomes", () => {
     const context = project(focused(state));
     expect(roles(context.history)).toEqual([
       "user",
-      "assistant",
+      "system",
       "system",
       "user",
       "assistant",
@@ -246,7 +246,7 @@ describe("the tape: the compaction of a finished state", () => {
     // The finished state's command has left the tape...
     expect(body).not.toContain("FOUND-BODY");
     // ...only its closure marker remains, in the finished state's triple.
-    expect(body).toContain("Finish state Localization — named the line");
+    expect(body).toContain("Finish state Localization — your stop reason: named the line");
     expect(context.situation).toBe("plan");
   });
 });
@@ -264,10 +264,10 @@ describe("the tape: edge cases", () => {
       ...stopNode("s1", "all green", 7, "m1"),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "assistant", "system", "user", "assistant"]);
+    expect(roles(context.history)).toEqual(["user", "system", "system", "user", "system"]);
     expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
-    expect(texts(context.history)).toContain("Finish state Localization — all green");
+    expect(texts(context.history)).toContain("Finish state Localization — your stop reason: all green");
   });
 
   it("a declared state without a plan renders move + confirmation", () => {
@@ -277,7 +277,7 @@ describe("the tape: edge cases", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("plan");
-    expect(roles(context.history)).toEqual(["user", "assistant", "system", "user"]);
+    expect(roles(context.history)).toEqual(["user", "system", "system", "user"]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
   });
 });
@@ -300,7 +300,7 @@ describe("the tape: recall and determinism", () => {
       ...item("i1", 6, ["a1"]),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "assistant", "system", "user", "assistant", "tool"]);
+    expect(roles(context.history)).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
     expect(context.history[4]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
     expect(context.history[5]?.text).toBe("[o1] the stored body");
   });

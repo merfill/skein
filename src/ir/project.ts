@@ -199,7 +199,7 @@ function closureLine(state: State, moveId: string): string {
   const label = island !== undefined ? ISLANDS[island].label : "State";
   const stop = stopOf(state, moveId);
   const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
-  return `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
+  return `Finish state ${label} — your stop reason: ${typeof why === "string" && why !== "" ? why : "done"}`;
 }
 
 // The plan's action nodes, in plan order (docs/ir_semantics §2.3).
@@ -249,17 +249,28 @@ function tailLines(text: string): string {
   return tail.length > 700 ? `…${tail.slice(tail.length - 700)}` : tail;
 }
 
-// The write a state actually performed (the last edit/write/apply_patch of its plan), from the
-// recorded call args. Empty `path` means the state changed no file.
+// The change a state actually performed (the last mutating action of its plan), from the
+// recorded call args and the `mutates` edges. A refused or read-only call mutated nothing and
+// is not the failed change. Empty `path` means the state changed no file.
 function lastWrite(state: State, moveId: string): {
   path: string;
   find?: string;
   replace?: string;
   content?: string;
   patch?: string;
+  command?: string;
 } {
-  let found: { path: string; find?: string; replace?: string; content?: string; patch?: string } = { path: "" };
+  let found: {
+    path: string;
+    find?: string;
+    replace?: string;
+    content?: string;
+    patch?: string;
+    command?: string;
+  } = { path: "" };
   for (const actionId of actionsOfMove(state, moveId)) {
+    const changed = mutatedPaths(state, actionId);
+    if (changed.length === 0) continue;
     const call = asCall(state.nodes.get(actionId));
     if (call === undefined) continue;
     const args = call.args;
@@ -274,6 +285,14 @@ function lastWrite(state: State, moveId: string): {
       found = { path, content: typeof args.content === "string" ? args.content : "" };
     } else if (call.name === "apply_patch") {
       found = { path, patch: typeof args.patch === "string" ? args.patch : "" };
+    } else if (call.name === "bash") {
+      // A bash command changes files as a side effect; the command is the actual change.
+      found = {
+        path: changed.join(", "),
+        command: typeof args.command === "string" ? args.command : "",
+      };
+    } else {
+      found = { path: changed.join(", ") };
     }
   }
   return found;
@@ -336,6 +355,10 @@ function failedAttemptText(
       lines.push(`    (wrote ${attempt.write.content.length} chars)`);
     } else if (attempt.write.patch !== undefined) {
       lines.push("    (applied a patch)");
+    } else if (attempt.write.command !== undefined && attempt.write.command !== "") {
+      // The command is the change: show it as one line rather than "no file changed".
+      const command = attempt.write.command.replace(/\s+/g, " ").trim();
+      lines.push(`    $ ${command.length > 160 ? `${command.slice(0, 157)}…` : command}`);
     }
   }
   lines.push(
@@ -364,8 +387,8 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
   const payload = movePayload(state, moveId);
   const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
-  // `ai`: the state marker (the engine's synthetic turn opening the state).
-  out.push({ role: "assistant", text: `Start state ${label}` });
+  // `system`: the state marker (the engine's synthetic turn opening the state).
+  out.push({ role: "system", text: `Start state ${label}` });
   // The failed attempt that sent the run back here: the actual change and the run it broke.
   // Shown for the OPEN, current Localization and Patch (the last attempt only; older ones are
   // on the tape). Patch needs it at the moment of editing, not only Localization at re-entry.
@@ -387,7 +410,7 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   // `user`: the state's own goal (from its definition); the doxa's `what`/`notes` are not shown.
   if (what !== "") out.push({ role: "user", text: `what: ${what}` });
   if (stopOf(state, moveId) !== undefined) {
-    out.push({ role: "assistant", text: closureLine(state, moveId) });
+    out.push({ role: "system", text: closureLine(state, moveId) });
     return;
   }
   renderPlan(state, moveId, out);

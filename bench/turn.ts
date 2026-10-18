@@ -25,7 +25,7 @@ import type { ModelMessage } from "ai";
 import { createChatModel } from "../src/llm/client";
 import { invokeTools, type ModelReply } from "../src/llm/structured";
 import type { Action, Proposals } from "../src/llm/schemas";
-import { toolNamesFor } from "../src/llm/tools";
+import { toolDescriptionsFor, toolNamesFor } from "../src/llm/tools";
 import { loadSettings } from "../src/config/settings";
 import { ISLANDS, stateDescription, type IslandId } from "../src/ir/islands";
 import { type Context, type Situation, type TapeMessage } from "../src/ir/project";
@@ -368,7 +368,8 @@ for (const turn of turns) {
   if (process.argv.includes("--no-turn-system")) {
     while (messages.length > 0 && messages[messages.length - 1]!.role === "system") messages.pop();
   }
-  const allowedTools = toolsFor(row.situation, lastMoveOf(row.history ?? [])?.island);
+  const move = lastMoveOf(row.history ?? []);
+  const allowedTools = toolsFor(row.situation, move?.island);
 
   if (dumpPath !== undefined) {
     const target = turns.length === 1 ? dumpPath : `${dumpPath}.t${turn}`;
@@ -402,6 +403,7 @@ for (const turn of turns) {
         rebuild,
         usageHandlers: [meter],
         allowedTools,
+        toolDescriptions: toolDescriptionsFor(move?.island),
         onResponse: respond,
       });
       console.log(

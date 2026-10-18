@@ -24,6 +24,7 @@ import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
+import { toolDescriptionsFor } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { buildMessages, promptText } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -189,6 +190,7 @@ export const skein = {
       try {
         proposal = await invokeTools(model, buildMessages(context), {
           usageHandlers: [...inherited.map(langChainUsage), meter],
+          toolDescriptions: toolDescriptionsFor(context.island),
           settings,
           rebuild: (maxTokens, opts) =>
             createChatModel({

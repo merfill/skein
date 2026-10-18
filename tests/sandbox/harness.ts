@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { CommandResult, Workspace } from "../../src/tools/workspace";
+import { createCheckpoint } from "./checkpoint";
 import { containerWorkspace } from "./container";
 import { dockerWorkspace } from "./docker";
 import type { SandboxRunOptions } from "./run";
@@ -92,7 +93,12 @@ export async function runTask(
   options: SandboxRunOptions = {},
 ): Promise<TaskRun> {
   const { root, request, check } = materializeTask(task, { stageSolution: options.stageSolution });
-  const workspace =
+  // The checkpoint store lives under `.skein`, so it is skipped by the file tools and never
+  // part of a snapshot. It is mounted read-only into the task so the agent's shell can read
+  // it (db-wal's image has tar/cp but no git) but cannot corrupt the snapshots.
+  const checkpoint = createCheckpoint(root);
+  const checkpointDest = `${task.mountPoint ?? "/app"}/.skein/checkpoints`;
+  const baseWorkspace =
     task.image !== undefined
       ? dockerWorkspace(root, {
           image: task.image,
@@ -101,10 +107,19 @@ export async function runTask(
           ...((task.network ?? options.network) !== undefined
             ? { network: task.network ?? options.network }
             : {}),
+          mounts: [{ host: checkpoint.dir, dest: checkpointDest, readOnly: true }],
         })
       : containerWorkspace(root, {
           ...(task.mountPoint !== undefined ? { mountPoint: task.mountPoint } : {}),
+          roBinds: [{ host: checkpoint.dir, dest: checkpointDest }],
         });
+  // The engine's revert uses this only for a preimage its calls cannot reconstruct (bash,
+  // write, apply_patch, deletions); the layer is absent in a plain filesystem workspace.
+  const workspace: Workspace = {
+    ...baseWorkspace,
+    checkpoint: (label) => checkpoint.checkpoint(label),
+    restoreCheckpoint: (id, paths) => checkpoint.restore(id, paths),
+  };
 
   // The Dockerfile/setup.sh steps a task needs before the agent starts.
   for (const command of task.setup ?? []) {
@@ -114,9 +129,28 @@ export async function runTask(
     }
   }
 
+  // The baseline is the post-setup state: setup may create the artifacts the task starts from.
+  // Each turn snapshots again, so a `bash` deletion/checkpoint in one turn is recoverable in
+  // the next. A turn that changed nothing reuses the previous tree (see `createCheckpoint`).
+  const capture = (label: string): void => {
+    try {
+      checkpoint.snapshot(label);
+    } catch (error) {
+      // The checkpoint is a safety net, never a reason to abort the task.
+      console.warn(`[checkpoint] ${label} skipped: ${String(error)}`);
+    }
+  };
+  capture("initial");
+  let turn = 0;
+  const proposeWithCheckpoint: Proposer = async (context) => {
+    capture(`turn-${turn}`);
+    turn += 1;
+    return propose(context);
+  };
+
   const result = await runAgent(
     {
-      propose,
+      propose: proposeWithCheckpoint,
       workspace,
       maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
     },
