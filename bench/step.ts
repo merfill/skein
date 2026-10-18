@@ -5,6 +5,9 @@
 //
 //   TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
 //
+// `EXTRA_SYSTEM` appends a system message to the built context for this one call (a one-step
+// counterfactual, like `bench/turn.ts --append-system`); it is not written back to the seq.
+//
 // seq.json = [{ "turn": N, "action": <Action> }, …]: every action is applied with
 // `executeAction` in order (so `bash`/`read`/`grep` run against the container), then the IR is
 // projected, `buildMessages` renders the tape, and `propose` makes ONE model call for the next
@@ -49,7 +52,10 @@ const render = (ctx: Context): string =>
           } else if (part.type === "tool-call") {
             lines.push(`-> call ${part.toolName}(${JSON.stringify(part.input)})`);
           } else if (part.type === "tool-result") {
-            lines.push(`(answers ${part.toolCallId})`);
+            const output = (part as { output?: { value?: unknown } }).output;
+            const value =
+              typeof output?.value === "string" ? output.value : JSON.stringify(output?.value ?? "");
+            lines.push(`(answers ${part.toolCallId}) ${value}`);
           }
         }
       }
@@ -99,14 +105,19 @@ async function main(): Promise<void> {
     }
 
     const context = project(fold(events as never));
+    const extraSystem = process.env.EXTRA_SYSTEM;
+    const injected: Context =
+      extraSystem !== undefined && extraSystem !== ""
+        ? { ...context, history: [...context.history, { role: "system", text: extraSystem }] }
+        : context;
     const turn = seq.length > 0 ? Math.max(...seq.map((entry) => entry.turn)) + 1 : 0;
     const path = join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`);
-    writeFileSync(path, render(context));
-    console.log(`\nturn ${turn}: situation=${context.situation} island=${context.island ?? "(none)"}  → ${path}`);
+    writeFileSync(path, render(injected));
+    console.log(`\nturn ${turn}: situation=${injected.situation} island=${injected.island ?? "(none)"}  → ${path}`);
 
     reasoning.length = 0;
     const meter = new TurnMeter();
-    const proposals = await propose(model, context, {
+    const proposals = await propose(model, injected, {
       settings,
       usageHandlers: [meter],
       onResponse: (response) => {

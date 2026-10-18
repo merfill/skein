@@ -31,9 +31,9 @@ Inside one request, memory works like this:
 - **"Read this file, we will need it."** Reading is an ordinary action, but after `stop` the
   file body leaves the tape. The next state (or the next request) does not "see" it: the fact is
   in the tree, but nothing points to it.
-- **A pure read request.** The startable states are `orientation` and `localization`, and each
-  has its own goal ("map the project", "find the defect"). A request "read README" is either
-  declined or forced into a foreign goal.
+- **A pure read request.** The startable state is `orientation`; from there the path depends on
+  the result (an artifact or a situation). A request "read README" is either declined or forced
+  into a foreign goal.
 - **"I changed my mind" / "the defect is not there".** Logos does not understand language: it
   cannot classify a free-form utterance and does not know what to do with it.
 - **"Cancel everything."** There is no session-level operation: stop execution and leave the

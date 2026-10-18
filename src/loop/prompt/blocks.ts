@@ -29,8 +29,9 @@ const TRANSITIONS = (() => {
 const STATES = ISLAND_ORDER.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 
 // The states a request can start in, shown in the request hint. There is no START node in the
-// graph, so the list is explicit: add a state here to offer it at the request.
-const START_ISLANDS: readonly IslandId[] = ["orientation", "localization"];
+// graph, so the list is explicit: add a state here to offer it at the request. Orientation is
+// the only start: every path begins by mapping the material and the acceptance.
+const START_ISLANDS: readonly IslandId[] = ["orientation"];
 const renderStates = (ids: readonly IslandId[]): string =>
   ids.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 const START_STATES = renderStates(START_ISLANDS);
@@ -41,9 +42,9 @@ const START_STATES = renderStates(START_ISLANDS);
 const REQUEST_NOTES =
   "Take the state's own goal as it stands — do not fold the request into `what`; leave `done` out " +
   "(the state's default criterion applies). `notes` = what the request presumes about this state, " +
-  "in the context of orienting in the project (the area, subsystem, files or the acceptance " +
-  "command it points to) — carried in as an assumption to verify against the project, since the " +
-  "request may be wrong. One short line — up to ~20 words.";
+  "in the context of the material (the area, files, records, tools, or the acceptance it points " +
+  "to) — carried in as an assumption to verify against the material, since the request may be " +
+  "wrong. One short line — up to ~20 words.";
 
 // S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
 // tool descriptions — those ship in the request's `tools` field (the single source is the
@@ -56,14 +57,12 @@ export const BASE_BLOCKS: readonly PromptBlock[] = [
 States:
 ${STATES}
 
-Work the state — your tool calls are its steps — until its goal is reached, then \`stop\`. The engine returns you to it; then \`move\` to the next one, or to Finish and \`stop\` to end the request.
+Work the state — your tool calls are its steps — until its goal is reached, then \`stop\`. The engine returns you to it; then \`move\` to the next state its transitions name; when they lead to Finish, \`move\` there and \`stop\` to end the request.
 
 Transitions — move on as soon as the condition holds:
 ${TRANSITIONS}
 
-IMPORTANT: Before you begin work, think about what the code you're editing is supposed to do based on the filenames directory structure.
-
-The change must come from the located material. Do not synthesize, invent, or reconstruct values or artifacts to satisfy a count, a form, or an expected answer. A check that only reads your own output is not acceptance: compare against the source material.`,
+The result must come from the source material or the request's specification. Do not synthesize, invent, or reconstruct values or artifacts to satisfy a count, a form, or an expected answer. A check that only reads your own output is not acceptance: compare against the source or specification.`,
   },
 ];
 
@@ -104,6 +103,31 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
   },
 ];
 
+// The state-specific transition rule: the hint of the finished state is not visible on the
+// transition turn, so the rule that decides among its reachable states lives here.
+function transitionRule(island?: IslandId): string[] {
+  switch (island) {
+    case "localization":
+      return [
+        "Choose Patch only when the artifact is named and, for a code defect, the cause or violated invariant is stated. If the artifact is evidence and the method or situation is still needed, choose Research.",
+      ];
+    case "recovery":
+      return [
+        "Choose Finish only when the output is derived from the source and the source's own integrity/consistency check passes. If no candidate was accepted, or the check could not decide, choose Research. If the source was the wrong object, choose Localization. If the recovered material must now be applied as a change to an existing artifact, choose Patch.",
+      ];
+    case "construction":
+      return [
+        "Choose Finish only when the artifact is derived from the specification or the source's behaviour and the acceptance check passes. If the check failed because the method or specification did not hold, choose Research. If the source or input was wrong, choose Localization.",
+      ];
+    case "verification":
+      return [
+        "After a failed acceptance, choose Patch by default: the located object is still the material, and the failure is in the produced change or result (value, length, format, span, assembly). Choose Localization only when the failure names a different object (a different file, function, record, or image), or the object was not found; a change that did not fix the symptom is not enough.",
+      ];
+    default:
+      return [];
+  }
+}
+
 // S5 — the finished-state scenario: the tape above carries the record (each finished state is a
 // `Start state` / goal / `Finish state` triple) and the user's request. The hint names the states
 // reachable from the focused one and carries the request's presumptions into the next state as
@@ -111,21 +135,18 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
 // Dynamic, like `turnInstruction`.
 export function transitionInstruction(island?: IslandId): string {
   const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
-  const candidates = [...new Set<IslandId>([...targets, TERMINAL_ISLAND])];
+  const candidates = [...new Set<IslandId>(targets)];
+  const canFinish = candidates.includes(TERMINAL_ISLAND);
   const label = island !== undefined ? ISLANDS[island].label : undefined;
   const head =
     label !== undefined
       ? `Your result is the line \`Finish state ${label} — …\` above — read it.`
       : `Your result is the finished state's \`Finish\` line above — read it.`;
   return [
-    `${head} From it and the user's request, choose the next state: call \`move\` to enter it; if the work is done, \`move\` to Finish and \`stop\` there.`,
+    `${head} From it and the user's request, choose the next state: call \`move\` to enter it.${canFinish ? " If the work is done, `move` to Finish and `stop` there." : ""}`,
     `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
-    ...(island === "verification"
-      ? [
-          "After a failed acceptance, choose Patch by default: the located object is still the material, and the failure is in the produced change or result (value, length, format, span, assembly). Choose Localization only when the failure names a different object (a different file, function, record, or image), or the object was not found; a change that did not fix the symptom is not enough.",
-        ]
-      : []),
-    `Take the next state's own goal as it stands — do not fold the finished state's result or the request into \`what\`; leave \`done\` out (the state's default criterion applies). \`notes\` = what the request and the just-finished result presume about this state — carried in as assumptions to verify against the project. One short line — up to ~20 words.`,
+    ...transitionRule(island),
+    `Take the next state's own goal as it stands — do not fold the finished state's result or the request into \`what\`; leave \`done\` out (the state's default criterion applies). \`notes\` = what the request and the just-finished result presume about this state — carried in as assumptions to verify against the material. One short line — up to ~20 words.`,
   ].join("\n\n");
 }
 
@@ -162,7 +183,7 @@ export function turnInstruction(island?: IslandId, done?: string): string {
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
   const hint = island !== undefined ? ISLANDS[island].hint : "";
-  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not re-verify the diagnosis; checking the form of the result you produce is part of the change. Inspection must not consume or rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or rewrite them, and prefer read-only modes. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them. Do not over-work the state, and do not do a later state's work.`;
+  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Inspection must not consume or rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or rewrite them, and prefer read-only modes. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

@@ -36,12 +36,30 @@ describe("islands: the closed vocabulary", () => {
     expect(isIsland("atlantis")).toBe(false);
   });
 
-  it("scopes the write-class to Patch: the island delimits the apply surface", () => {
+  it("routes the epistemic and productive states", () => {
+    const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
+      ISLANDS[id].next.map((edge) => edge.to);
+    expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research"]));
+    expect(targets("localization")).toEqual(expect.arrayContaining(["patch", "research"]));
+    expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction", "patch"]));
+    expect(targets("patch")).toEqual(["verification"]);
+    expect(targets("recovery")).toEqual(expect.arrayContaining(["finish", "research", "patch"]));
+    expect(targets("construction")).toEqual(expect.arrayContaining(["finish", "research"]));
+    expect(targets("verification")).toEqual(expect.arrayContaining(["finish", "patch", "localization"]));
+  });
+
+  it("scopes the write-class to the productive states: the island delimits the apply surface", () => {
     const write = new Set(["edit", "write", "apply_patch"]);
+    const productive = new Set(["patch", "recovery", "construction"]);
     for (const id of ISLAND_IDS) {
       const hasWrite = ISLANDS[id].applies.some((tool) => write.has(tool));
-      expect(hasWrite).toBe(id === "patch");
+      expect(hasWrite).toBe(productive.has(id));
     }
+    expect(ISLANDS.research.applies).not.toContain("write");
+    expect(ISLANDS.recovery.applies).toContain("write");
+    expect(ISLANDS.recovery.applies).not.toContain("edit");
+    expect(ISLANDS.recovery.applies).not.toContain("apply_patch");
+    expect(ISLANDS.construction.applies).toEqual(expect.arrayContaining(["edit", "write", "apply_patch"]));
     expect(ISLANDS.finish.applies).toEqual([]);
   });
 

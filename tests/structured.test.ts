@@ -457,7 +457,7 @@ describe("tool surface (toolNamesFor)", () => {
     ]);
   });
 
-  it("offers only the frontier's `applies` (the state's tools; the write-class is Patch's)", () => {
+  it("offers only the frontier's `applies` (the state's tools; no write-class for an inspection state)", () => {
     expect(
       toolNamesFor({
         move: false,

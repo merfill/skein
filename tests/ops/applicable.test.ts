@@ -90,7 +90,7 @@ describe("frontier (applicable)", () => {
     expect(classification(run("ls"), events).reason).toContain("no_state");
   });
 
-  it("REF-NOT-IN-STATE refuses an edit while in Localization (the write-class is Patch's)", () => {
+  it("REF-NOT-IN-STATE refuses an edit while in Localization (the write-class is not an inspection tool)", () => {
     const { ws } = makeWorkspace({ "a.txt": "x" });
     const events = execAll([move("localization", "find it"), read("a.txt")], [request()], ws).events;
     expect(classification(edit("a.txt", "x", "y"), events).reason).toContain("not_in_state");

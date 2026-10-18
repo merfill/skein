@@ -81,7 +81,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object this state works on — optional; leave it out and the state's default goal applies. done = the knowledge that closes THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do a later state's work — name the place, do not derive the fix. notes = what the request presumes about this state, carried in as an assumption to verify against the tree. One short sentence each — up to ~20 words.`,
+      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object or situation this state works on — optional; leave it out and the state's default goal applies. done = the knowledge that closes THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do another state's work — name the place or situation, do not derive the result. notes = what the request presumes about this state, carried in as an assumption to verify against the material. One short sentence each — up to ~20 words.`,
     schema: moveParams,
   },
   {
@@ -147,7 +147,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context; a strong suspicion is enough for the diagnosis — do not re-verify the diagnosis; checking the form of the result you produce is part of the change. A form check is not provenance: the result must come from the source material; do not synthesize it to satisfy a form. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to a later state or to the task's problem.`,
+      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to another state or to the task's problem.`,
     schema: stopParams,
   },
   {
@@ -184,20 +184,33 @@ const INSPECTION_BASH_SUFFIX =
 const PATCH_BASH_SUFFIX =
   "This state changes the target: make the change specific and targeted; do not use wildcard " +
   "edits or deletes and do not touch unrelated files.";
+const RECOVERY_BASH_SUFFIX =
+  "This state reconstructs data from a source: you may create and modify files (the search " +
+  "script, the output, scratch copies); keep the source read-only; do not edit the source.";
+const CONSTRUCTION_BASH_SUFFIX =
+  "This state builds a new artifact: write only the artifact and its acceptance check; do not " +
+  "modify the source or unrelated files.";
 
 // The bash tool is dual-use (inspection and mutation). The state determines which contract the
-// model sees: inspection states get the read-only/preserve rule first; patch gets the targeted
-// change rule. Direct callers without an island keep the global description.
+// model sees: inspection states get the read-only/preserve rule first; the productive states get
+// their own targeted rule. Direct callers without an island keep the global description.
 function baseDescription(name: string): string {
   return PROPOSAL_TOOLS.find((tool) => tool.function.name === name)?.function.description ?? "";
 }
 
+const INSPECTION_STATES: ReadonlySet<IslandId> = new Set([
+  "orientation",
+  "localization",
+  "research",
+  "verification",
+]);
+
 export function bashDescriptionFor(island?: IslandId): string {
   const base = baseDescription("bash");
   if (island === "patch") return `${PATCH_BASH_SUFFIX} ${base}`;
-  if (island === "orientation" || island === "localization" || island === "verification") {
-    return `${INSPECTION_BASH_SUFFIX} ${base}`;
-  }
+  if (island === "recovery") return `${RECOVERY_BASH_SUFFIX} ${base}`;
+  if (island === "construction") return `${CONSTRUCTION_BASH_SUFFIX} ${base}`;
+  if (island !== undefined && INSPECTION_STATES.has(island)) return `${INSPECTION_BASH_SUFFIX} ${base}`;
   return base;
 }
 
@@ -207,6 +220,9 @@ const INSPECTION_WEBFETCH_SUFFIX =
 const PATCH_WEBFETCH_SUFFIX =
   "This state changes the target: use `path` only for an artifact the goal names; it creates a " +
   "new workspace file and never overwrites.";
+const CONSTRUCTION_WEBFETCH_SUFFIX =
+  "This state builds a new artifact: use `path` only for a declared input or reference; it " +
+  "creates a new file and never overwrites.";
 const PATCH_EDIT_SUFFIX =
   "This state changes the target: edit only the target the goal names; do not edit raw artifacts, " +
   "unrelated files, or sibling code; make the replacement exact and targeted.";
@@ -216,20 +232,45 @@ const PATCH_WRITE_SUFFIX =
 const PATCH_APPLY_PATCH_SUFFIX =
   "This state changes the target: apply only the diff the goal names; do not delete or rename " +
   "files outside the goal; check the patch paths; a wrong patch may not be revertible.";
+const RECOVERY_WRITE_SUFFIX =
+  "This state reconstructs data from a source: write the search script, the required output, or " +
+  "scratch copies; do not overwrite the source.";
+const CONSTRUCTION_EDIT_SUFFIX =
+  "This state builds a new artifact: edit only the artifact you are building; do not modify the " +
+  "source or unrelated files.";
+const CONSTRUCTION_WRITE_SUFFIX =
+  "This state builds a new artifact: write only the new artifact or its acceptance check; do not " +
+  "overwrite the source.";
+const CONSTRUCTION_APPLY_PATCH_SUFFIX =
+  "This state builds a new artifact: apply only a diff to that artifact; do not modify the source " +
+  "or unrelated files.";
 
 // The state-specific tool contract: `bash` is dual-use; `webfetch` creates a file; the write
-// tools exist only in Patch. The map is empty when no island is known (direct callers/tests),
-// which keeps the global descriptions.
+// tools belong to the productive states — Patch (existing artifact), Recovery (output/search
+// script), Construction (new artifact) — and never to the inspection states. The map is empty
+// when no island is known (direct callers/tests), which keeps the global descriptions.
 export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
   if (island === undefined) return {};
+  const webfetch =
+    island === "patch"
+      ? PATCH_WEBFETCH_SUFFIX
+      : island === "construction"
+        ? CONSTRUCTION_WEBFETCH_SUFFIX
+        : INSPECTION_WEBFETCH_SUFFIX;
   const descriptions: Record<string, string> = {
     bash: bashDescriptionFor(island),
-    webfetch: `${island === "patch" ? PATCH_WEBFETCH_SUFFIX : INSPECTION_WEBFETCH_SUFFIX} ${baseDescription("webfetch")}`,
+    webfetch: `${webfetch} ${baseDescription("webfetch")}`,
   };
   if (island === "patch") {
     descriptions.edit = `${PATCH_EDIT_SUFFIX} ${baseDescription("edit")}`;
     descriptions.write = `${PATCH_WRITE_SUFFIX} ${baseDescription("write")}`;
     descriptions.apply_patch = `${PATCH_APPLY_PATCH_SUFFIX} ${baseDescription("apply_patch")}`;
+  } else if (island === "recovery") {
+    descriptions.write = `${RECOVERY_WRITE_SUFFIX} ${baseDescription("write")}`;
+  } else if (island === "construction") {
+    descriptions.edit = `${CONSTRUCTION_EDIT_SUFFIX} ${baseDescription("edit")}`;
+    descriptions.write = `${CONSTRUCTION_WRITE_SUFFIX} ${baseDescription("write")}`;
+    descriptions.apply_patch = `${CONSTRUCTION_APPLY_PATCH_SUFFIX} ${baseDescription("apply_patch")}`;
   }
   return descriptions;
 }

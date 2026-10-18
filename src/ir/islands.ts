@@ -9,7 +9,10 @@
 export const ISLAND_IDS = [
   "orientation",
   "localization",
+  "research",
   "patch",
+  "recovery",
+  "construction",
   "verification",
   "finish",
 ] as const;
@@ -30,20 +33,24 @@ export interface Island {
   // state's goal (`what`) and not the one-time `instruction`.
   hint: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
-  // (`toolNamesFor`), so a state only offers the tools that belong to its work: the write-class
-  // (`edit`/`write`/`apply_patch`) lives in Patch alone. The island still never closes a state
-  // and never gates a `move` — it delimits the ACTION surface only (docs/ir_semantics.md §2.5).
+  // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
+  // existing artifact, Recovery writes only the output/search script, Construction builds a new
+  // artifact. The island still never closes a state and never gates a `move` — it delimits the
+  // ACTION surface only (docs/ir_semantics.md §2.5).
   applies: readonly string[];
   // The transitions out of this state: a target and the precondition ("when"). A floating or
   // terminal state carries none (docs/prompt_state_machine_concept.md §4.3).
   next: readonly { to: IslandId; when: string }[];
 }
 
-// The tool sets a state's `applies` is drawn from. The write-class belongs to Patch alone; the
-// inspection/run set is shared for now (per-state pruning of `bash`/`webfetch` is deferred).
+// The tool sets a state's `applies` is drawn from. The write-class belongs to the productive
+// states only — Patch (existing artifact), Recovery (output/search script), Construction (new
+// artifact); inspection states never get it.
 const INSPECT: readonly string[] = ["read", "grep", "list", "bash", "webfetch"];
 const WRITE: readonly string[] = ["edit", "write", "apply_patch"];
 const PATCH_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
+const RECOVER_TOOLS: readonly string[] = [...INSPECT, "write"];
+const CONSTRUCT_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 
 export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
@@ -57,58 +64,199 @@ export const ISLANDS: Record<IslandId, Island> = {
     instruction:
       "Inspect the material with the search tools: what exists (files, records, images, a " +
       "repository) and how success is judged (a command, an external verifier, or declared " +
-      "constraints). Do not hunt the target, reproduce the failure, or compare with an external " +
+      "constraints). Do not hunt the artifact, reproduce the failure, or compare with an external " +
       "reference.",
     hint:
       "Establish the root of the material with `pwd` (or a command that prints it), not from the " +
-      "request or documentation; map what exists and how success is judged. Do not hunt the target.",
+      "request or documentation; map what exists and how success is judged. Do not hunt the artifact.",
     applies: INSPECT,
-    next: [{ to: "localization", when: "the material is mapped and the acceptance is known" }],
+    next: [
+      {
+        to: "localization",
+        when: "the request requires finding an artifact — a code defect, a file, a record, an image, or a commit",
+      },
+      {
+        to: "research",
+        when: "the request is a situation or a method and no artifact is the target — hidden data, legacy behaviour, a specification, or a synthesis",
+      },
+    ],
   },
   localization: {
     id: "localization",
     label: "Localization",
-    what: "find the target in the material",
+    what: "find the artifact and, for a code defect, explain it",
     criterion:
-      "the target is named — the file, record, image, or function — with the coordinates or " +
-      "extent that identify it, and the sibling material is ruled out",
+      "the artifact is named with its coordinates or extent, its siblings are ruled out, and for " +
+      "a code defect the cause or violated invariant is stated",
     instruction:
-      "Inspect the material: find the target and distinguish it from its siblings — the other " +
-      "files, records, loops, or candidates of the same shape. A difference in shape, advance, " +
-      "encoding, or bytes is the signal. Name the target and its coordinates or extent. Do not " +
-      "prove it, do not change it, and do not compare with an external reference.",
+      "Inspect the material: find the artifact and distinguish it from its siblings — the other " +
+      "files, records, images, loops, or candidates of the same shape. For a code defect, name " +
+      "the cause: the expression and the invariant it violates, and why the observed failure " +
+      "follows. Name the coordinates or extent. Do not change the artifact and do not compare " +
+      "with an external reference.",
     hint:
-      "Name the target and its coordinates or extent, and say why the sibling material is not it. " +
-      "When that is named, stop — do not prove the target or re-read the whole material. Do not " +
-      "change it.",
+      "Name the artifact and its coordinates or extent, and say why the sibling material is not " +
+      "it. For a code defect, state the cause or violated invariant; a strong suspicion is " +
+      "enough — do not re-verify it. When both are named, stop; do not re-read the whole " +
+      "material. Do not change the artifact.",
     applies: INSPECT,
-    next: [{ to: "patch", when: "the target is named and its siblings are ruled out" }],
+    next: [
+      {
+        to: "patch",
+        when: "the artifact is named, its siblings are ruled out, and for a code defect the cause or violated invariant is stated",
+      },
+      {
+        to: "research",
+        when: "the artifact is named but the method or situation is still needed — the artifact is evidence, not the target",
+      },
+    ],
+  },
+  research: {
+    id: "research",
+    label: "Research",
+    what: "investigate the situation and establish the method",
+    criterion:
+      "the situation is explained — what happened, what the source does, or what must be built — " +
+      "and a concrete method and the source's own integrity/consistency check are named: what to " +
+      "search, decode, crack, or implement, and which source-internal property decides a candidate " +
+      "(checksum, hash, container metadata, structural invariant, or known records)",
+    instruction:
+      "Inspect the material and probe it with read-only commands where needed. Explain the " +
+      "situation: what happened, what the source does, or what must be built. Name the method " +
+      "and the check the source itself provides — what to search, decode, crack, or implement, " +
+      "and which source-internal property decides a candidate. For a binary or container source, " +
+      "use one short read-only probe/parser and run it; do not walk offsets by hand. Do not change " +
+      "the material, do not write the deliverable, and do not compare with an external reference.",
+    hint:
+      "Name the method and the check the source itself provides. A candidate merely present in " +
+      "the bytes, or merely matching the declared form, is not an integrity check. For a binary " +
+      "or container source, parse it with one short read-only probe/parser; do not walk offsets " +
+      "by hand or re-read the same region. Do not start the recovery or construction here; when " +
+      "both are named, stop.",
+    applies: INSPECT,
+    next: [
+      {
+        to: "recovery",
+        when: "the hidden, encoded, or deleted data must be reconstructed from the source",
+      },
+      {
+        to: "construction",
+        when: "a new artifact or program must be built from the specification or the source's behaviour",
+      },
+      {
+        to: "patch",
+        when: "the situation is a repository or history and the change is an edit to an existing artifact",
+      },
+    ],
   },
   patch: {
     id: "patch",
     label: "Patch",
-    what: "make the change the goal names",
-    criterion: "the change is made from the located material and its result has the declared form",
+    what: "make the named change to the artifact",
+    criterion: "the change is applied to the located artifact from the located material, and its result has the declared form",
     instruction:
-      "Apply the located change. If the result has a declared form (path, length, format), " +
-      "produce it and check that form in the same step.",
+      "Apply the change the located material names. If the result has a declared form (path, " +
+      "length, format), produce it and check that form in the same step. Do not relocate the " +
+      "artifact or re-derive the cause.",
     hint:
-      "Make the change the target names; do not relocate the target. If a `Previous failed attempt` " +
-      "block is present, do not repeat that change; apply a different one. If the change produces a " +
-      "value or artifact with a declared form, print it and check the form in the same step — a wrong " +
-      "result is caught here. Do not re-verify the diagnosis. The change must be derived from the " +
-      "located material: do not synthesize values or artifacts to satisfy the declared form.",
+      "Apply the change the located material names; do not relocate the artifact and do not " +
+      "re-derive the cause. If a `Previous failed attempt` block is present, do not repeat that " +
+      "change. If the result has a declared form, print it and check it in the same step. The " +
+      "change must come from the located material: do not synthesize values or artifacts to " +
+      "satisfy the form.",
     applies: PATCH_TOOLS,
-    next: [{ to: "verification", when: "the change is made from the located material and its result has the declared form" }],
+    next: [
+      {
+        to: "verification",
+        when: "the change is applied to the located artifact from the located material and its result has the declared form",
+      },
+    ],
+  },
+  recovery: {
+    id: "recovery",
+    label: "Recovery",
+    what: "reconstruct the hidden data from the source",
+    criterion:
+      "the required output exists, is derived from the source, and the source's own " +
+      "integrity/consistency check passes — a match to the declared form or mere presence in the " +
+      "source is not enough",
+    instruction:
+      "Reconstruct the hidden data from the source. You may and should create and modify files: " +
+      "write the search script, the required output, and any scratch copies you need. Keep the " +
+      "source itself read-only — work on copies or decoded copies; do not edit the source. Use " +
+      "the method and the source check Research named; do not re-derive the container structure. " +
+      "Keep the script minimal. Run it in place. Do not synthesize values.",
+    hint:
+      "Apply the method Research named; do not re-discover the source structure. You may create " +
+      "and change the script, output, and scratch copies; the source itself stays read-only. " +
+      "Search with a script, not by hand: enumerate candidates or decodings and keep only those " +
+      "that pass the source's own check. A candidate that matches only the declared form is not " +
+      "accepted. Include a negative control: a wrong candidate that fits the form must be " +
+      "rejected. If no candidate passes, stop and say so — do not fabricate.",
+    applies: RECOVER_TOOLS,
+    next: [
+      {
+        to: "finish",
+        when: "the required output exists, is derived from the source, and the source's own integrity/consistency check passes",
+      },
+      {
+        to: "research",
+        when: "the method or the source check failed — no candidate was accepted, or the check cannot decide",
+      },
+      {
+        to: "localization",
+        when: "the source or object is not the right one",
+      },
+      {
+        to: "patch",
+        when: "the recovered material must now be applied as a change to an existing artifact",
+      },
+    ],
+  },
+  construction: {
+    id: "construction",
+    label: "Construction",
+    what: "build the new artifact from the specification or source behaviour",
+    criterion:
+      "the artifact exists, is derived from the specification or the source's behaviour, and the " +
+      "acceptance check — the declared form, or the source behaviour on representative inputs — " +
+      "passes",
+    instruction:
+      "Build the artifact from the request's specification. When the request names a source " +
+      "program or artifact to modernize or translate, its behaviour is the specification. Write " +
+      "an acceptance check — a test harness, a differential run, or the declared form — run it, " +
+      "and fix the artifact until it passes. Do not modify the source.",
+    hint:
+      "Build the artifact the request names; do not repair the source. Check it against the " +
+      "specification or the source's behaviour on representative inputs; a file that merely " +
+      "exists is not done. If the check fails, fix the artifact or stop and return to Research " +
+      "when the method is wrong.",
+    applies: CONSTRUCT_TOOLS,
+    next: [
+      {
+        to: "finish",
+        when: "the artifact exists, is derived from the specification or source behaviour, and the acceptance check passes",
+      },
+      {
+        to: "research",
+        when: "the method or specification did not hold — the check failed for a method reason",
+      },
+      {
+        to: "localization",
+        when: "the source or input is not the right one",
+      },
+    ],
   },
   verification: {
     id: "verification",
     label: "Verification",
-    what: "check the change against the goal's acceptance",
-    criterion: "the acceptance holds: the acceptance command passes, or every declared constraint holds, and the result is derived from the source material, not synthesized",
+    what: "check the changed artifact against the goal's acceptance",
+    criterion:
+      "the acceptance holds: the acceptance command passes, or every declared constraint holds, " +
+      "and the result is derived from the source material, not synthesized",
     instruction:
       "Run the acceptance command if the workspace has one; otherwise check the declared " +
-      "constraints. Read the actual result.",
+      "constraints. Read the actual result. Do not write the acceptance or change the artifact.",
     hint:
       "Run the acceptance command if the workspace has one; otherwise check the declared " +
       "constraints. If it passes, `stop`. If it fails, `stop`; choose the next state: `patch` when " +

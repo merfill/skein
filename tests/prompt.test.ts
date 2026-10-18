@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ISLANDS } from "../src/ir/islands";
 import type { Context } from "../src/ir/project";
-import { PROPOSAL_TOOLS } from "../src/llm/tools";
+import { PROPOSAL_TOOLS, toolDescriptionsFor } from "../src/llm/tools";
 import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
@@ -27,6 +27,9 @@ describe("system prompt: base + node assembly", () => {
   it("carries the state-machine preamble and the state graph", () => {
     expect(BASE_PROMPT).toContain("exactly one state");
     expect(BASE_PROMPT).toContain("Orientation");
+    expect(BASE_PROMPT).toContain("Research");
+    expect(BASE_PROMPT).toContain("Recovery");
+    expect(BASE_PROMPT).toContain("Construction");
     expect(BASE_PROMPT).toContain("Verification");
   });
 
@@ -39,7 +42,8 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and its siblings are ruled out/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the artifact is named, its siblings are ruled out, and for a code defect the cause or violated invariant is stated/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation or a method/);
     expect(BASE_PROMPT).toMatch(/Finish is terminal/);
   });
 
@@ -48,6 +52,8 @@ describe("system prompt: base + node assembly", () => {
     expect(NODE_INSTRUCTIONS.working.length).toBeGreaterThan(0);
     expect(REQUEST_INSTRUCTION).not.toBe(NODE_INSTRUCTIONS.working);
     expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
+    expect(REQUEST_INSTRUCTION).toContain("- Orientation —");
+    expect(REQUEST_INSTRUCTION).not.toContain("- Localization —");
     expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
     expect(NODE_INSTRUCTIONS.plan).toMatch(/call a tool/i);
     expect(transitionInstruction("orientation")).toMatch(/choose the next state/i);
@@ -63,6 +69,18 @@ describe("system prompt: base + node assembly", () => {
     const fromVerification = transitionInstruction("verification");
     expect(fromVerification).toContain("Finish state Verification");
     expect(fromVerification).toContain("Localization"); // the corrective edge
+    const fromLocalization = transitionInstruction("localization");
+    expect(fromLocalization).toContain("Finish state Localization");
+    expect(fromLocalization).toMatch(/cause or violated invariant/);
+    expect(fromLocalization).toContain("Research");
+    const fromRecovery = transitionInstruction("recovery");
+    expect(fromRecovery).toContain("Finish state Recovery");
+    expect(fromRecovery).toMatch(/integrity\/consistency/);
+    expect(fromRecovery).toContain("Research");
+    const fromConstruction = transitionInstruction("construction");
+    expect(fromConstruction).toContain("Finish state Construction");
+    expect(fromConstruction).toMatch(/specification or the source's behaviour/);
+    expect(fromConstruction).toContain("Research");
   });
 });
 
@@ -88,6 +106,26 @@ describe("system prompt: tool contract", () => {
     expect(bash?.function.description).toMatch(/pipefail/i);
   });
 
+  it("scopes the tool contract to the state's work", () => {
+    const research = toolDescriptionsFor("research");
+    expect(research.bash).toMatch(/Inspection only/);
+    expect(research.write).toBeUndefined();
+
+    const recovery = toolDescriptionsFor("recovery");
+    expect(recovery.bash).toMatch(/you may create and modify files/i);
+    expect(recovery.bash).toMatch(/keep the source read-only/i);
+    expect(recovery.write).toMatch(/do not overwrite the source/i);
+    expect(recovery.edit).toBeUndefined();
+
+    const construction = toolDescriptionsFor("construction");
+    expect(construction.bash).toMatch(/builds a new artifact/i);
+    expect(construction.write).toMatch(/do not overwrite the source/i);
+    expect(construction.webfetch).toMatch(/declared input or reference/i);
+
+    const verification = toolDescriptionsFor("verification");
+    expect(verification.bash).toMatch(/Inspection only/);
+  });
+
   it("keeps `stop` about this state's criterion, with what it established as the record", () => {
     const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
     expect(stop?.function.description).toMatch(/criterion/i);
@@ -109,8 +147,7 @@ describe("system prompt: tool contract", () => {
     const orientation = turnInstruction("orientation", "the repository root is known");
     expect(orientation).toContain(ISLANDS.orientation.hint);
     expect(orientation).toMatch(/pwd/);
-    expect(orientation).toMatch(/do not hunt the target/i);
-    expect(orientation).toMatch(/do not re-verify the diagnosis/i);
+    expect(orientation).toMatch(/do not hunt the artifact/i);
     expect(orientation).toMatch(/environment facts/i);
     expect(orientation).toMatch(/observe them, do not assume them/i);
     expect(orientation).toMatch(/run the command that prints them/i);
@@ -118,12 +155,34 @@ describe("system prompt: tool contract", () => {
     const localization = turnInstruction("localization", "the failure is located");
     expect(localization).toContain(ISLANDS.localization.hint);
     expect(localization).toMatch(/sibling material/i);
+    expect(localization).toMatch(/cause or violated invariant/i);
+
+    const research = turnInstruction("research", "the method is named");
+    expect(research).toContain(ISLANDS.research.hint);
+    expect(research).toMatch(/check the source itself provides/i);
+    expect(research).toMatch(/not an integrity check/i);
+    expect(research).toMatch(/probe\/parser/i);
+    expect(research).toMatch(/do not walk offsets by hand/i);
+    expect(research).toMatch(/do not start the recovery or construction/i);
 
     const patch = turnInstruction("patch", "the fix is applied");
     expect(patch).toContain(ISLANDS.patch.hint);
-    expect(patch).toMatch(/do not relocate the target/i);
+    expect(patch).toMatch(/do not relocate the artifact/i);
     expect(patch).toMatch(/Previous failed attempt/);
     expect(patch).toMatch(/do not repeat that change/i);
+
+    const recovery = turnInstruction("recovery", "the output is derived");
+    expect(recovery).toContain(ISLANDS.recovery.hint);
+    expect(recovery).toMatch(/may create and change/i);
+    expect(recovery).toMatch(/do not re-discover the source structure/i);
+    expect(recovery).toMatch(/enumerate candidates/i);
+    expect(recovery).toMatch(/negative control|wrong candidate/i);
+    expect(recovery).toMatch(/do not fabricate/i);
+
+    const construction = turnInstruction("construction", "the artifact passes");
+    expect(construction).toContain(ISLANDS.construction.hint);
+    expect(construction).toMatch(/specification or the source's behaviour/i);
+    expect(construction).toMatch(/merely exists is not done/i);
 
     const verification = turnInstruction("verification", "the acceptance command passes");
     expect(verification).toContain(ISLANDS.verification.hint);
