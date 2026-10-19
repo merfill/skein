@@ -159,12 +159,20 @@ The general skeleton of one turn:
 system   — the base prompt (States + Transitions + the file-names line)   [always]
 system…  — constraints, if any                                            [as needed]
 user     — the USER REQUEST                                               [always, once]
+user     — ENVIRONMENT BRIEF (session fact, subset by island)             [if present]
 … states (children of the request) in order of appearance …
 system   — the current situation's instruction (plan/working/transition/terminal) [always]
 ```
 
 The **request** is shown **once, as the second message** (right after the base prompt) — and on
 **every** turn, so the task is visible inside the state too.
+
+The **environment brief** is a `user` turn right after the request (Markdown), built from the
+`add_node kind:"fact"` event: one deterministic probe at request start (`src/loop/probe.ts`)
+records the environment, and the projection selects the subset by the current island
+(Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
+root+interpreters/tools). The probe's raw output never reaches the tape; a replay reads the
+recorded fact instead of probing again.
 
 **State entry** (shown for every state):
 
@@ -384,6 +392,10 @@ ai — Finish state <Label> — <why from stop>
   `src/ir/events.ts`; `State.reverted` and versions — `src/ir/graph.ts`; the hook —
   `src/loop/graph.ts` (`executeNode`).
 - **Tape replay:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; checklist — §2.5.
+- **Session fact / environment probe:** `src/loop/probe.ts` (`probeEnvironment`),
+  `src/ir/environment.ts` (`EnvironmentFact`, subsets and the Markdown brief), the
+  `add_node kind:"fact"` event — `src/loop/graph.ts` (`runAgent`, `deps.probe`); the step
+  harness adds the fact in `bench/step.ts` (otherwise its tape diverges from the engine).
 - **Tape:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   instructions — `src/loop/prompt/blocks.ts`, island texts — `src/ir/islands.ts`, tool
   descriptions — `src/llm/tools.ts`.

@@ -1,6 +1,7 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
+import { ENV_FACT_ID, type EnvironmentFact } from "../ir/environment";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
@@ -49,6 +50,9 @@ export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
   maxTurns: number;
+  // The session environment probe (`src/loop/probe.ts`). The real entry points pass it so the
+  // fact is journalled once at request start; a replay or a unit test omits it.
+  probe?: (workspace: Workspace) => EnvironmentFact | undefined;
   noProgress?: number;
   // An external actor (a human or a program) may emit events before each turn — the seam
   // for future user intervention. Absent by default.
@@ -275,6 +279,22 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
           label: constraint.label,
           payload: { forbid: constraint.forbid ?? [] },
           seq: index + 1,
+        },
+      });
+    }
+    // The environment is a session fact: one deterministic probe at request start, journalled
+    // so a replay reads it instead of probing again.
+    const environment = deps.probe?.(deps.workspace);
+    if (environment !== undefined) {
+      seed.push({
+        type: "add_node",
+        node: {
+          id: ENV_FACT_ID,
+          space: "work",
+          kind: "fact",
+          label: "environment",
+          payload: environment,
+          seq: seed.length,
         },
       });
     }

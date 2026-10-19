@@ -98,6 +98,9 @@ declared form и **не** «кандидат буквально есть в ба
   constraints); whether it is under version control is noted when relevant`
 - **Предположения запроса:** область, подсистема, файлы — проверить по фактам, не принимать на
   веру.
+- **Environment brief:** сессионный факт (снят один раз на старте запроса, `fact`-событие):
+  `root`, `vcs`, `build`, `interpreters`, `package managers`, `missing`. Он не заменяет карту
+  материала: модель достраивает её, но не перепроверяет root/VCS/интерпретаторы командами.
 - **Границы:** не ищет дефект, не воспроизводит сбой, не описывает ситуацию глубоко, не
   сверяется с upstream и не разбирает историю версий глубже одной пробы «есть ли контроль
   версий». Сбой, замеченный по ходу, — в `notes`/итог, не задерживаясь.
@@ -108,7 +111,7 @@ declared form и **не** «кандидат буквально есть в ба
   - → **Construction**, когда метод очевиден из запроса и нужен новый артефакт (например,
     готовая команда `openssl`); обычно всё же через Research.
 - **Пример (fix-ocaml-gc):** корень `ocaml/`; сборка `./configure && make`, приёмка
-  `make -C testsuite one DIR=tests/basic`; одна проба `.git` → контроля версий нет.
+  `make -C testsuite one DIR=tests/basic`; VCS — из environment brief → контроля версий нет.
 - **Пример (password-recovery):** `/app` — tmpfs с `varsea`; VCS/сборки нет; успех — файл
   `/app/recovered_passwords.txt`.
 
@@ -141,16 +144,23 @@ declared form и **не** «кандидат буквально есть в ба
 - **Цель:** объяснить ситуацию и установить метод и source-проверку.
 - **`what`:** `investigate the situation and establish the method`
 - **`done`:** `the situation is explained — what happened, what the source does, or what must be
-  built — and a concrete method and the source's own integrity/consistency check are named: what
-  to search, decode, crack, or implement, and which source-internal property decides a candidate
-  (checksum, hash, container metadata, structural invariant, or known records)`
+  built — and the method's steps and the check that will decide success are named: what to
+  search, decode, crack, or build, and which property decides a candidate — the source's own
+  (checksum, hash, container metadata, structural invariant, known records) when there is a
+  source, otherwise the specification's acceptance. Name the steps and the check; the
+  derivation, the search, and the build belong to the productive state`
 - **Предположения запроса:** проявление, формат, инструменты — лиды; проверить по материалу.
 - **Границы:** не ищет дефект в коде (его может не быть), не применяет правку (Patch), не
   восстанавливает и не строит deliverable (Recovery/Construction). Может осматривать артефакты,
   но результат — описание ситуации и метод, а не указатель. Присутствие кандидата в байтах или
-  соответствие declared form — **не** source-проверка. Для binary/container источника —
-  **один короткий read-only probe/parser**, а не ручной обход offset’ов и повторное чтение того
-  же региона.
+  соответствие declared form — **не** source-проверка. Метод — план, а не его исполнение:
+  парсер/крекер/deliverable не строятся здесь. Формат определяется по сигнатурам **по всему
+  источнику**, а не по голове/энтропии; источник открывается только на копии в `/tmp` (его же
+  инструмент может сделать checkpoint/truncate/delete). Probe — только для сигнатуры или
+  проверки, которую нельзя установить чтением, один раз.
+- **Environment brief:** `interpreters`, `tools` (core/crypto/data/archive/net), `missing` — то,
+  чем можно писать probe и проверять кандидата. Карта материала (root/VCS/build) сюда не
+  дублируется: она уже в `Finish`-строке Orientation.
 - **Переход:**
   - → **Recovery**, когда нужно восстановить скрытые/закодированные/удалённые данные;
   - → **Construction**, когда нужно создать новый артефакт/программу;
@@ -199,6 +209,8 @@ declared form и **не** «кандидат буквально есть в ба
   read-only только сам источник. Использовать метод и source-проверку, названные `Research`; не
   переизобретать структуру контейнера и держать скрипт минимальным. Запустить на месте. **Не
   перебирать кандидатов вручную в диалоге.** Форма кандидата сама по себе — не acceptance.
+- **Environment brief:** `root`, `interpreters`, `tools`, `missing` — язык для скрипта-поиска и
+  инструменты проверки. Карта материала не дублируется.
 - **Границы:** источник — свидетельство, а не объект правки; не синтезировать значения; если
   deliverable — изменённый артефакт, это Patch. Скрипт держит поиск вне ленты: модель видит
   компактный результат, а не тысячи кандидатов. Negative control: кандидат, проходящий форму, но

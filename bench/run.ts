@@ -24,6 +24,7 @@ import { type State } from "../src/ir/graph";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
+import { probeEnvironment } from "../src/loop/probe";
 import { runAgent } from "../src/loop/graph";
 import { promptText, propose as proposeModel } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
@@ -222,7 +223,7 @@ async function main(): Promise<void> {
   };
 
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(work), maxTurns: args.maxTurns ?? settings.maxTurns },
+    { propose, workspace: fsWorkspace(work), maxTurns: args.maxTurns ?? settings.maxTurns, probe: probeEnvironment },
     { request: { id: "r1", text: prompt } },
   );
 

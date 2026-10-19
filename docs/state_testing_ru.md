@@ -159,12 +159,20 @@ TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
 system   — базовый промт (States + Transitions + строка про имена файлов)   [всегда]
 system…  — ограничения (constraints), если есть                              [по необходимости]
 user     — ЗАПРОС пользователя                                              [всегда, один раз]
+user     — ENVIRONMENT BRIEF (сессионный факт, подмножество по острову)      [если есть]
 … состояния (дети запроса) в порядке появления …
 system   — инструкция текущей ситуации (plan/working/transition/terminal)   [всегда]
 ```
 
 **Запрос** показывается **один раз, вторым сообщением** (сразу после базового промта) — и так
 на **каждом** ходу, чтобы задача была видна и внутри состояния.
+
+**Environment brief** — `user`-сообщение сразу после запроса (Markdown), собранное из события
+`add_node kind:"fact"`: один детерминированный зонд на старте запроса (`src/loop/probe.ts`)
+пишет среду, проекция выбирает подмножество по текущему острову (Orientation —
+root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
+root+interpreters/tools). Полный вывод зонда на ленту не попадает; replay читает записанный
+факт, а не запускает зонд.
 
 **Вход в состояние** (показывается для каждого состояния):
 
@@ -396,6 +404,10 @@ ai — Finish state <Label> — <why из stop>
   `src/ir/events.ts`; `State.reverted` и версии — `src/ir/graph.ts`; хук — `src/loop/graph.ts`
   (`executeNode`).
 - **Replay с ленты:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; чеклист — §2.5.
+- **Session fact / environment probe:** `src/loop/probe.ts` (`probeEnvironment`),
+  `src/ir/environment.ts` (`EnvironmentFact`, подмножества и Markdown-бриф), событие
+  `add_node kind:"fact"` — `src/loop/graph.ts` (`runAgent`, `deps.probe`); в шаговом харнессе
+  факт добавляет `bench/step.ts` (иначе лента расходится с движком).
 - **Лента:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   инструкции — `src/loop/prompt/blocks.ts`, тексты островов — `src/ir/islands.ts`,
   описания инструментов — `src/llm/tools.ts`.

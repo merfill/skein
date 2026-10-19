@@ -20,8 +20,8 @@ semantics — `docs/ir_semantics.md` (changed together with the code); the opera
 2. **State** (`src/ir/graph.ts`) — `fold(events)`: nodes, relations, container order, derived
    helpers, the traversal stack, file versions.
 3. **Context** (`src/ir/project.ts`) — `project(state)`, a deterministic **message tape**.
-4. **Tape** — the only I/O surface: the system part (base + node instruction + constraints)
-   plus the history.
+4. **Tape** — the only I/O surface: the system part (base + node instruction + constraints),
+   the request and the environment brief, plus the history.
 
 Before `project`, the engine reconciles active `ref`s with the filesystem
 (`src/loop/observe.ts`); a drift becomes a `mutate` event.
@@ -29,8 +29,8 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
 ## 2. Nodes and relations
 
 **Nodes** (`src/ir/types.ts`). Work space: `request`, `move`, `plan`, `item`, `action`,
-`observation`, `stop`, `unactionable`, `constraint`. Artifact space: `file` (also reserved
-`symbol`/`test`, not produced).
+`observation`, `stop`, `unactionable`, `constraint`, `fact`. Artifact space: `file` (also
+reserved `symbol`/`test`, not produced).
 
 - `request.payload = { text }` — raw motivation, the root. Walked as a sequence of states;
   declined (`unactionable`) if not actionable; no plan, no `stop`;
@@ -45,7 +45,10 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
   a run `{ command, exitCode?, output?, outputRef?, error?, errorRef?, signal?, core?, … }`
   (`output` is stdout, `error` is stderr, kept apart; `exitCode` `0` = pass, absent on a
   timeout); a failure carries `failed: true`, a non-execution `refused: true`;
-- `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`.
+- `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`;
+- `fact.payload = { root, found, missing }` — an engine-owned session fact (the environment
+  probe), recorded once at request start; it has no relation and the projection renders it as a
+  `user` brief whose subset depends on the current island.
 
 **Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`
 (request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),

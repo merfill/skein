@@ -14,6 +14,9 @@ export const WORK_KINDS = [
   "stop",
   "unactionable",
   "constraint",
+  // An engine-owned fact about the session (e.g. the environment probe). It hangs off no
+  // plan or state; the projection renders it where the current state needs it.
+  "fact",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 

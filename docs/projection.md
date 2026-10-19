@@ -18,7 +18,8 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 - `system` — the base prompt, the constraints, each state's `instruction` (shown once at entry),
   and the current situation's instruction (appended last, temporary);
-- `user` — the request (leads the tape, every turn) and each state's goal;
+- `user` — the request (leads the tape, every turn), the environment brief (a session fact,
+  right after the request) and each state's goal;
 - `assistant` — the state markers and the doxa's calls;
 - `tool` — command results.
 
@@ -39,6 +40,11 @@ thousands of artifacts.
 ## 3. The tape is built by walking the tree
 
 - the request is the first `user` turn (right after the base prompt), on every turn;
+- the **environment brief** is a `user` turn right after the request, built from the journalled
+  `fact` event (`add_node kind:"fact"`): its subset is chosen by the current island
+  (Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
+  root+interpreters/tools; other states have no brief yet). Without the fact there is no
+  message;
 - its states (`move` children) render in order: an **open** state renders its `Start state`
   marker, its `instruction` (`system`) and its goal (`user`), then its plan items in order (the
   first `apply` seeds the plan); a **finished** state — the current one awaiting the transition,

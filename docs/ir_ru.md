@@ -22,7 +22,7 @@
 3. **Context** (`src/ir/project.ts`) — `project(state)`, детерминированная **лента
    сообщений**.
 4. **Лента** — единственная поверхность I/O: системная часть (база + инструкция узла +
-   ограничения) и история.
+   ограничения), запрос с environment brief и история.
 
 Перед `project` движок сверяет активные `ref` с файловой системой (`src/loop/observe.ts`);
 замеченный дрейф становится событием `mutate`.
@@ -30,8 +30,8 @@
 ## 2. Узлы и связи
 
 **Узлы** (`src/ir/types.ts`). Рабочее пространство: `request`, `move`, `plan`, `item`,
-`action`, `observation`, `stop`, `unactionable`, `constraint`. Пространство артефактов:
-`file` (а также зарезервированные `symbol`/`test`, не производятся).
+`action`, `observation`, `stop`, `unactionable`, `constraint`, `fact`. Пространство
+артефактов: `file` (а также зарезервированные `symbol`/`test`, не производятся).
 
 - `request.payload = { text }` — сырая мотивация, корень. Проходится как последовательность
   состояний; отклоняется (`unactionable`), если не выполним; ни плана, ни `stop`;
@@ -46,7 +46,10 @@
   `{ command, exitCode?, output?, outputRef?, error?, errorRef?, signal?, core?, … }` (`output` —
   stdout, `error` — stderr, раздельно; `exitCode` `0` = успех, отсутствует при таймауте); провал
   несёт `failed: true`, неисполнение — `refused: true`;
-- `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`.
+- `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`;
+- `fact.payload = { root, found, missing }` — сессионный факт движка (environment probe),
+  записанный один раз на старте запроса; связей нет, проекция рендерит его `user`-брифом,
+  подмножество которого зависит от текущего острова.
 
 **Связи** (`src/ir/types.ts`, без поля статуса): `move` (request → move), `unactionable`
 (request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),

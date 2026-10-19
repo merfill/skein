@@ -149,11 +149,11 @@ describe("system prompt: tool contract", () => {
   it("places the per-state hint before the shared closure tail", () => {
     const orientation = turnInstruction("orientation", "the repository root is known");
     expect(orientation).toContain(ISLANDS.orientation.hint);
-    expect(orientation).toMatch(/pwd/);
+    expect(orientation).toMatch(/environment brief/i);
+    expect(orientation).toMatch(/do not re-probe what it covers/i);
     expect(orientation).toMatch(/do not hunt the artifact/i);
-    expect(orientation).toMatch(/environment facts/i);
-    expect(orientation).toMatch(/observe them, do not assume them/i);
-    expect(orientation).toMatch(/run the command that prints them/i);
+    expect(orientation).toMatch(/observed with the command that prints it/i);
+    expect(orientation).toMatch(/never\s+assumed from the request or documentation/i);
 
     const localization = turnInstruction("localization", "the failure is located");
     expect(localization).toContain(ISLANDS.localization.hint);

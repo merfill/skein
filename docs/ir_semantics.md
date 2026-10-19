@@ -97,6 +97,7 @@ Nodes fall into two spaces.
 | `stop` | the mark that a state is closed |
 | `unactionable` | the mark that the request has no actionable task |
 | `constraint` | a restriction (payload `forbid`: regex paths) |
+| `fact` | an engine-owned session fact (e.g. the environment probe; payload — the environment); no edges and no plan parent, projected on the tape |
 
 **The artifact space** — what exists besides the work:
 
@@ -412,6 +413,12 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 
 **States and their messages:**
 
+- `fact` — a session fact, not a call: right after the request the tape carries a `user`
+  message with a Markdown brief (`**Environment** …`) whose subset is chosen by the current
+  island (Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools;
+  Recovery — root+interpreters/tools; other states have no brief yet). The source is an
+  `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
+  reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
   `Start state <label>` marker (an `assistant` turn), then the state's `instruction` (a `system`
   turn), then the state's goal as a `user` turn (`what: <the island's goal>`). The doxa's

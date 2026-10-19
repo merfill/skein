@@ -21,6 +21,7 @@ import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toolNamesFor } from "../src/llm/tools";
+import { probeEnvironment } from "../src/loop/probe";
 import { runAgent } from "../src/loop/graph";
 import { BASE_PROMPT, buildMessages, propose as proposeModel } from "../src/loop/propose";
 import type { CommandResult, Workspace } from "../src/tools/workspace";
@@ -196,7 +197,7 @@ async function main(): Promise<void> {
   console.log(`trace ${tracePath}   model=${settings.model}   turns=${turns}   observations=${observations.length}`);
   console.log(`request: ${requestText.slice(0, 140)}…\n`);
 
-  const result = await runAgent({ propose, workspace, maxTurns: turns }, { request: { id: "r1", text: requestText } });
+  const result = await runAgent({ propose, workspace, maxTurns: turns, probe: probeEnvironment }, { request: { id: "r1", text: requestText } });
 
   console.log("| t | situation | action(s) | in | out | reason | calls |");
   console.log("|---|---|---|---|---|---|---|");

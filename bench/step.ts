@@ -21,10 +21,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadSettings } from "../src/config/settings";
+import { ENV_FACT_ID } from "../src/ir/environment";
+import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project, type Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { buildMessages, propose } from "../src/loop/propose";
+import { probeEnvironment } from "../src/loop/probe";
 import { executeAction } from "../src/tools";
 import { containerWorkspace } from "../tests/sandbox/container";
 import { cleanupContainers, dockerWorkspace } from "../tests/sandbox/docker";
@@ -83,7 +86,7 @@ async function main(): Promise<void> {
   const reasoning: string[] = [];
   const model = createChatModel(settings);
 
-  const seed = [
+  const seed: Event[] = [
     {
       type: "add_node",
       node: {
@@ -98,6 +101,23 @@ async function main(): Promise<void> {
   ];
 
   try {
+    // The same session fact the engine records at request start (src/loop/graph.ts), so a
+    // step-by-step tape sees the same environment the live run does.
+    // A/B switch for the environment fact on the step tape (the engine always probes).
+    const environment = process.env.SKEIN_ENV_PROBE === "false" ? undefined : probeEnvironment(workspace);
+    if (environment !== undefined) {
+      seed.push({
+        type: "add_node",
+        node: {
+          id: ENV_FACT_ID,
+          space: "work",
+          kind: "fact",
+          label: "environment",
+          payload: environment,
+          seq: 1,
+        },
+      });
+    }
     const events: unknown[] = [...seed];
     for (const entry of seq) {
       const applied = executeAction(entry.action as never, fold(events as never), workspace, entry.turn);

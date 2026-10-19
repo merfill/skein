@@ -183,7 +183,7 @@ export function turnInstruction(island?: IslandId, done?: string): string {
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
   const hint = island !== undefined ? ISLANDS[island].hint : "";
-  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them.`;
+  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Use the environment brief when it names a fact; observe with a command only a fact it does not cover — never assume one from the request or documentation.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

@@ -67,8 +67,10 @@ export const ISLANDS: Record<IslandId, Island> = {
       "constraints). Do not change the material, do not hunt the artifact, reproduce the failure, " +
       "or compare with an external reference.",
     hint:
-      "Establish the root of the material with `pwd` (or a command that prints it), not from the " +
-      "request or documentation; map what exists and how success is judged. Do not hunt the artifact.",
+      "The environment brief already names the root, the version control and the available tools: " +
+      "use it and do not re-probe what it covers. Map what exists and how success is judged; a " +
+      "fact the brief does not cover is still observed with the command that prints it, never " +
+      "assumed from the request or documentation. Do not hunt the artifact.",
     applies: INSPECT,
     next: [
       {

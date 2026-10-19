@@ -6,6 +6,7 @@ import {
   unactionableOf,
   type State,
 } from "./graph";
+import { ENV_FACT_ID, environmentBrief, type EnvironmentFact } from "./environment";
 import { ISLANDS, isTerminalIsland, stateDescription, type IslandId } from "./islands";
 import {
   applicable,
@@ -529,8 +530,15 @@ export function islandOf(state: State): IslandId | undefined {
   return moveIsland(state, move);
 }
 
+// The session's environment fact, recorded once at request start (`src/loop/probe.ts`).
+function environmentOf(state: State): EnvironmentFact | undefined {
+  const node = state.nodes.get(ENV_FACT_ID);
+  return node?.kind === "fact" ? (node.payload as EnvironmentFact | undefined) : undefined;
+}
+
 export function project(state: State, options: ProjectOptions = {}): Context {
   const history: TapeMessage[] = [];
+  const island = islandOf(state);
   const rootId = state.rootId;
   if (rootId !== undefined) {
     const request = state.nodes.get(rootId);
@@ -547,6 +555,13 @@ export function project(state: State, options: ProjectOptions = {}): Context {
           text: `declined: ${typeof why === "string" && why !== "" ? why : "not actionable"}`,
         });
       } else {
+        // The session's environment fact, in the subset the current state needs. It is a
+        // `user` turn (Markdown, not a tool schema) right after the request.
+        const environment = environmentOf(state);
+        if (environment !== undefined) {
+          const brief = environmentBrief(environment, island);
+          if (brief !== "") history.push({ role: "user", text: brief });
+        }
         for (const moveId of childrenOf(state, rootId)) renderState(state, moveId, history);
       }
     }
@@ -560,7 +575,6 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     });
     history.push({ role: "tool", text: options.rejection.text, callId });
   }
-  const island = islandOf(state);
   const focusedMove = currentMove(state);
   const done = focusedMove !== undefined ? movePayload(state, focusedMove)?.done : undefined;
   const situation = situationOf(state);
