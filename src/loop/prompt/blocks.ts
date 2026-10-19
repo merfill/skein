@@ -87,9 +87,9 @@ const MOVE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
     text:
-      `Call a tool — the action that advances the goal above. Inspection must not consume or ` +
-      `rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or ` +
-      `rewrite them, and prefer read-only modes.`,
+      `Call a tool — the action that advances the goal above. Work on the material without ` +
+      `consuming it: copy raw artifacts before any command that may checkpoint, delete, or ` +
+      `rewrite them.`,
   },
 ];
 
@@ -183,7 +183,7 @@ export function turnInstruction(island?: IslandId, done?: string): string {
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
   const hint = island !== undefined ? ISLANDS[island].hint : "";
-  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Inspection must not consume or rewrite the material: copy raw artifacts before any command that may checkpoint, delete, or rewrite them, and prefer read-only modes. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them.`;
+  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Environment facts (the repository root, paths, versions) are different: observe them, do not assume them — run the command that prints them.`;
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {

@@ -107,8 +107,11 @@ describe("system prompt: tool contract", () => {
   });
 
   it("scopes the tool contract to the state's work", () => {
+    // `bash` carries no state-specific read-only rule: inspection states get the global
+    // description, so the state's own instruction decides what the work needs.
     const research = toolDescriptionsFor("research");
-    expect(research.bash).toMatch(/Inspection only/);
+    expect(research.bash).not.toMatch(/Inspection only/);
+    expect(research.bash).not.toMatch(/read-only commands/i);
     expect(research.write).toBeUndefined();
 
     const recovery = toolDescriptionsFor("recovery");
@@ -123,7 +126,7 @@ describe("system prompt: tool contract", () => {
     expect(construction.webfetch).toMatch(/declared input or reference/i);
 
     const verification = toolDescriptionsFor("verification");
-    expect(verification.bash).toMatch(/Inspection only/);
+    expect(verification.bash).not.toMatch(/Inspection only/);
   });
 
   it("keeps `stop` about this state's criterion, with what it established as the record", () => {
@@ -159,11 +162,14 @@ describe("system prompt: tool contract", () => {
 
     const research = turnInstruction("research", "the method is named");
     expect(research).toContain(ISLANDS.research.hint);
-    expect(research).toMatch(/check the source itself provides/i);
-    expect(research).toMatch(/not an integrity check/i);
-    expect(research).toMatch(/probe\/parser/i);
-    expect(research).toMatch(/do not walk offsets by hand/i);
-    expect(research).toMatch(/do not start the recovery or construction/i);
+    expect(research).toMatch(/Name the situation, the method's steps, and the check/i);
+    expect(research).toMatch(/is not a check/i);
+    expect(research).toMatch(/do not derive, crack, decode, or build anything here/i);
+    expect(research).toMatch(/Say what the source IS/i);
+    expect(research).toMatch(/unidentified source is an open situation/i);
+    expect(research).toMatch(/do not re-read or re-derive it/i);
+    expect(research).toMatch(/mark coordinates in `why` approximate/i);
+    expect(research).toMatch(/nothing to research/i);
 
     const patch = turnInstruction("patch", "the fix is applied");
     expect(patch).toContain(ISLANDS.patch.hint);

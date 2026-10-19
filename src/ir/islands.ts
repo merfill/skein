@@ -64,8 +64,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     instruction:
       "Inspect the material with the search tools: what exists (files, records, images, a " +
       "repository) and how success is judged (a command, an external verifier, or declared " +
-      "constraints). Do not hunt the artifact, reproduce the failure, or compare with an external " +
-      "reference.",
+      "constraints). Do not change the material, do not hunt the artifact, reproduce the failure, " +
+      "or compare with an external reference.",
     hint:
       "Establish the root of the material with `pwd` (or a command that prints it), not from the " +
       "request or documentation; map what exists and how success is judged. Do not hunt the artifact.",
@@ -117,22 +117,35 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "investigate the situation and establish the method",
     criterion:
       "the situation is explained — what happened, what the source does, or what must be built — " +
-      "and a concrete method and the source's own integrity/consistency check are named: what to " +
-      "search, decode, crack, or implement, and which source-internal property decides a candidate " +
-      "(checksum, hash, container metadata, structural invariant, or known records)",
+      "and the method's steps and the check that will decide success are named: what to search, " +
+      "decode, crack, or build, and which property decides a candidate — the source's own " +
+      "(checksum, hash, container metadata, structural invariant, known records) when there is a " +
+      "source, otherwise the specification's acceptance. Name the steps and the check; the " +
+      "derivation, the search, and the build belong to the productive state.",
     instruction:
-      "Inspect the material and probe it with read-only commands where needed. Explain the " +
-      "situation: what happened, what the source does, or what must be built. Name the method " +
-      "and the check the source itself provides — what to search, decode, crack, or implement, " +
-      "and which source-internal property decides a candidate. For a binary or container source, " +
-      "use one short read-only probe/parser and run it; do not walk offsets by hand. Do not change " +
-      "the material, do not write the deliverable, and do not compare with an external reference.",
+      "Inspect the material with the search tools and read the source the request names. Explain " +
+      "the situation: what happened, what the source does, or what must be built. Then name the " +
+      "method and the check the source itself provides — what to search, decode, crack, or " +
+      "implement, and which source-internal property decides a candidate. The method is a plan, " +
+      "not its execution: do not build the parser, the cracker, or the deliverable here. Identify " +
+      "the format from the source's own signatures, not from its head or its entropy: structures " +
+      "can sit at any offset. Work on a copy in /tmp: opening a source with its own tool (a " +
+      "database, an archive, an index) can rewrite it — checkpoint, truncate, or delete a " +
+      "companion file — so never open the original. A probe is only for a signature scan or a " +
+      "check you cannot establish by reading; write it once under /tmp. Do not change the " +
+      "material and do not compare with an external reference.",
     hint:
-      "Name the method and the check the source itself provides. A candidate merely present in " +
-      "the bytes, or merely matching the declared form, is not an integrity check. For a binary " +
-      "or container source, parse it with one short read-only probe/parser; do not walk offsets " +
-      "by hand or re-read the same region. Do not start the recovery or construction here; when " +
-      "both are named, stop.",
+      "Name the situation, the method's steps, and the check — that is the whole job; do not " +
+      "derive, crack, decode, or build anything here, the productive state does that. A " +
+      "candidate merely present in the bytes, or merely matching the declared form, is not a " +
+      "check. Say what the source IS: its format or container, from its own signatures — an " +
+      "unidentified source is an open situation, not a method. A binary source can hide its " +
+      "structures at any offset: scan the whole source for known signatures instead of judging " +
+      "it by its head or its entropy. The tape already holds what you observed: do not re-read " +
+      "or re-derive it. If the request fully specifies the artifact and nothing is unknown, there " +
+      "is nothing to research: stop at once, and do not design the artifact on the way out — " +
+      "thinking it through here is doing the next state's work. Mark coordinates in `why` " +
+      "approximate unless the bytes confirmed them.",
     applies: INSPECT,
     next: [
       {
@@ -259,7 +272,8 @@ export const ISLANDS: Record<IslandId, Island> = {
       "constraints. Read the actual result. Do not write the acceptance or change the artifact.",
     hint:
       "Run the acceptance command if the workspace has one; otherwise check the declared " +
-      "constraints. If it passes, `stop`. If it fails, `stop`; choose the next state: `patch` when " +
+      "constraints. Do not change the artifact here — not with an edit, not with a shell command. " +
+      "If it passes, `stop`. If it fails, `stop`; choose the next state: `patch` when " +
       "the object you located (the file, record, image, or function) is still the material the " +
       "change must use, and the failure is in the produced change or result — its value, length, " +
       "format, span, or assembly. Re-reading or re-assembling the same object is part of the change, " +

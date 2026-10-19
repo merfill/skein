@@ -123,7 +123,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "bash",
     description:
-      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat. The command may modify the workspace: for inspection, prefer read-only commands, and copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Changes belong to the change state.",
+      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat. Changes belong to the change state.",
     schema: bashParams,
   },
   {
@@ -177,10 +177,6 @@ export const PROPOSAL_TOOLS: OpenAITool[] = DEFINITIONS.map((definition) => ({
 // source: the AI SDK validates the model's call against them before it reaches `toProposal`.
 // There is no `execute` — a call is the structured-output channel for the proposed `Action`,
 // never a tool the SDK runs (`stopWhen: stepCountIs(1)` in `structured.ts`).
-const INSPECTION_BASH_SUFFIX =
-  "Inspection only in this state: do not create, modify, or delete files; do not open or run a " +
-  "tool in a read-write mode; copy raw artifacts before any command that may checkpoint, delete, " +
-  "or rewrite them; prefer read-only modes; do not use wildcard mutations.";
 const PATCH_BASH_SUFFIX =
   "This state changes the target: make the change specific and targeted; do not use wildcard " +
   "edits or deletes and do not touch unrelated files.";
@@ -191,26 +187,18 @@ const CONSTRUCTION_BASH_SUFFIX =
   "This state builds a new artifact: write only the artifact and its acceptance check; do not " +
   "modify the source or unrelated files.";
 
-// The bash tool is dual-use (inspection and mutation). The state determines which contract the
-// model sees: inspection states get the read-only/preserve rule first; the productive states get
-// their own targeted rule. Direct callers without an island keep the global description.
+// The bash tool is dual-use (inspection and mutation). The productive states get their own
+// targeted rule; every other state (and a direct caller without an island) gets the global
+// description, which carries no state-specific read-only prohibition.
 function baseDescription(name: string): string {
   return PROPOSAL_TOOLS.find((tool) => tool.function.name === name)?.function.description ?? "";
 }
-
-const INSPECTION_STATES: ReadonlySet<IslandId> = new Set([
-  "orientation",
-  "localization",
-  "research",
-  "verification",
-]);
 
 export function bashDescriptionFor(island?: IslandId): string {
   const base = baseDescription("bash");
   if (island === "patch") return `${PATCH_BASH_SUFFIX} ${base}`;
   if (island === "recovery") return `${RECOVERY_BASH_SUFFIX} ${base}`;
   if (island === "construction") return `${CONSTRUCTION_BASH_SUFFIX} ${base}`;
-  if (island !== undefined && INSPECTION_STATES.has(island)) return `${INSPECTION_BASH_SUFFIX} ${base}`;
   return base;
 }
 
