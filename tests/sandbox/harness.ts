@@ -1,7 +1,7 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { probeEnvironment } from "../../src/loop/probe";
+import { probeSession } from "../../src/loop/probe";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { CommandResult, Workspace } from "../../src/tools/workspace";
@@ -154,7 +154,7 @@ export async function runTask(
       propose: proposeWithCheckpoint,
       workspace,
       maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
-      probe: probeEnvironment,
+      probe: probeSession,
     },
     {
       request: { id: "r1", text: request },

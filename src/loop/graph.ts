@@ -1,12 +1,12 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
 import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
-import { ENV_FACT_ID, type EnvironmentFact } from "../ir/environment";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
 import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
+import { SESSION_PROBE_ID, type SessionProbe } from "../ir/session";
 import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/traversal";
 import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
@@ -50,9 +50,9 @@ export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
   maxTurns: number;
-  // The session environment probe (`src/loop/probe.ts`). The real entry points pass it so the
-  // fact is journalled once at request start; a replay or a unit test omits it.
-  probe?: (workspace: Workspace) => EnvironmentFact | undefined;
+  // The session probe (`src/loop/probe.ts`): environment and material. The real entry points
+  // pass it so the fact is journalled once at request start; a replay or a unit test omits it.
+  probe?: (workspace: Workspace) => SessionProbe | undefined;
   noProgress?: number;
   // An external actor (a human or a program) may emit events before each turn — the seam
   // for future user intervention. Absent by default.
@@ -282,18 +282,18 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
         },
       });
     }
-    // The environment is a session fact: one deterministic probe at request start, journalled
-    // so a replay reads it instead of probing again.
-    const environment = deps.probe?.(deps.workspace);
-    if (environment !== undefined) {
+    // The probe is a session fact: one deterministic observation of the environment and the
+    // material at request start, journalled so a replay reads it instead of probing again.
+    const probe = deps.probe?.(deps.workspace);
+    if (probe !== undefined) {
       seed.push({
         type: "add_node",
         node: {
-          id: ENV_FACT_ID,
+          id: SESSION_PROBE_ID,
           space: "work",
           kind: "fact",
-          label: "environment",
-          payload: environment,
+          label: "session",
+          payload: probe,
           seq: seed.length,
         },
       });

@@ -78,7 +78,7 @@ describe("message wrappers: the wire JSON of the tape", () => {
     // The request is the first user turn; the second is the state's goal.
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
     expect(userTexts[0]).toContain("fix the bug");
-    expect(userTexts[1]).toContain("map the material");
+    expect(userTexts[1]).toContain("know the task's inputs");
     // A native call keeps its content empty (the call is in `tool_calls`).
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);

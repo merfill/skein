@@ -405,12 +405,16 @@ workspace). **Оконный** `recall` или любой `search` — друг�
 
 **Состояния и их сообщения:**
 
-- `fact` — сессионный факт — не вызов: сразу после запроса в ленту идёт `user`-сообщение с
-  Markdown-брифом (`**Environment** …`), подмножество которого выбирается по текущему острову
-  (Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
-  root+interpreters/tools; остальные состояния пока без брифа). Источник — событие
-  `add_node kind:"fact"`, записанное один раз на старте запроса (`src/loop/probe.ts`); replay
-  читает записанный факт, а не запускает зонд снова;
+- `fact` — сессионный факт — не вызов и не отдельное сообщение после запроса. Проекция
+  выводит блок отдельным `system`-ходом перед целью (`user`) **текущего** состояния. Один
+  `fact:session` несёт
+  `{ environment, material }`: доступные инструменты (с версиями, где они дешёвы), repo-статус,
+  top-level entries/paths и число файлов. Orientation получает `Workspace` (карту), Localization
+  и Research — ту же карту как `Orientation result` (Research ещё и `Probe`), Patch — её же как
+  `Workspace`, остальные — `Probe` (environment) отдельным заголовком. Конфиги, команды сборки, расширения и build state
+  в Orientation не показываются; объявленная команда не выдаётся за acceptance. Закрытые
+  состояния блоков не несут. Источник — событие `add_node kind:"fact"`, записанное один раз на
+  старте запроса (`src/loop/probe.ts`); replay читает записанный факт, а не запускает зонд снова;
 - `move` — состояние — это решение, а не вызов инструмента, поэтому **вызова нет**: оно
   рендерится маркером `Start state <label>` (ход `assistant`), затем инструкцией состояния (ход
   `system`), затем целью состояния ходом `user` (`what: <цель острова>`).   `move.what`/`move.notes`

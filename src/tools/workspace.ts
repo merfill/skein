@@ -97,6 +97,9 @@ export interface RunOptions {
 
 export interface Workspace {
   root: string;
+  // The root as the AGENT sees it (a container mount such as `/app`). Host-side workspaces
+  // omit it and `root` is already the visible path.
+  readonly displayRoot?: string;
   read(path: string): string;
   version(path: string): string;
   signature(path: string): string;

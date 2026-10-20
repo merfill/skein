@@ -1030,8 +1030,8 @@ describe("runAgent", () => {
     expect(texts).toContain("run build");
     // The state IS its goal: the goal (the state's own `what`) is a `user` turn after the request.
     const goal =
-      context.history.map((message) => message.text).find((text) => text.includes("map the material")) ?? "";
-    expect(goal).toContain("map the material");
+      context.history.map((message) => message.text).find((text) => text.includes("know the task's inputs")) ?? "";
+    expect(goal).toContain("know the task's inputs");
   });
 
   it("refuses a repeated read and names the stored result", async () => {

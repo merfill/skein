@@ -56,21 +56,20 @@ export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
     id: "orientation",
     label: "Orientation",
-    what: "map the material and how success is judged",
+    what: "know the task's inputs and how success is judged",
     criterion:
-      "the material is known — what exists (files, records, images, a repository) — and how " +
-      "success is judged (an in-workspace command, an external verifier, or declared constraints); " +
-      "whether it is under version control is noted when relevant",
+      "the workspace root and its top-level entries are known; the repository status is noted; " +
+      "and the acceptance is named from the request — an in-workspace command, an external " +
+      "verifier, or declared constraints",
     instruction:
-      "Inspect the material with the search tools: what exists (files, records, images, a " +
-      "repository) and how success is judged (a command, an external verifier, or declared " +
-      "constraints). Do not change the material, do not hunt the artifact, reproduce the failure, " +
-      "or compare with an external reference.",
+      "Read the request and the workspace map: root, repository status, top-level entries. Name " +
+      "the acceptance as the request declares it. If the request and the map already name the " +
+      "inputs and the acceptance, `stop` now. Do not list inside the entries, verify build " +
+      "targets or paths, read file contents, or inspect history or data formats — those belong " +
+      "to the next state.",
     hint:
-      "The environment brief already names the root, the version control and the available tools: " +
-      "use it and do not re-probe what it covers. Map what exists and how success is judged; a " +
-      "fact the brief does not cover is still observed with the command that prints it, never " +
-      "assumed from the request or documentation. Do not hunt the artifact.",
+      "The workspace map is the index; the request is the acceptance. Do not list inside " +
+      "entries, check paths, or inspect build state, configs, history, or contents.",
     applies: INSPECT,
     next: [
       {
@@ -86,30 +85,36 @@ export const ISLANDS: Record<IslandId, Island> = {
   localization: {
     id: "localization",
     label: "Localization",
-    what: "find the artifact and, for a code defect, explain it",
+    what: "find the target in the material",
     criterion:
-      "the artifact is named with its coordinates or extent, its siblings are ruled out, and for " +
-      "a code defect the cause or violated invariant is stated",
+      "the target is named — the file, record, image, or function — with the coordinates or " +
+      "extent that identify it; its siblings are ruled out; and a suspected cause is named — the " +
+      "expression, step, or encoding that looks wrong and the rule or invariant it breaks — " +
+      "marked unverified",
     instruction:
-      "Inspect the material: find the artifact and distinguish it from its siblings — the other " +
-      "files, records, images, loops, or candidates of the same shape. For a code defect, name " +
-      "the cause: the expression and the invariant it violates, and why the observed failure " +
-      "follows. Name the coordinates or extent. Do not change the artifact and do not compare " +
-      "with an external reference.",
+      "Find the target in the material — the file, record, image, or function — and name its " +
+      "coordinates or extent. Before inspecting, think about what the code is supposed to do from " +
+      "the user's request, the workspace map (filesystem facts), the environment (available " +
+      "tools), and the filenames; use that to choose which files and symbols to inspect. For " +
+      "shell work, use only the tools the environment lists; missing ones are unavailable. " +
+      "Distinguish " +
+      "it from its siblings by shape, code, or signature. Name " +
+      "the target, say why the siblings are not it, and name a suspected cause: the expression, " +
+      "step, or encoding that looks wrong and the rule or invariant it breaks. Mark the cause " +
+      "unverified. Do not change the target.",
     hint:
-      "Name the artifact and its coordinates or extent, and say why the sibling material is not " +
-      "it. For a code defect, state the cause or violated invariant; a strong suspicion is " +
-      "enough — do not re-verify it. When both are named, stop; do not re-read the whole " +
-      "material. Do not change the artifact.",
+      "Start from the workspace map (filesystem facts) and the environment (available tools). " +
+      "Think about what the code is supposed to do from the filenames and the directory " +
+      "structure: list the relevant directories and choose the candidate files by name — the " +
+      "implementation and the definitions or headers it uses — then inspect those. Compare the " +
+      "target with the sibling that performs the same traversal or operation — the neighbouring " +
+      "loop or function — and use its pattern as the reference. A suspected cause is enough to " +
+      "stop — do not look for a different bug.",
     applies: INSPECT,
     next: [
       {
         to: "patch",
-        when: "the artifact is named, its siblings are ruled out, and for a code defect the cause or violated invariant is stated",
-      },
-      {
-        to: "research",
-        when: "the artifact is named but the method or situation is still needed — the artifact is evidence, not the target",
+        when: "the target is named, its siblings are ruled out, and a suspected cause is named (unverified)",
       },
     ],
   },
@@ -137,17 +142,17 @@ export const ISLANDS: Record<IslandId, Island> = {
       "check you cannot establish by reading; write it once under /tmp. Do not change the " +
       "material and do not compare with an external reference.",
     hint:
-      "Name the situation, the method's steps, and the check — that is the whole job; do not " +
-      "derive, crack, decode, or build anything here, the productive state does that. A " +
-      "candidate merely present in the bytes, or merely matching the declared form, is not a " +
-      "check. Say what the source IS: its format or container, from its own signatures — an " +
-      "unidentified source is an open situation, not a method. A binary source can hide its " +
-      "structures at any offset: scan the whole source for known signatures instead of judging " +
-      "it by its head or its entropy. The tape already holds what you observed: do not re-read " +
-      "or re-derive it. If the request fully specifies the artifact and nothing is unknown, there " +
-      "is nothing to research: stop at once, and do not design the artifact on the way out — " +
-      "thinking it through here is doing the next state's work. Mark coordinates in `why` " +
-      "approximate unless the bytes confirmed them.",
+      "Name the situation, the method's steps, and the check; do not derive, crack, decode, or " +
+      "build anything here — the productive state does that. A candidate merely present in the " +
+      "bytes, or merely matching the declared form, is not a check. Say what the source IS: its " +
+      "format or container, from its own signatures — an unidentified source is an open " +
+      "situation, not a method. A binary source can hide its structures at any offset: scan the " +
+      "whole source for known signatures instead of judging it by its head or its entropy. The " +
+      "tape already holds what you observed: do not re-read or re-derive it. If the request fully " +
+      "specifies the artifact and nothing is unknown, do not design the artifact on the way out — " +
+      "thinking it through here is doing the next state's work. Mark coordinates approximate " +
+      "unless the bytes confirmed them. The workspace map and the `Finish state Orientation` line " +
+      "are the map; do not re-map.",
     applies: INSPECT,
     next: [
       {
@@ -174,11 +179,12 @@ export const ISLANDS: Record<IslandId, Island> = {
       "length, format), produce it and check that form in the same step. Do not relocate the " +
       "artifact or re-derive the cause.",
     hint:
-      "Apply the change the located material names; do not relocate the artifact and do not " +
-      "re-derive the cause. If a `Previous failed attempt` block is present, do not repeat that " +
-      "change. If the result has a declared form, print it and check it in the same step. The " +
-      "change must come from the located material: do not synthesize values or artifacts to " +
-      "satisfy the form.",
+      "The change is the one the previous state's `Finish` line names — read it and apply it. Do " +
+      "not re-derive the cause or choose a different change. Read the definition of every symbol " +
+      "the change uses — the file that defines it, not a usage — and the sibling the line cites; " +
+      "use them only to confirm the change. If a `Previous failed attempt` block is present, do " +
+      "not repeat that change. If the result has a declared form, print it and check it in the " +
+      "same step; do not synthesize values or artifacts to satisfy the form.",
     applies: PATCH_TOOLS,
     next: [
       {
@@ -202,12 +208,11 @@ export const ISLANDS: Record<IslandId, Island> = {
       "the method and the source check Research named; do not re-derive the container structure. " +
       "Keep the script minimal. Run it in place. Do not synthesize values.",
     hint:
-      "Apply the method Research named; do not re-discover the source structure. You may create " +
-      "and change the script, output, and scratch copies; the source itself stays read-only. " +
-      "Search with a script, not by hand: enumerate candidates or decodings and keep only those " +
-      "that pass the source's own check. A candidate that matches only the declared form is not " +
-      "accepted. Include a negative control: a wrong candidate that fits the form must be " +
-      "rejected. If no candidate passes, stop and say so — do not fabricate.",
+      "Apply the method Research named; do not re-discover the source structure. The source stays " +
+      "read-only; create and change the script, output, and scratch copies. Search with a script, " +
+      "not by hand: enumerate candidates or decodings and keep only those that pass the source's " +
+      "own check. A candidate that matches only the declared form is not accepted. Include a " +
+      "negative control: a wrong candidate that fits the form must be rejected. Do not fabricate.",
     applies: RECOVER_TOOLS,
     next: [
       {
@@ -242,10 +247,9 @@ export const ISLANDS: Record<IslandId, Island> = {
       "an acceptance check — a test harness, a differential run, or the declared form — run it, " +
       "and fix the artifact until it passes. Do not modify the source.",
     hint:
-      "Build the artifact the request names; do not repair the source. Check it against the " +
-      "specification or the source's behaviour on representative inputs; a file that merely " +
-      "exists is not done. If the check fails, fix the artifact or stop and return to Research " +
-      "when the method is wrong.",
+      "Do not repair the source. Check the artifact against the specification or the source's " +
+      "behaviour on representative inputs; a file that merely exists is not done. If the check " +
+      "fails, fix the artifact.",
     applies: CONSTRUCT_TOOLS,
     next: [
       {
@@ -274,21 +278,11 @@ export const ISLANDS: Record<IslandId, Island> = {
       "constraints. Read the actual result. Do not write the acceptance or change the artifact.",
     hint:
       "Run the acceptance command if the workspace has one; otherwise check the declared " +
-      "constraints. Do not change the artifact here — not with an edit, not with a shell command. " +
-      "If it passes, `stop`. If it fails, `stop`; choose the next state: `patch` when " +
-      "the object you located (the file, record, image, or function) is still the material the " +
-      "change must use, and the failure is in the produced change or result — its value, length, " +
-      "format, span, or assembly. Re-reading or re-assembling the same object is part of the change, " +
-      "not a new localization. `localization` only when the object itself is not found, or the " +
-      "failure points to a different object. A wrong length, format, value, byte span, or an " +
-      "incomplete-looking fragment is not a different object. A check that only reads your own output " +
-      "is not acceptance: compare the result against the source material, not just its count or " +
-      "form; do not accept synthesized data. " +
-      "`why` = a literal retelling of the failure: the command or constraint, its exit status and " +
-      "the actual output (quote the first real error, not the whole tail). Do not interpret the " +
-      "code, do not propose a fix, and do not say whether the change is wrong. If it could not run " +
-      "because the environment is not ready — wrong working directory, missing testsuite/build " +
-      "artifacts, or `ocamltest` missing — do not stop: fix the environment and retry.",
+      "constraints, and read the actual result. Do not change the artifact here — not with an " +
+      "edit, not with a shell command. A check that only reads your own output is not " +
+      "acceptance: compare the result against the source material. If it could not run because " +
+      "the environment is not ready — wrong working directory or missing build/test artifacts — " +
+      "fix the environment and retry.",
     applies: INSPECT,
     next: [
       { to: "finish", when: "the acceptance holds" },

@@ -159,27 +159,30 @@ The general skeleton of one turn:
 system   — the base prompt (States + Transitions + the file-names line)   [always]
 system…  — constraints, if any                                            [as needed]
 user     — the USER REQUEST                                               [always, once]
-user     — ENVIRONMENT BRIEF (session fact, subset by island)             [if present]
 … states (children of the request) in order of appearance …
 system   — the current situation's instruction (plan/working/transition/terminal) [always]
 ```
 
 The **request** is shown **once, as the second message** (right after the base prompt) — and on
-**every** turn, so the task is visible inside the state too.
+**every** turn, so the task is visible inside the state too. There is **no** separate
+environment-brief message after the request.
 
-The **environment brief** is a `user` turn right after the request (Markdown), built from the
-`add_node kind:"fact"` event: one deterministic probe at request start (`src/loop/probe.ts`)
-records the environment, and the projection selects the subset by the current island
-(Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
-root+interpreters/tools). The probe's raw output never reaches the tape; a replay reads the
-recorded fact instead of probing again.
+The **probe** is one session `fact` (`id: fact:session`, payload `{ environment, material }`),
+recorded at request start (`src/loop/probe.ts`). `material` is the workspace map (`root`, repo,
+entries/paths, files), with no configs, build commands or extensions. The projection shows it as
+`Workspace` in Orientation; in Localization/Research the same map is `Orientation result`
+(Research also gets `Probe` with interpreters/tools); Patch gets it as `Workspace`; other states
+get `Probe` (environment) under its own heading. Closed states carry no block and the request turn has none. The probe's
+raw output never reaches the tape; a replay reads the recorded fact instead of probing again.
 
-**State entry** (shown for every state):
+**State entry** (shown for every state; the block only for the current one):
 
 ```
 ai       — Start state <Label>
 system   — <island instruction: how to act in this state>
 user     — what: <island.what>
+system — <Workspace in Orientation/Patch / Orientation result in L,R / Probe elsewhere>
+user   — what: <the island's goal>
 ```
 
 **Returning to Localization or Patch after a failure** (the current open state only): right after
@@ -323,6 +326,27 @@ ai — Finish state <Label> — <why from stop>
     run5 used `Verification → Patch` directly (one revert), the others were direct. Tokens —
     `docs/benches/best_bench.md`.
 
+- **Localization → Patch only (2026-10-20).** The late `Localization → Research` edge was
+  removed (`83243ae`): Localization again has a single transition — Patch. A dry rebuild of the
+  transition from the 34-turn run shows no Research; live K=3 on the same turn — 3/3 `move patch`
+  (reasoning 0–166). Full `fix-ocaml-gc` K=1: reward=1, `request_addressed`, 34 turns, 5.23₽ —
+  no Research, but Patch took 15 turns: re-deriving the cause (~10k reasoning over t13–t20) and
+  2 turns on `.skein/checkpoints`; cache hit 81%.
+- **Patch gets the material map (2026-10-20).** Patch no longer gets the Probe with
+  compilers/interpreters; instead it gets `Workspace` (`root`, `repo`, `entries`, `files`), as
+  Orientation does. On the recorded tape at t9 (Patch plan) a dry projection shows `repo: none`
+  and `entries: ocaml/ (4623 files)`; live K=3 on the same context — 3/3 go straight to
+  `runtime/shared_heap.c` (280-699), with no git and no `ls`/broad grep. Before: t9 `git status`
+  + `git diff` (7.3k chars of usage, 0.157₽) and t10 `ls` + `grep free_space/run/rle` (0.156₽);
+  after: 0.019–0.091₽ on Patch's first turn.
+
+- **Suspected cause in Localization (2026-10-20, K=3).** Localization's criterion now includes a
+  suspected cause (`unverified`). Full `fix-ocaml-gc`: reward 3/3, turns 30/24/43, input
+  307,859/153,747/334,964, cost 2.315/1.526/3.130₽ (was 34/404,613/5.226₽). The cause was
+  correct in 2/3 — Patch 4–6 turns, 1.5–2.3₽; in run3 the cause was vague ("free-run skip mixing
+  block and word units") → wrong patch → segfault → second Patch: 43 turns, 3.13₽. The bottleneck
+  is now the precision of the suspected cause, not Patch.
+
 ### Problems (for tomorrow)
 
 > Hypothesis p.1–2 is **closed**: "late closure because the model cannot see its own conclusion" is
@@ -392,10 +416,13 @@ ai — Finish state <Label> — <why from stop>
   `src/ir/events.ts`; `State.reverted` and versions — `src/ir/graph.ts`; the hook —
   `src/loop/graph.ts` (`executeNode`).
 - **Tape replay:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; checklist — §2.5.
-- **Session fact / environment probe:** `src/loop/probe.ts` (`probeEnvironment`),
-  `src/ir/environment.ts` (`EnvironmentFact`, subsets and the Markdown brief), the
-  `add_node kind:"fact"` event — `src/loop/graph.ts` (`runAgent`, `deps.probe`); the step
-  harness adds the fact in `bench/step.ts` (otherwise its tape diverges from the engine).
+- **Session probe:** `src/loop/probe.ts` (`probeSession`: environment + material),
+  `src/loop/material.ts` (the workspace map: root/repo/entries/paths), `src/ir/environment.ts`
+  (`EnvironmentFact`, subsets), `src/ir/material.ts` (`MaterialFact`, `workspaceBrief`),
+  `src/ir/session.ts` (`SESSION_PROBE_ID = "fact:session"`, `probeBrief` for the environment);
+  the `add_node kind:"fact"` event — `src/loop/graph.ts` (`runAgent`, `deps.probe`); rendering —
+  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe); the step harness adds
+  the fact in `bench/step.ts` (otherwise its tape diverges from the engine).
 - **Tape:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   instructions — `src/loop/prompt/blocks.ts`, island texts — `src/ir/islands.ts`, tool
   descriptions — `src/llm/tools.ts`.
@@ -451,4 +478,46 @@ ai — Finish state <Label> — <why from stop>
      `/app/ocaml`; a general fix: show the cwd in the `bash` observation or distinguish the
      workspace/repo root.
   6. **Meta-doubt** (§5 p.4): does the `ai` marker `Start/Finish state` get in the way.
-  7. The Patch/Verification state texts (`docs/states_ru.md` §2.3–2.5 are empty).
+  7. The Patch/Verification state texts — `docs/states_ru.md` §2.4, §2.7.
+- **Orientation result vs probe (2026-10-20).** One `fact:session` (`environment` + `material`)
+  is recorded at request start. `material` is the workspace map: `root`, repo status, top-level
+  entries (full paths for small materials), file count; no configs, build commands, extensions or
+  build state. Orientation renders it as `Workspace`; Localization and Research get the same map
+  as `Orientation result` (Research also gets `Probe` with interpreters/tools); other states get
+  `Probe` (environment) under its own heading. Orientation's goal is narrowed to the inputs and
+  the acceptance declared by the request; if the map and request already name them, the first
+  step can be `stop`.
+- **Orientation across 13 tasks (2026-10-20, minimal).** Live run on the real images: **13/13
+  closed Orientation in 3 turns** (request → `stop` → transition; one `password` took 4), with no
+  material exploration, `max_turns`, `llm_error` or refusals. `fix-ocaml-gc`: 3 turns, ~6.4k input
+  tokens, 0.065₽ versus 6 turns / 25.9k / 0.166₽ in the previous scheme. K=3 routes:
+  password/cobol → Research, custom-memory/fix-git → Localization, git-leak → Research (3/3).
+  Remaining: environment for other states, `.skein` visible to the shell, probe staleness after
+  installs/edits.
+- **Localization/Patch alignment (2026-10-20).** Localization restored to the 29-turn criterion:
+  target + coordinates/extent + siblings ruled out, **no** failing code/cause. Patch — as in the
+  29-turn run (`439095b`, declared form); Verification was already that version. Probe rules:
+  `repo: none` → no git, no build docs/configs, start from the named subsystem; "the tape already
+  holds what you observed".
+- **Localization live K=3 (2026-10-20).** `fix-code-vulnerability`: 3/3, Localization 4 turns,
+  16–22k in, 0.22–0.36₽; target `_hkey`/`_hval` and CRLF/NUL named correctly. `fix-ocaml-gc`:
+  3/3, Localization 8–11 turns, 63–139k in, 1.6–2.25₽; a reasoning storm on the final turn
+  (2.3–2.8k), and turns spent on `git status/diff` with `repo: none`, HACKING and broad search.
+  Probe-aware rules added: with `repo: none` do not run git, do not read build docs/configs,
+  start from the subsystem named by the request. Repeat K=3 `fix-ocaml`: turns 9/7/9 (was
+  8/11/10), cost 2.01/1.18/1.19₽ (was 1.62/1.87/2.25) — clearly better, still above the old 6
+  turns; the reasoning storm remains in run1 (3.3k), so "one or two sibling sites" (#4) is not
+  added yet. `fix-code` — 4/4/5 turns, 0.24–0.39₽, no regression.
+- **Full fix-ocaml-gc (2026-10-20, live).** reward=1 but `stop=max_turns`, **60 turns, 7.61₽**:
+  Orientation 3/0.29, Localization 8/1.21, Patch-1 21/2.74, Verification-1 8/0.68, Patch-2 16/2.28,
+  Verification-2 4/0.40. Cause — Localization named the **wrong exact line**
+  (`p += wh * Wosize_hd` without +1); Patch applied it, the build failed, the second Patch found
+  `p += wh`. The old 29-turn run named only `pool_sweep`/encoding, and Patch derived the exact
+  change. Conclusion: Localization must not require the failing code; restore target+siblings,
+  with Patch/Verification as in the 29-turn run.
+- **Full fix-ocaml-gc after alignment (2026-10-20, live).** reward=1,
+  `stop=request_addressed`, **34 turns, 4.24₽**: Orientation 3/0.29, Localization 7/0.83,
+  **Research 5/1.00 (extra step)**, Patch 10/1.22, Verification 8/0.79, Finish 1/0.10. The exact
+  change `p += wh` is correct. Before alignment (failing code) it was 60 turns/7.61₽ and the
+  wrong line. The remaining gap to 29 turns/1.684₽ is the extra Research: for a code defect the
+  transition should go to Patch; Research stays for situations/new artifacts.

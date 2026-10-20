@@ -87,49 +87,49 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "recall",
     description:
-      "Read a STORED RESULT by id instead of repeating the command that produced it — the body is addressed by the id shown in the tape (`[id] …`). Without start/end the body starts from the top; give start/end to page a large body (the result reports a \"continue from N\" cursor). This reads a past result; searching it for a pattern is `search`, and reading a workspace FILE is `read`. Refused if the same id is recalled with no window while its body is already in view (redundant); a windowed recall is new content.",
+      "Read a STORED RESULT by id — the body addressed by the id shown in the tape (`[id] …`). Without start/end the body starts from the top; start/end page a large body (the result reports a \"continue from N\" cursor). Refused if the same id is recalled with no window while its body is already in view; a windowed recall is new content.",
     schema: recallParams,
   },
   {
     name: "search",
     description:
-      "Search INSIDE a stored result (an earlier observation), by id, for a regular expression — return matching line windows as plain text (line-numbered), with before/after context (default 3/3). Use it to locate a marker in a big stored output (a log, a build log, a command output) without paging it line by line; this searches stdout AND stderr of a stored run. It is not `grep` (which searches workspace files): the target here is one stored result id. A very broad pattern returns few candidates — narrow it.",
+      "Search INSIDE a stored result (an earlier observation) by id, for a regular expression. Returns matching line windows as plain text (line-numbered), with before/after context (default 3/3). Searches stdout AND stderr of a stored run. The target is one stored result id.",
     schema: searchParams,
   },
   {
     name: "read",
     description:
-      "Read a file from the local filesystem (filePath). Returns at most ~8K chars; offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). Use grep to find content in large files. A larger file reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window when nothing has been modified is a repeat (refused): recall the stored result by id instead. Refused if the file does not exist.",
+      "Read a file from the local filesystem (filePath). Returns at most ~8K chars; offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). A larger file reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window when nothing has been modified is refused as a repeat. Refused if the file does not exist.",
     schema: readParams,
   },
   {
     name: "grep",
     description:
-      "Fast content search: search workspace file contents by regular expression (pattern), scoped by path (a file or directory) and include (a path glob, e.g. \"**/*.c\"). Returns line-numbered plain text (`path:line:match`, context `path-line-text`, default 3/3). from is the 1-based start and pages the results (default 50, max 100); a `[showing N of M; continue from K]` trailer says how. Re-running an identical search is refused: recall its stored result by id.",
+      "Fast content search: search workspace file contents by regular expression (pattern), scoped by path (a file or directory) and include (a path glob, e.g. \"**/*.c\"). Returns line-numbered plain text (`path:line:match`, context `path-line-text`, default 3/3). `from` is the 1-based start and pages the results (default 50, max 100); a `[showing N of M; continue from K]` trailer says how. Re-running an identical search is refused; the stored result remains on the tape.",
     schema: grepParams,
   },
   {
     name: "list",
     description:
-      "List workspace files as JSON; path/include scope the listing, from pages it (default 100 files, max 200). The window is kept small (~8K chars), so it is a pointer to what exists, not content. Use it to see what exists (e.g. which extensions) before choosing include in grep. Refused if the same listing is repeated unchanged — recall the id.",
+      "List workspace files as JSON; path/include scope the listing, from pages it (default 100 files, max 200). The window is kept small (~8K chars): a pointer to what exists, not content. Refused if the same listing is repeated unchanged.",
     schema: listParams,
   },
   {
     name: "edit",
     description:
-      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique; it does not create files — use write for that. Refused if: oldString is not found; the file was modified since its last read (stale_base) — read it first; a constraint forbids the path; or the file does not exist.",
+      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique. Creates no file. Refused if: oldString is not found; the file was modified since its last read (stale_base); a constraint forbids the path; or the file does not exist.",
     schema: editParams,
   },
   {
     name: "bash",
     description:
-      "Executes a given bash command. This tool is for terminal operations like make, npm, docker, scripting — do NOT use it for file operations (reading, writing, editing, searching): use read/grep/list/edit/write instead. command is required and runs from the WORKSPACE ROOT; pass workdir to run it in a subdirectory (instead of prefixing `cd <dir> &&`), and timeout (milliseconds) to cap it. bash BLOCKS until the command exits or the engine's cap elapses (minutes), so run a build or a test suite in the FOREGROUND — it returns exit 0/non-zero and the output. stdout and stderr are captured SEPARATELY (never merge with 2>&1; a pipe hides the left side's exit code, so add `set -o pipefail` when a masked failure must not pass). The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id with recall {id, start, end}. Re-running an identical command when nothing has been modified is refused as a repeat. Changes belong to the change state.",
+      "Executes a given bash command. command is required and runs from the WORKSPACE ROOT; workdir runs it in a subdirectory; timeout (milliseconds) caps it. Blocks until the command exits or the engine's cap elapses; returns exit 0/non-zero. stdout and stderr are captured separately. The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id. Re-running an identical command when nothing has been modified is refused as a repeat.",
     schema: bashParams,
   },
   {
     name: "write",
     description:
-      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. Overwriting requires that the file was read and has not been modified since (stale_base otherwise); prefer edit for a small change. Refused if a constraint forbids the path.",
+      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. Overwriting requires that the file was read and has not been modified since (stale_base otherwise). Refused if a constraint forbids the path.",
     schema: writeParams,
   },
   {
@@ -147,7 +147,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      `Call \`stop\` — and nothing else — when this state's criterion holds. The criterion is the \`This state's done criterion: "…"\` line at the end of the context. When it holds, stop even though you could read more. why = what THIS state established, in its own terms — one short line; do not add findings that belong to another state or to the task's problem.`,
+      `Call \`stop\` when this state's criterion holds. why = where and why you stopped, with the reasoning and the detail the state after it needs — up to ~50 words.`,
     schema: stopParams,
   },
   {

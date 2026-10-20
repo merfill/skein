@@ -88,6 +88,12 @@ declared form и **не** «кандидат буквально есть в ба
 
 ## 2. Конкретные состояния
 
+> **Orientation result vs probe.** Orientation устанавливает входы и acceptance и даёт карту
+> workspace (`root`, repo, entries/paths). Эта карта показывается в **Localization** и
+> **Research** как `Orientation result`; другие состояния получают `Probe` (environment/tools)
+> отдельным заголовком. Probe — сессионный факт; Orientation result — результат предыдущего
+> состояния, не environment-бриф. Закрытые состояния и request-ход этих блоков не несут.
+
 ### 2.1 Orientation
 
 - **Предмет:** материал и способ судить успех.
@@ -98,48 +104,52 @@ declared form и **не** «кандидат буквально есть в ба
   constraints); whether it is under version control is noted when relevant`
 - **Предположения запроса:** область, подсистема, файлы — проверить по фактам, не принимать на
   веру.
-- **Environment brief:** сессионный факт (снят один раз на старте запроса, `fact`-событие):
-  `root`, `vcs`, `build`, `interpreters`, `package managers`, `missing`. Он не заменяет карту
-  материала: модель достраивает её, но не перепроверяет root/VCS/интерпретаторы командами.
+- **Workspace map:** `root`, repo-статус (none или branch/head/dirty), top-level entries
+  (для маленьких материалов — paths), число файлов. В Orientation не показываются
+  environment, расширения, конфиги, команды сборки и build state: это не её цель.
 - **Границы:** не ищет дефект, не воспроизводит сбой, не описывает ситуацию глубоко, не
-  сверяется с upstream и не разбирает историю версий глубже одной пробы «есть ли контроль
-  версий». Сбой, замеченный по ходу, — в `notes`/итог, не задерживаясь.
+  сверяется с upstream и не разбирает историю версий глубже VCS-статуса из probe. Сбой,
+  замеченный по ходу, — в `notes`/итог, не задерживаясь.
 - **Переход:**
   - → **Localization**, когда цель — найти артефакт (дефект кода, файл, запись, образ);
   - → **Research**, когда цель — ситуация/метод (скрытые данные, legacy-поведение, спека,
-    синтез);
-  - → **Construction**, когда метод очевиден из запроса и нужен новый артефакт (например,
-    готовая команда `openssl`); обычно всё же через Research.
+    синтез).
+  Новый артефакт — через **Research**; прямого ребра в Construction из Orientation нет.
 - **Пример (fix-ocaml-gc):** корень `ocaml/`; сборка `./configure && make`, приёмка
-  `make -C testsuite one DIR=tests/basic`; VCS — из environment brief → контроля версий нет.
+  `make -C testsuite one DIR=tests/basic`; VCS — из material map → контроля версий нет.
 - **Пример (password-recovery):** `/app` — tmpfs с `varsea`; VCS/сборки нет; успех — файл
   `/app/recovered_passwords.txt`.
 
 ### 2.2 Localization
 
-- **Предмет:** артефакт в существующем материале.
-- **Цель:** найти артефакт и, если это дефект кода, объяснить причину.
-- **`what`:** `find the artifact and explain the defect`
-- **`done`:** `the artifact is named with coordinates or extent, its siblings are ruled out, and
-  for a code defect the cause or violated invariant is stated`
+- **Вход:** `Orientation result` — карта workspace (root/repo/entries/paths).
+- **Предмет:** цель в существующем материале.
+- **Цель:** найти цель и отличить её от сиблингов.
+- **`what`:** `find the target in the material`
+- **`done`:** `the target is named — the file, record, image, or function — with the coordinates
+  or extent that identify it, the sibling material is ruled out, and a suspected cause is named
+  — one exact expression, step, or encoding that looks wrong, the sibling convention or
+  invariant it breaks — marked unverified`
 - **Предположения запроса:** проявление и область — лиды, проверить чтением/осмотром. Файл,
   названный в `Finish` предыдущего состояния, целью не становится: координаты добываются сами.
 - **Границы:** не применяет правку (Patch), не воспроизводит сбой (Verification), не описывает
-  ситуацию/метод (Research), не сверяется с upstream/эталоном. Для дефекта кода причина
-  обязательна: иначе Patch снова начнёт исследование.
+  ситуацию/метод (Research), не сверяется с upstream/эталоном. Сравнение с сиблингами — способ
+  найти расхождение. Причину назвать как **предполагаемую** (unverified), **одну**: конкретное
+  неверное выражение и конвенцию/инвариант сиблингов, который оно нарушает. Не доказывать её,
+  точную правку не выводить — это работа Patch.
 - **Переход:**
-  - → **Patch**, когда артефакт найден и (для дефекта) причина названа;
-  - → **Research**, когда артефакт найден, но нужен метод/ситуация (например, образ найден, но
-    надо понять, как восстановить данные).
-- **Пример (fix-ocaml-gc):** `runtime/shared_heap.c`, `pool_sweep`, строка ~650; причина —
-  двойной шаг `Whsize_hd` вместо `wh`, потому что run уже пропущен выше.
-- **Пример (fix-code-vulnerability):** `bottle.py`, `_hkey`/`_hval`; причина — потеряны проверки
-  CRLF/NUL, ожидается `ValueError`.
-- **Пример (password-recovery):** `varsea/disks/.../ae3f4c.dat` — артефакт-образ; дальше
-  Research (что с ним произошло и как восстановить).
+  - → **Patch**, когда цель названа, сиблинги исключены и названа предполагаемая причина
+    (unverified).
+  Выхода в Research нет: если нужен метод/ситуация, а не правка существующего артефакта,
+  это маршрут из Orientation (`O → R`), а не продолжение Localization.
+- **Пример (fix-ocaml-gc):** `runtime/shared_heap.c`, `pool_sweep`, строка ~650; предполагаемая
+  причина — общий advance после free-ветки идёт по `Whsize_hd` вместо `wh`; exact change — Patch.
+- **Пример (fix-code-vulnerability):** `bottle.py`, `_hkey`/`_hval`; предполагаемая причина —
+  потеряны проверки CRLF/NUL; exact change — Patch.
 
 ### 2.3 Research
 
+- **Вход:** `Orientation result` + `Probe` (interpreters/tools).
 - **Предмет:** ситуация, у которой нет одного артефакта-цели.
 - **Цель:** объяснить ситуацию и установить метод и source-проверку.
 - **`what`:** `investigate the situation and establish the method`
@@ -158,7 +168,7 @@ declared form и **не** «кандидат буквально есть в ба
   источнику**, а не по голове/энтропии; источник открывается только на копии в `/tmp` (его же
   инструмент может сделать checkpoint/truncate/delete). Probe — только для сигнатуры или
   проверки, которую нельзя установить чтением, один раз.
-- **Environment brief:** `interpreters`, `tools` (core/crypto/data/archive/net), `missing` — то,
+- **Probe (environment subset):** `interpreters`, `tools` (core/crypto/data/archive/net), `missing` — то,
   чем можно писать probe и проверять кандидата. Карта материала (root/VCS/build) сюда не
   дублируется: она уже в `Finish`-строке Orientation.
 - **Переход:**
@@ -182,6 +192,7 @@ declared form и **не** «кандидат буквально есть в ба
 
 ### 2.4 Patch
 
+- **Вход:** `Workspace` — карта материала (root/repo/entries/paths).
 - **Предмет:** существующий артефакт.
 - **Цель:** внести названное изменение.
 - **`what`:** `make the named change to the artifact`
@@ -189,7 +200,7 @@ declared form и **не** «кандидат буквально есть в ба
   result has the declared form`
 - **Границы:** не ищет артефакт (Localization), не описывает ситуацию/метод (Research), не
   восстанавливает скрытые данные (Recovery), не строит новый артефакт (Construction). Не
-  повторяет откатанную попытку; не синтезирует значения/артефакты.
+  Не повторяет откатанную попытку; не синтезирует значения/артефакты.
 - **Переход:** → **Verification**, когда изменение применено и форма проверена.
 - **Пример (fix-ocaml-gc):** `p += Whsize_hd(hd)` → `p += wh` в `pool_sweep`.
 - **Пример (fix-git):** merge потерянного коммита в `master` с разрешением конфликта.
@@ -209,7 +220,7 @@ declared form и **не** «кандидат буквально есть в ба
   read-only только сам источник. Использовать метод и source-проверку, названные `Research`; не
   переизобретать структуру контейнера и держать скрипт минимальным. Запустить на месте. **Не
   перебирать кандидатов вручную в диалоге.** Форма кандидата сама по себе — не acceptance.
-- **Environment brief:** `root`, `interpreters`, `tools`, `missing` — язык для скрипта-поиска и
+- **Probe (environment subset):** `root`, `interpreters`, `tools`, `missing` — язык для скрипта-поиска и
   инструменты проверки. Карта материала не дублируется.
 - **Границы:** источник — свидетельство, а не объект правки; не синтезировать значения; если
   deliverable — изменённый артефакт, это Patch. Скрипт держит поиск вне ленты: модель видит
@@ -289,9 +300,8 @@ declared form и **не** «кандидат буквально есть в ба
 
 Пояснения:
 
-- **Localization не обязательна для recovery**, если артефакт очевиден (образ — весь материал):
-  Research сам его назовёт и опишет ситуацию. Если артефактов несколько и надо выбрать —
-  `O → L → R → Recovery → Finish`.
+- **Localization не обязательна для recovery**: Research сам назовёт артефакты, опишет ситуацию
+  и выберет нужный. Маршрут — `O → R → Recovery → Finish`.
 - **db-wal**: WAL — артефакт, но его проблема — ситуация (кодировка/фреймы), поэтому Research +
   Recovery; декодирование WAL входит в Recovery как инструментальная операция.
 - **git-leak**: Recovery извлекает секрет; Patch делает purge; Verification проверяет и то, и

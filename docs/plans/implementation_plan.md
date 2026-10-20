@@ -210,6 +210,35 @@ Beyond Tier 0, the current line adds:
 - **Final live batch (2026-10-17, done).** `fix-ocaml-gc --net on`, 5 parallel: **5/5
   `reward=1`**, 29–50 steps, **7.315₽** total (1.031–2.521₽ per run); 999,544 in (79.7% cache),
   47,325 out (28,462 reasoning). Tokens and analysis — `docs/benches/best_bench.md`.
+- **Orientation result vs probe (2026-10-20, done).** One `fact:session`
+  (`environment` + `material`) is recorded at request start. `material` is the workspace map:
+  `root`, repo status, top-level entries/paths, file count; configs, build commands, extensions
+  and build state are gone. Orientation renders `Workspace`; Localization/Research get the same
+  map as `Orientation result` (Research also gets `Probe` with interpreters/tools); other states
+  get `Probe` (environment) under its own heading. Orientation's goal is narrowed to the inputs
+  and the acceptance declared by the request; if the map and request already name them, the first
+  step can be `stop`.
+- **Orientation across 13 tasks (2026-10-20, minimal).** Real task images: **13/13 closed
+  Orientation in 3 turns** (request → `stop` → transition; one `password` took 4), with no
+  material exploration and no errors. `fix-ocaml-gc`: 3 turns, ~6.4k in, 0.065₽ versus 6 turns /
+  25.9k / 0.166₽ before. K=3 routes: password/cobol → Research, custom-memory/fix-git →
+  Localization, git-leak → Research (3/3). Tests — `364 passed`, typecheck clean.
+- **Localization/Patch alignment (2026-10-20).** Localization — the 29-turn criterion:
+  target + coordinates/extent + siblings ruled out, **no** failing code/cause. Patch — as in the
+  29-turn run (`439095b`, declared form); Verification was already that version. Probe rules:
+  `repo: none` → no git, no build docs/configs, start from the named subsystem; "the tape already
+  holds what you observed".
+- **Full fix-ocaml (2026-10-20, live).** With failing code: 60 turns/7.61₽, wrong line, Patch-1
+  21 + Patch-2 16. After alignment: reward=1, `stop=request_addressed`, **34 turns, 4.24₽**:
+  Orientation 3/0.29, Localization 7/0.83, **Research 5/1.00 (extra step)**, Patch 10/1.22,
+  Verification 8/0.79, Finish 1/0.10. The remaining gap to 29/1.684₽ is the extra Research: for a
+  code defect the transition should be L→P; Research is for situations/new artifacts. Tests —
+  `364 passed`, typecheck clean.
+- **Localization → Patch (2026-10-20).** The late `L → R` edge is removed (`83243ae`):
+  Localization again has a single transition — Patch. A dry rebuild of the transition from the
+  34-turn run shows no Research; live K=3 — 3/3 `move patch`. Full `fix-ocaml-gc` K=1: reward=1,
+  `request_addressed`, 34 turns, 5.23₽ — no Research; the remainder is Patch at 15 turns
+  (re-deriving the cause, ~10k reasoning) and 2 turns on `.skein/checkpoints`; cache hit 81%.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit
@@ -279,6 +308,15 @@ CSP/arithmetic, UI, multilinguality, multiple LLM providers.
   done, without a doxa turn (A5 in `docs/plans/archive/step_reduction_plan.md` §5).
 - Cache: only the stable prefix (request + constraints) is cacheable; the
   projection's focus changes every turn (`docs/plans/archive/step_reduction_plan.md` §4).
+- **A path outside the workspace in `write`/`read`/`edit` (2026-10-19).** Today `/tmp/...`
+  is reinterpreted as `/app/tmp/...` (workspace-relative), and the model loses turns debugging
+  the path: 3 of 4 db-wal Recovery runs. Principled fix: **reject** a path outside the
+  workspace instead of normalizing it, and say in the tool contract that the path is
+  workspace-relative.
+- **The Research → Recovery handoff must carry the method (2026-10-19).** In db-wal `why` said
+  "determine the byte-level transform" rather than "XOR 0x42, little-endian checksums"; Recovery
+  re-derived it and got stuck on endianness (t18–t21, 4–12k chars). General rule: `stop.why`
+  carries what the next state needs — the method/coordinates/check, not just the situation.
 - **Localization loses the cross-state handoff (regression, 2026-10-15).** The real sandbox
   `fix-ocaml-gc --net on` (Phase-20 tape) failed — reward 0, `max_turns` 60: orientation closed
   on "layout known" and localization started with a causal goal ("find why the bootstrap

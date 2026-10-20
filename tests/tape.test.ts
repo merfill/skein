@@ -132,7 +132,7 @@ describe("the tape: request and state", () => {
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toContain("map the material");
+    expect(context.history[3]?.text).toContain("know the task's inputs");
     expect(context.history[4]?.text).toBe("[a1] make test");
     expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
   });

@@ -179,6 +179,7 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
 
   return {
     ...base,
+    displayRoot: mount,
     read: (path) => base.read(containerPath(path)),
     version: (path) => base.version(containerPath(path)),
     signature: (path) => base.signature(containerPath(path)),

@@ -16,6 +16,13 @@
 Один прогон — одна строка. В каталоге прогона лежит трасса (`metrics.json`, `result.json`;
 opencode пишет ещё `opencode.txt`).
 
+> **2026-10-20, final conduct, net on, K=3:** `fix-ocaml-gc` — **3/3 reward=1**,
+> 24/29/30 шагов, **1.402 / 1.634 / 2.410₽** (median **1.634₽**). Первый end-to-end
+> прогон промта, где hint = conduct, tail = conduct → goal → criterion → stop, а в
+> Localization добавлены directory/definitions + sibling-сравнение. Против opencode
+> (5 прогонов, median 1.974₽) — **−17%**; общий input в 3.7× меньше (201k против 748k),
+> cache hit хуже (71% против 96%). См. «Батч 2026-10-20» ниже.
+
 > **2026-10-18, terminal-bench breadth:** `db-wal-recovery`, `log-summary-date-ranges`,
 > `cobol-modernization`, `fix-code-vulnerability`, `password-recovery` — **5/5**;
 > `crack-7z-hash` — **3/3** завершившихся (2 прерваны). Обобщённые состояния + workspace
@@ -46,6 +53,43 @@ opencode пишет ещё `opencode.txt`).
 goal-into-move, 49 шагов). Ранее выпали: **`19-02`** (net on, 46 шагов, 6.97₽), **`08-40`**
 (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
 12.68₽) — их описания остались в разделах ниже.
+
+## Батч 2026-10-20 — final conduct, net on, K=3
+
+`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --net on`, 3 параллельно, бюджет 60,
+официальный verifier. Промт: hint = conduct; tail = **conduct → goal → criterion → stop**;
+Localization — list directories + definitions + sibling comparison; Patch — previous
+`Finish` line + «read the definition — the file that defines it, not a usage» + sibling
+confirmation.
+
+| run | шагов | вызовов | in | fresh | cache | hit | out (виз + реа) | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| `18-27-57-021` | **24** | 24 | 137 379 | 45 987 | 91 392 | 67% | 7 763 (2 916 + 4 847) | **1.402** | **1** |
+| `18-27-57-452` | 30 | 30 | 201 464 | 58 104 | 143 360 | 71% | 7 743 (3 664 + 4 079) | **1.634** | **1** |
+| `18-27-56-831` | 29 | 29 | 270 713 | 68 985 | 201 728 | 75% | 15 641 (3 303 + 12 338) | **2.410** | **1** |
+| **median** | **29** | **29** | **201 464** | **58 104** | **143 360** | **71%** | **7 763** | **1.634** | — |
+
+Все три — `request_addressed`, `reward=1`. Среднее по трём: 1.815₽; сумма 5.446₽.
+
+**Против opencode (5 прогонов, `net on/off`, все reward=1):**
+
+| | Skein K=3 | opencode K=5 |
+|---|---:|---:|
+| шагов | 24 / 29 / 30 (median 29) | 24–33 (median 27) |
+| ₽ | **1.402 / 1.634 / 2.410, median 1.634** | 1.455–2.793, median 1.974 |
+| fresh in | 45 987–68 985 (median 58 104) | median 33 449 |
+| всего in | median 201 464 | median 748 329 |
+| cache hit | 67–75% | 95–97% |
+| out | median 7 763 | median 11 993 |
+
+Итог: **median на 17% дешевле opencode**; выигрыш — за счёт в 3.7× меньшего общего
+контекста (закрытые состояния элидируются). Свежий input и cache hit у нас хуже.
+
+**Оговорки.** В каждом прогоне был транзиентный `EPIPE` от API (внутренний retry, ходы не
+потеряны). Официальный verifier — PASS (`reward=1`). Каталоги:
+`bench/runs/sandbox-tasks/2026-10-20T18-27-56-831Z-fix-ocaml-gc`,
+`…18-27-57-021Z…`, `…18-27-57-452Z…`. Тесты: `typecheck` чистый,
+offline `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — 363 passed.
 
 ## Батч 2026-10-18 — обобщённые состояния, checkpoint/revert, terminal-bench breadth
 

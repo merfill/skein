@@ -9,7 +9,7 @@ import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import type { Action, Proposals } from "../../src/llm/schemas";
-import { probeEnvironment } from "../../src/loop/probe";
+import { probeSession } from "../../src/loop/probe";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import { promptText, propose as proposeModel } from "../../src/loop/propose";
 import { fsWorkspace } from "../../src/tools/workspace";
@@ -184,7 +184,7 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
   const checkCommand = resolveCheck(fixture, options.check);
 
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns, probe: probeEnvironment },
+    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns, probe: probeSession },
     {
       request: { id: "r1", text: request },
       ...(constraints.length > 0 ? { constraints } : {}),

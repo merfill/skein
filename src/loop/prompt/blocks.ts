@@ -42,9 +42,10 @@ const START_STATES = renderStates(START_ISLANDS);
 const REQUEST_NOTES =
   "Take the state's own goal as it stands — do not fold the request into `what`; leave `done` out " +
   "(the state's default criterion applies). `notes` = what the request presumes about this state, " +
-  "in the context of the material (the area, files, records, tools, or the acceptance it points " +
-  "to) — carried in as an assumption to verify against the material, since the request may be " +
-  "wrong. One short line — up to ~20 words.";
+  "in the context of the material (the area, files, records, or the acceptance it points to) — " +
+  "carried in as an assumption to verify against the material, since the request may be wrong. " +
+  "The environment and material facts are the engine's; do not repeat them in `notes`. One short " +
+  "line — up to ~20 words.";
 
 // S1 — the base contract: who the agent is and the output discipline. It does NOT repeat the
 // tool descriptions — those ship in the request's `tools` field (the single source is the
@@ -68,12 +69,12 @@ The result must come from the source material or the request's specification. Do
 
 // S2 — the request scenario (a fresh request: choose the first state, or decline). It carries the
 // request's presumptions into the state as `notes`; the state's own goal and criterion stand as-is
-// (docs/ir_semantics.md §2.5). Rendered as a system message right after the request, per turn
+// (docs/ir_semantics.md §2.5). Appended as a system message at the end of the request turn
 // (never stored).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B6",
-    text: `Choose the state to start in from the user's request (the previous message): call \`move\` to enter it, or \`decline\` if the request admits no such state.
+    text: `Choose the state to start in from the user's request: call \`move\` to enter it, or \`decline\` if the request admits no such state.
 
 Startable states:
 ${START_STATES}
@@ -87,7 +88,8 @@ const MOVE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B7",
     text:
-      `Call a tool — the action that advances the goal above. Work on the material without ` +
+      `Call a tool — the action that advances the goal above. If the state's goal already ` +
+      `holds from its entry and the request, \`stop\` now. Work on the material without ` +
       `consuming it: copy raw artifacts before any command that may checkpoint, delete, or ` +
       `rewrite them.`,
   },
@@ -107,9 +109,13 @@ const GOAL_BLOCKS: readonly PromptBlock[] = [
 // transition turn, so the rule that decides among its reachable states lives here.
 function transitionRule(island?: IslandId): string[] {
   switch (island) {
+    case "orientation":
+      return [
+        "Choose Localization only when the deliverable is a change to an existing artifact and the next work is to name it or its cause — a file, function, record, image, or commit. A source that exists is not automatically the target: choose Research when the deliverable is a new artifact built from a specification or source behaviour, hidden/encoded/deleted data, a situation, or a method.",
+      ];
     case "localization":
       return [
-        "Choose Patch only when the artifact is named and, for a code defect, the cause or violated invariant is stated. If the artifact is evidence and the method or situation is still needed, choose Research.",
+        "Choose Patch when the target is named, its siblings are ruled out, and a suspected cause is named; mark the cause unverified.",
       ];
     case "recovery":
       return [
@@ -171,7 +177,10 @@ export const REQUEST_INSTRUCTION = assemble(REQUEST_BLOCKS);
 // holds the doxa MUST close it (`stop`), and it must not keep acting. It restates the current
 // state's criterion (concretized `done`, island fallback) so the doxa does not have to recall
 // the one-time state description far up the tape.
-export function turnInstruction(island?: IslandId, done?: string): string {
+// The per-turn tail: conduct (the state's own hint), the concretized goal, the done criterion,
+// then the closure. Ordered conduct → goal → stop: the state's own behavior sits at the top of
+// the tail and the stop criterion stays last.
+function stateTail(island?: IslandId, done?: string, what?: string): string {
   const criterion =
     done !== undefined && done !== ""
       ? done
@@ -182,8 +191,25 @@ export function turnInstruction(island?: IslandId, done?: string): string {
     criterion !== ""
       ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
       : `This state is done when its goal holds.`;
-  const hint = island !== undefined ? ISLANDS[island].hint : "";
-  return `${lead}${hint !== "" ? ` ${hint}` : ""} When it holds, \`stop\` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them. Use the environment brief when it names a fact; observe with a command only a fact it does not cover — never assume one from the request or documentation.`;
+  const conduct = island !== undefined ? ISLANDS[island].hint : "";
+  const goal =
+    what !== undefined && what !== ""
+      ? what
+      : island !== undefined
+        ? ISLANDS[island].what
+        : "";
+  return [
+    conduct,
+    goal !== "" ? `what: ${goal}` : "",
+    lead,
+    "When it holds, `stop` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
+  ]
+    .filter((part) => part !== "")
+    .join(" ");
+}
+
+export function turnInstruction(island?: IslandId, done?: string, what?: string): string {
+  return stateTail(island, done, what);
 }
 
 export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> = {
@@ -191,6 +217,14 @@ export const NODE_INSTRUCTIONS: Record<"plan" | "working" | "terminal", string> 
   working: assemble(GOAL_BLOCKS),
   terminal: assemble(TERMINAL_BLOCKS),
 };
+
+// The plan turn is the state's first action: the generic "call a tool" plus the same state
+// hint the working turns carry, so the state's own guidance is present when the first action
+// is chosen.
+export function planInstruction(island?: IslandId, done?: string, what?: string): string {
+  if (island === undefined) return NODE_INSTRUCTIONS.plan;
+  return `${NODE_INSTRUCTIONS.plan}\n\n${stateTail(island, done, what)}`;
+}
 
 export const PROMPT_BLOCKS: readonly PromptBlock[] = [
   ...BASE_BLOCKS,

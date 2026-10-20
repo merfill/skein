@@ -21,13 +21,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadSettings } from "../src/config/settings";
-import { ENV_FACT_ID } from "../src/ir/environment";
+import { SESSION_PROBE_ID } from "../src/ir/session";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project, type Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { buildMessages, propose } from "../src/loop/propose";
-import { probeEnvironment } from "../src/loop/probe";
+import { probeSession } from "../src/loop/probe";
 import { executeAction } from "../src/tools";
 import { containerWorkspace } from "../tests/sandbox/container";
 import { cleanupContainers, dockerWorkspace } from "../tests/sandbox/docker";
@@ -101,19 +101,19 @@ async function main(): Promise<void> {
   ];
 
   try {
-    // The same session fact the engine records at request start (src/loop/graph.ts), so a
-    // step-by-step tape sees the same environment the live run does.
-    // A/B switch for the environment fact on the step tape (the engine always probes).
-    const environment = process.env.SKEIN_ENV_PROBE === "false" ? undefined : probeEnvironment(workspace);
-    if (environment !== undefined) {
+    // The same session probe the engine records at request start (src/loop/graph.ts), so a
+    // step-by-step tape sees the same facts the live run does.
+    // A/B switch for the probe on the step tape (the engine always probes).
+    const probe = process.env.SKEIN_ENV_PROBE === "false" ? undefined : probeSession(workspace);
+    if (probe !== undefined) {
       seed.push({
         type: "add_node",
         node: {
-          id: ENV_FACT_ID,
+          id: SESSION_PROBE_ID,
           space: "work",
           kind: "fact",
-          label: "environment",
-          payload: environment,
+          label: "session",
+          payload: probe,
           seq: 1,
         },
       });
@@ -147,14 +147,14 @@ async function main(): Promise<void> {
     });
     writeFileSync(
       join(dir, "turns.ndjson"),
-      `${JSON.stringify({ turn, situation: context.situation, island: context.island, actions: proposals.actions, reasoning: reasoning.join("\n") })}\n`,
+      `${JSON.stringify({ turn, situation: context.situation, island: context.island, actions: proposals.actions, reasoning: reasoning.join("\n"), cacheRead: meter.cacheRead, cacheWrite: meter.cacheWrite, usage: meter.usage })}\n`,
       { flag: "a" },
     );
     writeFileSync(join(dir, "next-actions.json"), JSON.stringify(proposals.actions, null, 2));
     console.log("actions:", JSON.stringify(proposals.actions, null, 2));
     console.log("reasoning:", reasoning.join(" ").replace(/\s+/g, " ").trim().slice(0, 2000));
     console.log(
-      `usage: llm=${meter.calls} in=${meter.inputTokens} out=${meter.outputTokens} reason=${meter.reasoningTokens} cost=${meter.costCalls > 0 ? `${meter.costRub.toFixed(4)}₽` : "?"}`,
+      `usage: llm=${meter.calls} in=${meter.inputTokens} out=${meter.outputTokens} reason=${meter.reasoningTokens} cache=${meter.cacheRead}/${meter.cacheWrite} cost=${meter.costCalls > 0 ? `${meter.costRub.toFixed(4)}₽` : "?"}`,
     );
     console.log("tape →", path);
   } finally {

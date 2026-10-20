@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ISLANDS } from "../src/ir/islands";
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS, toolDescriptionsFor } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, planInstruction, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -42,7 +42,7 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the artifact is named, its siblings are ruled out, and for a code defect the cause or violated invariant is stated/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named, its siblings are ruled out, and a suspected cause is named/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation or a method/);
     expect(BASE_PROMPT).toMatch(/Finish is terminal/);
   });
@@ -54,8 +54,13 @@ describe("system prompt: base + node assembly", () => {
     expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
     expect(REQUEST_INSTRUCTION).toContain("- Orientation —");
     expect(REQUEST_INSTRUCTION).not.toContain("- Localization —");
+    expect(REQUEST_INSTRUCTION).not.toMatch(/previous message/i);
+    expect(NODE_INSTRUCTIONS.working).not.toMatch(/environment brief/i);
     expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
     expect(NODE_INSTRUCTIONS.plan).toMatch(/call a tool/i);
+    expect(planInstruction("localization")).toMatch(/call a tool/i);
+    expect(planInstruction("localization")).toContain(ISLANDS.localization.hint);
+    expect(planInstruction()).toBe(NODE_INSTRUCTIONS.plan);
     expect(transitionInstruction("orientation")).toMatch(/choose the next state/i);
     expect(NODE_INSTRUCTIONS.terminal).toMatch(/stop/i);
   });
@@ -71,8 +76,8 @@ describe("system prompt: base + node assembly", () => {
     expect(fromVerification).toContain("Localization"); // the corrective edge
     const fromLocalization = transitionInstruction("localization");
     expect(fromLocalization).toContain("Finish state Localization");
-    expect(fromLocalization).toMatch(/cause or violated invariant/);
-    expect(fromLocalization).toContain("Research");
+    expect(fromLocalization).toMatch(/target is named, its siblings are ruled out, and a suspected cause is named/);
+    expect(fromLocalization).not.toContain("Research");
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
     expect(fromRecovery).toMatch(/integrity\/consistency/);
@@ -100,10 +105,9 @@ describe("system prompt: tool contract", () => {
     expect(BASE_PROMPT).not.toContain("{ tool:");
   });
 
-  it("keeps stream discipline in the `bash` tool description (single source)", () => {
+  it("keeps the mechanical stream contract in the `bash` tool description", () => {
     const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
-    expect(bash?.function.description).toMatch(/stdout and stderr are captured SEPARATELY/i);
-    expect(bash?.function.description).toMatch(/pipefail/i);
+    expect(bash?.function.description).toMatch(/stdout and stderr are captured separately/i);
   });
 
   it("scopes the tool contract to the state's work", () => {
@@ -132,7 +136,9 @@ describe("system prompt: tool contract", () => {
   it("keeps `stop` about this state's criterion, with what it established as the record", () => {
     const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
     expect(stop?.function.description).toMatch(/criterion/i);
-    expect(stop?.function.description).toMatch(/established/i);
+    expect(stop?.function.description).toMatch(/where and why/i);
+    expect(stop?.function.description).toMatch(/reasoning/i);
+    expect(stop?.function.description).toMatch(/50 words/i);
     expect(stop?.function.description).not.toMatch(/next state/i);
     const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
     expect(required).toContain("why");
@@ -146,19 +152,38 @@ describe("system prompt: tool contract", () => {
     expect(nudge).not.toMatch(/next state/i);
   });
 
-  it("places the per-state hint before the shared closure tail", () => {
+  it("places the per-state conduct, goal and stop criterion before the closure", () => {
     const orientation = turnInstruction("orientation", "the repository root is known");
     expect(orientation).toContain(ISLANDS.orientation.hint);
-    expect(orientation).toMatch(/environment brief/i);
-    expect(orientation).toMatch(/do not re-probe what it covers/i);
-    expect(orientation).toMatch(/do not hunt the artifact/i);
-    expect(orientation).toMatch(/observed with the command that prints it/i);
-    expect(orientation).toMatch(/never\s+assumed from the request or documentation/i);
+    expect(orientation).toMatch(/workspace map is the index/i);
+    expect(orientation).toMatch(/request is the acceptance/i);
+    expect(orientation).toMatch(/do not list inside entries/i);
+    expect(orientation).toMatch(/inspect build state, configs, history, or contents/i);
+    expect(orientation).not.toMatch(/when the inputs and the acceptance are named, stop/i);
+    expect(orientation).not.toMatch(/environment brief/i);
+    expect(orientation).not.toMatch(/available tools/i);
+    // conduct → goal → stop criterion.
+    expect(orientation.indexOf(ISLANDS.orientation.hint)).toBeLessThan(orientation.indexOf("what:"));
+    expect(orientation.indexOf("what:")).toBeLessThan(orientation.indexOf("done criterion"));
 
-    const localization = turnInstruction("localization", "the failure is located");
+    const localization = turnInstruction("localization", "the failure is located", "the pool sweep in shared_heap.c");
     expect(localization).toContain(ISLANDS.localization.hint);
-    expect(localization).toMatch(/sibling material/i);
-    expect(localization).toMatch(/cause or violated invariant/i);
+    expect(localization).toMatch(/the failure is located/);
+    expect(localization).toMatch(/what: the pool sweep in shared_heap\.c/);
+    expect(localization).toMatch(/workspace map/i);
+    expect(localization).toMatch(/suspected cause is enough/i);
+    expect(localization).toMatch(/sibling that performs the same/i);
+    expect(localization).not.toMatch(/where and why you stopped/i);
+    expect(localization).not.toMatch(/sibling comparison/i);
+    expect(localization).not.toMatch(/50 words/i);
+    expect(localization).not.toMatch(/start from the subsystem/i);
+    expect(localization).not.toMatch(/repo: none/i);
+
+    const localizationDefault = turnInstruction("localization");
+    expect(localizationDefault).toMatch(/what: find the target in the material/);
+    expect(localizationDefault).toMatch(/suspected cause/i);
+    expect(localizationDefault).toMatch(/looks wrong/i);
+    expect(localizationDefault).toMatch(/marked unverified/i);
 
     const research = turnInstruction("research", "the method is named");
     expect(research).toContain(ISLANDS.research.hint);
@@ -168,18 +193,23 @@ describe("system prompt: tool contract", () => {
     expect(research).toMatch(/Say what the source IS/i);
     expect(research).toMatch(/unidentified source is an open situation/i);
     expect(research).toMatch(/do not re-read or re-derive it/i);
-    expect(research).toMatch(/mark coordinates in `why` approximate/i);
-    expect(research).toMatch(/nothing to research/i);
+    expect(research).toMatch(/mark coordinates approximate/i);
+    expect(research).not.toMatch(/nothing to research/i);
+    expect(research).toMatch(/workspace map and the `Finish state Orientation` line/i);
 
     const patch = turnInstruction("patch", "the fix is applied");
     expect(patch).toContain(ISLANDS.patch.hint);
-    expect(patch).toMatch(/do not relocate the artifact/i);
+    expect(patch).toMatch(/previous state's `Finish` line/i);
+    expect(patch).toMatch(/do not re-derive the cause/i);
+    expect(patch).toMatch(/file that defines it, not a usage/i);
+    expect(patch).toMatch(/sibling the line cites/i);
+    expect(patch).not.toMatch(/do not relocate the artifact/i);
     expect(patch).toMatch(/Previous failed attempt/);
     expect(patch).toMatch(/do not repeat that change/i);
 
     const recovery = turnInstruction("recovery", "the output is derived");
     expect(recovery).toContain(ISLANDS.recovery.hint);
-    expect(recovery).toMatch(/may create and change/i);
+    expect(recovery).toMatch(/create and change the script, output, and scratch copies/i);
     expect(recovery).toMatch(/do not re-discover the source structure/i);
     expect(recovery).toMatch(/enumerate candidates/i);
     expect(recovery).toMatch(/negative control|wrong candidate/i);
@@ -192,14 +222,11 @@ describe("system prompt: tool contract", () => {
 
     const verification = turnInstruction("verification", "the acceptance command passes");
     expect(verification).toContain(ISLANDS.verification.hint);
-    expect(verification).toMatch(/choose the next state/i);
-    expect(verification).toMatch(/patch/i);
-    expect(verification).toMatch(/localization/i);
+    expect(verification).not.toMatch(/choose the next state/i);
     expect(verification).toMatch(/wrong working directory/i);
     expect(verification).toMatch(/fix the environment and retry/i);
-    expect(verification).toMatch(/literal retelling/i);
-    expect(verification).toMatch(/Do not interpret the code/i);
-    expect(verification).toMatch(/do not propose a fix/i);
+    expect(verification).not.toMatch(/literal retelling/i);
+    expect(verification).not.toMatch(/Do not interpret the code/i);
 
     expect(NODE_INSTRUCTIONS.terminal).toContain(ISLANDS.finish.hint);
   });
@@ -209,13 +236,6 @@ describe("system prompt: tool contract", () => {
     expect(b8?.text).toMatch(/stop/i);
     expect(b8?.text).toMatch(/do not re-check/i);
     expect(NODE_INSTRUCTIONS.working).toContain(b8?.text ?? "");
-  });
-
-  // A live run backgrounded every build and then spent turns polling it; a foreground run
-  // blocks and finishes in one turn. The run tool description says to run builds in the foreground.
-  it("tells the model to run builds in the foreground (in the bash tool description)", () => {
-    const run = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
-    expect(run?.function.description).toMatch(/FOREGROUND/);
   });
 
   it("exposes the move vocabulary and no removed fields", () => {
@@ -300,20 +320,10 @@ describe("system prompt: stream discipline", () => {
   const bashDescription = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash")?.function
     .description;
 
-  it("tells the model to keep stdout and stderr separate", () => {
-    expect(bashDescription).toMatch(/stdout and stderr are captured SEPARATELY/i);
-    expect(bashDescription).toContain("2>&1");
-  });
-
-  it("allows pipes but warns that a pipe hides the exit code", () => {
-    expect(bashDescription).toMatch(/pipefail/);
-    expect(bashDescription).toMatch(/hides the left side's exit code/i);
-  });
-
-  it("states the workspace-root/cd rule in the bash description (not in move)", () => {
+  it("states the mechanical working-directory contract in the bash description", () => {
     const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
     expect(bash?.function.description).toMatch(/WORKSPACE ROOT/);
-    expect(bash?.function.description).toContain("cd <dir> &&");
+    expect(bash?.function.description).toMatch(/workdir/);
   });
 
   it("carries no failure-diagnosis playbook (the log and the tools carry it)", () => {

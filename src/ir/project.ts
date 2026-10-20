@@ -6,8 +6,10 @@ import {
   unactionableOf,
   type State,
 } from "./graph";
-import { ENV_FACT_ID, environmentBrief, type EnvironmentFact } from "./environment";
+import type { EnvironmentFact } from "./environment";
 import { ISLANDS, isTerminalIsland, stateDescription, type IslandId } from "./islands";
+import { workspaceBrief } from "./material";
+import { SESSION_PROBE_ID, probeBrief, type SessionProbe } from "./session";
 import {
   applicable,
   currentMove,
@@ -63,6 +65,9 @@ export interface Context {
   // The focused state's stop condition, concretized by the doxa on the `move` (falls back to
   // the island's generic criterion in the renderer). Used by the per-turn nudge.
   done?: string;
+  // The focused state's goal, concretized by the doxa on the `move` (falls back to the island's
+  // generic goal in the renderer). Used by the per-turn nudge.
+  what?: string;
   // The frontier: the moves admissible at the focus. The model surface is bound from it, so
   // the offered tools cannot include a move the engine would refuse (§2.6). Absent on a
   // hand-built context (tests), where the full surface is offered.
@@ -376,6 +381,30 @@ function failedAttemptText(
   return lines.join("\n");
 }
 
+// The engine-owned facts for the focused state. Orientation gets the workspace map; L/R get
+// the same map as the Orientation result and, where the state needs tools, the environment
+// probe under its own heading; other states get the probe as reference.
+function stateBrief(state: State, island: IslandId): string {
+  const probe = probeOf(state);
+  if (probe === undefined) return "";
+  const blocks: string[] = [];
+  if (island === "orientation") {
+    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
+  } else if (island === "localization" || island === "research") {
+    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
+    const environment = probeBrief(probe, island);
+    if (environment !== "") blocks.push(environment);
+  } else if (island === "patch") {
+    // Patch needs the material map, not the toolchain: the repository status (no git when
+    // `none`) and the entries resolve the located coordinates without re-listing.
+    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
+  } else {
+    const environment = probeBrief(probe, island);
+    if (environment !== "") blocks.push(environment);
+  }
+  return blocks.join("\n\n");
+}
+
 // Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
 // two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
 // (the `stop` reason). The goal is the state's OWN definition (`island.what`), a `user` turn;
@@ -406,10 +435,14 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
       });
     }
   }
-  // `system`: the engine's instruction for how to act in this state.
+  // `system`: the material the state works on, then the instruction for how to act. The
+  // session probe rides the FOCUSED state only: older closed states are compact records.
+  const focused = moveId === currentMove(state);
+  const brief = focused && island !== undefined ? stateBrief(state, island) : "";
+  if (brief !== "") out.push({ role: "system", text: brief });
   if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
-  // `user`: the state's own goal (from its definition); the doxa's `what`/`notes` are not shown.
-  if (what !== "") out.push({ role: "user", text: `what: ${what}` });
+  const goal = what !== "" ? `what: ${what}` : "";
+  if (goal !== "") out.push({ role: "user", text: goal });
   if (stopOf(state, moveId) !== undefined) {
     out.push({ role: "system", text: closureLine(state, moveId) });
     return;
@@ -530,10 +563,19 @@ export function islandOf(state: State): IslandId | undefined {
   return moveIsland(state, move);
 }
 
-// The session's environment fact, recorded once at request start (`src/loop/probe.ts`).
-function environmentOf(state: State): EnvironmentFact | undefined {
-  const node = state.nodes.get(ENV_FACT_ID);
-  return node?.kind === "fact" ? (node.payload as EnvironmentFact | undefined) : undefined;
+// The session probe, recorded once at request start (`src/loop/probe.ts`). It is not a child
+// of the request and is never copied into a state; the projection renders its subset at the
+// entry of the focused state.
+function probeOf(state: State): SessionProbe | undefined {
+  // `fact:env` is the id recorded by the previous probe version; replaying an older journal
+  // keeps its environment fact rather than silently dropping it.
+  const node = state.nodes.get(SESSION_PROBE_ID) ?? state.nodes.get("fact:env");
+  if (node?.kind !== "fact") return undefined;
+  const payload = node.payload as SessionProbe | EnvironmentFact | undefined;
+  if (payload === undefined) return undefined;
+  return "environment" in payload || "material" in payload
+    ? (payload as SessionProbe)
+    : { environment: payload as EnvironmentFact };
 }
 
 export function project(state: State, options: ProjectOptions = {}): Context {
@@ -555,13 +597,8 @@ export function project(state: State, options: ProjectOptions = {}): Context {
           text: `declined: ${typeof why === "string" && why !== "" ? why : "not actionable"}`,
         });
       } else {
-        // The session's environment fact, in the subset the current state needs. It is a
-        // `user` turn (Markdown, not a tool schema) right after the request.
-        const environment = environmentOf(state);
-        if (environment !== undefined) {
-          const brief = environmentBrief(environment, island);
-          if (brief !== "") history.push({ role: "user", text: brief });
-        }
+        // The probe lives in the state entry, not in a preamble after the request: each
+        // state gets the facts it needs, at the point where it works.
         for (const moveId of childrenOf(state, rootId)) renderState(state, moveId, history);
       }
     }
@@ -576,7 +613,9 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     history.push({ role: "tool", text: options.rejection.text, callId });
   }
   const focusedMove = currentMove(state);
-  const done = focusedMove !== undefined ? movePayload(state, focusedMove)?.done : undefined;
+  const focusedPayload = focusedMove !== undefined ? movePayload(state, focusedMove) : undefined;
+  const done = focusedPayload?.done;
+  const what = focusedPayload?.what;
   const situation = situationOf(state);
   const frontier = applicable(state, currentFocus(state));
   const nudge =
@@ -588,6 +627,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     situation,
     island,
     ...(done !== undefined && done !== "" ? { done } : {}),
+    ...(what !== undefined && what !== "" ? { what } : {}),
     applicable: frontier,
     constraints: constraintsOf(state),
     ...(nudge !== undefined ? { nudge } : {}),

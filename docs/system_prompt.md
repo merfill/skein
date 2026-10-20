@@ -61,7 +61,7 @@ Current blocks:
 | ID | Behavior | Basis | Status |
 |---|---|---|---|
 | B0 | Frame: a coding agent implemented as a state machine — stages of work with exit criteria, transitions as preconditions; files/directories on disk; independent calls are batched | `prompt_state_machine_concept` | in code |
-| B4 | The walk (`move { state, what, done }` declares the state, its goal and its stop condition — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the whole state set with a `Done` per state; the conditioned transitions grouped by source, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
+| B4 | The walk (`move { state, what, done }` declares the state, its goal and its stop condition — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the whole state set with a `Done` per state; the conditioned transitions grouped by source, rendered from `ISLANDS`; at the request only `move`/`decline` are bound, and a state's tools appear after entry | `src/ir/islands.ts` | in code |
 | B6 | Request situation: choose the starting state (`move`, with `what`/`done` scoped to it — **from the request**) or `decline`; the startable states | `tools` §5.1 | in code |
 | B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
 | B8 | Working situation **block** — superseded by `turnInstruction` (below): work the state now; when the criterion holds, `stop` (no criterion gate) | `ir_semantics` §4.3–4.4 | defined, not wired |
@@ -76,10 +76,11 @@ turn (`what: <the island's goal>`). The request **leads** the tape — the secon
 after the base prompt — on every turn. On an open state, the per-turn instruction is
 `turnInstruction` (appended last, temporary): the state's done criterion, then the state's
 `hint` (`ISLANDS[island].hint` — what to do or avoid in this state), then the shared closure rule:
-`When it holds, stop — and nothing else. A strong suspicion is enough for the code judgment;
-environment facts (the repository root, paths, versions) must be observed, not assumed — run the
-command that prints them.` Orientation's hint establishes the absolute root with `pwd`. A stalled
-state also gets a soft nudge (`Context.nudge`, `docs/ir_semantics.md` §2.8).
+`When it holds, stop — and nothing else. Do not over-work the state... Keep the source material
+intact...` Orientation's hint points at the `Workspace` block (root/repo/entries/paths);
+environment, build state and configs are not shown in Orientation — the probe goes to other
+states under its own heading. A stalled state also gets a soft nudge (`Context.nudge`,
+`docs/ir_semantics.md` §2.8).
 
 Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
 **B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a

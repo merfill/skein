@@ -91,6 +91,7 @@ export function containerWorkspace(root: string, options: ContainerOptions = {})
   // a background job would run on the host, not in the namespace).
   return {
     ...base,
+    displayRoot: mount,
     read: (path) => base.read(containerPath(path)),
     version: (path) => base.version(containerPath(path)),
     signature: (path) => base.signature(containerPath(path)),

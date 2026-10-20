@@ -40,7 +40,7 @@ describe("islands: the closed vocabulary", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
     expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research"]));
-    expect(targets("localization")).toEqual(expect.arrayContaining(["patch", "research"]));
+    expect(targets("localization")).toEqual(["patch"]);
     expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction", "patch"]));
     expect(targets("patch")).toEqual(["verification"]);
     expect(targets("recovery")).toEqual(expect.arrayContaining(["finish", "research", "patch"]));
@@ -125,7 +125,7 @@ describe("islands: the projection highlights the state", () => {
     expect(marker).toBe("Start state Orientation");
     // The goal is the state's OWN definition (`island.what`), not the move's `what`.
     const goal = context.history.find((m) => m.role === "user" && m.text.startsWith("what:"))?.text ?? "";
-    expect(goal).toBe("what: map the material and how success is judged");
+    expect(goal).toBe("what: know the task's inputs and how success is judged");
     const messages = buildMessages(context);
     expect(messages.some((message) => String(message.content) === goal)).toBe(true);
   });

@@ -22,7 +22,7 @@
 3. **Context** (`src/ir/project.ts`) — `project(state)`, детерминированная **лента
    сообщений**.
 4. **Лента** — единственная поверхность I/O: системная часть (база + инструкция узла +
-   ограничения), запрос с environment brief и история.
+   ограничения), запрос и история; probe-факты идут в записи **текущего** состояния.
 
 Перед `project` движок сверяет активные `ref` с файловой системой (`src/loop/observe.ts`);
 замеченный дрейф становится событием `mutate`.
@@ -47,9 +47,13 @@
   stdout, `error` — stderr, раздельно; `exitCode` `0` = успех, отсутствует при таймауте); провал
   несёт `failed: true`, неисполнение — `refused: true`;
 - `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`;
-- `fact.payload = { root, found, missing }` — сессионный факт движка (environment probe),
-  записанный один раз на старте запроса; связей нет, проекция рендерит его `user`-брифом,
-  подмножество которого зависит от текущего острова.
+- `fact.payload = { environment, material }` — сессионный факт движка (`fact:session`),
+  записанный один раз на старте запроса; связей нет. `environment` — `{ root, found, missing }`,
+  `material` — `{ root, repos, entries, paths, files }` (индекс workspace, без конфигов и
+  команд сборки). Факт сессионный: будущий контейнер `Session` владеет им, а деревья запросов
+  ссылаются на него по id. Проекция: Orientation — `Workspace`, L/R — `Orientation result`,
+  Patch — `Workspace` (карта материала), остальные — `Probe` (environment); закрытые состояния и
+  request-ход блоков не несут.
 
 **Связи** (`src/ir/types.ts`, без поля статуса): `move` (request → move), `unactionable`
 (request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),

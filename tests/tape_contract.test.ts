@@ -87,8 +87,8 @@ const REQ = { role: "user", content: "solve the task" };
 const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
-  { role: "system", content: expect.stringContaining("Inspect the material") },
-  { role: "user", content: expect.stringContaining("map the material") },
+  { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
+  { role: "user", content: expect.stringContaining("know the task's inputs") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -111,8 +111,8 @@ describe("move: before [request] -> delta -> after", () => {
     expect(await tapeOf(after)).toEqual([
       REQ,
       { role: "system", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Inspect the material") },
-      { role: "user", content: expect.stringContaining("map the material") },
+      { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
+      { role: "user", content: expect.stringContaining("know the task's inputs") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -459,8 +459,8 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(await tapeOf(s.after)).toEqual([
       REQ,
       { role: "system", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Inspect the material") },
-      { role: "user", content: expect.stringContaining("map the material") },
+      { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
+      { role: "user", content: expect.stringContaining("know the task's inputs") },
       { role: "system", content: "Finish state Orientation — your stop reason: done" },
     ]);
   });

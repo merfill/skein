@@ -212,6 +212,34 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **Финальный live-батч (2026-10-17, сделано).** `fix-ocaml-gc --net on`, 5 параллельных:
   **5/5 `reward=1`**, 29–50 ходов, **7.315₽** суммарно (1.031–2.521₽ на прогон); 999 544 in
   (79.7% cache), 47 325 out (28 462 reasoning). Токены и разбор — `docs/benches/best_bench_ru.md`.
+- **Orientation result vs probe (2026-10-20, сделано).** Один `fact:session`
+  (`environment` + `material`) пишется на старте запроса. `material` — карта workspace: `root`,
+  repo-статус, top-level entries/paths, число файлов; конфиги, команды сборки, расширения и
+  build state убраны. Orientation показывает `Workspace`; Localization/Research получают ту же
+  карту как `Orientation result` (Research — плюс `Probe` с interpreters/tools); остальные —
+  `Probe` (environment) отдельным заголовком. Цель Orientation сужена до входов и acceptance из
+  запроса; если карта и запрос уже всё называют, первый шаг может быть `stop`.
+- **Orientation на 13 задачах (2026-10-20, minimal).** Реальные образы задач: **13/13 закрыли
+  Orientation за 3 хода** (request → `stop` → transition; один `password` — 4), без
+  исследования материала и ошибок. `fix-ocaml-gc`: 3 хода, ~6.4k in, 0.065₽ против 6 ходов /
+  25.9k / 0.166₽ раньше. K=3 маршрутов: password/cobol → Research, custom-memory/fix-git →
+  Localization, git-leak → Research (3/3). Тесты — `364 passed`, typecheck чистый.
+- **Localization/Patch alignment (2026-10-20).** Localization — критерий 29-ходового прогона:
+  target + coordinates/extent + siblings ruled out, **без** failing code/cause. Patch — как в
+  29-ходовом (`439095b`, declared form); Verification уже был в этой версии. Добавлены
+  probe-правила: `repo: none` → без git, не читать build-доки/конфиги, старт от названной
+  подсистемы; «tape already holds what you observed».
+- **Полный fix-ocaml (2026-10-20, live).** С failing code: 60 ходов/7.61₽, неверная строка,
+  Patch-1 21 + Patch-2 16. После alignment: reward=1, `stop=request_addressed`, **34 хода,
+  4.24₽**: Orientation 3/0.29, Localization 7/0.83, **Research 5/1.00 (лишний шаг)**, Patch
+  10/1.22, Verification 8/0.79, Finish 1/0.10. Остаток разрыва с 29/1.684₽ — лишний Research:
+  для code defect нужен переход L→P; Research — для ситуаций/новых артефактов. Тесты —
+  `364 passed`, typecheck чистый.
+- **Localization → Patch (2026-10-20).** Позднее ребро `L → R` убрано (`83243ae`): у
+  Localization снова единственный переход — Patch. Dry-rebuild перехода из 34-ходового прогона
+  Research не показывает; live K=3 — 3/3 `move patch`. Полный `fix-ocaml-gc` K=1: reward=1,
+  `request_addressed`, 34 хода, 5.23₽ — Research нет; остаток — Patch 15 ходов (пере-вывод
+  причины, ~10k reasoning) и 2 хода на `.skein/checkpoints`; cache hit 81%.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
 offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с явного разрешения владельца.
@@ -284,6 +312,15 @@ CSP/арифметика, UI, мультиязычность, несколько
   плана, без хода доксы (A5 в `docs/plans/archive/step_reduction_plan_ru.md` §5).
 - Кэш: кэшируется только стабильный префикс (request + constraints); фокус
   проекции меняется каждый ход (`docs/plans/archive/step_reduction_plan_ru.md` §4).
+- **Путь вне workspace в `write`/`read`/`edit` (2026-10-19).** Сейчас `/tmp/...`
+  переинтерпретируется как `/app/tmp/...` (workspace-relative), и модель теряет ходы на
+  отладке пути: 3 из 4 Recovery-прогонов на db-wal. Принципиальный фикс — **отвергать** путь
+  вне workspace, а не нормализовать его; в контракте инструмента сказать, что путь
+  workspace-relative.
+- **Handoff Research → Recovery должен нести метод (2026-10-19).** В db-wal `why` говорил
+  «determine the byte-level transform», а не «XOR 0x42, checksums little-endian»; Recovery
+  заново выводил метод и вязнул в endianness (t18–t21, 4–12k симв.). Общее правило: `stop.why`
+  несёт то, что нужно следующему состоянию — метод/координаты/проверку, а не только ситуацию.
 - **Локализация теряет межсостоянийную передачу (регресс, 2026-10-15).** Реальный sandbox
   `fix-ocaml-gc --net on` (Phase-20-лента) провалился — reward 0, `max_turns` 60: orientation
   закрылась на «layout known», а локализация стартовала с причинной целью («find why the

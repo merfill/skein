@@ -413,10 +413,15 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 
 **States and their messages:**
 
-- `fact` — a session fact, not a call: right after the request the tape carries a `user`
-  message with a Markdown brief (`**Environment** …`) whose subset is chosen by the current
-  island (Orientation — root/vcs/build/interpreters/pkg; Research — interpreters/tools;
-  Recovery — root+interpreters/tools; other states have no brief yet). The source is an
+- `fact` — a session fact, not a call and not a separate message after the request. The
+  projection emits the block as a `system` turn before the **current** state's goal (`user`). One
+  `fact:session` carries `{ environment, material }`: available tools (with versions where they
+  are cheap), VCS status, top-level entries/paths and the file count. Orientation gets
+  `Workspace` (the map); Localization and Research get the same map as `Orientation result`
+  (Research also gets `Probe`); Patch gets it as `Workspace`; other states get `Probe`
+  (environment) under its own heading.
+  Configs, build commands, extensions and build state are not shown in Orientation; a declared
+  command is not presented as the acceptance. Closed states carry no block. The source is an
   `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
   reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a

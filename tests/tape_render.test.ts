@@ -78,7 +78,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
       { role: "user", text: "solve the task" },
       { role: "system", text: "Start state Orientation" },
       { role: "system", text: ISLANDS.orientation.instruction },
-      { role: "user", text: "what: map the material and how success is judged" },
+      { role: "user", text: "what: know the task's inputs and how success is judged" },
       { role: "system", text: "Finish state Orientation — your stop reason: done" },
     ]);
   });

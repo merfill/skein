@@ -21,7 +21,7 @@ semantics — `docs/ir_semantics.md` (changed together with the code); the opera
    helpers, the traversal stack, file versions.
 3. **Context** (`src/ir/project.ts`) — `project(state)`, a deterministic **message tape**.
 4. **Tape** — the only I/O surface: the system part (base + node instruction + constraints),
-   the request and the environment brief, plus the history.
+   the request and the history; the probe facts ride the **current** state's entry.
 
 Before `project`, the engine reconciles active `ref`s with the filesystem
 (`src/loop/observe.ts`); a drift becomes a `mutate` event.
@@ -46,9 +46,14 @@ reserved `symbol`/`test`, not produced).
   (`output` is stdout, `error` is stderr, kept apart; `exitCode` `0` = pass, absent on a
   timeout); a failure carries `failed: true`, a non-execution `refused: true`;
 - `stop.payload = { why? }`, `unactionable.payload = { why? }`, `constraint.payload = { forbid }`;
-- `fact.payload = { root, found, missing }` — an engine-owned session fact (the environment
-  probe), recorded once at request start; it has no relation and the projection renders it as a
-  `user` brief whose subset depends on the current island.
+- `fact.payload = { environment, material }` — an engine-owned session fact
+  (`fact:session`), recorded once at request start; it has no relation. `environment` is
+  `{ root, found, missing }`; `material` is `{ root, repos, entries, paths, files }` (a workspace
+  index, with no configs or build commands). The fact is session-scoped: a future `Session`
+  container owns it, and request trees reference it by id. The projection renders `Workspace` in
+  Orientation, `Orientation result` in Localization/Research, `Workspace` in Patch, and `Probe`
+  (environment) elsewhere;
+  closed states and the request turn carry none.
 
 **Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`
 (request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),

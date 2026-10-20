@@ -159,27 +159,30 @@ TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
 system   — базовый промт (States + Transitions + строка про имена файлов)   [всегда]
 system…  — ограничения (constraints), если есть                              [по необходимости]
 user     — ЗАПРОС пользователя                                              [всегда, один раз]
-user     — ENVIRONMENT BRIEF (сессионный факт, подмножество по острову)      [если есть]
 … состояния (дети запроса) в порядке появления …
 system   — инструкция текущей ситуации (plan/working/transition/terminal)   [всегда]
 ```
 
 **Запрос** показывается **один раз, вторым сообщением** (сразу после базового промта) — и так
-на **каждом** ходу, чтобы задача была видна и внутри состояния.
+на **каждом** ходу, чтобы задача была видна и внутри состояния. Отдельного probe-сообщения
+после запроса **нет**.
 
-**Environment brief** — `user`-сообщение сразу после запроса (Markdown), собранное из события
-`add_node kind:"fact"`: один детерминированный зонд на старте запроса (`src/loop/probe.ts`)
-пишет среду, проекция выбирает подмножество по текущему острову (Orientation —
-root/vcs/build/interpreters/pkg; Research — interpreters/tools; Recovery —
-root+interpreters/tools). Полный вывод зонда на ленту не попадает; replay читает записанный
-факт, а не запускает зонд.
+**Probe** — один сессионный `fact` (`id: fact:session`, payload `{ environment, material }`),
+записанный на старте запроса (`src/loop/probe.ts`). `material` — карта workspace (`root`, repo,
+entries/paths, files), без конфигов, команд сборки и расширений. Проекция показывает её как
+`Workspace` в Orientation; в Localization/Research та же карта идёт как `Orientation result`
+(Research дополнительно получает `Probe` с interpreters/tools); Patch получает её же как
+`Workspace`; остальные состояния получают `Probe` (environment) отдельным заголовком. Закрытые состояния блоков не несут, на request-ходу
+их нет. Полный вывод probe на ленту не попадает; replay читает записанный факт.
 
-**Вход в состояние** (показывается для каждого состояния):
+**Вход в состояние** (показывается для каждого состояния; блок — только у текущего):
 
 ```
 ai       — Start state <Label>
 system   — <инструкция острова: как действовать в этом состоянии>
 user     — what: <цель острова (island.what)>
+system — <Workspace в Orientation/Patch / Orientation result в L,R / Probe в остальных>
+user   — what: <цель острова>
 ```
 
 **Возврат в Localization или Patch после провала** (только текущее открытое состояние): сразу
@@ -334,6 +337,27 @@ ai — Finish state <Label> — <why из stop>
     7.315₽; run5 использовал `Verification → Patch` напрямую (один revert), остальные — прямой
     путь. Токены — `docs/benches/best_bench_ru.md`.
 
+- **Localization → Patch only (2026-10-20).** Убрано позднее ребро `Localization → Research`
+  (`83243ae`): у Localization снова единственный переход — Patch. Dry-rebuild перехода из
+  34-ходового прогона Research не показывает; live K=3 на том же ходу — 3/3 `move patch`
+  (reasoning 0–166). Полный `fix-ocaml-gc` K=1: reward=1, `request_addressed`, 34 хода, 5.23₽ —
+  Research нет, но Patch 15 ходов: пере-вывод причины (~10k reasoning на t13–t20) и 2 хода на
+  `.skein/checkpoints`; cache hit 81%.
+- **Patch получает карту материала (2026-10-20).** Patch больше не получает Probe с
+  compilers/interpreters; вместо него — `Workspace` (`root`, `repo`, `entries`, `files`), как у
+  Orientation. На записанной ленте t9 (Patch plan) dry-проекция даёт `repo: none` и
+  `entries: ocaml/ (4623 files)`; live K=3 на этом же контексте — 3/3 сразу читают
+  `runtime/shared_heap.c` (280-699), без git и без `ls`/широкого grep. Было: t9 `git status` +
+  `git diff` (7.3k символов usage, 0.157₽) и t10 `ls` + `grep free_space/run/rle` (0.156₽);
+  стало: 0.019–0.091₽ на первом ходе Patch.
+
+- **Гипотеза причины в Localization (2026-10-20, K=3).** Критерий L расширен: target +
+  siblings + предполагаемая причина (`unverified`). Полные `fix-ocaml-gc`: reward 3/3, ходы
+  30/24/43, input 307 859/153 747/334 964, cost 2.315/1.526/3.130₽ (было 34/404 613/5.226₽).
+  В 2/3 причина верная — Patch 4–6 ходов, 1.5–2.3₽; в run3 причина размытая («free-run skip
+  mixing block and word units») → неверная правка → segfault → второй Patch: 43 хода, 3.13₽.
+  Узкое место теперь — точность предполагаемой причины, а не Patch.
+
 ### Проблемы (на завтра)
 
 > Гипотеза п.1–2 **закрыта**: «позднее закрытие от того, что модель не видит свой вывод» —
@@ -404,9 +428,12 @@ ai — Finish state <Label> — <why из stop>
   `src/ir/events.ts`; `State.reverted` и версии — `src/ir/graph.ts`; хук — `src/loop/graph.ts`
   (`executeNode`).
 - **Replay с ленты:** `AgentInput.seed`/`startTurn` — `src/loop/graph.ts`; чеклист — §2.5.
-- **Session fact / environment probe:** `src/loop/probe.ts` (`probeEnvironment`),
-  `src/ir/environment.ts` (`EnvironmentFact`, подмножества и Markdown-бриф), событие
-  `add_node kind:"fact"` — `src/loop/graph.ts` (`runAgent`, `deps.probe`); в шаговом харнессе
+- **Session probe:** `src/loop/probe.ts` (`probeSession`: environment + material),
+  `src/loop/material.ts` (карта workspace: root/repo/entries/paths), `src/ir/environment.ts`
+  (`EnvironmentFact`, подмножества), `src/ir/material.ts` (`MaterialFact`, `workspaceBrief`),
+  `src/ir/session.ts` (`SESSION_PROBE_ID = "fact:session"`, `probeBrief` для environment);
+  событие `add_node kind:"fact"` — `src/loop/graph.ts` (`runAgent`, `deps.probe`); рендер —
+  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe); в шаговом харнессе
   факт добавляет `bench/step.ts` (иначе лента расходится с движком).
 - **Лента:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   инструкции — `src/loop/prompt/blocks.ts`, тексты островов — `src/ir/islands.ts`,
@@ -461,4 +488,39 @@ ai — Finish state <Label> — <why из stop>
   5. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
      общий фикс — показывать cwd в наблюдении `bash` или различать workspace/repo root.
   6. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
-  7. Тексты состояний Patch/Verification (`docs/states_ru.md` §2.3–2.5 пусты).
+  7. Тексты состояний Patch/Verification — `docs/states_ru.md` §2.4, §2.7.
+- **Orientation result vs probe (2026-10-20).** Один `fact:session` (`environment` + `material`)
+  пишется на старте запроса. `material` — карта workspace: `root`, repo-статус, top-level
+  entries (для маленьких материалов — paths), число файлов; без конфигов, команд сборки,
+  расширений и build state. Orientation показывает её как `Workspace`; Localization и Research
+  получают ту же карту как `Orientation result` (Research — плюс `Probe` с interpreters/tools);
+  остальные состояния получают `Probe` (environment) отдельным заголовком. Цель Orientation
+  сужена до входов и acceptance из запроса; если карта и запрос уже всё называют, первый же
+  шаг может быть `stop`.
+- **Orientation на 13 задачах (2026-10-20, minimal).** Живой прогон на реальных образах: **13/13
+  закрыли Orientation за 3 хода** (request → `stop` → transition; один `password` — 4), без
+  исследования материала, `max_turns`, `llm_error` или отказов. `fix-ocaml-gc`: 3 хода, ~6.4k
+  входных токенов, 0.065₽ против 6 ходов / 25.9k / 0.166₽ в прежней схеме. K=3 маршрутов:
+  password/cobol → Research, custom-memory/fix-git → Localization, git-leak → Research (3/3).
+  Осталось: environment для других состояний, `.skein` виден shell’у, staleness probe после
+  установок/правок.
+- **Localization/Patch alignment (2026-10-20).** Localization вернули к критерию 29-ходового
+  прогона: target + coordinates/extent + siblings ruled out, **без** failing code/cause.
+  Patch — как в 29-ходовом (`439095b`, declared form); Verification уже был в этой версии.
+  Добавлены probe-правила: `repo: none` → без git, не читать build-доки/конфиги, старт от
+  названной подсистемы; «tape already holds what you observed».
+- **Localization live K=3 (2026-10-20).** `fix-code-vulnerability`: 3/3, Localization 4 хода,
+  16–22k in, 0.22–0.36₽; target `_hkey`/`_hval` и CRLF/NUL назван верно. `fix-ocaml-gc`: 3/3,
+  Localization 8–11 ходов, 63–139k in, 1.6–2.25₽; reasoning-шторм на финальном ходу
+  (2.3–2.8k), модель тратит ходы на `git status/diff` при `repo: none`, HACKING и широкий поиск.
+  Сделан probe-aware набор: при `repo: none` не запускать git, не читать build-доки/конфиги,
+  начинать с названной в запросе подсистемы. Повтор K=3 `fix-ocaml`: ходы 9/7/9 (было 8/11/10),
+  стоимость 2.01/1.18/1.19₽ (было 1.62/1.87/2.25) — заметно лучше, но всё ещё больше старых
+  6 ходов; reasoning-шторм остался в run1 (3.3k), поэтому «one or two sibling sites» (#4) пока
+  не добавляли. `fix-code` — 4/4/5 ходов, 0.24–0.39₽, без регрессии.
+- **Полный fix-ocaml-gc после alignment (2026-10-20, live).** reward=1,
+  `stop=request_addressed`, **34 хода, 4.24₽**: Orientation 3/0.29, Localization 7/0.83,
+  **Research 5/1.00 (лишний шаг)**, Patch 10/1.22, Verification 8/0.79, Finish 1/0.10. Точная
+  правка `p += wh` верная. До alignment (failing code) было 60 ходов/7.61₽ и неверная строка.
+  Остаток разрыва с 29 ходами/1.684₽ — лишний Research: для code defect надо идти в Patch,
+  Research оставить для ситуаций/новых артефактов.
