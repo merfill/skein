@@ -47,15 +47,13 @@ afterEach(cleanupWorkspaces);
 
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
-  // Strip the leading system prefix (base + one message per constraint) and the TRAILING
-  // temporary instructions (the observation instruction and the situation's instruction, never
-  // in the history). The transition instruction is a `user` turn (a trailing assistant + system
-  // is a provider "prefix" and refuses the `move` call), so strip that one too. A state's
-  // description is on the tape (shown once at entry), not stripped.
+  // Strip the leading system prefix (base + one message per constraint) and the appended
+  // situation prompt: `request` appends a system turn, `transition` a `user` turn. A state's
+  // start/brief/hint are on the tape and must stay.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
-  while (end > start && all[end - 1]?.role === "system") end -= 1;
+  if (context.situation === "request" && end > start && all[end - 1]?.role === "system") end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "user") end -= 1;
   return all.slice(start, end);
 }
@@ -86,9 +84,13 @@ const REQ = { role: "user", content: "solve the task" };
 // are native call/result pairs.
 const GOAL_PREFIX = [
   REQ,
-  { role: "system", content: "Start state Orientation" },
-  { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
-  { role: "user", content: expect.stringContaining("know the task's inputs") },
+  {
+    role: "system",
+    content: expect.stringMatching(
+      /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
+    ),
+  },
+  { role: "system", content: expect.stringContaining("workspace map is the index") },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -110,9 +112,13 @@ describe("move: before [request] -> delta -> after", () => {
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      { role: "system", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
-      { role: "user", content: expect.stringContaining("know the task's inputs") },
+      {
+        role: "system",
+        content: expect.stringMatching(
+          /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
+        ),
+      },
+      { role: "system", content: expect.stringContaining("workspace map is the index") },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -146,15 +152,15 @@ describe("move: before [request] -> delta -> after", () => {
     // The finished state's plan and its command have left the tape; only the closure marker,
     // in the finished state's triple, remains.
     const texts = after.map((entry) => entry.content ?? "").join("\n");
-    expect(texts).toContain("Finish state Localization — your stop reason: the line is named");
+    expect(texts).toContain("Finish state Localization — the line is named");
     expect(texts).not.toContain("false");
     expect(
       after.find(
-        (entry) => entry.content === "Finish state Localization — your stop reason: the line is named",
+        (entry) => entry.content === "Finish state Localization — the line is named",
       ),
     ).toEqual({
       role: "system",
-      content: "Finish state Localization — your stop reason: the line is named",
+      content: "Finish state Localization — the line is named",
     });
   });
 });
@@ -431,7 +437,7 @@ describe("recall / search: they leave a node on the state's tape", () => {
       { role: "assistant", call: { name: "stop", args: {} } },
       {
         role: "tool",
-        content: expect.stringMatching(/^rejected stop: not_addressed: stop applies to an open state/),
+        content: expect.stringMatching(/^rejected stop: not_addressed: not admissible here/),
         tool_call_id: "call:rejected",
       },
     ]);
@@ -458,10 +464,13 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
       REQ,
-      { role: "system", content: "Start state Orientation" },
-      { role: "system", content: expect.stringContaining("Read the request and the workspace map") },
-      { role: "user", content: expect.stringContaining("know the task's inputs") },
-      { role: "system", content: "Finish state Orientation — your stop reason: done" },
+      {
+        role: "system",
+        content: expect.stringMatching(
+          /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
+        ),
+      },
+      { role: "system", content: "Finish state Orientation — done" },
     ]);
   });
 

@@ -39,7 +39,7 @@ export function classify(action: Action, state: State): Classification {
     }
     // A move is legal at a finished state (the transition); otherwise the state is still open.
     if (node?.kind === "move" && isMoveFinished(state, current as string)) return accept;
-    return reject("state_open: finish the current state (stop) before moving to the next one");
+    return reject("state_open: the current state is still open; a move applies after it finishes");
   }
 
   if (action.operator === "decline") {
@@ -48,7 +48,7 @@ export function classify(action: Action, state: State): Classification {
       return reject("not_request: decline formulates no state, so it applies only at the request");
     }
     if (currentMove(state) !== undefined) {
-      return reject("interpreted: the request has already started; work it or stop instead");
+      return reject("interpreted: the request has already started; work it");
     }
     if (unactionableOf(state, current as string) !== undefined) {
       return reject("repeated_action: the request is already declined");
@@ -67,7 +67,7 @@ export function classify(action: Action, state: State): Classification {
     // The doxa's closure. On an open state it finishes it; on the terminal state it ends the
     // request. There is no `stop` on the request (docs/ir_semantics.md §4.4).
     if (node?.kind === "move" && !hasStopped(state, current as string)) return accept;
-    return reject("not_addressed: stop applies to an open state or the terminal state");
+    return reject("not_addressed: not admissible here");
   }
 
   if (action.operator === "apply") {
@@ -81,7 +81,7 @@ export function classify(action: Action, state: State): Classification {
         if (!ISLANDS[island].applies.includes(tool)) {
           return reject(
             `not_in_state: ${tool} is not admissible in ${ISLANDS[island].label}; ` +
-              "stop it and move to the state that owns that work",
+              "another state owns that work",
           );
         }
       }

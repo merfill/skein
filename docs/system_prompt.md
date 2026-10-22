@@ -15,6 +15,21 @@ Related: `docs/ir_semantics.md` (IR semantics: the prompt is the doxa's policy o
 This is the **source of truth about prompt behavior**. The code follows it: a behavior
 change goes "edit here → edit the block → test".
 
+## Terminology
+
+| Concept | Term | Where |
+|---|---|---|
+| a state of work | **state** | `move { state, … }`, `Start state <label>` |
+| a transition into a state | **move** | tool `move` |
+| a state's criterion | **`done`** | `move.done`, "when `done` holds" |
+| the stop tool | **`stop`** | tool `stop { why }`; called only when `done` holds |
+| a state's closure record | **`Finish state <label> — <why>`** | tape marker |
+| the terminal state | **End** (`end`) | `move { state: "end" }` |
+
+`stop` appears only as the tool name and in "call `stop` when `done` holds"; never as "stop
+the state", "stop applies to a state", "stop reason", or "stop then move". A state's closure
+is the `Finish state` line; the request ends after the End state is finished.
+
 ## 0. Principle
 
 The prompt is an **operational spec of the doxa's policy**, not a paragraph of text. It is
@@ -35,10 +50,13 @@ L2 is under the gate, L3 is acceptance.
   instructions** (`NODE_INSTRUCTIONS`, keyed by `Situation`: `request` / `plan` / `working` /
   `transition` / `terminal`), assembled in `src/loop/prompt/blocks.ts` (re-exported by
   `src/loop/prompt/index.ts`): each is its blocks' texts joined with `\n\n`.
-- A block is `{ id: string; text: string }`; the IDs are stable (B1…).
+- A block is `{ id: string; text: string }`; the base block IDs are `B1`…`B4` and set the order
+  in the system prompt. Situation prompts are named (`request`, `plan`, `working`, `transition`,
+  `terminal`), never `B…`.
 - `src/loop/propose.ts` builds the message list as: `BASE_PROMPT`, the constraints, the tape
-  (the history), then the situation's instruction **appended last** — temporary, re-derived from
-  the situation each turn, never stored in the history (`docs/ir_semantics.md` §6).
+  (the history), then, only outside a state, the situation's prompt **appended last** —
+  temporary, re-derived from the situation each turn, never stored in the history
+  (`docs/ir_semantics.md` §6).
 - The tool contract (names, parameters, descriptions) is **not** copied into the prompt text:
   it is sent as the request's `tools` field (native function-calling), generated from the
   single registry `PROPOSAL_TOOLS` (`src/llm/tools.ts`). The prompt only tells the model to
@@ -47,7 +65,7 @@ L2 is under the gate, L3 is acceptance.
 **Assembly invariants:**
 
 1. one block = one behavior; no duplication between blocks;
-2. every behavior has an ID and a §2 entry;
+2. every behavior has an ID (base block) or a name (situation prompt) and a §2 entry;
 3. the assembled prompt equals the concatenation of blocks (checked by L1);
 4. the prompt does **not** repeat the tool descriptions — they ship in the request's `tools`
    (checked by L1).
@@ -58,76 +76,56 @@ The prompt is deliberately plain (an "opencode-style" trim, Phase 11): it states
 engine requires, not how to think. Strategy lives in the tool `description`s and the tape.
 Current blocks:
 
-| ID | Behavior | Basis | Status |
-|---|---|---|---|
-| B0 | Frame: a coding agent implemented as a state machine — stages of work with exit criteria, transitions as preconditions; files/directories on disk; independent calls are batched | `prompt_state_machine_concept` | in code |
-| B4 | The walk (`move { state, what, done }` declares the state, its goal and its stop condition — a state IS its goal; the first `apply` seeds the plan; `stop` finishes it and forces the transition); the whole state set with a `Done` per state; the conditioned transitions grouped by source, rendered from `ISLANDS`; at the request only `move`/`decline` are bound, and a state's tools appear after entry | `src/ir/islands.ts` | in code |
-| B6 | Request situation: choose the starting state (`move`, with `what`/`done` scoped to it — **from the request**) or `decline`; the startable states | `tools` §5.1 | in code |
-| B7 | Plan situation: take the state's first step (the next tool call); act on the goal and the tape; no change history | `ir_semantics` §4.2 | in code |
-| B8 | Working situation **block** — superseded by `turnInstruction` (below): work the state now; when the criterion holds, `stop` (no criterion gate) | `ir_semantics` §4.3–4.4 | defined, not wired |
-| B9 | Transition situation (dynamic — `transitionInstruction(island)`): the source of `what`/`done` is the `Finish state <label>` line of the just-finished state; the `next` neighbours (+ Finish) are listed; "choose the next state (`move`) or Finish and `stop`" | `ir_semantics` §4.1 | in code |
-| B10 | Terminal situation: the Finish state — call `stop` to end the request | `ir_semantics` §4.4 | in code |
-| B13 | Output discipline: **removed** (the base prompt carries the contract) | — | cut |
-| B19 | The workspace is the source of truth — the change is already in the files; find it by reading the code and reproducing the failure; do not assume a VCS/`git`/diff/history; a `git` failure is not retried | `tests/prompt.test.ts` | in code |
+| ID | Block | Behavior | Basis | Status |
+|---|---|---|---|---|
+| B1 | `role` | A coding agent; exactly one state at a time; the state is its goal with its own `done` criterion; tool calls each turn, run in order, independent calls batched; the state's tool calls are its steps | `prompt_state_machine_concept` | in code |
+| B2 | `principles` | Understand before acting (code, tests, imports, configs; search; read; neighbors; sibling comparison); follow the project's conventions and patterns; comments sparingly; work only the state's goal; the source is the only reference (no external version); provenance; no secrets; concise output | `specializing`/`keep-going` (opencode), `docs/ir_semantics.md` §6 | in code |
+| B3 | `states` | The state map: `label — what`, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
+| B4 | `moves` | The transitions grouped by source, rendered from `ISLANDS`; `End` is terminal | `docs/prompt_state_machine_concept.md` §4.3 | in code |
 
-A state is rendered **on the tape**, not injected per turn: a `Start state <label>` marker (an
-`assistant` turn), the state's `instruction` (a `system` turn), and the state's goal as a `user`
-turn (`what: <the island's goal>`). The request **leads** the tape — the second message, right
-after the base prompt — on every turn. On an open state, the per-turn instruction is
-`turnInstruction` (appended last, temporary): the state's done criterion, then the state's
-`hint` (`ISLANDS[island].hint` — what to do or avoid in this state), then the shared closure rule:
-`When it holds, stop — and nothing else. Do not over-work the state... Keep the source material
-intact...` Orientation's hint points at the `Workspace` block (root/repo/entries/paths);
-environment, build state and configs are not shown in Orientation — the probe goes to other
-states under its own heading. A stalled state also gets a soft nudge (`Context.nudge`,
-`docs/ir_semantics.md` §2.8).
+Situation prompts are **named**, not numbered. Only two are appended, and only outside a state:
 
-Removed in the opencode-style trim (Phase 11): **B3/B4/B5** (folded), **B8** (VCS policy),
-**B9** (external reference / diff playbook), **B11** (revision loop), **B15** (stop — now a
-bullet in B7), **B17** (foreground — now in the `bash` description). Also cut: **B10** (the
-failure-diagnosis playbook) and the localize→edit trigger from **B16**, and the
-diff/localization steering from the `webfetch`/`grep` descriptions. The rationale: these were
-opinionated strategy heuristics; the prompt now keeps only the engine contract, and a generic
-coding model strategizes from the tape and the tool descriptions.
+| Name | Situation | Role |
+|---|---|---|
+| `request` | fresh request | `system` |
+| `transition` | after a `Finish state` line | `user` |
 
-Then (Phase 13) the prompt drops every tool mechanic and moves to the `tools` field: **B12**
-(the tool index — a verbatim copy of the `tools` descriptions), **B14** (stream discipline — in
-the `bash` description) and **B16** (constraints/stale-read — in the `edit`/`write` descriptions
-and enforced by the engine) are gone; **B1**/**B2**/**B13** are reworded as a plain coding
-agent (no doxa/logos vocabulary), and **B7** is trimmed to the situational contract.
+### State tape
 
-### Per-block detail
+A state is rendered on the tape, in order:
 
-- **B1** frames a plain coding agent with access to the files and directories on disk; it makes
-  one or more moves per turn, which the engine executes in order and returns the results. A
-  batch must be independent: no call may depend on a sibling's result. The tape/projection is an
-  engine concern, not prompt text.
-- **B4** states the walk: `move { state, what }` declares the state AND its goal (a state IS
-  its goal), the first `apply` seeds the plan, further `apply`s work it, `stop` finishes it and
-  forces the transition decision; a `move` while a state is open is refused. It renders the
-  candidate initial states (`Start`) and the conditioned transitions from `ISLANDS`.
-- **B6** (request) fixes the first move: `move { state, what }` chooses the starting state and
-  its goal (or `decline` for a non-actionable request). A bash command stays literal, from the
-  workspace root, with a `cd <dir> &&` prefix in a subdirectory; if the request names no command,
-  the state's first action is a discovery one (`ls`, `cat README.md`). The `cd` rule is echoed in
-  the `move` `description` — the schema the model sees on every call.
-- **B7** (plan situation) gives the declared state's FIRST plan item — an ordinary tool call
-  (`apply`): any tool, usually a bash command. The engine runs it at once and it seeds the
-  state's plan. There are no sub-states.
-- **B8** (working situation) fixes the loop **search → implement**: search first and widely (a
-  batch of independent reads/greps), and once the exact change is named, `edit`/`write` at once;
-  when the state's criterion holds, `stop` it (no criterion gate). A `move` while the state is
-  open is refused. `stop` closes the state and is the only closure.
-- **B9** (transition) is the forced decision after a `stop`: `move { state, what }` to the next
-  state (routes from B4), or `move { state: "finish" }` when the work is done.
-- **B10** (terminal) is the Finish state: call `stop` to finish the request.
-- **B18** gives short micro-examples of a move to anchor its form.
-- **B13** keeps reasoning short — never recall/reconstruct code from memory, no code snippets in
-  reasoning (to see code, `read`/`grep`/`webfetch`).
-- **B12/B14/B16** no longer exist as blocks: the tool names/parameters/descriptions, the
-  stdout/stderr + `pipefail` guidance and the constraints/stale-read rules live in the tool
-  `description`s (`src/llm/tools.ts`) and, where enforceable, in the engine (repeat and
-  `stale_base` refusals).
+| Name | Message | Role |
+|---|---|---|
+| `start` | `Start state <Label>` + `Goal: <what>.` + `Done when: <done>.` + the island `instruction` | `system` |
+| `brief` | the probe facts for the island (`stateBrief`) | `system` |
+| `hint` | the island `hint` — state-specific conduct and the stop cue | `system` |
+| `finish` | `Finish state <Label> — <why>` | `system` |
+
+The request **leads** the tape — the second message, right after the base prompt — on every
+turn. `start`/`brief`/`hint` are shown once when the state is entered; there is no per-turn tail
+and no `user: what:`. `brief` and `hint` are elided when the state closes; the compact record is
+`start` + `finish`. The old `Previous failed attempt` block is gone: the previous states'
+`finish` lines carry the record.
+
+### Base blocks
+
+- **B1 — role.** A coding agent; exactly one state at a time; the state is its goal with its own
+  `done` criterion. Each turn is tool calls; the engine runs them in order; independent calls
+  are batched. Work the state: its tool calls are its steps.
+- **B2 — principles.** Understand before acting: read the request, surrounding code, tests,
+  imports and configuration; use the search tools; validate assumptions by reading; check
+  neighboring files; compare the target with the sibling that performs the same operation.
+  Follow the project's style, structure, naming, typing and patterns; keep changes idiomatic;
+  comment sparingly. Work only the state's goal; plan, make small changes, debug from evidence.
+  Provenance: the source is the only reference; the result comes from the source/spec, never
+  synthesized; acceptance compares against the source. No secrets; concise output.
+- **B3 — states.** The state map: `label — what`.
+- **B4 — moves.** The transitions: `from → to — when`; `End` is terminal.
+
+### Situation prompts
+
+- **`request`** — choose the starting state (`move`) or `decline`; the startable states.
+- **`transition`** — after `Finish state`: the next states and the rule among them.
 
 ## 3. Cross-cutting invariants
 

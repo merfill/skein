@@ -81,7 +81,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object or situation this state works on — optional; leave it out and the state's default goal applies. done = the knowledge that closes THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do another state's work — name the place or situation, do not derive the result. notes = what the request presumes about this state, carried in as an assumption to verify against the material. One short sentence each — up to ~20 words.`,
+      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object or situation this state works on — optional; leave it out and the state's default goal applies. done = the criterion for THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do another state's work — name the place or situation, do not derive the result. notes = what the request presumes about this state, carried in as an assumption to verify against the material. One short sentence each — up to ~20 words.`,
     schema: moveParams,
   },
   {
@@ -147,7 +147,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      `Call \`stop\` when this state's criterion holds. why = where and why you stopped, with the reasoning and the detail the state after it needs — up to ~50 words.`,
+      `Call \`stop\` to stop. why = a detailed account of why you are stopping — up to ~50 words.`,
     schema: stopParams,
   },
   {

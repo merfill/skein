@@ -62,7 +62,7 @@ describe("stop", () => {
       if (index === 1) return proposal({ operator: "move", state: "orientation", what: "map the repo", done: "mapped" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
       if (index === 3) return proposal({ operator: "stop", why: "the state is done" });
-      if (index === 4) return proposal({ operator: "move", state: "finish", what: "" });
+      if (index === 4) return proposal({ operator: "move", state: "end", what: "" });
       if (index === 5) return proposal({ operator: "stop", why: "the request is done" });
       return proposal({ operator: "recall", id: "r1" });
     };

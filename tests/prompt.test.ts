@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { ISLANDS } from "../src/ir/islands";
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS, toolDescriptionsFor } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, NODE_INSTRUCTIONS, planInstruction, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction, turnInstruction } from "../src/loop/prompt";
+import { BASE_BLOCKS, BASE_PROMPT, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -42,27 +41,18 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     // A transition carries its precondition, not just a target.
-    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named, its siblings are ruled out, and a suspected cause is named/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation or a method/);
-    expect(BASE_PROMPT).toMatch(/Finish is terminal/);
+    expect(BASE_PROMPT).toMatch(/End is terminal/);
   });
 
-  it("gives the request and goal situations their own instructions", () => {
+  it("gives the request situation its own instruction", () => {
     expect(REQUEST_INSTRUCTION.length).toBeGreaterThan(0);
-    expect(NODE_INSTRUCTIONS.working.length).toBeGreaterThan(0);
-    expect(REQUEST_INSTRUCTION).not.toBe(NODE_INSTRUCTIONS.working);
     expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
     expect(REQUEST_INSTRUCTION).toContain("- Orientation —");
     expect(REQUEST_INSTRUCTION).not.toContain("- Localization —");
     expect(REQUEST_INSTRUCTION).not.toMatch(/previous message/i);
-    expect(NODE_INSTRUCTIONS.working).not.toMatch(/environment brief/i);
-    expect(NODE_INSTRUCTIONS.working).toMatch(/stop/i);
-    expect(NODE_INSTRUCTIONS.plan).toMatch(/call a tool/i);
-    expect(planInstruction("localization")).toMatch(/call a tool/i);
-    expect(planInstruction("localization")).toContain(ISLANDS.localization.hint);
-    expect(planInstruction()).toBe(NODE_INSTRUCTIONS.plan);
     expect(transitionInstruction("orientation")).toMatch(/choose the next state/i);
-    expect(NODE_INSTRUCTIONS.terminal).toMatch(/stop/i);
   });
 
   it("at a transition, points at the finished state's `Finish` line as the source of what/done", () => {
@@ -76,7 +66,7 @@ describe("system prompt: base + node assembly", () => {
     expect(fromVerification).toContain("Localization"); // the corrective edge
     const fromLocalization = transitionInstruction("localization");
     expect(fromLocalization).toContain("Finish state Localization");
-    expect(fromLocalization).toMatch(/target is named, its siblings are ruled out, and a suspected cause is named/);
+    expect(fromLocalization).toMatch(/target is named and a cause is suspected/);
     expect(fromLocalization).not.toContain("Research");
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
@@ -133,109 +123,19 @@ describe("system prompt: tool contract", () => {
     expect(verification.bash).not.toMatch(/Inspection only/);
   });
 
-  it("keeps `stop` about this state's criterion, with what it established as the record", () => {
+  it("keeps `stop` state-agnostic: a stop tool with a bounded, detailed why", () => {
     const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
-    expect(stop?.function.description).toMatch(/criterion/i);
-    expect(stop?.function.description).toMatch(/where and why/i);
-    expect(stop?.function.description).toMatch(/reasoning/i);
+    expect(stop?.function.description).toMatch(/stop/i);
+    expect(stop?.function.description).toMatch(/why/i);
     expect(stop?.function.description).toMatch(/50 words/i);
-    expect(stop?.function.description).not.toMatch(/next state/i);
+    expect(stop?.function.description).not.toMatch(/state|criterion|next/i);
     const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
     expect(required).toContain("why");
   });
 
-  it("the working nudge names the done criterion and never a next state", () => {
-    const nudge = turnInstruction("localization", "the cause is named with the file and the exact change");
-    expect(nudge).toContain("the cause is named with the file and the exact change");
-    expect(nudge).toMatch(/stop/i);
-    expect(nudge).not.toMatch(/single next step/i);
-    expect(nudge).not.toMatch(/next state/i);
-  });
-
-  it("places the per-state conduct, goal and stop criterion before the closure", () => {
-    const orientation = turnInstruction("orientation", "the repository root is known");
-    expect(orientation).toContain(ISLANDS.orientation.hint);
-    expect(orientation).toMatch(/workspace map is the index/i);
-    expect(orientation).toMatch(/request is the acceptance/i);
-    expect(orientation).toMatch(/do not list inside entries/i);
-    expect(orientation).toMatch(/inspect build state, configs, history, or contents/i);
-    expect(orientation).not.toMatch(/when the inputs and the acceptance are named, stop/i);
-    expect(orientation).not.toMatch(/environment brief/i);
-    expect(orientation).not.toMatch(/available tools/i);
-    // conduct → goal → stop criterion.
-    expect(orientation.indexOf(ISLANDS.orientation.hint)).toBeLessThan(orientation.indexOf("what:"));
-    expect(orientation.indexOf("what:")).toBeLessThan(orientation.indexOf("done criterion"));
-
-    const localization = turnInstruction("localization", "the failure is located", "the pool sweep in shared_heap.c");
-    expect(localization).toContain(ISLANDS.localization.hint);
-    expect(localization).toMatch(/the failure is located/);
-    expect(localization).toMatch(/what: the pool sweep in shared_heap\.c/);
-    expect(localization).toMatch(/workspace map/i);
-    expect(localization).toMatch(/suspected cause is enough/i);
-    expect(localization).toMatch(/sibling that performs the same/i);
-    expect(localization).not.toMatch(/where and why you stopped/i);
-    expect(localization).not.toMatch(/sibling comparison/i);
-    expect(localization).not.toMatch(/50 words/i);
-    expect(localization).not.toMatch(/start from the subsystem/i);
-    expect(localization).not.toMatch(/repo: none/i);
-
-    const localizationDefault = turnInstruction("localization");
-    expect(localizationDefault).toMatch(/what: find the target in the material/);
-    expect(localizationDefault).toMatch(/suspected cause/i);
-    expect(localizationDefault).toMatch(/looks wrong/i);
-    expect(localizationDefault).toMatch(/marked unverified/i);
-
-    const research = turnInstruction("research", "the method is named");
-    expect(research).toContain(ISLANDS.research.hint);
-    expect(research).toMatch(/Name the situation, the method's steps, and the check/i);
-    expect(research).toMatch(/is not a check/i);
-    expect(research).toMatch(/do not derive, crack, decode, or build anything here/i);
-    expect(research).toMatch(/Say what the source IS/i);
-    expect(research).toMatch(/unidentified source is an open situation/i);
-    expect(research).toMatch(/do not re-read or re-derive it/i);
-    expect(research).toMatch(/mark coordinates approximate/i);
-    expect(research).not.toMatch(/nothing to research/i);
-    expect(research).toMatch(/workspace map and the `Finish state Orientation` line/i);
-
-    const patch = turnInstruction("patch", "the fix is applied");
-    expect(patch).toContain(ISLANDS.patch.hint);
-    expect(patch).toMatch(/previous state's `Finish` line/i);
-    expect(patch).toMatch(/do not re-derive the cause/i);
-    expect(patch).toMatch(/file that defines it, not a usage/i);
-    expect(patch).toMatch(/sibling the line cites/i);
-    expect(patch).not.toMatch(/do not relocate the artifact/i);
-    expect(patch).toMatch(/Previous failed attempt/);
-    expect(patch).toMatch(/do not repeat that change/i);
-
-    const recovery = turnInstruction("recovery", "the output is derived");
-    expect(recovery).toContain(ISLANDS.recovery.hint);
-    expect(recovery).toMatch(/create and change the script, output, and scratch copies/i);
-    expect(recovery).toMatch(/do not re-discover the source structure/i);
-    expect(recovery).toMatch(/enumerate candidates/i);
-    expect(recovery).toMatch(/negative control|wrong candidate/i);
-    expect(recovery).toMatch(/do not fabricate/i);
-
-    const construction = turnInstruction("construction", "the artifact passes");
-    expect(construction).toContain(ISLANDS.construction.hint);
-    expect(construction).toMatch(/specification or the source's behaviour/i);
-    expect(construction).toMatch(/merely exists is not done/i);
-
-    const verification = turnInstruction("verification", "the acceptance command passes");
-    expect(verification).toContain(ISLANDS.verification.hint);
-    expect(verification).not.toMatch(/choose the next state/i);
-    expect(verification).toMatch(/wrong working directory/i);
-    expect(verification).toMatch(/fix the environment and retry/i);
-    expect(verification).not.toMatch(/literal retelling/i);
-    expect(verification).not.toMatch(/Do not interpret the code/i);
-
-    expect(NODE_INSTRUCTIONS.terminal).toContain(ISLANDS.finish.hint);
-  });
-
-  it("keeps the stop condition in the working instruction (B8): a state closes by stop", () => {
-    const b8 = PROMPT_BLOCKS.find((block) => block.id === "B8");
-    expect(b8?.text).toMatch(/stop/i);
-    expect(b8?.text).toMatch(/do not re-check/i);
-    expect(NODE_INSTRUCTIONS.working).toContain(b8?.text ?? "");
+  it("numbers the base blocks B1..B4 in system-prompt order and names the request prompt", () => {
+    expect(BASE_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2", "B3", "B4"]);
+    expect(PROMPT_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2", "B3", "B4", "request"]);
   });
 
   it("exposes the move vocabulary and no removed fields", () => {
@@ -243,7 +143,7 @@ describe("system prompt: tool contract", () => {
     const description = move?.function.description ?? "";
     expect(description).not.toContain("sketch");
     expect(description).toContain("never batch");
-    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${NODE_INSTRUCTIONS.working}`;
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("localization")}`;
     for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
       expect(prompt, `prompt must not mention ${removed}`).not.toContain(removed);
       expect(description, `move must not mention ${removed}`).not.toContain(removed);
@@ -306,7 +206,7 @@ describe("tool surface: no drift to a removed tool", () => {
   it("mentions no removed tool anywhere the model reads", () => {
     // `query` was split into `recall`/`search`; the old name must not survive in a tool
     // description or the prompt, or the model will call a tool that does not exist.
-    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${NODE_INSTRUCTIONS.working}`;
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("localization")}`;
     for (const tool of PROPOSAL_TOOLS) {
       expect(tool.function.description, `${tool.function.name} mentions 'query'`).not.toMatch(
         /\bquery\b/i,
@@ -327,9 +227,9 @@ describe("system prompt: stream discipline", () => {
   });
 
   it("carries no failure-diagnosis playbook (the log and the tools carry it)", () => {
-    expect(NODE_INSTRUCTIONS.working).not.toMatch(/WRONG WORKING DIRECTORY/);
-    expect(NODE_INSTRUCTIONS.working).not.toMatch(/SETUP, not the defect/);
-    expect(NODE_INSTRUCTIONS.working).not.toMatch(/From a failure to its cause/);
+    expect(BASE_PROMPT).not.toMatch(/WRONG WORKING DIRECTORY/);
+    expect(BASE_PROMPT).not.toMatch(/SETUP, not the defect/);
+    expect(BASE_PROMPT).not.toMatch(/From a failure to its cause/);
   });
 
   it("keeps the stale-read safeguard in the edit/write descriptions, no localize->edit trigger", () => {
@@ -337,12 +237,12 @@ describe("system prompt: stream discipline", () => {
     const write = PROPOSAL_TOOLS.find((tool) => tool.function.name === "write")?.function.description;
     expect(edit).toMatch(/stale_base/);
     expect(write).toMatch(/stale_base/);
-    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.working}`;
+    const prompt = BASE_PROMPT;
     expect(prompt).not.toMatch(/LOCALIZED|NAMED SUSPECT/);
   });
 
   it("no longer carries the external-reference / diff playbook", () => {
-    const prompt = `${BASE_PROMPT}\n${NODE_INSTRUCTIONS.working}`;
+    const prompt = BASE_PROMPT;
     expect(prompt).not.toMatch(/External reference/i);
     expect(prompt).not.toMatch(/LEAD, not a checklist/i);
   });
@@ -361,7 +261,7 @@ describe("context format: tape", () => {
     constraints: [{ id: "k1", forbid: ["secret"] }],
   };
 
-  it("lays the context out as a stable prefix, the constraints, the tape, then the open-state nudge", () => {
+  it("lays the context out as a stable prefix, the constraints, then the tape", () => {
     const messages = buildMessages(context);
     expect(messages[0]).toMatchObject({ role: "system", content: BASE_PROMPT });
     expect(messages[1]?.role).toBe("system");
@@ -382,9 +282,9 @@ describe("context format: tape", () => {
     const result = Array.isArray(tool.content) ? tool.content[0] : undefined;
     expect(result).toMatchObject({ type: "tool-result", toolCallId: "c1" });
     expect((result as { output?: { value?: string } }).output?.value).toContain("boom");
-    // The open-state nudge is appended last (temporary — never in the history).
-    expect(messages.at(-1)).toMatchObject({ role: "system", content: turnInstruction() });
-    expect(messages).toHaveLength(6);
+    // No per-turn tail: the open-state prompt lives on the tape, not appended here.
+    expect(messages.at(-1)?.role).toBe("tool");
+    expect(messages).toHaveLength(5);
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {

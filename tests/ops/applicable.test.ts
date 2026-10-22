@@ -80,7 +80,7 @@ describe("frontier (applicable)", () => {
 
   it("the terminal state offers stop", () => {
     const { ws } = makeWorkspace({});
-    const moved = exec(move("finish"), [request()], ws);
+    const moved = exec(move("end"), [request()], ws);
     const moveId = currentFocus(moved.state)!;
     expect(applicable(moved.state, moveId)).toMatchObject({ stop: true, move: false, apply: false });
   });

@@ -101,10 +101,10 @@
 - **инструкция ситуации** добавляется в конце каждого хода (временно, не хранится):
   `request` (выбери первое состояние или `decline`; `what`/`done` — **из запроса**), `plan`
   (первый шаг состояния), `working` (`turnInstruction`: критерий назван явно — «This state's done
-  criterion: "<criterion>". When it holds, `stop` — and nothing else; do not over-work the state»),
+  criterion: "<criterion>". When it holds, call `stop`; do not over-work the state»),
   `transition` (`transitionInstruction(island)`: источник `what`/`done` — строка `Finish state
-  <label>` закрытого состояния; перечислены соседи по `next`; выбери следующее или Finish),
-  `terminal` (вызови `stop`, чтобы завершить);
+  <label>` закрытого состояния; перечислены соседи по `next`; выбери следующее или End),
+  `terminal` (вызови `stop`, когда запрос завершён);
 - **ограничения** добавляются отдельными `system`-сообщениями.
 
 Точная граница базы и ситуации — предмет следующего этапа (составной системный промпт).

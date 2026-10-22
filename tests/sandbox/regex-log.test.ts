@@ -47,7 +47,7 @@ function proposerFor(regex: string) {
   };
   const write: Action = { operator: "apply", action: { tool: "write", path: "/app/regex.txt", content: regex } };
   const stopState: Action = { operator: "stop", why: "the regex is written" };
-  const toEnd: Action = { operator: "move", state: "finish", what: "" };
+  const toEnd: Action = { operator: "move", state: "end", what: "" };
   const stopRequest: Action = { operator: "stop", why: "the regex is written" };
   return scripted([toWork, goal, write, stopState, toEnd, stopRequest], stopRequest);
 }

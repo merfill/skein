@@ -110,7 +110,7 @@ never nested under it.
 |---|---|---|---|---|---|
 | open a state | focus is the request with no `move` yet | add `move` (`state`, `what`); `move` relation request → move; `descend` | the state is declared; focus → the `move`; its plan is empty until the first `apply` | `empty_state` | `OP-MV-1` |
 | transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `state_open` | `OP-MV-2` |
-| terminal | the state is `finish` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
+| terminal | the state is `end` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
 
 - **Projection** (`PRJ-MV`): the tape gains a `Start state <label>` marker (an `assistant` turn),
   the state's `instruction` (a `system` turn) and the state's goal as a `user` turn
@@ -118,7 +118,7 @@ never nested under it.
   <why>` marker (from the `move.stop` relation); the state's own plan turns are elided (§7).
 - **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
   **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
-  it) and where to go next. `what` is required except for the terminal `finish`.
+  it) and where to go next. `what` is required except for the terminal `end`.
 
 ### 2.2 the state's first plan item (`OP-CG`)
 
@@ -275,14 +275,14 @@ the request (`unactionable` relation) and ends the run
 
 The doxa's terminal move and the **sole closure**. On an open **goal** it finishes the state's
 work (the engine returns to the governing `move` and forces the transition decision); on the
-**terminal state** (`finish`, which has no goal) it ends the run. There is no criterion and no
+**terminal state** (`end`, which has no goal) it ends the run. There is no criterion and no
 check: the doxa decides while working.
 
 | Case | Pre | Effects | Derived | Refuses | ID |
 |---|---|---|---|---|---|
 | finish a state's work | the focus is an open state | add a `stop` node and a `stop` relation from the state's `move` | the state is finished; focus returns to its `move` | — | `OP-ST-1` |
 | closure recorded on the move | a state | the `stop` node is hung off the `move` (no plan item); the reason lives in its `why` | the closure and its reason sit on the `move` | — | `OP-ST-2` |
-| the request ends | the focus is the terminal state (`finish`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
+| the request ends | the focus is the terminal state (`end`) | add a `stop` node and a `stop` relation from the `move` | the run ends, stopReason `request_addressed` | — | `OP-ST-3` |
 | not at a closeable state | the focus is the request, or a non-terminal `move` | — | — | `not_addressed` | `REF-ST-STATE` |
 
 - **Projection** (`PRJ-STOP`): the state's closure renders as a `Finish state <label> — <why>`

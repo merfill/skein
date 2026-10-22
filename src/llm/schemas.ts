@@ -70,7 +70,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     // Declare the state (island of work) the doxa will work in — the automaton's transition —
     // AND the state's goal text (`what`); the state IS its goal (docs/ir_semantics.md §4.1,
     // docs/plans/archive/goal_into_move_plan.md). `what` is required except for the terminal
-    // Finish state, which has no plan.
+    // End state, which has no plan.
     operator: z.literal("move"),
     state: z.enum(ISLAND_IDS),
     what: z.string(),

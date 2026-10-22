@@ -54,10 +54,10 @@ describe("the message tape under a long horizon", () => {
     );
 
     expect(lengths.length).toBeGreaterThan(30);
-    // The request turn stays; the declared state adds the `Start state` marker, the state's
-    // instruction and the goal turn (+3); each later command appends an assistant call and a
+    // The request turn stays; the declared state adds the `Start state` message (goal/done/
+    // instruction) and the hint (+2); each later command appends an assistant call and a
     // tool result.
-    expect(lengths[1]).toBe((lengths[0] ?? 0) + 3);
+    expect(lengths[1]).toBe((lengths[0] ?? 0) + 2);
     for (let i = 2; i < lengths.length; i += 1) {
       expect(lengths[i]).toBe((lengths[i - 1] ?? 0) + 2);
     }
@@ -81,7 +81,7 @@ describe("the message tape under a long horizon", () => {
       if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B", done: "b" }] };
       if (call === 5) return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
       if (call === 6) return { thought: "", actions: [{ operator: "stop", why: "B is done" }] };
-      if (call === 7) return { thought: "", actions: [{ operator: "move", state: "finish", what: "" }] };
+      if (call === 7) return { thought: "", actions: [{ operator: "move", state: "end", what: "" }] };
       return { thought: "", actions: [{ operator: "stop", why: "done" }] };
     };
 
@@ -94,7 +94,7 @@ describe("the message tape under a long horizon", () => {
     // `Start state` / goal / `Finish state` triple, remains.
     const last = contexts.at(-1);
     const texts = last?.history.map((message) => message.text).join("\n") ?? "";
-    expect(texts).toContain("Finish state Orientation — your stop reason: A is done");
+    expect(texts).toContain("Finish state Orientation — A is done");
     expect(texts).not.toContain("FIRSTCMD");
   }, 30_000);
 });

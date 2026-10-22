@@ -230,13 +230,13 @@ ai — Finish state <Label> — <why from stop>
 | `request` | `REQUEST_INSTRUCTION` — pick the starting state (`move`) or `decline` |
 | `plan` | "Call a tool — the action that advances the goal above." |
 | `working` | `turnInstruction` — the state's criterion + "when it holds, `stop`; a suspicion is enough…" |
-| `transition` | `transitionInstruction` — read the `Finish` line, pick the next state |
-| `terminal` | "This is Finish. Call `stop` now…" |
+| `transition` | `transitionInstruction` — read the `Finish state` line, pick the next state |
+| `terminal` | "This is End. Call `stop` when the request is complete…" |
 
 **What is erased (not shown):**
 - `notes` from `move` — not rendered;
 - `what` from `move` — not rendered (the goal comes from the island definition);
-- **a closed state's plan** — all `ai`/`tool` pairs are replaced by a single `Finish` line.
+- **a closed state's plan** — all `ai`/`tool` pairs are replaced by a single `Finish state` line.
 
 **What is added:**
 - the request — at the top, once;
@@ -517,7 +517,7 @@ ai — Finish state <Label> — <why from stop>
   with Patch/Verification as in the 29-turn run.
 - **Full fix-ocaml-gc after alignment (2026-10-20, live).** reward=1,
   `stop=request_addressed`, **34 turns, 4.24₽**: Orientation 3/0.29, Localization 7/0.83,
-  **Research 5/1.00 (extra step)**, Patch 10/1.22, Verification 8/0.79, Finish 1/0.10. The exact
+  **Research 5/1.00 (extra step)**, Patch 10/1.22, Verification 8/0.79, End 1/0.10. The exact
   change `p += wh` is correct. Before alignment (failing code) it was 60 turns/7.61₽ and the
   wrong line. The remaining gap to 29 turns/1.684₽ is the extra Research: for a code defect the
   transition should go to Patch; Research stays for situations/new artifacts.

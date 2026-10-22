@@ -14,7 +14,7 @@ export const ISLAND_IDS = [
   "recovery",
   "construction",
   "verification",
-  "finish",
+  "end",
 ] as const;
 
 export type IslandId = (typeof ISLAND_IDS)[number];
@@ -64,12 +64,11 @@ export const ISLANDS: Record<IslandId, Island> = {
     instruction:
       "Read the request and the workspace map: root, repository status, top-level entries. Name " +
       "the acceptance as the request declares it. If the request and the map already name the " +
-      "inputs and the acceptance, `stop` now. Do not list inside the entries, verify build " +
-      "targets or paths, read file contents, or inspect history or data formats — those belong " +
-      "to the next state.",
+      "inputs and the acceptance, `stop`.",
     hint:
-      "The workspace map is the index; the request is the acceptance. Do not list inside " +
-      "entries, check paths, or inspect build state, configs, history, or contents.",
+      "The workspace map is the index; the request is the acceptance. Do not go inside " +
+      "entries, check paths, or inspect build state, configs, history, or contents — those " +
+      "belong to the next state.",
     applies: INSPECT,
     next: [
       {
@@ -87,34 +86,22 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Localization",
     what: "find the target in the material",
     criterion:
-      "the target is named — the file, record, image, or function — with the coordinates or " +
-      "extent that identify it; its siblings are ruled out; and a suspected cause is named — the " +
-      "expression, step, or encoding that looks wrong and the rule or invariant it breaks — " +
-      "marked unverified",
+      "the target is named — the file, record, image, or function — and a suspected cause is " +
+      "named — the expression, step, or encoding that conflicts with the source's own " +
+      "comment/invariant",
     instruction:
-      "Find the target in the material — the file, record, image, or function — and name its " +
-      "coordinates or extent. Before inspecting, think about what the code is supposed to do from " +
-      "the user's request, the workspace map (filesystem facts), the environment (available " +
-      "tools), and the filenames; use that to choose which files and symbols to inspect. For " +
-      "shell work, use only the tools the environment lists; missing ones are unavailable. " +
-      "Distinguish " +
-      "it from its siblings by shape, code, or signature. Name " +
-      "the target, say why the siblings are not it, and name a suspected cause: the expression, " +
-      "step, or encoding that looks wrong and the rule or invariant it breaks. Mark the cause " +
-      "unverified. Do not change the target.",
+      "Find the target from the request, the workspace map and the filenames: list the relevant " +
+      "directories, choose candidate files by name — the implementation and the definitions or " +
+      "headers it uses — and inspect those.",
     hint:
-      "Start from the workspace map (filesystem facts) and the environment (available tools). " +
-      "Think about what the code is supposed to do from the filenames and the directory " +
-      "structure: list the relevant directories and choose the candidate files by name — the " +
-      "implementation and the definitions or headers it uses — then inspect those. Compare the " +
-      "target with the sibling that performs the same traversal or operation — the neighbouring " +
-      "loop or function — and use its pattern as the reference. A suspected cause is enough to " +
-      "stop — do not look for a different bug.",
+      "Once you can name the target and a conflict with the source's own invariant, that is " +
+      "enough — stop. The request's changes are one defect. Put the detailed reason in the " +
+      "`why`: the target and the conflict. Do not change the target.",
     applies: INSPECT,
     next: [
       {
         to: "patch",
-        when: "the target is named, its siblings are ruled out, and a suspected cause is named (unverified)",
+        when: "the target is named and a cause is suspected",
       },
     ],
   },
@@ -163,10 +150,6 @@ export const ISLANDS: Record<IslandId, Island> = {
         to: "construction",
         when: "a new artifact or program must be built from the specification or the source's behaviour",
       },
-      {
-        to: "patch",
-        when: "the situation is a repository or history and the change is an edit to an existing artifact",
-      },
     ],
   },
   patch: {
@@ -179,12 +162,12 @@ export const ISLANDS: Record<IslandId, Island> = {
       "length, format), produce it and check that form in the same step. Do not relocate the " +
       "artifact or re-derive the cause.",
     hint:
-      "The change is the one the previous state's `Finish` line names — read it and apply it. Do " +
-      "not re-derive the cause or choose a different change. Read the definition of every symbol " +
-      "the change uses — the file that defines it, not a usage — and the sibling the line cites; " +
-      "use them only to confirm the change. If a `Previous failed attempt` block is present, do " +
-      "not repeat that change. If the result has a declared form, print it and check it in the " +
-      "same step; do not synthesize values or artifacts to satisfy the form.",
+      "The cause is the one the previous state's `Finish` line names — apply the change it " +
+      "implies. Do not re-derive the cause or choose a different one. Read the definition of " +
+      "every symbol the change uses — the file that defines it, not a usage — and the sibling " +
+      "the line cites; use them only to confirm the change. If the result has a declared form, " +
+      "print it and check it in the same step; do not synthesize values or artifacts to satisfy " +
+      "the form.",
     applies: PATCH_TOOLS,
     next: [
       {
@@ -196,7 +179,7 @@ export const ISLANDS: Record<IslandId, Island> = {
   recovery: {
     id: "recovery",
     label: "Recovery",
-    what: "reconstruct the hidden data from the source",
+    what: "recover the required result from the source",
     criterion:
       "the required output exists, is derived from the source, and the source's own " +
       "integrity/consistency check passes — a match to the declared form or mere presence in the " +
@@ -216,20 +199,12 @@ export const ISLANDS: Record<IslandId, Island> = {
     applies: RECOVER_TOOLS,
     next: [
       {
-        to: "finish",
+        to: "end",
         when: "the required output exists, is derived from the source, and the source's own integrity/consistency check passes",
       },
       {
         to: "research",
         when: "the method or the source check failed — no candidate was accepted, or the check cannot decide",
-      },
-      {
-        to: "localization",
-        when: "the source or object is not the right one",
-      },
-      {
-        to: "patch",
-        when: "the recovered material must now be applied as a change to an existing artifact",
       },
     ],
   },
@@ -253,16 +228,12 @@ export const ISLANDS: Record<IslandId, Island> = {
     applies: CONSTRUCT_TOOLS,
     next: [
       {
-        to: "finish",
+        to: "end",
         when: "the artifact exists, is derived from the specification or source behaviour, and the acceptance check passes",
       },
       {
         to: "research",
         when: "the method or specification did not hold — the check failed for a method reason",
-      },
-      {
-        to: "localization",
-        when: "the source or input is not the right one",
       },
     ],
   },
@@ -285,18 +256,18 @@ export const ISLANDS: Record<IslandId, Island> = {
       "fix the environment and retry.",
     applies: INSPECT,
     next: [
-      { to: "finish", when: "the acceptance holds" },
+      { to: "end", when: "the acceptance holds" },
       { to: "patch", when: "it fails but the located object still holds — the failure is in the change or result (value, length, format, span, assembly)" },
       { to: "localization", when: "it fails and the object itself is in doubt — not found, or the failure points to a different object" },
     ],
   },
-  finish: {
-    id: "finish",
-    label: "Finish",
-    what: "finish the request",
+  end: {
+    id: "end",
+    label: "End",
+    what: "complete the request",
     criterion: "",
-    instruction: "The work is done; finish the request.",
-    hint: "Call `stop` now to end the request.",
+    instruction: "The work is done; complete the request.",
+    hint: "Call `stop` when the request is complete.",
     applies: [],
     next: [],
   },
@@ -317,7 +288,7 @@ export function stateDescription(island: Island, what?: string, done?: string): 
 
 // The terminal state: reaching it is the sign of the end; it carries no goal and accepts
 // `stop` directly (docs/plans/archive/state_protocol_plan.md §2, §6.7).
-export const TERMINAL_ISLAND: IslandId = "finish";
+export const TERMINAL_ISLAND: IslandId = "end";
 
 export function isTerminalIsland(value: string): boolean {
   return value === TERMINAL_ISLAND;

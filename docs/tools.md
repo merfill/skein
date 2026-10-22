@@ -49,7 +49,7 @@ operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the I
 |---|---|
 | `move` | declare the state (island of work) to work in AND its goal `what` — the automaton's transition; the plan hangs off the `move` |
 | `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch`; the first `apply` after a `move` seeds the state's plan |
-| `stop` | the sole closure: finish the state's `move` (or the terminal `move`; no criterion gate) |
+| `stop` | the sole closure: the tool description is state-agnostic; the state's hint defines what `why` must contain; the engine accepts it on an open state (no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
 
@@ -58,9 +58,9 @@ operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the I
 - `state` — the island of work to work in, one of the names the base prompt lists
   (`reconnaissance`, `localization`, `patch`, `verification`, …); an authored label, never a
   gate. The first `move` picks the opening state; later moves pick the next one (only after the
-  current state is `stop`ped).
+  current state is finished).
 - `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
-  the terminal `finish` state (which has no goal).
+  the terminal `end` state (which has no goal).
 
 Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
 focus becomes a `move` node and the plan hangs directly off it. The next move is the state's
@@ -104,9 +104,12 @@ gone — the model never used them.
 
 ### 2.4 `stop { why? }`
 
-The doxa's terminal move and the sole closure. On an open state it finishes that state: the
-engine hangs a `stop` node off the state's `move` (a `stop` relation, not a plan item;
-`hasStopped` is the derived fact), and the doxa then `move`s to the next state. On the **terminal move** (`finish`, which has no
+The doxa's terminal move and the sole closure. The tool description is **state-agnostic**:
+`Call stop to stop. why = a detailed account of why you are stopping — up to ~50 words.` The
+state's hint on the tape says what the `why` must contain — it must satisfy the `Done when`
+declared in the state's `Start state`. On an open state it finishes that state: the engine hangs
+a `stop` node off the state's `move` (a `stop` relation, not a plan item; `hasStopped` is the
+derived fact); the next decision is the transition. On the **terminal move** (`end`, which has no
 `what`) it hangs the `stop` node off the `move` and ends the request.
 There is **no criterion gate**: `stop` is accepted on an open state (cycle / premature-stop
 detection is deferred). There is **no** `stop` on the request: the run ends when the terminal

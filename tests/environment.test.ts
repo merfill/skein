@@ -177,7 +177,7 @@ describe("environment probe", () => {
     expect(localization).toContain("interpreters:");
     expect(localization).toContain("tools: jq");
     expect(localization).not.toContain("root:");
-    expect(environmentBrief(environment, "finish")).toBe("");
+    expect(environmentBrief(environment, "end")).toBe("");
   });
 
   it("marks a timed-out probe as partial", () => {
@@ -278,10 +278,10 @@ describe("session probe projection", () => {
     const probe: SessionProbe = { environment, material };
     const context = project(fold([request(), probeEvent(probe), ...move("orientation")]));
     expect(context.history[0]).toMatchObject({ role: "user", text: "task" });
-    const goal = context.history.find(
-      (message) => message.role === "user" && message.text.startsWith("what:"),
+    const start = context.history.find(
+      (message) => message.role === "system" && message.text.includes("Start state Orientation"),
     );
-    expect(goal?.text).toBe("what: know the task's inputs and how success is judged");
+    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
     const brief = context.history.find(
       (message) => message.role === "system" && message.text.includes("Workspace map"),
     );
@@ -353,10 +353,10 @@ describe("session probe projection", () => {
     );
     expect(results).toHaveLength(1);
     expect(results[0]?.text).not.toContain("what:");
-    const goal = context.history.find(
-      (message) => message.role === "user" && message.text === "what: investigate the situation and establish the method",
+    const start = context.history.find(
+      (message) => message.role === "system" && message.text.includes("Start state Research"),
     );
-    expect(goal?.text).toBe("what: investigate the situation and establish the method");
+    expect(start?.text).toContain("Goal: investigate the situation and establish the method.");
   });
 });
 

@@ -118,7 +118,7 @@ function buildSteps(): Step[] {
   // The terminal state: stop to finish the request.
   {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("finish"), [request("Done.")], ws);
+    const moved = exec(move("end"), [request("Done.")], ws);
     steps.push({
       name: "terminal-stop",
       context: projectAt(moved.events),

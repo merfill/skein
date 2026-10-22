@@ -5,7 +5,7 @@
 > чтобы они не смешивались друг с другом и не «перетекали» одно в другое.
 >
 > Реализовано в `src/ir/islands.ts`: восемь состояний (`orientation`, `localization`,
-> `research`, `patch`, `recovery`, `construction`, `verification`, `finish`). Документ описывает
+> `research`, `patch`, `recovery`, `construction`, `verification`, `end`). Документ описывает
 > их цели, критерии и маршруты. Live/tape-валидация: первый полный путь на `password-recovery`
 > пройден (v2); остальные классы — впереди. Общие формулировки живут в `islands.ts`, уточнения —
 > в подсказках запроса и перехода (`src/loop/prompt/blocks.ts`).
@@ -75,7 +75,7 @@ Acceptance — это то, по чему видно, что задача реш
 Для `Patch` acceptance обычно внешний (тесты/сборка проекта), поэтому после него идёт
 **Verification**. Для `Recovery` и `Construction` acceptance — та же source-проверка, которой
 состояние уже пользуется, поэтому проверка входит **в критерий самого состояния**: оно идёт в
-`Finish` при успехе и в `Research` при провале метода.
+`End` при успехе и в `Research` при провале метода.
 
 **Source-проверка** (в коде — `the source's own integrity/consistency check`) — свойство самого
 источника: checksum, hash, container metadata, structural invariant или known records. Это **не**
@@ -124,14 +124,13 @@ declared form и **не** «кандидат буквально есть в ба
 
 - **Вход:** `Orientation result` — карта workspace (root/repo/entries/paths).
 - **Предмет:** цель в существующем материале.
-- **Цель:** найти цель и отличить её от сиблингов.
+- **Цель:** найти цель.
 - **`what`:** `find the target in the material`
-- **`done`:** `the target is named — the file, record, image, or function — with the coordinates
-  or extent that identify it, the sibling material is ruled out, and a suspected cause is named
-  — one exact expression, step, or encoding that looks wrong, the sibling convention or
-  invariant it breaks — marked unverified`
+- **`done`:** `the target is named — the file, record, image, or function — and a suspected
+  cause is named — one exact expression, step, or encoding that conflicts with the source's own
+  comment/invariant or with the sibling that performs the same operation`
 - **Предположения запроса:** проявление и область — лиды, проверить чтением/осмотром. Файл,
-  названный в `Finish` предыдущего состояния, целью не становится: координаты добываются сами.
+  названный в `Finish state` предыдущего состояния, целью не становится: координаты добываются сами.
 - **Границы:** не применяет правку (Patch), не воспроизводит сбой (Verification), не описывает
   ситуацию/метод (Research), не сверяется с upstream/эталоном. Сравнение с сиблингами — способ
   найти расхождение. Причину назвать как **предполагаемую** (unverified), **одну**: конкретное
@@ -170,12 +169,10 @@ declared form и **не** «кандидат буквально есть в ба
   проверки, которую нельзя установить чтением, один раз.
 - **Probe (environment subset):** `interpreters`, `tools` (core/crypto/data/archive/net), `missing` — то,
   чем можно писать probe и проверять кандидата. Карта материала (root/VCS/build) сюда не
-  дублируется: она уже в `Finish`-строке Orientation.
+  дублируется: она уже в `Finish state`-строке Orientation.
 - **Переход:**
   - → **Recovery**, когда нужно восстановить скрытые/закодированные/удалённые данные;
-  - → **Construction**, когда нужно создать новый артефакт/программу;
-  - → **Patch**, когда ситуация — это история/репозиторий и нужна правка существующего
-    артефакта (например, merge потерянного коммита).
+  - → **Construction**, когда нужно создать новый артефакт/программу.
 - **Пример (password-recovery):** файл удалён; в 4 MiB образе фрагментированный ZIP: local
   header на ~1 MiB, хвост данных на ~3 MiB; кандидат проверяется по CRC32; пароль — 23 символа,
   `8XD…W54`, uppercase/цифры.
@@ -210,7 +207,7 @@ declared form и **не** «кандидат буквально есть в ба
 
 - **Предмет:** ситуация со скрытыми/закодированными/удалёнными данными.
 - **Цель:** восстановить данные из источника и записать требуемый output.
-- **`what`:** `reconstruct the hidden data from the source`
+- **`what`:** `recover the required result from the source`
 - **`done`:** `the required output exists, is derived from the source, and the source's own
   integrity/consistency check passes — a match to the declared form or mere presence in the
   source is not enough`
@@ -227,10 +224,9 @@ declared form и **не** «кандидат буквально есть в ба
   компактный результат, а не тысячи кандидатов. Negative control: кандидат, проходящий форму, но
   не source-проверку, должен быть отвергнут.
 - **Переход:**
-  - → **Finish**, когда output записан и source-проверка прошла;
+  - → **End**, когда output записан и source-проверка прошла;
   - → **Research**, когда метод/source-проверка не сработали (нет кандидатов, все отвергнуты);
   - остаться/повторить, когда ошибка исполнения (путь, формат, выбор кандидата);
-  - → **Localization**, если не тот объект/источник.
 - **Пример (password-recovery):** скрипт перебирает пары фрагментов, строит
   `PASSWORD=<candidate>\n`, сверяет CRC32 с central directory (`0xb0725dc4`), проверяет формат,
   пишет все совпадения; negative control — неверный кандидат отвергнут.
@@ -251,10 +247,9 @@ declared form и **не** «кандидат буквально есть в ба
 - **Границы:** не правит исходный артефакт (Patch); source — спецификация поведения, а не объект
   изменения; не подменяет проверку «файл создан».
 - **Переход:**
-  - → **Finish**, когда артефакт создан и проверка прошла;
+  - → **End**, когда артефакт создан и проверка прошла;
   - → **Research**, когда метод/спека не сходятся;
-  - остаться/повторить при ошибке исполнения;
-  - → **Localization**, если не тот source/вход.
+  - остаться/повторить при ошибке исполнения.
 - **Пример (regex-log):** `regex.txt` + харнесс на positive/negative строках.
 - **Пример (cobol-modernization):** `program.py` + дифференциальный прогон против COBOL.
 - **Пример (openssl-selfsigned-cert):** ключ/сертификат/PEM + `openssl verify` и проверка полей.
@@ -272,36 +267,36 @@ declared form и **не** «кандидат буквально есть в ба
   внешнюю). Если acceptance внешний/скрытый, модель делает сильнейшую доступную проверку и
   честно называет границы. Проверка, читающая только свой output, — не acceptance.
 - **Переход:**
-  - → **Finish**, когда acceptance держится;
+  - → **End**, когда acceptance держится;
   - → **Patch**, когда изменение неверно, а объект тот же;
   - → **Localization**, когда объект/координаты в сомнении.
 - **Пример (fix-ocaml-gc):** `make -C testsuite one DIR=tests/basic` → 40 passed.
 - **Пример (fix-code-vulnerability):** `pytest -rA` + `report.jsonl`.
 - **Пример (custom-memory-heap-crash):** release/debug + valgrind без утечек.
 
-### 2.8 Finish
+### 2.8 End
 
 - **Предмет:** запрос.
 - **Цель:** завершить работу.
-- **Критерий:** работа сделана; `stop` закрывает запрос.
+- **Критерий:** запрос завершён; когда он выполнен — `stop`.
 - **Переход:** терминальное состояние.
 
 ## 3. Маршруты
 
 | класс | маршрут |
 |---|---|
-| **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `O → L → P → V → Finish` |
-| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → Recovery → Finish` |
-| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → R → Construction → Finish` |
-| **History** (fix-git) | `O → L → P → V → Finish`; вариант `O → R → P → V` |
-| **Hybrid** (git-leak-recovery) | `O → R → Recovery → P → V → Finish` |
+| **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `O → L → P → V → End` |
+| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → Recovery → End` |
+| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → R → Construction → End` |
+| **History** (fix-git) | `O → L → P → V → End` |
+| **Hybrid** (git-leak-recovery) | `O → R → Recovery → P → V → End` |
 
 `O` — Orientation, `L` — Localization, `R` — Research, `P` — Patch, `V` — Verification.
 
 Пояснения:
 
 - **Localization не обязательна для recovery**: Research сам назовёт артефакты, опишет ситуацию
-  и выберет нужный. Маршрут — `O → R → Recovery → Finish`.
+  и выберет нужный. Маршрут — `O → R → Recovery → End`.
 - **db-wal**: WAL — артефакт, но его проблема — ситуация (кодировка/фреймы), поэтому Research +
   Recovery; декодирование WAL входит в Recovery как инструментальная операция.
 - **git-leak**: Recovery извлекает секрет; Patch делает purge; Verification проверяет и то, и

@@ -200,7 +200,7 @@ session
 
 ```
 - Reading  what: «прочитать AGENTS.md и запомнить правила»  closed  why: «правила записаны»
-- Finish   —                                               closed
+- End      —                                               closed
 ```
 
 ## 6. Проекция мета-unit'а

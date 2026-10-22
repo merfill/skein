@@ -651,18 +651,16 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; the move adds the `Start state` marker, the state's
-    // instruction and the goal as a user turn (the request leads the tape); the first apply seeds
-    // the plan.
+    // A fresh request is a single user turn; the move adds the `Start state` message (goal, done,
+    // instruction) and the hint (the request leads the tape); the first apply seeds the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
-    expect(roles[2]).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "system", "system"]);
+    expect(roles[2]).toEqual(["user", "system", "system", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
       "system",
       "system",
-      "user",
       "assistant",
       "tool",
       "assistant",
@@ -699,7 +697,7 @@ describe("the message tape", () => {
           ],
         };
       }
-      if (index === 5) return proposal({ operator: "move", state: "finish", what: "" });
+      if (index === 5) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -829,7 +827,7 @@ describe("runAgent", () => {
         return proposal({ operator: "apply", action: { tool: "bash", command: "node --test" } });
       }
       if (index === 5) return proposal({ operator: "stop", why: "node --test passes" });
-      if (index === 6) return proposal({ operator: "move", state: "finish", what: "" });
+      if (index === 6) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "node --test passes" });
     };
     const result = await runAgent(
@@ -856,7 +854,7 @@ describe("runAgent", () => {
         });
       }
       if (index === 3) return proposal({ operator: "stop", why: "state done" });
-      if (index === 4) return proposal({ operator: "move", state: "finish", what: "" });
+      if (index === 4) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -979,7 +977,7 @@ describe("runAgent", () => {
         return proposal({ operator: "recall", id: id ?? "missing", start: 55, end: 65 });
       }
       if (index === 5) return proposal({ operator: "stop", why: "seen enough" });
-      if (index === 6) return proposal({ operator: "move", state: "finish", what: "" });
+      if (index === 6) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -1025,10 +1023,10 @@ describe("runAgent", () => {
     expect(context.situation).toBe("working");
     expect(context.history[0]?.role).toBe("user"); // the request leads the tape
     expect(context.history[1]?.role).toBe("system");
-    expect(context.history[1]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toContain("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
-    // The state IS its goal: the goal (the state's own `what`) is a `user` turn after the request.
+    // The state IS its goal: the goal (the state's own `what`) is inside the `Start state` message.
     const goal =
       context.history.map((message) => message.text).find((text) => text.includes("know the task's inputs")) ?? "";
     expect(goal).toContain("know the task's inputs");

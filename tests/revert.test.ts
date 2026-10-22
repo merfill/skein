@@ -95,17 +95,15 @@ describe("revert: checkpoint covers bash, write and deletions", () => {
     expect(outcome.events[0]).toMatchObject({ type: "revert", patchMoveId });
   });
 
-  it("names a bash change in the failed-attempt block instead of 'no file changed'", () => {
+  it("carries the failure in the Finish lines, not in a failed-attempt block", () => {
     const { ws, events } = failedPatch([
       run("sed -i 's/return a - b;/return a + b;/' src/sum.mjs"),
     ]);
     const moved = exec(move("localization", "find again"), events, ws);
-    const block = project(moved.state).history.find((message) =>
-      message.text.startsWith("Previous failed attempt:"),
-    );
-    expect(block?.text).toContain("Patch: src/sum.mjs");
-    expect(block?.text).toContain("sed -i");
-    expect(block?.text).not.toContain("no file changed");
+    const history = project(moved.state).history;
+    expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
+    expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
+    expect(history.map((message) => message.text)).toContain("Finish state Patch — changed");
   });
 
   it("without a checkpoint, write in a Patch is still a conflict", () => {
@@ -156,20 +154,17 @@ describe("revert: failed Patch -> Localization", () => {
     expect(currentVersion(after, "file:src/sum.mjs")).toBe(ws.version("src/sum.mjs"));
   });
 
-  it("re-entering Localization says the change was reverted and allows the same area", () => {
+  it("re-entering Localization has no failed-attempt block; the revert is in the journal", () => {
     const { ws, events, state, patchMoveId } = failedAttempt();
     const outcome = revertLastPatch(state, patchMoveId, ws);
     const moved = exec(move("localization", "find again"), [...events, ...outcome.events], ws);
-    const block = project(moved.state).history.find((message) =>
-      message.text.startsWith("Previous failed attempt:"),
-    );
-    expect(block?.text).toContain("has been reverted in the workspace");
-    expect(block?.text).toContain("Verification: still fails");
-    expect(block?.text).toContain("A different change is required");
-    expect(block?.text).not.toContain("look elsewhere");
+    const history = project(moved.state).history;
+    expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
+    expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
+    expect(fold([...events, ...outcome.events]).reverted.has(patchMoveId)).toBe(true);
   });
 
-  it("re-entering Patch carries the failed attempt block", () => {
+  it("re-entering Patch keeps the Start/Finish record and adds no failed-attempt block", () => {
     const { ws, events, state, patchMoveId } = failedAttempt();
     const outcome = revertLastPatch(state, patchMoveId, ws);
     const localization = exec(move("localization", "find again"), [...events, ...outcome.events], ws);
@@ -177,16 +172,14 @@ describe("revert: failed Patch -> Localization", () => {
     const patch = exec(move("patch", "fix again"), stopped.events, ws);
     const history = project(patch.state).history;
     const starts = history
-      .map((message, index) => (message.role === "system" && message.text === "Start state Patch" ? index : -1))
+      .map((message, index) => (message.role === "system" && message.text.startsWith("Start state Patch") ? index : -1))
       .filter((index) => index >= 0);
     expect(starts).toHaveLength(2);
-    const block = history.slice(starts[1]! + 1).find((message) => message.text.startsWith("Previous failed attempt:"));
-    expect(block?.text).toContain("has been reverted in the workspace");
-    expect(block?.text).toContain("Verification: still fails");
-    expect(block?.text).toContain("Do not repeat this change");
+    expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
+    expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
   });
 
-  it("keeps the doxa's failure why even when the run exited 0", () => {
+  it("keeps the doxa's failure why in the Finish line even when the run exited 0", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let step = execAll(withGoal("do it", "true"), [request()], ws);
     step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
@@ -196,14 +189,14 @@ describe("revert: failed Patch -> Localization", () => {
     step = exec({ operator: "stop", why: "changed" }, step.events, ws);
     step = execAll([move("verification", "check it"), run("true")], step.events, ws);
     step = exec({ operator: "stop", why: "acceptance failed: tests/basic failed" }, step.events, ws);
-    // No revert: exit 0 means the engine sees no failed run. The model's why still explains
-    // the failure, and the block must carry it.
+    // No revert: exit 0 means the engine sees no failed run. The model's why still explains the
+    // failure, and the Finish line carries it.
     const moved = exec(move("localization", "find again"), step.events, ws);
-    const block = project(moved.state).history.find((message) =>
-      message.text.startsWith("Previous failed attempt:"),
+    const history = project(moved.state).history;
+    expect(history.map((message) => message.text)).toContain(
+      "Finish state Verification — acceptance failed: tests/basic failed",
     );
-    expect(block?.text).toContain("Verification: acceptance failed: tests/basic failed");
-    expect(block?.text).toContain("The failed change is still in the workspace");
+    expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
   });
 
   it("does not revert a passing Verification", () => {
@@ -258,14 +251,12 @@ describe("revert: failed Patch -> Localization", () => {
     expect(ws.read("src/sum.mjs")).toContain("return a - b;");
     const history = project(fold(result.events)).history;
     const starts = history
-      .map((message, index) => (message.role === "system" && message.text === "Start state Patch" ? index : -1))
+      .map((message, index) => (message.role === "system" && message.text.startsWith("Start state Patch") ? index : -1))
       .filter((index) => index >= 0);
     const lastStart = starts.at(-1);
     expect(lastStart).toBeDefined();
-    const block = history.slice((lastStart as number) + 1).find((message) =>
-      message.text.startsWith("Previous failed attempt:"),
-    );
-    expect(block?.text).toContain("has been reverted in the workspace");
+    expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
+    expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
   });
 
   it("the loop reverts before the move to Localization", async () => {

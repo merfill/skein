@@ -215,7 +215,7 @@ projection and `classify`.
 | an open state (no plan yet: `plan`) | `apply`, `stop` | give the first plan item — the first `apply` seeds the plan |
 | an open state (plan has items: `working`) | `apply`, `stop` | continue the work; `stop` closes the state |
 | a finished state (`transition`) | `move` | the forced transition decision |
-| the terminal state (`finish`, `terminal`) | `stop` | the request is complete |
+| the terminal state (`end`, `terminal`) | `stop` | the request is complete |
 
 ### 2.7 How a command enters the tree
 
@@ -290,7 +290,7 @@ Declares the state (the island of work) the doxa will work in — the automaton'
 
 **Input.** `{ state, what }`: `state` — one of the island names the base prompt lists (the
 **first** move picks the opening state; later moves the next one); `what` — the concrete goal of
-**this state** (required except for the terminal `finish`, which has no plan).
+**this state** (required except for the terminal `end`, which has no plan).
 
 **Action.** Create a `move` node `M` with payload `{ state, what }`; link it as the
 request's newest `move` child (`R.move += M`); emit `descend` `R → M`. Focus moves to `M`. The
@@ -299,7 +299,7 @@ move declares the state AND its goal: the plan hangs directly off `M`. The move 
 refused while a state is still open (`state_open`) or with a bad state name (`empty_state`).
 
 **Focus.** The focus becomes `M`; the next admissible moves are `apply` (the first call seeds
-the plan) and `stop`; at the terminal state (`finish`, no plan) only `stop`.
+the plan) and `stop`; at the terminal state (`end`, no plan) only `stop`.
 
 ### 4.2 `apply`
 
@@ -323,7 +323,7 @@ Closes a state — the only way to finish it.
 
 **Action.** If the focus is an open **state** (a `move` not yet stopped), create a `stop` node
 `S` and link `M.stop = S`: the state is finished; the next decision is the transition (§4.1).
-If the focus is the **terminal state** (`finish`, which has no plan), the same `stop` ends the
+If the focus is the **terminal state** (`end`, which has no plan), the same `stop` ends the
 request (`request_addressed`). There is **no criterion gate**: the doxa closes the state while
 working. `stop` at the request (or at an already-finished state) is refused (`not_addressed`).
 
@@ -379,7 +379,7 @@ hypothesis) is new records; only the derived view is recomputed.
 | Condition | Closed by | Derived state |
 |---|---|---|
 | an open state | `stop` (no gate) | closed; the `stop` relation leads move → stop; the state is finished, focus stays on its `move` |
-| the terminal state (`finish`) | `stop` (no gate) | closed; the `stop` relation leads move → stop; the request ends (`request_addressed`) |
+| the terminal state (`end`) | `stop` (no gate) | closed; the `stop` relation leads move → stop; the request ends (`request_addressed`) |
 | the request (root) | ends when the terminal state is stopped (`request_addressed`) or on `decline` (`request_unactionable`); the request has no `stop` | the run ends |
 
 **The request is not closed in the IR.** There is no "accepted" node: the user's silence is
@@ -437,7 +437,7 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   mechanical last failing command/tail. It is a projection of existing events
   (`mutates`/`observation`/`stop`), not a status
   or a gate; `stop` still closes only by the doxa. Only the last attempt is shown (earlier ones
-  remain on the tape as `Finish` lines);
+  remain on the tape as `Finish state` lines);
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
   observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
   `item`), so the first plan item is an ordinary tool call;
@@ -478,14 +478,14 @@ identifier, not by path: read a fragment with `recall { id, start, end }`, searc
 nonzero exit.
 
 **The system part** is assembled per situation, not as a monolith: the base prompt holds only
-what is true on any turn (the role, the contract, the walk, and the state set with its
+what is true on any turn (the role, the principles, the contract, the state set and its
 transitions); appended last each turn (temporary, never stored) is the current situation's
 instruction per situation: `request` (choose the first state, or `decline`; `what`/`done` — from the
 request), `plan` (the state's first step), `working` (`turnInstruction`: the criterion named
-explicitly — "This state's done criterion: "<criterion>". When it holds, `stop` — and nothing else;
+explicitly — "This state's done criterion: "<criterion>". When it holds, call `stop`;
 do not over-work the state"), `transition` (`transitionInstruction(island)`: the source of
 `what`/`done` is the `Finish state <label>` line of the just-finished state; the `next` neighbours
-are listed; choose the next state), `terminal` (call `stop` to end). The tool names/parameters/descriptions
+are listed; choose the next state), `terminal` (call `stop` when the request is complete). The tool names/parameters/descriptions
 are **not** in the prompt — they ship in the request's `tools` field, and that field is **bound
 from `Context.applicable`**: on a `request`/`transition` only `move` is offered (plus read-only
 `recall`/`search`), while a state is open the apply tools and `stop` are offered, so a move the
@@ -511,7 +511,7 @@ as `allowedTools`).
    state (closure is `stop` alone). It delimits the open state's action surface — the tools the
    island's `applies` admits; a tool outside it is refused (`not_in_state`), but the doxa can
    always leave the mode with a `move`.
-10. The request ends when the terminal state (`finish`) is stopped, or when it is declined;
+10. The request ends when the terminal state (`end`) is stopped, or when it is declined;
     there is no `stop` on the request.
 
 ---

@@ -31,10 +31,12 @@ export function movePayload(state: State, id: string): MovePayload | undefined {
 }
 
 export function moveIsland(state: State, id: string): IslandId | undefined {
-  return movePayload(state, id)?.state;
+  const island = movePayload(state, id)?.state;
+  // A journal written before the terminal state was renamed still says `finish`.
+  return (island as string | undefined) === "finish" ? "end" : island;
 }
 
-// Is the state of this `move` finished? A state (including the terminal Finish state, which
+// Is the state of this `move` finished? A state (including the terminal End state, which
 // has no plan) is finished when it is stopped — the doxa's `stop` is the only closure
 // (docs/ir_semantics.md §2.5).
 export function isMoveFinished(state: State, id: string): boolean {

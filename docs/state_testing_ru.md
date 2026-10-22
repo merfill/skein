@@ -230,13 +230,13 @@ ai — Finish state <Label> — <why из stop>
 | `request` | `REQUEST_INSTRUCTION` — выбрать стартовое состояние (`move`) или `decline` |
 | `plan` | «Call a tool — the action that advances the goal above.» |
 | `working` | `turnInstruction` — критерий состояния + «когда он выполнен, `stop`; подозрения достаточно…» |
-| `transition` | `transitionInstruction` — прочитать строку `Finish`, выбрать следующее состояние |
-| `terminal` | «This is Finish. Call `stop` now…» |
+| `transition` | `transitionInstruction` — прочитать строку `Finish state`, выбрать следующее состояние |
+| `terminal` | «This is End. Call `stop` when the request is complete…» |
 
 **Что затирается (не показывается):**
 - `notes` из `move` — не рендерятся;
 - `what` из `move` — не рендерится (цель берётся из определения острова);
-- **план закрытого состояния** — все пары `ai`/`tool` заменяются одной строкой `Finish`.
+- **план закрытого состояния** — все пары `ai`/`tool` заменяются одной строкой `Finish state`.
 
 **Что добавляется:**
 - запрос — вверху, один раз;
@@ -520,7 +520,7 @@ ai — Finish state <Label> — <why из stop>
   не добавляли. `fix-code` — 4/4/5 ходов, 0.24–0.39₽, без регрессии.
 - **Полный fix-ocaml-gc после alignment (2026-10-20, live).** reward=1,
   `stop=request_addressed`, **34 хода, 4.24₽**: Orientation 3/0.29, Localization 7/0.83,
-  **Research 5/1.00 (лишний шаг)**, Patch 10/1.22, Verification 8/0.79, Finish 1/0.10. Точная
+  **Research 5/1.00 (лишний шаг)**, Patch 10/1.22, Verification 8/0.79, End 1/0.10. Точная
   правка `p += wh` верная. До alignment (failing code) было 60 ходов/7.61₽ и неверная строка.
   Остаток разрыва с 29 ходами/1.684₽ — лишний Research: для code defect надо идти в Patch,
   Research оставить для ситуаций/новых артефактов.

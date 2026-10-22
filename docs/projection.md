@@ -100,10 +100,10 @@ The system part is assembled per situation, not as a monolith:
 - the **situation instruction** is appended last each turn (temporary, never stored):
   `request` (choose the first state, or `decline`; `what`/`done` — **from the request**), `plan`
   (the state's first step), `working` (`turnInstruction`: the criterion named explicitly — "This
-  state's done criterion: "<criterion>". When it holds, `stop` — and nothing else; do not over-work
+  state's done criterion: "<criterion>". When it holds, call `stop`; do not over-work
   the state"), `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
   `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
-  the next state or Finish), `terminal` (call `stop` to end);
+  the next state or End), `terminal` (call `stop` when the request is complete);
 - the **constraints** are added as separate `system` messages.
 
 The exact base/situation boundary is the subject of the following stage (the composite system

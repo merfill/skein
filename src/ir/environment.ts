@@ -67,7 +67,7 @@ function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
   if (island === "recovery") return RECOVERY_GROUPS;
   if (island === "construction") return CONSTRUCTION_GROUPS;
   if (island === "verification") return VERIFICATION_GROUPS;
-  // Localization and Finish inspect the material with the model's own search tools.
+  // Localization and End inspect the material with the model's own search tools.
   return [];
 }
 

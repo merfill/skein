@@ -205,7 +205,7 @@ function closureLine(state: State, moveId: string): string {
   const label = island !== undefined ? ISLANDS[island].label : "State";
   const stop = stopOf(state, moveId);
   const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
-  return `Finish state ${label} — your stop reason: ${typeof why === "string" && why !== "" ? why : "done"}`;
+  return `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
 }
 
 // The plan's action nodes, in plan order (docs/ir_semantics §2.3).
@@ -255,132 +255,6 @@ function tailLines(text: string): string {
   return tail.length > 700 ? `…${tail.slice(tail.length - 700)}` : tail;
 }
 
-// The change a state actually performed (the last mutating action of its plan), from the
-// recorded call args and the `mutates` edges. A refused or read-only call mutated nothing and
-// is not the failed change. Empty `path` means the state changed no file.
-function lastWrite(state: State, moveId: string): {
-  path: string;
-  find?: string;
-  replace?: string;
-  content?: string;
-  patch?: string;
-  command?: string;
-} {
-  let found: {
-    path: string;
-    find?: string;
-    replace?: string;
-    content?: string;
-    patch?: string;
-    command?: string;
-  } = { path: "" };
-  for (const actionId of actionsOfMove(state, moveId)) {
-    const changed = mutatedPaths(state, actionId);
-    if (changed.length === 0) continue;
-    const call = asCall(state.nodes.get(actionId));
-    if (call === undefined) continue;
-    const args = call.args;
-    const path = typeof args.filePath === "string" ? args.filePath : typeof args.path === "string" ? args.path : "";
-    if (call.name === "edit") {
-      found = {
-        path,
-        find: typeof args.oldString === "string" ? args.oldString : "",
-        replace: typeof args.newString === "string" ? args.newString : "",
-      };
-    } else if (call.name === "write") {
-      found = { path, content: typeof args.content === "string" ? args.content : "" };
-    } else if (call.name === "apply_patch") {
-      found = { path, patch: typeof args.patch === "string" ? args.patch : "" };
-    } else if (call.name === "bash") {
-      // A bash command changes files as a side effect; the command is the actual change.
-      found = {
-        path: changed.join(", "),
-        command: typeof args.command === "string" ? args.command : "",
-      };
-    } else {
-      found = { path: changed.join(", ") };
-    }
-  }
-  return found;
-}
-
-// The most recent patch -> verification pair before `beforeMoveId` whose verification was
-// stopped: the engine's record that this change was already tried and did not help. The
-// failure explanation is the doxa's `stop.why` on the Verification move — the model's concise
-// account of what broke — not the mechanical last failing command and its tail.
-// Only the last attempt is kept; older ones are already on the tape.
-function lastFailedAttempt(
-  state: State,
-  beforeMoveId: string,
-): {
-  patchMoveId: string;
-  write: ReturnType<typeof lastWrite>;
-  why: string;
-} | undefined {
-  const rootId = state.rootId;
-  if (rootId === undefined) return undefined;
-  const moves = childrenOf(state, rootId);
-  const end = moves.indexOf(beforeMoveId);
-  if (end < 0) return undefined;
-  let patchMove: string | undefined;
-  let verificationMove: string | undefined;
-  for (let i = 0; i < end; i += 1) {
-    const moveId = moves[i] as string;
-    const island = moveIsland(state, moveId);
-    if (island === "patch") {
-      patchMove = moveId;
-      verificationMove = undefined;
-    } else if (island === "verification" && patchMove !== undefined) {
-      verificationMove = moveId;
-    }
-  }
-  if (patchMove === undefined || verificationMove === undefined) return undefined;
-  const stop = stopOf(state, verificationMove);
-  if (stop === undefined) return undefined;
-  const rawWhy = payloadOf(state, stop)?.why;
-  const why = typeof rawWhy === "string" ? rawWhy : "";
-  return { patchMoveId: patchMove, write: lastWrite(state, patchMove), why };
-}
-
-// The engine-authored record of the failed attempt, carried into the next Localization/Patch.
-function failedAttemptText(
-  attempt: NonNullable<ReturnType<typeof lastFailedAttempt>>,
-  reverted: boolean,
-): string {
-  const lines = ["Previous failed attempt:"];
-  if (attempt.write.path === "") {
-    lines.push("  Patch: no file changed.");
-  } else {
-    lines.push(`  Patch: ${attempt.write.path}`);
-    if (attempt.write.find !== undefined) {
-      const indent = (text: string): string => text.replace(/^/gm, "    ");
-      lines.push(indent(attempt.write.find));
-      lines.push("    ->");
-      lines.push(indent(attempt.write.replace ?? ""));
-    } else if (attempt.write.content !== undefined) {
-      lines.push(`    (wrote ${attempt.write.content.length} chars)`);
-    } else if (attempt.write.patch !== undefined) {
-      lines.push("    (applied a patch)");
-    } else if (attempt.write.command !== undefined && attempt.write.command !== "") {
-      // The command is the change: show it as one line rather than "no file changed".
-      const command = attempt.write.command.replace(/\s+/g, " ").trim();
-      lines.push(`    $ ${command.length > 160 ? `${command.slice(0, 157)}…` : command}`);
-    }
-  }
-  lines.push(
-    `  Verification: ${attempt.why !== "" ? attempt.why : "the acceptance command failed."}`,
-  );
-  lines.push(
-    reverted
-      ? "  This change has been reverted in the workspace; the tree is back to its pre-patch state."
-      : "  The failed change is still in the workspace.",
-  );
-  lines.push(
-    "  Do not repeat this change. A different change is required; it may be in the same file or even the same loop.",
-  );
-  return lines.join("\n");
-}
-
 // The engine-owned facts for the focused state. Orientation gets the workspace map; L/R get
 // the same map as the Orientation result and, where the state needs tools, the environment
 // probe under its own heading; other states get the probe as reference.
@@ -405,45 +279,41 @@ function stateBrief(state: State, island: IslandId): string {
   return blocks.join("\n\n");
 }
 
-// Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
-// two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
-// (the `stop` reason). The goal is the state's OWN definition (`island.what`), a `user` turn;
-// the doxa's `what` on the move is its articulation, not a replacement. While the state is open
-// its plan follows (native tool calls and their results); once it is stopped the plan is elided —
-// the triple `[Start state, goal, Finish state]` is the compact record (docs/ir_semantics §7).
+// Render a state: `Start state <label>` with its goal, its `done` criterion and the island's
+// instruction, then the probe facts and the hint (once, at entry). While the state is open its
+// plan follows; once it is stopped the plan, the brief and the hint are elided — the compact
+// record is `Start state` + `Finish state <label> — <why>` (docs/ir_semantics §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
   const payload = movePayload(state, moveId);
-  const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
-  // `system`: the state marker (the engine's synthetic turn opening the state).
-  out.push({ role: "system", text: `Start state ${label}` });
-  // The failed attempt that sent the run back here: the actual change and the run it broke.
-  // Shown for the OPEN, current Localization and Patch (the last attempt only; older ones are
-  // on the tape). Patch needs it at the moment of editing, not only Localization at re-entry.
-  if (
-    (island === "localization" || island === "patch") &&
-    moveId === currentMove(state) &&
-    stopOf(state, moveId) === undefined
-  ) {
-    const attempt = lastFailedAttempt(state, moveId);
-    if (attempt !== undefined) {
-      out.push({
-        role: "system",
-        text: failedAttemptText(attempt, state.reverted.has(attempt.patchMoveId)),
-      });
-    }
+  const goal = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
+  const criterion =
+    payload?.done !== undefined && payload.done !== ""
+      ? payload.done
+      : island !== undefined
+        ? ISLANDS[island].criterion
+        : "";
+  const sentence = (text: string): string => text.replace(/\.\s*$/, "");
+  const start = [`Start state ${label}`];
+  if (goal !== "") start.push(`Goal: ${sentence(goal)}.`);
+  if (criterion !== "") start.push(`Done when: ${sentence(criterion)}.`);
+  if (island !== undefined && ISLANDS[island].instruction !== "") {
+    start.push("", ISLANDS[island].instruction);
   }
-  // `system`: the material the state works on, then the instruction for how to act. The
-  // session probe rides the FOCUSED state only: older closed states are compact records.
-  const focused = moveId === currentMove(state);
-  const brief = focused && island !== undefined ? stateBrief(state, island) : "";
-  if (brief !== "") out.push({ role: "system", text: brief });
-  if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
-  const goal = what !== "" ? `what: ${what}` : "";
-  if (goal !== "") out.push({ role: "user", text: goal });
-  if (stopOf(state, moveId) !== undefined) {
+  out.push({ role: "system", text: start.join("\n") });
+
+  // The session probe and the hint ride the FOCUSED open state only: older and closed states
+  // are compact records. There is no per-turn tail.
+  const open = stopOf(state, moveId) === undefined;
+  const focused = open && moveId === currentMove(state);
+  if (focused && island !== undefined) {
+    const brief = stateBrief(state, island);
+    if (brief !== "") out.push({ role: "system", text: brief });
+    if (ISLANDS[island].hint !== "") out.push({ role: "system", text: ISLANDS[island].hint });
+  }
+  if (!open) {
     out.push({ role: "system", text: closureLine(state, moveId) });
     return;
   }
@@ -620,7 +490,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const frontier = applicable(state, currentFocus(state));
   const nudge =
     options.stall !== undefined && options.stall > 0 && island !== undefined
-      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Act, or \`stop\` this state and \`move\` on.`
+      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Act, or call \`stop\` when the \`done\` criterion holds.`
       : undefined;
   return {
     history,

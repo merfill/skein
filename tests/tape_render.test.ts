@@ -4,7 +4,6 @@ import { fold } from "../src/ir/graph";
 import { ISLANDS } from "../src/ir/islands";
 import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { turnInstruction } from "../src/loop/prompt";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
@@ -52,35 +51,41 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(project(fold([request()])).history.map(shape)).toEqual([{ role: "user", text: "solve the task" }]);
   });
 
-  it("move -> Start state marker + goal; action/observation -> assistant.call + tool pairs", () => {
+  it("move -> Start state with goal/done/instruction + hint; action/observation -> call + tool pairs", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The state is a decision, not a tool call: a `Start state` marker and the goal as a `user`
-    // turn, then each plan item as a native call + tool result.
+    // The state entry is one `Start state` system message (goal, done, instruction), then the
+    // hint; there is no `user: what` and no per-turn tail.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
       ["system", null, false],
       ["system", null, false],
-      ["user", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
       ["assistant", "read", false],
       ["tool", null, true],
     ]);
+    const start = ctx.history[1];
+    expect(start?.text).toContain("Start state Orientation");
+    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
+    expect(start?.text).toContain("Done when:");
+    expect(start?.text).toContain(ISLANDS.orientation.instruction);
+    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.hint);
   });
 
-  it("stop -> the finished state collapses to its Start/goal/Finish triple", () => {
+  it("stop -> the state collapses to its Start (goal/done/instruction) + Finish", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
-    expect(ctx.history.map(shape)).toEqual([
-      { role: "user", text: "solve the task" },
-      { role: "system", text: "Start state Orientation" },
-      { role: "system", text: ISLANDS.orientation.instruction },
-      { role: "user", text: "what: know the task's inputs and how success is judged" },
-      { role: "system", text: "Finish state Orientation — your stop reason: done" },
-    ]);
+    expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system"]);
+    const start = ctx.history[1];
+    expect(start?.text).toContain("Start state Orientation");
+    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
+    expect(start?.text).toContain("Done when:");
+    expect(start?.text).toContain(ISLANDS.orientation.instruction);
+    expect(ctx.history[2]?.text).toBe("Finish state Orientation — done");
+    expect(ctx.history.some((m) => m.role === "user" && m.text.startsWith("what:"))).toBe(false);
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {
@@ -109,7 +114,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     );
   });
 
-  it("re-entering Localization carries the last failed patch and the model's failure why", () => {
+  it("re-entering Localization has no failed-attempt block; the Finish lines carry the why", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     let step = execAll(withGoal("do it", "true"), [request()], w);
     step = exec({ operator: "stop", why: "mapped" }, step.events, w);
@@ -126,22 +131,9 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     step = exec(move("localization", "find again"), step.events, w);
 
     const history = project(step.state).history;
-    let start = -1;
-    for (let i = 0; i < history.length; i += 1) {
-      const message = history[i];
-      if (message?.role === "system" && message.text === "Start state Localization") start = i;
-    }
-    // The block rides the state entry, right after the (current) Start marker.
-    const block = history[start + 1];
-    expect(block?.role).toBe("system");
-    expect(block?.text.startsWith("Previous failed attempt:")).toBe(true);
-    expect(block?.text).toContain("Patch: src/sum.mjs");
-    expect(block?.text).toContain("return a - b;");
-    expect(block?.text).toContain("return a + b;");
-    expect(block?.text).toContain("Verification: still fails");
-    expect(block?.text).toContain("Do not repeat this change");
-    expect(block?.text).toContain("The failed change is still in the workspace");
-    expect(block?.text).not.toContain("look elsewhere");
+    expect(history.some((m) => m.text.startsWith("Previous failed attempt:"))).toBe(false);
+    expect(history.map((m) => m.text)).toContain("Finish state Patch — changed");
+    expect(history.map((m) => m.text)).toContain("Finish state Verification — still fails");
   });
 
   it("the first Localization has no failed-attempt block", () => {
@@ -203,17 +195,16 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(() => buildMessages(ctx)).toThrow(/without a callId/);
   });
 
-  it("is the base + one system per constraint, then the tape, then the open-state nudge", async () => {
+  it("is the base + one system per constraint, then the tape (no per-turn tail)", async () => {
     const context: Context = {
       history: [{ role: "user", text: "fix" }],
       situation: "working",
       constraints: [{ id: "k1", forbid: ["secret"] }],
     };
     const msgs = await wire(buildMessages(context));
-    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user", "system"]);
+    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user"]);
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
-    expect(msgs[3]?.content).toBe(turnInstruction());
   });
 });

@@ -41,11 +41,11 @@ describe("islands: the closed vocabulary", () => {
       ISLANDS[id].next.map((edge) => edge.to);
     expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research"]));
     expect(targets("localization")).toEqual(["patch"]);
-    expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction", "patch"]));
+    expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction"]));
     expect(targets("patch")).toEqual(["verification"]);
-    expect(targets("recovery")).toEqual(expect.arrayContaining(["finish", "research", "patch"]));
-    expect(targets("construction")).toEqual(expect.arrayContaining(["finish", "research"]));
-    expect(targets("verification")).toEqual(expect.arrayContaining(["finish", "patch", "localization"]));
+    expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
+    expect(targets("construction")).toEqual(expect.arrayContaining(["end", "research"]));
+    expect(targets("verification")).toEqual(expect.arrayContaining(["end", "patch", "localization"]));
   });
 
   it("scopes the write-class to the productive states: the island delimits the apply surface", () => {
@@ -60,7 +60,7 @@ describe("islands: the closed vocabulary", () => {
     expect(ISLANDS.recovery.applies).not.toContain("edit");
     expect(ISLANDS.recovery.applies).not.toContain("apply_patch");
     expect(ISLANDS.construction.applies).toEqual(expect.arrayContaining(["edit", "write", "apply_patch"]));
-    expect(ISLANDS.finish.applies).toEqual([]);
+    expect(ISLANDS.end.applies).toEqual([]);
   });
 
   it("renders each state's description (State + Done, no Now)", () => {
@@ -120,14 +120,12 @@ describe("islands: the projection highlights the state", () => {
     expect(context.situation).toBe("working");
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
-    // The state is a `Start state` marker; the goal follows as a `user` turn.
-    const marker = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
-    expect(marker).toBe("Start state Orientation");
-    // The goal is the state's OWN definition (`island.what`), not the move's `what`.
-    const goal = context.history.find((m) => m.role === "user" && m.text.startsWith("what:"))?.text ?? "";
-    expect(goal).toBe("what: know the task's inputs and how success is judged");
+    // The state entry is one `Start state` system message carrying the state's own goal.
+    const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
+    expect(start).toContain("Start state Orientation");
+    expect(start).toContain("Goal: know the task's inputs and how success is judged.");
     const messages = buildMessages(context);
-    expect(messages.some((message) => String(message.content) === goal)).toBe(true);
+    expect(messages.some((message) => String(message.content) === start)).toBe(true);
   });
 
   it("has no island on a fresh request", () => {

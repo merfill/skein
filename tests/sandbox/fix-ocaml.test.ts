@@ -17,7 +17,7 @@ const goal: Action = {
   action: { tool: "bash", command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
 };
 const stopState: Action = { operator: "stop", why: "the state is done" };
-const toEnd: Action = { operator: "move", state: "finish", what: "" };
+const toEnd: Action = { operator: "move", state: "end", what: "" };
 const stopRequest: Action = { operator: "stop", why: "the goal is done" };
 
 const objective: Action[] = [

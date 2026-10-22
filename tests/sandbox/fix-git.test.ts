@@ -30,7 +30,7 @@ const restore: Action = {
   },
 };
 const stopState: Action = { operator: "stop", why: "the reference files are restored" };
-const toEnd: Action = { operator: "move", state: "finish", what: "" };
+const toEnd: Action = { operator: "move", state: "end", what: "" };
 const stopRequest: Action = { operator: "stop", why: "the reference files are restored" };
 
 const image = fixGit.image ?? "";

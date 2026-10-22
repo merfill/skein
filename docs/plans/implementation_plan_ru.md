@@ -207,7 +207,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **Per-state hints (2026-10-17, сделано).** `Island.hint` для каждого состояния + общий
   closure-хвост: Orientation — `pwd`/build/check; Localization — sibling walkers; Patch —
   «только названное изменение / не повторять failed attempt»; Verification —
-  pass/fail/environment; Finish — `stop`. `turnInstruction` больше не смешивает состояния;
+  pass/fail/environment; End — `stop`, когда запрос завершён. `turnInstruction` больше не смешивает состояния;
   тесты — `tests/prompt.test.ts`, `docs/system_prompt_ru.md`.
 - **Финальный live-батч (2026-10-17, сделано).** `fix-ocaml-gc --net on`, 5 параллельных:
   **5/5 `reward=1`**, 29–50 ходов, **7.315₽** суммарно (1.031–2.521₽ на прогон); 999 544 in
@@ -232,7 +232,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **Полный fix-ocaml (2026-10-20, live).** С failing code: 60 ходов/7.61₽, неверная строка,
   Patch-1 21 + Patch-2 16. После alignment: reward=1, `stop=request_addressed`, **34 хода,
   4.24₽**: Orientation 3/0.29, Localization 7/0.83, **Research 5/1.00 (лишний шаг)**, Patch
-  10/1.22, Verification 8/0.79, Finish 1/0.10. Остаток разрыва с 29/1.684₽ — лишний Research:
+  10/1.22, Verification 8/0.79, End 1/0.10. Остаток разрыва с 29/1.684₽ — лишний Research:
   для code defect нужен переход L→P; Research — для ситуаций/новых артефактов. Тесты —
   `364 passed`, typecheck чистый.
 - **Localization → Patch (2026-10-20).** Позднее ребро `L → R` убрано (`83243ae`): у

@@ -1074,10 +1074,10 @@ export function executeAction(
       // transition decision. On the terminal state (`finish`, which has no plan) the `stop`
       // ends the request (docs/ir_semantics.md §4.4).
       const focus = currentFocus(state);
-      if (focus === undefined) return fail("stop applies to an open state or the terminal state");
+      if (focus === undefined) return fail("not admissible here");
       const focusNode = state.nodes.get(focus);
       if (focusNode?.kind !== "move") {
-        return fail("stop applies to an open state or the terminal state");
+        return fail("not admissible here");
       }
       const terminal = isTerminalIsland(moveIsland(state, focus) ?? "");
       const seq = next();

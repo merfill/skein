@@ -58,9 +58,9 @@ describe("move", () => {
 
   it("OP-MV-3 the terminal state accepts stop directly (DER-REQ-1)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("finish"), [request()], ws);
+    const moved = exec(move("end"), [request()], ws);
     const moveId = currentMove(moved.state)!;
-    expect(moveIsland(moved.state, moveId)).toBe("finish");
+    expect(moveIsland(moved.state, moveId)).toBe("end");
     expect(isMoveFinished(moved.state, moveId)).toBe(false);
     const stopped = exec({ operator: "stop", why: "done" }, moved.events, ws);
     expect(stopped.outcome.done).toBe(true);

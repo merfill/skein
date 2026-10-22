@@ -205,7 +205,7 @@ L1 example for `r2`:
 
 ```
 - Reading  what: "read AGENTS.md and remember the rules"  closed  why: "the rules are recorded"
-- Finish   —                                             closed
+- End      —                                             closed
 ```
 
 ## 6. The meta-unit's projection
