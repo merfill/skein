@@ -20,12 +20,17 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { ModelMessage } from "ai";
+
 import { loadSettings } from "../src/config/settings";
 import { SESSION_PROBE_ID } from "../src/ir/session";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
-import { project, type Context } from "../src/ir/project";
+import { ISLANDS } from "../src/ir/islands";
+import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
+import { invokeTools } from "../src/llm/structured";
+import { toolDescriptionsFor, toolNamesFor } from "../src/llm/tools";
 import { buildMessages, propose } from "../src/loop/propose";
 import { probeSession } from "../src/loop/probe";
 import { executeAction } from "../src/tools";
@@ -42,8 +47,8 @@ const seq = JSON.parse(readFileSync(seqPath, "utf8")) as { turn: number; action:
 const dir = process.env.TAPE_DIR ?? join("bench", "runs", "sandbox-tasks", `${taskId}-step`);
 mkdirSync(join(dir, "contexts"), { recursive: true });
 
-const render = (ctx: Context): string =>
-  buildMessages(ctx)
+const renderMessages = (messages: ModelMessage[]): string =>
+  messages
     .map((message) => {
       const lines = [`===== ${message.role} =====`];
       if (typeof message.content === "string") {
@@ -65,6 +70,51 @@ const render = (ctx: Context): string =>
       return lines.join("\n");
     })
     .join("\n\n");
+
+const render = (ctx: Context): string => renderMessages(buildMessages(ctx));
+
+function oldLLayout(history: TapeMessage[]): TapeMessage[] {
+  const index = history.findIndex(
+    (message) =>
+      message.role === "system" &&
+      message.text !== undefined &&
+      message.text.startsWith("Start state Localization\nGoal:"),
+  );
+  if (index < 0) return history;
+  const start = history[index];
+  const text = start?.text ?? "";
+  const lines = text.split("\n");
+  const label = lines[0] ?? "Start state Localization";
+  const instruction = text.split("\n\n").slice(1).join("\n\n");
+  const brief = history.find(
+    (message) =>
+      message.role === "system" &&
+      message.text !== undefined &&
+      message.text.startsWith("Workspace map"),
+  );
+  const hint = history.find(
+    (message) => message.role === "system" && message.text === ISLANDS.localization.hint,
+  );
+  const plan = history.filter(
+    (message) => message.role === "assistant" || message.role === "tool",
+  );
+  return [
+    ...history.slice(0, index),
+    { role: "system", text: label },
+    ...(brief !== undefined ? [brief] : []),
+    ...(instruction !== "" ? [{ role: "system" as const, text: instruction }] : []),
+    ...(process.env.SKEIN_L_USER === "none"
+      ? []
+      : [
+          {
+            role: "user" as const,
+            text: "Find the error. Report its location and what is wrong. Do not change the material.",
+          },
+        ]),
+    ...(hint !== undefined ? [hint] : []),
+    ...plan,
+  ];
+}
 
 async function main(): Promise<void> {
   const task = TASKS[taskId];
@@ -126,32 +176,150 @@ async function main(): Promise<void> {
 
     const context = project(fold(events as never));
     const extraSystem = process.env.EXTRA_SYSTEM;
+    const isMinimal = process.env.SKEIN_MINIMAL_TAPE === "true";
+    const roleMessage: TapeMessage = {
+      role: "system",
+      text: "You are a software engineering agent. Your job is to solve software development tasks and help the developer.",
+    };
+    const requestMessage = context.history.find((message) => message.role === "user");
+    const briefMessage = context.history.find(
+      (message) => message.role === "system" && message.text.startsWith("Workspace map"),
+    );
+    const hintMessage = context.history.find(
+      (message) => message.role === "system" && message.text === ISLANDS.localization.hint,
+    );
+    const planMessages = context.history.filter(
+      (message) => message.role === "assistant" || message.role === "tool",
+    );
+    const minimalHistory = [roleMessage, requestMessage, briefMessage, hintMessage, ...planMessages]
+      .filter((message): message is TapeMessage => message !== undefined);
+    const minimalContext: Context = { ...context, history: minimalHistory };
     const injected: Context =
       extraSystem !== undefined && extraSystem !== ""
         ? { ...context, history: [...context.history, { role: "system", text: extraSystem }] }
         : context;
+    const cleaned: Context =
+      process.env.SKEIN_STRIP_FINISH === "true"
+        ? {
+            ...injected,
+            history: injected.history.map((message) =>
+              message.role === "system" &&
+              message.text !== undefined &&
+              message.text.startsWith("Finish state Orientation —")
+                ? {
+                    ...message,
+                    text: "Finish state Orientation — Workspace root /app, single top-level entry ocaml/ (4623 files); no VCS repository.",
+                  }
+                : message,
+            ),
+          }
+        : injected;
+    const oldContext: Context =
+      process.env.SKEIN_OLD_L_LAYOUT === "true"
+        ? { ...cleaned, history: oldLLayout(cleaned.history) }
+        : cleaned;
+    const fullContext: Context =
+      process.env.SKEIN_SPLIT_START === "true"
+        ? {
+            ...oldContext,
+            history: oldContext.history.flatMap((message): TapeMessage[] => {
+              const text = message.text;
+              if (
+                message.role === "system" &&
+                text !== undefined &&
+                text.startsWith("Start state ") &&
+                text.includes("\nGoal:")
+              ) {
+                const [first, ...rest] = text.split("\n");
+                return [{ ...message, text: first ?? "" }, { ...message, text: rest.join("\n") }];
+              }
+              return [message];
+            }),
+          }
+        : oldContext;
+    const proposeContext: Context =
+      process.env.SKEIN_NO_WEBFETCH === "true" && fullContext.applicable !== undefined
+        ? {
+            ...fullContext,
+            applicable: {
+              ...fullContext.applicable,
+              applies: fullContext.applicable.applies?.filter((tool) => tool !== "webfetch"),
+            },
+          }
+        : fullContext;
+    const tapeContext = isMinimal ? minimalContext : fullContext;
+    const tapeMessages = isMinimal
+      ? buildMessages(minimalContext).slice(1)
+      : buildMessages(fullContext);
     const turn = seq.length > 0 ? Math.max(...seq.map((entry) => entry.turn)) + 1 : 0;
     const path = join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`);
-    writeFileSync(path, render(injected));
-    console.log(`\nturn ${turn}: situation=${injected.situation} island=${injected.island ?? "(none)"}  → ${path}`);
+    writeFileSync(path, renderMessages(tapeMessages));
+    console.log(`\nturn ${turn}: situation=${tapeContext.situation} island=${tapeContext.island ?? "(none)"}  → ${path}`);
 
     reasoning.length = 0;
     const meter = new TurnMeter();
-    const proposals = await propose(model, injected, {
-      settings,
-      usageHandlers: [meter],
-      onResponse: (response) => {
-        const raw = (response as { reasoning?: unknown }).reasoning;
-        if (typeof raw === "string" && raw !== "") reasoning.push(raw);
-      },
-    });
+    let replyAttempt = 0;
+    const onResponse = (response: unknown) => {
+      const raw = (response as { reasoning?: unknown }).reasoning;
+      if (typeof raw === "string" && raw !== "") reasoning.push(raw);
+      if (process.env.DUMP_REPLY === "true") {
+        replyAttempt += 1;
+        const reply = response as {
+          text?: unknown;
+          reasoning?: unknown;
+          toolCalls?: unknown;
+          finishReason?: unknown;
+          response?: unknown;
+          usage?: unknown;
+        };
+        const dump = {
+          text: reply.text,
+          reasoning: reply.reasoning,
+          toolCalls: reply.toolCalls,
+          finishReason: reply.finishReason,
+          response: reply.response,
+          usage: reply.usage,
+        };
+        const dumpPath = join(
+          dir,
+          `reply-t${String(turn).padStart(3, "0")}-a${replyAttempt}.json`,
+        );
+        try {
+          writeFileSync(dumpPath, JSON.stringify(dump, null, 2));
+        } catch (error) {
+          writeFileSync(dumpPath, `dump failed: ${String(error)}\n${String(reply)}`);
+        }
+        console.log("reply dump →", dumpPath);
+      }
+    };
+    const minimalFrontier = context.applicable ?? {
+      move: false,
+      apply: true,
+      stop: true,
+      decline: false,
+      applies: ISLANDS.localization.applies,
+    };
+    const proposals = isMinimal
+      ? await invokeTools(model, tapeMessages, {
+          settings,
+          usageHandlers: [meter],
+          onResponse,
+          allowedTools: toolNamesFor(minimalFrontier),
+          toolDescriptions: toolDescriptionsFor("localization"),
+        })
+      : await propose(model, proposeContext, {
+          settings,
+          usageHandlers: [meter],
+          onResponse,
+        });
     writeFileSync(
       join(dir, "turns.ndjson"),
-      `${JSON.stringify({ turn, situation: context.situation, island: context.island, actions: proposals.actions, reasoning: reasoning.join("\n"), cacheRead: meter.cacheRead, cacheWrite: meter.cacheWrite, usage: meter.usage })}\n`,
+      `${JSON.stringify({ turn, situation: context.situation, island: context.island, thought: proposals.thought, actions: proposals.actions, reasoning: reasoning.join("\n"), cacheRead: meter.cacheRead, cacheWrite: meter.cacheWrite, usage: meter.usage })}\n`,
       { flag: "a" },
     );
     writeFileSync(join(dir, "next-actions.json"), JSON.stringify(proposals.actions, null, 2));
     console.log("actions:", JSON.stringify(proposals.actions, null, 2));
+    console.log("thought:", proposals.thought.replace(/\s+/g, " ").trim().slice(0, 2000));
     console.log("reasoning:", reasoning.join(" ").replace(/\s+/g, " ").trim().slice(0, 2000));
     console.log(
       `usage: llm=${meter.calls} in=${meter.inputTokens} out=${meter.outputTokens} reason=${meter.reasoningTokens} cache=${meter.cacheRead}/${meter.cacheWrite} cost=${meter.costCalls > 0 ? `${meter.costRub.toFixed(4)}₽` : "?"}`,

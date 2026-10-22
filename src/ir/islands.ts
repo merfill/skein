@@ -52,6 +52,12 @@ const PATCH_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 const RECOVER_TOOLS: readonly string[] = [...INSPECT, "write"];
 const CONSTRUCT_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 
+const LOCALIZATION_CRITERION =
+  "the target is named — the file, record, image, or function — with the coordinates or " +
+  "extent that identify it; its siblings are ruled out; and a suspected cause is named — the " +
+  "expression, step, or encoding that looks wrong and the rule or invariant it breaks — " +
+  "marked unverified";
+
 export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
     id: "orientation",
@@ -68,7 +74,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     hint:
       "The workspace map is the index; the request is the acceptance. Do not go inside " +
       "entries, check paths, or inspect build state, configs, history, or contents — those " +
-      "belong to the next state.",
+      "belong to the next state. Even if the request points to a file, do not open it here: " +
+      "the acceptance is already named; file contents belong to the next state.",
     applies: INSPECT,
     next: [
       {
@@ -85,18 +92,26 @@ export const ISLANDS: Record<IslandId, Island> = {
     id: "localization",
     label: "Localization",
     what: "find the target in the material",
-    criterion:
-      "the target is named — the file, record, image, or function — and a suspected cause is " +
-      "named — the expression, step, or encoding that conflicts with the source's own " +
-      "comment/invariant",
+    criterion: LOCALIZATION_CRITERION,
     instruction:
-      "Find the target from the request, the workspace map and the filenames: list the relevant " +
-      "directories, choose candidate files by name — the implementation and the definitions or " +
-      "headers it uses — and inspect those.",
+      "Find the target in the material — the file, record, image, or function — and name its " +
+      "coordinates or extent. Before inspecting, think about what the code is supposed to do " +
+      "from the user's request, the workspace map (filesystem facts), the environment (available " +
+      "tools), and the filenames; use that to choose which files and symbols to inspect. For " +
+      "shell work, use only the tools the environment lists; missing ones are unavailable. " +
+      "Distinguish it from its siblings by shape, code, or signature. Name the target, say why " +
+      "the siblings are not it, and name a suspected cause: the expression, step, or encoding " +
+      "that looks wrong and the rule or invariant it breaks. Mark the cause unverified. Do not " +
+      "change the target.",
     hint:
-      "Once you can name the target and a conflict with the source's own invariant, that is " +
-      "enough — stop. The request's changes are one defect. Put the detailed reason in the " +
-      "`why`: the target and the conflict. Do not change the target.",
+      "Start from the workspace map (filesystem facts) and the environment (available tools). " +
+      "Think about what the code is supposed to do from the filenames and the directory " +
+      "structure: list the relevant directories and choose the candidate files by name — the " +
+      "implementation and the definitions or headers it uses — then inspect those. Work from " +
+      "the file you are reading: its own comments and the neighbouring code are the evidence. " +
+      "Find the sibling that performs the same traversal or operation — the neighbouring loop " +
+      "or function — and follow its pattern. A suspected cause is enough to stop — do not look " +
+      "for a different bug. criterion: \"" + LOCALIZATION_CRITERION + "\".",
     applies: INSPECT,
     next: [
       {

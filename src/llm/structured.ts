@@ -501,9 +501,12 @@ export async function invokeTools(
       throw new Error("model returned no tool call");
     }
     if (repair !== undefined) throw new Error("model returned no tool call");
+    const stopAvailable = allowed === undefined || allowed.has("stop");
     repair = {
       role: "user",
-      content: "You did not call a tool. Call one or more of the provided tools.",
+      content: stopAvailable
+        ? "You did not call a tool. If the state's goal is met, call `stop` now with the result in `why`; otherwise call one or more of the provided tools."
+        : "You did not call a tool. Call one or more of the provided tools.",
     };
   }
 }

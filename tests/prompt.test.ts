@@ -40,7 +40,6 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toMatch(/- Orientation — .+\./);
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
-    // A transition carries its precondition, not just a target.
     expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation or a method/);
     expect(BASE_PROMPT).toMatch(/End is terminal/);
@@ -121,14 +120,16 @@ describe("system prompt: tool contract", () => {
 
     const verification = toolDescriptionsFor("verification");
     expect(verification.bash).not.toMatch(/Inspection only/);
+
   });
 
-  it("keeps `stop` state-agnostic: a stop tool with a bounded, detailed why", () => {
+  it("keeps `stop` generic: a stop tool with a bounded, detailed why", () => {
     const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
     expect(stop?.function.description).toMatch(/stop/i);
     expect(stop?.function.description).toMatch(/why/i);
+    expect(stop?.function.description).toMatch(/this state's criterion holds/i);
     expect(stop?.function.description).toMatch(/50 words/i);
-    expect(stop?.function.description).not.toMatch(/state|criterion|next/i);
+    expect(stop?.function.description).not.toMatch(/localization|patch/i);
     const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
     expect(required).toContain("why");
   });

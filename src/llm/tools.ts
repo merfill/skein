@@ -147,7 +147,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "stop",
     description:
-      `Call \`stop\` to stop. why = a detailed account of why you are stopping — up to ~50 words.`,
+      `Call \`stop\` when this state's criterion holds. why = where and why you stopped, with the reasoning and the detail the state after it needs — up to ~50 words.`,
     schema: stopParams,
   },
   {
