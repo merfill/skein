@@ -48,11 +48,14 @@ Implementation — `tests/sandbox/docker.ts`, function `dockerWorkspace(root, op
   extracted to a host temp root and not bind-mounted (`rootless`); there is no host copy.
 - Commands, the file tools (`read`/`grep`/`list`/`edit`/`write`), `bash`, background jobs and
   the checkpoint run through `docker exec` in that container, so `/app` and `/tmp` mean the same
-  thing to the tools and to the shell.
+  thing to the tools and to the shell; `grep`/`listFiles` return workspace-relative paths like
+  `fsWorkspace`.
 - The checkpoint store is `/tmp/.skein` **inside the container** (`DockerBackend`);
   `/app/.skein/checkpoints` is a symlink to it.
-- Tasks without an image (`bwrap`, `container.ts`) keep a host root, host `fsWorkspace` file
-  tools and a per-invocation `/tmp`; bwrap is not on D yet.
+- Every ported task, including `regex-log`, takes this path (`regex-log`'s verifier runs in a
+  separate verifier container because its image has no Python). `bwrap` (`container.ts`)
+  remains only for the opencode baseline/`bench/minimal`: there the workspace is a host root,
+  the file tools are host `fsWorkspace`, and `/tmp` is per-invocation.
 - Cleanup — `cleanupContainers()` (`docker rm`; no `/app` host mount to wipe).
 
 ### 2.2 Running commands
@@ -258,6 +261,10 @@ ai — Finish state <Label> — <why from stop>
   `/tmp/.skein` (`DockerBackend`); `checkIn:"host"` uses a verifier container
   (`SKEIN_VERIFIER_IMAGE`). The 5-minute `signatureMap` (per-file `docker exec` → batched
   `signatures`) was found and fixed. Crack after the fix: 24 turns, reward=1, request_addressed.
+- **D is closed (2026-10-23, session 10).** `regex-log` now runs its own image + verifier
+  container (bwrap left the task path); `stageSolution` is rootless; `live-step` computes the
+  tree diff inside the container; `fetchTo` copies bytes via `docker cp`; rootless
+  `grep/list/listFiles` honor `SKIP_DIRS`/dot entries/include-exclude like `fsWorkspace`.
 - **The tape's shape was reworked** (see §3): the request at the top, once; state entry —
   `ai(Start)` + `system(instruction)` + `user(what)`; `notes`/`move.what` not shown.
 - **A per-island `instruction` was added** (`src/ir/islands.ts`) — "how to act in the state",

@@ -202,18 +202,19 @@ tokens are in
 
 ## 3.6 Sandbox tasks (real, no Harbor)
 
-Real terminal-bench tasks run locally with the real engine and the task's own verifier, on
-two backends:
+Real terminal-bench tasks run locally with the real engine and the task's own verifier. All 13
+tasks take one path, **Docker rootless**:
 
-- **Docker rootless** (image tasks). The task's own image
-  (`alexgshaw/<task>:20251031`) carries the exact environment, so nothing is installed on the
-  host. The container starts directly from the image; `/app` is **not** copied to the host or
-  bind-mounted. File tools, `grep/list`, `bash`, background jobs and the checkpoint run through
-  `docker exec`; the store is `/tmp/.skein` in the container (`DockerBackend`). Network is
+- The task's own image (`alexgshaw/<task>:20251031`) carries the exact environment, so nothing
+  is installed on the host. The container starts directly from the image; `/app` is **not**
+  copied to the host or bind-mounted. File tools, `grep/list`, `bash`, background jobs and the
+  checkpoint run through `docker exec`; `grep`/`listFiles` return workspace-relative paths like
+  `fsWorkspace`. The store is `/tmp/.skein` in the container (`DockerBackend`). Network is
   `none` by default, a sane `--ulimit nofile` is set (valgrind), and git `safe.directory=*`.
-- **bwrap** (`container.ts`, used by `regex-log`). A host temp root mounted at `/app` under
-  `bwrap`, sharing the host `/usr` read-only, network off; its file tools/checkpoint are still
-  host-side (`/tmp` is per-invocation). Moving bwrap to D is a separate step.
+- `regex-log` also runs its own image (`alexgshaw/regex-log:20251031`); it has no Python, so
+  its verifier runs in a separate verifier container (`checkIn: "host"`).
+- **bwrap** (`container.ts`) remains only for the opencode baseline (host-side verifier) and
+  `bench/minimal.ts`; the task path no longer uses it.
 
 Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsigned-cert`,
 `git-leak-recovery`, `cobol-modernization`, `modernize-scientific-stack`,
@@ -223,8 +224,9 @@ Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsig
 | File | Role |
 | --- | --- |
 | `tests/sandbox/docker.ts` | the Docker `Workspace` (rootless: image → `docker exec`; batched `signatures`) |
+| `tests/sandbox/docker.test.ts` | rootless: `fetchTo` (docker cp) and `list`/`grep`/`listFiles` parity |
 | `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` in the container |
-| `tests/sandbox/container.ts` | the bwrap `Workspace`; file tools rewrite the `/app/` prefix |
+| `tests/sandbox/container.ts` | the bwrap `Workspace` (opencode baseline, `bench/minimal`); file tools rewrite the `/app/` prefix |
 | `tests/sandbox/task.ts` | `SandboxTask` + Harbor-cache lookup + the pytest-free verifier runner and a `pytest` shim |
 | `tests/sandbox/harness.ts` | `runTask`: materialize → setup → `runAgent` → `checkSetup` → verifier → reward |
 | `tests/sandbox/tasks/<id>.ts` | one task's descriptor; `registry.ts` maps id → task |
@@ -276,14 +278,17 @@ stays reproducible.
 
 **Verifier.** The task's `tests/test_outputs.py` is run by a pytest-free wrapper; a `pytest`
 shim is staged so `import pytest` resolves without installing it. `checkIn: "host"` runs the
-verifier via bwrap for an image without Python (`git-leak-recovery`, `password-recovery`,
-`crack-7z-hash`); `checkSetup` runs a pre-verifier command in the task container
-(`fix-ocaml-gc` rebuilds the compiler and regenerates `tests.txt`).
+verifier in a separate verifier container (`SKEIN_VERIFIER_IMAGE`) for an image without Python
+(`regex-log`, `git-leak-recovery`, `password-recovery`, `crack-7z-hash`): `/app` is streamed
+task→verifier, the tests are copied with `docker cp`, and the verifier image's `/app` is
+cleared first. `checkSetup` runs a pre-verifier command in the task container (`fix-ocaml-gc`
+rebuilds the compiler and regenerates `tests.txt`).
 
 **Isolation / limitations.** Docker tasks keep the network off (except `crack-7z-hash`,
 which installs p7zip), mount no host home, and root-owned files are wiped from inside the
-container on teardown. bwrap tasks share the host `/usr`, so they need the tool on the host.
-A background `run {background: true}` and `fetch` still use the host implementation.
+container on teardown. `fetch` downloads on the host (allowlist/constraints) and copies the
+bytes into the container; background jobs in rootless mode run in the container. bwrap
+(`container.ts`) shares the host `/usr` and is used only by the opencode baseline/`minimal`.
 
 **Adding a task.** Write `tests/sandbox/tasks/<id>.ts` with `{ id, image?, files?, setup?,
 check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` defaults to the cached

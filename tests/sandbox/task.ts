@@ -2,11 +2,11 @@ import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-// A terminal-bench task, ported to run WITHOUT Docker: the harness materializes the task's
-// environment into a temp root and runs the agent in a `bwrap` namespace (`container.ts`),
-// then scores it with the task's own verifier. The task's files (instruction, setup,
-// verifier) are read from the local Harbor cache, never copied into the repository (the
-// tasks carry a benchmark canary).
+// A terminal-bench task. A task with `image` runs in its own Docker image (rootless; see
+// `docker.ts`), with all tools and the checkpoint inside the container; a task without an
+// image falls back to a host temp root under `bwrap` (`container.ts`). The task's own verifier
+// scores the result. The task's files (instruction, setup, verifier) are read from the local
+// Harbor cache, never copied into the repository (the tasks carry a benchmark canary).
 //
 //   { id, files?, setup?, check?, mountPoint? }
 //
@@ -26,9 +26,10 @@ export interface SandboxTask {
   // environment, so no host install is needed. `workdir` is the task WORKDIR inside it.
   image?: string;
   workdir?: string;
-  // Where the verifier runs. "task" (default) runs it in the task image; "host" runs it via
-  // bwrap with the host tools (`container.ts`) — for an image that lacks the verifier's
-  // runtime (e.g. `git-leak-recovery` has git but no Python), when the host has it.
+  // Where the verifier runs. "task" (default) runs it in the task image; "host" runs it in a
+  // separate verifier container (`SKEIN_VERIFIER_IMAGE`) for an image that lacks the verifier's
+  // runtime (e.g. `git-leak-recovery` has git but no Python). The legacy host/bwrap path uses
+  // it too when the task has no image.
   checkIn?: "task" | "host";
   // The turn budget for a live run (default 24). A build-heavy task needs more: the
   // criterion triggers a full rebuild, and a foreground run of it blocks for minutes but is

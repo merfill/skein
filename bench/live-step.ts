@@ -86,6 +86,15 @@ function callArgs(action: Proposals["actions"][number]): string {
   return JSON.stringify(input);
 }
 
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+
+function diffLines(stdout: string | undefined, stderr: string | undefined, code: number | null): string[] {
+  if (code !== null && code > 1) {
+    return [`diff failed: ${(stderr ?? "").trim() || `exit ${code}`}`];
+  }
+  return (stdout ?? "").split("\n").filter((line) => line !== "").slice(0, 40);
+}
+
 // The workspace changes since the initial snapshot, as `diff -rq` lines (bounded).
 function treeChanges(initial: string, current: string): string[] {
   const result = spawnSync(
@@ -94,8 +103,20 @@ function treeChanges(initial: string, current: string): string[] {
     { encoding: "utf8" },
   );
   if (result.error !== undefined) return [`diff failed: ${String(result.error)}`];
-  const lines = (result.stdout ?? "").split("\n").filter((line) => line !== "");
-  return lines.slice(0, 40);
+  return diffLines(result.stdout, result.stderr, result.status);
+}
+
+// The container-native form: both the initial snapshot and the live tree are container paths,
+// so `diff` must run there too.
+function containerTreeChanges(
+  exec: (command: string) => { code: number; stdout: string; stderr: string },
+  initial: string,
+  current: string,
+): string[] {
+  const result = exec(
+    `diff -rq --exclude=.skein --exclude=.env --exclude='.env.*' ${shellQuote(initial)} ${shellQuote(current)}`,
+  );
+  return diffLines(result.stdout, result.stderr, result.code);
 }
 
 async function main(): Promise<void> {
@@ -114,18 +135,25 @@ async function main(): Promise<void> {
   }
 
   console.info(
-    `[live-step] opening ${task.id}: extracting ${task.image ?? "the image"} into a host tree, ` +
-      "starting the container, running setup and the initial checkpoint…",
+    `[live-step] opening ${task.id}: ` +
+      (task.image !== undefined
+        ? "starting the task container (rootless; /app stays in the container), "
+        : "extracting the image into a host tree, ") +
+      "running setup and the initial checkpoint…",
   );
   const openedAt = Date.now();
   // `--net` gates the HOST's fetch/run through the allowlist proxy; the task container keeps
   // its own network mode (`task.network`, default `none`).
   const opened = openTaskWorkspace(task);
   const { workspace, request } = opened;
+  // The diff compares the initial checkpoint tree with the agent-visible live tree. For
+  // rootless Docker both are container paths (`/tmp/.skein/trees/0` and `/app`); the host
+  // root is only the empty interface dir.
+  const treeRoot = opened.rootless === true ? (workspace.displayRoot ?? opened.root) : opened.root;
   const initialTree = join(opened.checkpoint.dir, opened.checkpoint.snapshots[0]!.tree);
   console.info(
     `[live-step] ready in ${((Date.now() - openedAt) / 1000).toFixed(1)}s: ` +
-      `root=${opened.root} container=${(workspace as { name?: string }).name ?? "(none)"}`,
+      `root=${treeRoot} container=${(workspace as { name?: string }).name ?? "(none)"}`,
   );
   rmSync(signal, { force: true });
 
@@ -217,7 +245,10 @@ async function main(): Promise<void> {
       );
       for (const action of actions) console.info(`  call ${callName(action)} ${callArgs(action)}`);
       for (const line of toolTail) console.info(`  out  ${line}`);
-      const changed = treeChanges(initialTree, opened.root);
+      const changed =
+        opened.rootless === true && opened.container !== undefined
+          ? containerTreeChanges((command) => opened.container!.exec(command), initialTree, treeRoot)
+          : treeChanges(initialTree, treeRoot);
       console.info(
         changed.length > 0
           ? `  tree ${changed.length} change${changed.length === 1 ? "" : "s"}:\n    ${changed.join("\n    ")}`

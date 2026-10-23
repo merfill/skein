@@ -59,7 +59,8 @@ across turns — nothing is replayed.
 - the doxa's calls (`call <tool> <args>`);
 - the observations of the just-executed turn (`exit`, output tail);
 - the workspace diff since the initial post-setup tree, computed from the checkpoint store
-  (`diff -rq trees/0 trees/N`);
+  (`diff -rq /tmp/.skein/trees/0 /app`); in rootless mode `diff` runs in the task container,
+  in legacy host mode on the host;
 - the tape path.
 
 Files under `--dir`:

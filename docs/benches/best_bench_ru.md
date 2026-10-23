@@ -21,9 +21,25 @@ opencode пишет ещё `opencode.txt`).
 > на t10 / t8 / t11; median входа **163 568** (fresh 51 084 + cache 115 968, 71%) против
 > opencode net-off **981 082**, reasoning **3 812** против **15 852**. См. «Батч 2026-10-23».
 
+> **2026-10-23, rootless D + relative paths, net off, K=3:** `fix-ocaml-gc` — **3/3 reward=1**,
+> 27–29 шагов, **1.633 / 1.732 / 1.822₽** (median **1.732₽**). L закрылась на t8 / t10 / t10;
+> median входа **196 449** (fresh 64 353 + cache 135 680, 69%). Против pre-rootless батча
+> median **+23%** стоимости; разрыв — в Patch (8–9 ходов против 6–8), не в Localization.
+> См. «Батч 2026-10-23 — rootless D».
+
 > **2026-10-23, breadth:** `fix-code` / `fix-git` / `custom-memory` — **3/3 reward=1**;
 > 25 / 19 / 60 ходов, **0.942 / 0.847 / 3.822₽**. `fix-git` прошёл без Verification;
 > `custom-memory` — регрессия (60 ходов, 4 цикла). См. «Батч 2026-10-23 — breadth».
+
+> **2026-10-23, breadth rootless D + relative paths:** `fix-code` / `fix-git` /
+> `custom-memory` — **3/3 reward=1**; 20 / 20 / 60 ходов, **0.769 / 0.833 / 3.114₽**.
+> `fix-code`/`fix-git` — `request_addressed`; `custom-memory` — `reward=1`, но
+> **`max_turns`** (без self-closure). См. «Батч 2026-10-23 — breadth, rootless D».
+
+> **2026-10-23, recovery (Research → Recovery), net off, K=1 на задачу:**
+> `password-recovery` / `db-wal-recovery` / `crack-7z-hash` — **3/3 reward=1**, 26 / 22 / 23
+> хода, **2.531 / 1.278 / 0.965₽**. Все `request_addressed`, маршрут
+> `O → Research → Recovery → End`. См. «Батч 2026-10-23 — recovery».
 
 > **2026-10-20, final conduct, net on, K=3:** `fix-ocaml-gc` — **3/3 reward=1**,
 > 24/29/30 шагов, **1.402 / 1.634 / 2.410₽** (median **1.634₽**). Первый end-to-end
@@ -49,13 +65,13 @@ opencode пишет ещё `opencode.txt`).
 | 1 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — восстановленный state-слой, reasoning on; **1.412₽**, лучший по входу (151 935) | **1** | 25 | 33 | 151 935 | 6 944 (2 995 + 3 949) | 66% | — | `bench/runs/sandbox-tasks/2026-10-23T04-29-19-623Z-fix-ocaml-gc` |
 | 2 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — восстановленный state-слой, reasoning on; **1.437₽** | **1** | 29 | 38 | 208 780 | 7 092 (3 322 + 3 770) | 76% | — | `bench/runs/sandbox-tasks/2026-10-23T04-29-21-776Z-fix-ocaml-gc` |
 | 3 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning на ленте (бывш. ★: лучший по стоимости/входу до 2026-10-23) | **1** | 27 | 34 | 159 475 | 10 681 (2 901 + 7 780) | 72% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-582Z-fix-ocaml-gc` |
-| 4 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning на ленте (A/B) | **1** | 34 | 44 | 173 000 | 14 923 (3 296 + 11 627) | 71% | — | `bench/runs/sandbox-tasks/2026-10-17T04-57-57-012Z-fix-ocaml-gc` |
-| 5 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning на ленте (A/B) | **1** | 32 | 40 | 222 135 | 14 603 (3 274 + 11 329) | 75% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-598Z-fix-ocaml-gc` |
-| 6 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **лучший net on и лучший Skein по стоимости без reasoning на ленте (Фаза 18: активные директивы)** | **1** | 29 | 37 | 252 551 | 16 198 (3 177 + 13 021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
-| 7 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
-| 8 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698 460 | 11 993 (3 245 + 8 748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
-| 9 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1 430 864 | 11 399 (4 011 + 7 388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
-| 10 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748 329 | 15 834 (2 720 + 13 114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
+| 4 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.633₽** | **1** | 27 | 27 | 196 293 | 7 636 (3 031 + 4 605) | 69% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-116Z-fix-ocaml-gc-AAFw9y` |
+| 5 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.732₽** | **1** | 29 | 29 | 196 449 | 8 130 (3 798 + 4 332) | 67% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-094Z-fix-ocaml-gc-sVz2Qi` |
+| 6 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.822₽** | **1** | 29 | 29 | 239 499 | 9 046 (3 428 + 5 618) | 73% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-093Z-fix-ocaml-gc-bH2YAw` |
+| 7 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning на ленте (A/B) | **1** | 34 | 44 | 173 000 | 14 923 (3 296 + 11 627) | 71% | — | `bench/runs/sandbox-tasks/2026-10-17T04-57-57-012Z-fix-ocaml-gc` |
+| 8 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning на ленте (A/B) | **1** | 32 | 40 | 222 135 | 14 603 (3 274 + 11 329) | 75% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-598Z-fix-ocaml-gc` |
+| 9 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **лучший net on и лучший Skein по стоимости без reasoning на ленте (Фаза 18: активные директивы)** | **1** | 29 | 37 | 252 551 | 16 198 (3 177 + 13 021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
+| 10 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1 213 834 | 21 987 (3 398 + 18 589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 
 Номера строк — текущие (2026-10-23); в разделах ниже `(#N)` относится к таблице на момент
 того прогона.
@@ -66,7 +82,10 @@ opencode пишет ещё `opencode.txt`).
 **`2026-10-11T13-50-03`** (net off, 45 шагов), **`2026-10-13T11-51-44`** (net off,
 goal-into-move, 49 шагов), **`19-02`** (net on, 46 шагов, 6.97₽), **`08-40`**
 (net on, 50 шагов, стоимость не записана), **`07-02`** (net off, 13.78₽) и **`18-30`** (net on,
-12.68₽) — их описания остались в разделах ниже.
+12.68₽) — их описания остались в разделах ниже. С добавлением rootless-батча выпали
+opencode-строки: **`2026-10-09T16-01-20`** (net on, 33 шага, 434s), **`2026-10-11T06-30-03`**
+(net on, 33, 314s) и **`2026-10-11T06-52-33`** (net off, 24, 279s); их трассы остаются в
+каталогах.
 
 ## Батч 2026-10-23 — восстановленный state-слой, reasoning on, net off, K=3
 
@@ -111,6 +130,37 @@ K мал (3 против 2/5), temp 0.1 — это направление, не 
 Трассы: `bench/runs/sandbox-tasks/2026-10-23T04-29-17-477Z-fix-ocaml-gc`,
 `…04-29-19-623Z…`, `…04-29-21-776Z…`.
 
+## Батч 2026-10-23 — rootless D + workspace-relative paths, net off, K=3
+
+`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --net off --turns 60`, 3 параллельно,
+официальный verifier. Текущее дерево на `63563cb` + незакоммиченный D: образ задачи стартует
+rootless, file-tools/`bash`/jobs/checkpoint идут в контейнере (store `/tmp/.skein`), verifier —
+в отдельном контейнере; `grep`/`listFiles` возвращают **workspace-relative** пути, как
+`fsWorkspace` (не `/app/...`). State layer/prompt — как в `8dc3102`. Это чистый прогон:
+без abort, все три дошли до официального verifier.
+
+| run | шагов | вызовов | in | fresh | cache | hit | out (виз + реа) | peak chars | L stop | Patch | Verification | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `16-32-18-116` | 27 | 27 | 196 293 | 60 613 | 135 680 | 69% | 7 636 (3 031 + 4 605) | 48 388 | t8 | t9–17 | t18–24 | **1.633** | **1** |
+| `16-32-18-094` | 29 | 29 | 196 449 | 64 353 | 132 096 | 67% | 8 130 (3 798 + 4 332) | 58 812 | t10 | t11–18 | t19–26 | **1.732** | **1** |
+| `16-32-18-093` | 29 | 29 | 239 499 | 65 035 | 174 464 | 73% | 9 046 (3 428 + 5 618) | 72 420 | t10 | t11–19 | t20–26 | **1.822** | **1** |
+| **median** | **29** | **29** | **196 449** | **64 353** | **135 680** | **69%** | **8 130 (3 428 + 4 605)** | **58 812** | — | — | — | **1.732** | — |
+
+Все три — `request_addressed`, `reward=1`, verifier `PASS test_tests_output`; правка одна и
+та же: `p += Whsize_hd(hd)` → `p += wh` в `pool_sweep` (`runtime/shared_heap.c`). В каждом
+прогоне был один retryable `No output generated` (в Verification); ходы не потеряны.
+
+**Против pre-rootless батча `04-29`** (host `/app` + host fast-path `grep/list`):
+median шагов **29 vs 26**, in **196 449 vs 163 568** (+20%), fresh **64 353 vs 51 084**
+(+26%), cache hit **69% vs 71%**, out **8 130 vs 6 944** (+17%), ₽ **1.732 vs 1.412**
+(+23%), peak chars **58 812 vs 58 504** (равно). L закрывается так же/лучше (t8/t10/t10
+против t10/t8/t11); разрыв — в **Patch** (9/8/9 ходов против 6/7/8) и в большем fresh-входе.
+Относительные пути убрали раздувание `/app/...`, но не объясняют остаток: это model/provider
+variance + лишние `grep`/`bash`/`read` в Patch. K=3, temp 0.1 — направление, не статистика.
+
+Трассы: `bench/runs/sandbox-tasks/2026-10-23T16-32-18-116Z-fix-ocaml-gc-AAFw9y`,
+`…16-32-18-094Z-…-sVz2Qi`, `…16-32-18-093Z-…-bH2YAw`.
+
 ## Батч 2026-10-23 — breadth: `fix-code`, `fix-git`, `custom-memory` (net off, K=1)
 
 Три остальные задачи набора `O → L → P → V`, по одному прогону, параллельно:
@@ -143,6 +193,63 @@ fix-code 0.942₽ (было 0.81–1.32), fix-git 0.847₽ (было 0.86–1.30
 
 Трассы: `bench/runs/sandbox-tasks/2026-10-23T05-04-29-581Z-fix-code-vulnerability`,
 `…05-04-31-786Z-fix-git`, `…05-04-33-824Z-custom-memory-heap-crash`.
+
+## Батч 2026-10-23 — breadth, rootless D + workspace-relative paths (net off, K=1 на задачу)
+
+`npx tsx tests/sandbox/sandbox-run.ts <task> --net off --turns 60`, три задачи параллельно,
+по одному прогону, официальный verifier. Текущее дерево на `63563cb` + незакоммиченный D:
+rootless, `grep`/`listFiles` возвращают workspace-relative пути. State layer/prompt — как в
+`8dc3102`.
+
+| задача | ходов | LLM/tool | in | fresh | cache | hit | out (виз + реа) | peak chars | stop | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `fix-code-vulnerability` | 20 | 20/20 | 89 667 | 30 019 | 59 648 | 67% | 3 240 (1 998 + 1 242) | 19 027 | `request_addressed` | **0.769** | **1** |
+| `fix-git` | 20 | 20/24 | 84 542 | 33 726 | 50 816 | 60% | 3 285 (2 378 + 907) | 21 627 | `request_addressed` | **0.833** | **1** |
+| `custom-memory-heap-crash` | 60 | 60/70 | 504 734 | 94 878 | 409 856 | 81% | 18 968 (6 892 + 12 076) | 69 266 | **`max_turns`** | **3.114** | **1** |
+
+`fix-code`/`fix-git` — чистые self-closure. `custom-memory` — `reward=1` по verifier, но
+**не закрылся сам**: 60 ходов, последний ход `move`, не `stop`. Провайдерских retry в этих
+трёх не было.
+
+**Против pre-rootless breadth-батча `05-04`:**
+
+- `fix-code`: **20 vs 25** ходов, **0.769 vs 0.942₽** (−18%), in **89 667 vs 131 597** (−32%).
+- `fix-git`: **20 vs 19**, **0.833 vs 0.847₽** (−2%), in **84 542 vs 90 466** (−7%).
+- `custom-memory`: **60 vs 60**, **3.114 vs 3.822₽** (−19%), in **504 734 vs 525 154** (−4%);
+  но там `request_addressed`, здесь **`max_turns`** — стоимость лучше, закрытие хуже. В один
+  ряд с закрытыми прогонами его не ставить.
+
+Трассы: `bench/runs/sandbox-tasks/2026-10-23T17-15-08-536Z-fix-code-vulnerability-ztbKKL`,
+`…17-15-08-508Z-fix-git-oYsqqe`, `…17-15-08-496Z-custom-memory-heap-crash-gUHPBo`.
+
+## Батч 2026-10-23 — recovery (Research → Recovery), net off, K=1 на задачу
+
+`npx tsx tests/sandbox/sandbox-run.ts <task> --net off --turns 40`, три задачи параллельно,
+по одному прогону, официальный verifier. Текущее дерево на `63563cb` + незакоммиченный D:
+rootless, `grep`/`listFiles` — workspace-relative. State layer/prompt — как в `8dc3102`.
+Все три — Recovery-класс: `O → Research → Recovery → End`, без Localization/Verification.
+
+| задача | ходов | LLM/tool | in | fresh | cache | hit | out (виз + реа) | peak chars | маршрут | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `password-recovery` | 26 | 26/30 | 274 211 | 64 419 | 209 792 | 77% | 19 208 (6 337 + 12 871) | 66 760 | O → R → Recovery → End | **2.531** | **1** |
+| `db-wal-recovery` | 22 | 22/25 | 133 968 | 39 888 | 94 080 | 70% | 7 924 (3 941 + 3 983) | 27 829 | O → R → Recovery → End | **1.278** | **1** |
+| `crack-7z-hash` | 23 | 23/29 | 150 852 | 35 780 | 115 072 | 76% | 4 344 (2 653 + 1 691) | 28 365 | O → R → Recovery → End | **0.965** | **1** |
+
+Все — `request_addressed`, `reward=1`; в каждом прогоне на ленте есть `Start state Research`
+и `Start state Recovery`; provider retry не было.
+
+**Против recovery-батча 2026-10-18** (5×40, средние, другой промт/harness — ориентир, не
+статистика):
+
+- `password-recovery`: 26 ходов против 34.2, in 274 211 против 234.1k, out 19 208 против 11.5k,
+  **2.531 против 1.590₽** — дороже из-за reasoning 12.9k; ходов меньше.
+- `db-wal-recovery`: 22 против 28.4, in 133 968 против 143.1k, out 7 924 против 9.0k,
+  **1.278 против 1.160₽** — близко.
+- `crack-7z-hash`: 23 против 30.7, in 150 852 против 159.5k, out 4 344 против 5.4k,
+  **0.965 против 0.925₽** — близко.
+
+Трассы: `bench/runs/sandbox-tasks/2026-10-23T17-24-05-064Z-password-recovery-JqJ0AD`,
+`…17-24-05-074Z-db-wal-recovery-4eqN0L`, `…17-24-05-071Z-crack-7z-hash-L9Gpoj`.
 
 ## Батч 2026-10-20 — final conduct, net on, K=3
 

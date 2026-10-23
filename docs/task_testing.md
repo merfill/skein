@@ -31,12 +31,13 @@ engine** (`runAgent`), the real tools and **the task's own verifier**, without H
   `tests/sandbox/tasks/registry.ts`;
 - the task files (`instruction.md`, `tests/`, `solution/`) come from the Harbor cache
   `~/.cache/harbor/tasks/<hash>/<id>/` and are never copied into the repository;
-- a task with `image` runs in Docker **rootless**: the container starts from the image;
-  `/app` is **not** extracted to a host temp root or bind-mounted. File tools
+- every ported task (including `regex-log`) runs in Docker **rootless**: the container starts
+  from the image; `/app` is **not** extracted to a host temp root or bind-mounted. File tools
   (`read/write/edit/grep/list`), `bash`, background jobs and the checkpoint run in the
-  container via `docker exec`; the store is `/tmp/.skein` inside the container
-  (`DockerBackend`). A task without `image` runs under `bwrap`
-  (`tests/sandbox/container.ts`) — its file tools/checkpoint are still host-side;
+  container via `docker exec`; `grep`/`listFiles` return workspace-relative paths. The store is
+  `/tmp/.skein` inside the container (`DockerBackend`). A task without `image` (none today)
+  would fall back to `bwrap`
+  (`tests/sandbox/container.ts`), which is kept for the opencode baseline/`minimal`;
 - `setup` runs before the agent; the **verifier is staged after the agent** so `test.sh`
   cannot leak into the workspace: `checkIn:"task"` writes the tests into the container,
   `checkIn:"host"` uses a separate verifier container (`SKEIN_VERIFIER_IMAGE`, default

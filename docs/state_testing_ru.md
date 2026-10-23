@@ -50,11 +50,14 @@
   выгружается в host temp-root и не бинд-маунтится (`rootless`); host-копии `/app` нет.
 - Команды, файловые инструменты (`read`/`grep`/`list`/`edit`/`write`), `bash`, фоновые jobs и
   checkpoint идут через `docker exec` в этот же контейнер, поэтому `/app` и `/tmp` означают
-  одно и то же и для инструментов, и для shell.
+  одно и то же и для инструментов, и для shell; `grep`/`listFiles` возвращают
+  workspace-relative пути, как `fsWorkspace`.
 - Checkpoint store — `/tmp/.skein` **в контейнере** (`DockerBackend`); `/app/.skein/checkpoints`
   — symlink на него.
-- Для задач без образа (`bwrap`, `container.ts`) workspace — host-root, file-tools пока host
-  `fsWorkspace`, `/tmp` — per-invocation tmpfs; перенос bwrap на D ещё не сделан.
+- Все ported задачи, включая `regex-log`, идут этим путём (у `regex-log` верификатор — в
+  отдельном verifier-контейнере, т.к. в образе нет Python). `bwrap` (`container.ts`) остался
+  только для opencode-baseline/`bench/minimal`: там workspace — host-root, file-tools —
+  host `fsWorkspace`, `/tmp` — per-invocation tmpfs.
 - Уборка — `cleanupContainers()` (`docker rm` контейнера; host-mount для `/app` больше нет).
 
 ### 2.2 Исполнение команд
@@ -257,6 +260,10 @@ ai — Finish state <Label> — <why из stop>
   verifier для `checkIn:"host"` — отдельный контейнер (`SKEIN_VERIFIER_IMAGE`). Найден и
   исправлен 5-минутный `signatureMap` (per-file `docker exec` → batched `signatures`). Crack
   после фикса: 24 хода, reward=1, request_addressed.
+- **D закрыт (2026-10-23, session 10).** `regex-log` переведён на свой образ + verifier-контейнер
+  (bwrap ушёл из task-пути); `stageSolution` идёт rootless; `live-step` считает дифф деревом
+  внутри контейнера; `fetchTo` копирует байты через `docker cp`; `grep/list/listFiles` в
+  rootless соблюдают `SKIP_DIRS`/dot-entries/include-exclude, как `fsWorkspace`.
 - **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход состояния —
   `ai(Start)` + `system(инструкция)` + `user(what)`; `notes`/`move.what` не показываются.
 - **Добавлена per-island `instruction`** (`src/ir/islands.ts`) — «как действовать в

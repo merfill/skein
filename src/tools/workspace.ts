@@ -127,7 +127,7 @@ export interface Workspace {
   restoreCheckpoint?(id: string, paths: readonly string[]): { path: string; version: string }[];
 }
 
-const SKIP_DIRS = new Set([
+export const SKIP_DIRS = new Set([
   "node_modules",
   ".git",
   "dist",
@@ -191,7 +191,7 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
-function globMatcher(glob: string): (path: string) => boolean {
+export function globMatcher(glob: string): (path: string) => boolean {
   const hasSlash = glob.includes("/");
   const re = globToRegExp(glob);
   return (path) => re.test(hasSlash ? path : (path.split("/").pop() ?? path));

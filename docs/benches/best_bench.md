@@ -21,9 +21,25 @@ writes `opencode.txt`).
 > t10 / t8 / t11; median input **163,568** (fresh 51,084 + cache 115,968, 71%) vs opencode
 > net-off **981,082**; reasoning **3,812** vs **15,852**. See the 2026-10-23 batch below.
 
+> **2026-10-23, rootless D + relative paths, net off, K=3:** `fix-ocaml-gc` — **3/3 reward=1**,
+> 27–29 steps, **1.633 / 1.732 / 1.822₽** (median **1.732₽**). L closed at t8 / t10 / t10;
+> median input **196,449** (fresh 64,353 + cache 135,680, 69%). Versus the pre-rootless batch
+> median cost **+23%**; the gap is in Patch (8–9 steps vs 6–8), not Localization. See the
+> 2026-10-23 rootless batch below.
+
 > **2026-10-23, breadth:** `fix-code` / `fix-git` / `custom-memory` — **3/3 reward=1**;
 > 25 / 19 / 60 steps, **0.942 / 0.847 / 3.822₽**. `fix-git` skipped Verification;
 > `custom-memory` is a regression (60 steps, 4 cycles). See the 2026-10-23 breadth batch.
+
+> **2026-10-23, breadth rootless D + relative paths:** `fix-code` / `fix-git` /
+> `custom-memory` — **3/3 reward=1**; 20 / 20 / 60 steps, **0.769 / 0.833 / 3.114₽**.
+> `fix-code`/`fix-git` are `request_addressed`; `custom-memory` is `reward=1` but
+> **`max_turns`** (no self-closure). See the 2026-10-23 rootless breadth batch below.
+
+> **2026-10-23, recovery (Research → Recovery), net off, K=1 per task:**
+> `password-recovery` / `db-wal-recovery` / `crack-7z-hash` — **3/3 reward=1**, 26 / 22 / 23
+> steps, **2.531 / 1.278 / 0.965₽**. All `request_addressed`, route
+> `O → Research → Recovery → End`. See the 2026-10-23 recovery batch below.
 
 > **2026-10-18, terminal-bench breadth:** `db-wal-recovery`, `log-summary-date-ranges`,
 > `cobol-modernization`, `fix-code-vulnerability`, `password-recovery` — **5/5**;
@@ -42,13 +58,13 @@ writes `opencode.txt`).
 | 1 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — restored state layer, reasoning on; **1.412₽**, best by input (151,935) | **1** | 25 | 33 | 151,935 | 6,944 (2,995 + 3,949) | 66% | — | `bench/runs/sandbox-tasks/2026-10-23T04-29-19-623Z-fix-ocaml-gc` |
 | 2 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — restored state layer, reasoning on; **1.437₽** | **1** | 29 | 38 | 208,780 | 7,092 (3,322 + 3,770) | 76% | — | `bench/runs/sandbox-tasks/2026-10-23T04-29-21-776Z-fix-ocaml-gc` |
 | 3 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (formerly ★: best by cost/input before 2026-10-23) | **1** | 27 | 34 | 159,475 | 10,681 (2,901 + 7,780) | 72% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-582Z-fix-ocaml-gc` |
-| 4 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 34 | 44 | 173,000 | 14,923 (3,296 + 11,627) | 71% | — | `bench/runs/sandbox-tasks/2026-10-17T04-57-57-012Z-fix-ocaml-gc` |
-| 5 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 32 | 40 | 222,135 | 14,603 (3,274 + 11,329) | 75% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-598Z-fix-ocaml-gc` |
-| 6 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **best net on and best Skein by cost without reasoning on the tape (Phase 18: active directives)** | **1** | 29 | 37 | 252,551 | 16,198 (3,177 + 13,021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
-| 7 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
-| 8 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** ‡ | **1** | 33 | 32 | 698,460 | 11,993 (3,245 + 8,748) | 97% | 434s | `bench/runs/sandbox-tasks/2026-10-09T16-01-20-117Z-fix-ocaml-gc-opencode-on` |
-| 9 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net on** † | **1** | 33 | 36 | 1,430,864 | 11,399 (4,011 + 7,388) | 97% | 314s | `bench/runs/sandbox-tasks/2026-10-11T06-30-03-965Z-fix-ocaml-gc-opencode-on` |
-| 10 | 2026-10-11 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** † | **1** | 24 | 31 | 748,329 | 15,834 (2,720 + 13,114) | 96% | 279s | `bench/runs/sandbox-tasks/2026-10-11T06-52-33-197Z-fix-ocaml-gc-opencode-off` |
+| 4 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.633₽** | **1** | 27 | 27 | 196,293 | 7,636 (3,031 + 4,605) | 69% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-116Z-fix-ocaml-gc-AAFw9y` |
+| 5 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.732₽** | **1** | 29 | 29 | 196,449 | 8,130 (3,798 + 4,332) | 67% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-094Z-fix-ocaml-gc-sVz2Qi` |
+| 6 | 2026-10-23 | Skein | `fix-ocaml-gc` | **net off** — rootless D + relative grep/list; **1.822₽** | **1** | 29 | 29 | 239,499 | 9,046 (3,428 + 5,618) | 73% | — | `bench/runs/sandbox-tasks/2026-10-23T16-32-18-093Z-fix-ocaml-gc-bH2YAw` |
+| 7 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 34 | 44 | 173,000 | 14,923 (3,296 + 11,627) | 71% | — | `bench/runs/sandbox-tasks/2026-10-17T04-57-57-012Z-fix-ocaml-gc` |
+| 8 | 2026-10-17 | Skein | `fix-ocaml-gc` | **net off** † — reasoning on the tape (A/B) | **1** | 32 | 40 | 222,135 | 14,603 (3,274 + 11,329) | 75% | — | `bench/runs/sandbox-tasks/2026-10-17T05-16-41-598Z-fix-ocaml-gc` |
+| 9 | 2026-10-14 | Skein | `fix-ocaml-gc` | **net on** † — **best net on and best Skein by cost without reasoning on the tape (Phase 18: active directives)** | **1** | 29 | 37 | 252,551 | 16,198 (3,177 + 13,021) | 78% | — | `bench/runs/sandbox-tasks/2026-10-14T05-37-29-796Z-fix-ocaml-gc` |
+| 10 | 2026-10-09 | opencode 1.18.35 | `fix-ocaml-gc` | **net off** | **1** | 27 | 41 | 1,213,834 | 21,987 (3,398 + 18,589) | 96% | 322s | `bench/runs/sandbox-tasks/2026-10-09T15-51-47-367Z-fix-ocaml-gc-opencode-off` |
 
 Row numbers are current (2026-10-23); in the sections below, `(#N)` refers to the leaderboard at
 the time of that run.
@@ -59,7 +75,10 @@ Newly out of the top-10: **`2026-10-15T19-24-07`** (net on, 52 steps, 7.30₽),
 **`2026-10-11T13-50-03`** (net off, 45 steps), **`2026-10-13T11-51-44`** (net off,
 goal-into-move, 49 steps), **`19-02`** (net on, 46 steps, 6.97₽), **`08-40`** (net on,
 50 steps, no cost recorded), **`07-02`** (net off, 13.78₽) and **`18-30`** (net on, 12.68₽) —
-their write-ups remain in the sections below.
+their write-ups remain in the sections below. With the rootless batch added, these opencode
+rows dropped out: **`2026-10-09T16-01-20`** (net on, 33 steps, 434s), **`2026-10-11T06-30-03`**
+(net on, 33, 314s) and **`2026-10-11T06-52-33`** (net off, 24, 279s); their traces remain in
+the run dirs.
 
 **Condition notes.** † — a run **after the oracle was removed**: the task verifier (including
 Harbor's `tests/test.sh`, which names the broken tag `tag_purposefully_broken_sweeping_changes`)
@@ -125,6 +144,38 @@ direction, not statistics.
 Traces: `bench/runs/sandbox-tasks/2026-10-23T04-29-17-477Z-fix-ocaml-gc`,
 `…04-29-19-623Z…`, `…04-29-21-776Z…`.
 
+## Batch 2026-10-23 — rootless D + workspace-relative paths, net off, K=3
+
+`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --net off --turns 60`, 3 in parallel, the
+official verifier. Current tree on `63563cb` + uncommitted D: the task image starts rootless,
+file tools/`bash`/jobs/checkpoint run in the container (store `/tmp/.skein`), the verifier runs
+in a separate container; `grep`/`listFiles` return **workspace-relative** paths like
+`fsWorkspace` (not `/app/...`). State layer/prompt as in `8dc3102`. This is a clean batch: no
+aborts, all three reached the official verifier.
+
+| run | steps | calls | in | fresh | cache | hit | out (vis + rea) | peak chars | L stop | Patch | Verification | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `16-32-18-116` | 27 | 27 | 196,293 | 60,613 | 135,680 | 69% | 7,636 (3,031 + 4,605) | 48,388 | t8 | t9–17 | t18–24 | **1.633** | **1** |
+| `16-32-18-094` | 29 | 29 | 196,449 | 64,353 | 132,096 | 67% | 8,130 (3,798 + 4,332) | 58,812 | t10 | t11–18 | t19–26 | **1.732** | **1** |
+| `16-32-18-093` | 29 | 29 | 239,499 | 65,035 | 174,464 | 73% | 9,046 (3,428 + 5,618) | 72,420 | t10 | t11–19 | t20–26 | **1.822** | **1** |
+| **median** | **29** | **29** | **196,449** | **64,353** | **135,680** | **69%** | **8,130 (3,428 + 4,605)** | **58,812** | — | — | — | **1.732** | — |
+
+All three `request_addressed`, `reward=1`, verifier `PASS test_tests_output`; the same correct
+edit every time: `p += Whsize_hd(hd)` → `p += wh` in `pool_sweep` (`runtime/shared_heap.c`).
+Each run had one retryable `No output generated` (in Verification); no turns were lost.
+
+**Against the pre-rootless `04-29` batch** (host `/app` + host fast-path `grep/list`):
+median steps **29 vs 26**, in **196,449 vs 163,568** (+20%), fresh **64,353 vs 51,084**
+(+26%), cache hit **69% vs 71%**, out **8,130 vs 6,944** (+17%), ₽ **1.732 vs 1.412**
+(+23%), peak chars **58,812 vs 58,504** (equal). Localization closes at the same/better turn
+(t8/t10/t10 vs t10/t8/t11); the gap is in **Patch** (9/8/9 steps vs 6/7/8) and in more fresh
+input. Relative paths removed the `/app/...` inflation but do not explain the remainder: it is
+model/provider variance plus extra `grep`/`bash`/`read` in Patch. K=3, temp 0.1 — a direction,
+not statistics.
+
+Traces: `bench/runs/sandbox-tasks/2026-10-23T16-32-18-116Z-fix-ocaml-gc-AAFw9y`,
+`…16-32-18-094Z-…-sVz2Qi`, `…16-32-18-093Z-…-bH2YAw`.
+
 ## Batch 2026-10-23 — breadth: `fix-code`, `fix-git`, `custom-memory` (net off, K=1)
 
 The other three tasks of the `O → L → P → V` set, one run each, in parallel:
@@ -157,6 +208,62 @@ statistics.
 
 Traces: `bench/runs/sandbox-tasks/2026-10-23T05-04-29-581Z-fix-code-vulnerability`,
 `…05-04-31-786Z-fix-git`, `…05-04-33-824Z-custom-memory-heap-crash`.
+
+## Batch 2026-10-23 — breadth, rootless D + workspace-relative paths (net off, K=1 per task)
+
+`npx tsx tests/sandbox/sandbox-run.ts <task> --net off --turns 60`, three tasks in parallel,
+one run each, official verifier. Current tree on `63563cb` + uncommitted D: rootless,
+`grep`/`listFiles` return workspace-relative paths. State layer/prompt as in `8dc3102`.
+
+| task | steps | LLM/tool | in | fresh | cache | hit | out (vis + rea) | peak chars | stop | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `fix-code-vulnerability` | 20 | 20/20 | 89,667 | 30,019 | 59,648 | 67% | 3,240 (1,998 + 1,242) | 19,027 | `request_addressed` | **0.769** | **1** |
+| `fix-git` | 20 | 20/24 | 84,542 | 33,726 | 50,816 | 60% | 3,285 (2,378 + 907) | 21,627 | `request_addressed` | **0.833** | **1** |
+| `custom-memory-heap-crash` | 60 | 60/70 | 504,734 | 94,878 | 409,856 | 81% | 18,968 (6,892 + 12,076) | 69,266 | **`max_turns`** | **3.114** | **1** |
+
+`fix-code`/`fix-git` are clean self-closures. `custom-memory` is `reward=1` by the verifier but
+did **not** close itself: 60 steps, the last step is `move`, not `stop`. No provider retries in
+these three.
+
+**Against the pre-rootless `05-04` breadth batch:**
+
+- `fix-code`: **20 vs 25** steps, **0.769 vs 0.942₽** (−18%), in **89,667 vs 131,597** (−32%).
+- `fix-git`: **20 vs 19**, **0.833 vs 0.847₽** (−2%), in **84,542 vs 90,466** (−7%).
+- `custom-memory`: **60 vs 60**, **3.114 vs 3.822₽** (−19%), in **504,734 vs 525,154** (−4%);
+  but that run was `request_addressed`, this one is **`max_turns`** — better cost, worse
+  closure. Do not rank it with the closed runs.
+
+Traces: `bench/runs/sandbox-tasks/2026-10-23T17-15-08-536Z-fix-code-vulnerability-ztbKKL`,
+`…17-15-08-508Z-fix-git-oYsqqe`, `…17-15-08-496Z-custom-memory-heap-crash-gUHPBo`.
+
+## Batch 2026-10-23 — recovery (Research → Recovery), net off, K=1 per task
+
+`npx tsx tests/sandbox/sandbox-run.ts <task> --net off --turns 40`, three tasks in parallel,
+one run each, official verifier. Current tree on `63563cb` + uncommitted D: rootless,
+`grep`/`listFiles` return workspace-relative paths. State layer/prompt as in `8dc3102`.
+All three are Recovery-class: `O → Research → Recovery → End`, no Localization/Verification.
+
+| task | steps | LLM/tool | in | fresh | cache | hit | out (vis + rea) | peak chars | route | ₽ | reward |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|---|---|--:|--:|
+| `password-recovery` | 26 | 26/30 | 274,211 | 64,419 | 209,792 | 77% | 19,208 (6,337 + 12,871) | 66,760 | O → R → Recovery → End | **2.531** | **1** |
+| `db-wal-recovery` | 22 | 22/25 | 133,968 | 39,888 | 94,080 | 70% | 7,924 (3,941 + 3,983) | 27,829 | O → R → Recovery → End | **1.278** | **1** |
+| `crack-7z-hash` | 23 | 23/29 | 150,852 | 35,780 | 115,072 | 76% | 4,344 (2,653 + 1,691) | 28,365 | O → R → Recovery → End | **0.965** | **1** |
+
+All `request_addressed`, `reward=1`; every tape contains `Start state Research` and
+`Start state Recovery`; no provider retries.
+
+**Against the 2026-10-18 recovery batch** (5×40 averages, different prompt/harness — an
+indication, not statistics):
+
+- `password-recovery`: 26 steps vs 34.2, in 274,211 vs 234.1k, out 19,208 vs 11.5k,
+  **2.531 vs 1.590₽** — more expensive because of 12.9k reasoning; fewer steps.
+- `db-wal-recovery`: 22 vs 28.4, in 133,968 vs 143.1k, out 7,924 vs 9.0k,
+  **1.278 vs 1.160₽** — close.
+- `crack-7z-hash`: 23 vs 30.7, in 150,852 vs 159.5k, out 4,344 vs 5.4k,
+  **0.965 vs 0.925₽** — close.
+
+Traces: `bench/runs/sandbox-tasks/2026-10-23T17-24-05-064Z-password-recovery-JqJ0AD`,
+`…17-24-05-074Z-db-wal-recovery-4eqN0L`, `…17-24-05-071Z-crack-7z-hash-L9Gpoj`.
 
 ## Batch 2026-10-18 — generalized states, checkpoint/revert, terminal-bench breadth
 

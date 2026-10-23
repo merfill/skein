@@ -32,12 +32,13 @@ Harbor:
   `tests/sandbox/tasks/registry.ts`;
 - файлы задачи (`instruction.md`, `tests/`, `solution/`) читаются из кэша Harbor
   `~/.cache/harbor/tasks/<hash>/<id>/` и никогда не копируются в репозиторий;
-- задача с `image` идёт в Docker **rootless**: контейнер стартует прямо из образа, `/app`
-  **не** выгружается в host temp-root и не бинд-маунтится; файловые инструменты
-  (`read/write/edit/grep/list`), `bash`, фоновые jobs и checkpoint работают в контейнере
-  через `docker exec`. Store — `/tmp/.skein` в контейнере (`DockerBackend`). Задача без
-  `image` идёт через `bwrap` (`tests/sandbox/container.ts`) — там file-tools/checkpoint пока
-  host-side;
+- все ported задачи (включая `regex-log`) идут в Docker **rootless**: контейнер стартует
+  прямо из образа, `/app` **не** выгружается в host temp-root и не бинд-маунтится; файловые
+  инструменты (`read/write/edit/grep/list`), `bash`, фоновые jobs и checkpoint работают в
+  контейнере через `docker exec`; `grep`/`listFiles` возвращают workspace-relative пути.
+  Store — `/tmp/.skein` в контейнере (`DockerBackend`).
+  Задача без `image` (сейчас таких нет) упала бы в `bwrap` (`tests/sandbox/container.ts`),
+  который оставлен для opencode-baseline/`minimal`;
 - `setup` выполняется до агента; **verifier ставится после агента**, чтобы `test.sh` не утёк
   в workspace: `checkIn:"task"` — файлы тестов пишутся в контейнер, `checkIn:"host"` —
   отдельный verifier-контейнер (`SKEIN_VERIFIER_IMAGE`, по умолчанию `fix-code`): `/app`

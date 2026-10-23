@@ -3,9 +3,10 @@ import { existsSync } from "node:fs";
 
 import { fsWorkspace, type CommandResult, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
-// A real-execution workspace for a terminal-bench task, isolated with `bwrap` (bubblewrap)
-// instead of Docker: `run` executes a real shell inside a namespace where the workspace is
-// mounted at the task's WORKDIR (`/app` by default) and the host is otherwise read-only.
+// A real-execution workspace isolated with `bwrap` (bubblewrap) instead of Docker, kept for
+// the opencode baseline's host verifier and `bench/minimal`: `run` executes a real shell
+// inside a namespace where the workspace is mounted at the task's WORKDIR (`/app` by
+// default) and the host is otherwise read-only.
 // No network (`--unshare-net`), no host home, `/tmp` is a tmpfs — the model's commands
 // cannot escape or persist. The host system tree (`/usr`, `/bin`, `/lib`, `/etc`) is shared
 // read-only, so the tools already installed on the host are available to the task.

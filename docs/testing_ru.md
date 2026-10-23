@@ -207,17 +207,18 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 ## 3.6 Песочница задач (реальные, без Harbor)
 
 Реальные задачи terminal-bench гоняются локально настоящим движком и родным верификатором
-задачи на двух бэкендах:
+задачи. Все 13 задач идут одним путём — **Docker rootless**:
 
-- **Docker rootless** (задачи с образом). Родной образ задачи
-  (`alexgshaw/<task>:20251031`) несёт точное окружение, на хост ничего не ставится.
-  Контейнер стартует прямо из образа; `/app` **не** копируется на хост и не бинд-маунтится.
-  File-tools, `grep/list`, `bash`, фоновые jobs и checkpoint — через `docker exec`; store
-  `/tmp/.skein` в контейнере (`DockerBackend`). Сеть по умолчанию `none`, выставлен
+- Родной образ задачи (`alexgshaw/<task>:20251031`) несёт точное окружение, на хост ничего
+  не ставится. Контейнер стартует прямо из образа; `/app` **не** копируется на хост и не
+  бинд-маунтится. File-tools, `grep/list`, `bash`, фоновые jobs и checkpoint — через
+  `docker exec`; `grep`/`listFiles` возвращают workspace-relative пути, как `fsWorkspace`.
+  Store `/tmp/.skein` в контейнере (`DockerBackend`). Сеть по умолчанию `none`, выставлен
   `--ulimit nofile` (valgrind) и git `safe.directory=*`.
-- **bwrap** (`container.ts`, для `regex-log`). Временный корень хоста в `/app` под `bwrap`
-  с read-only `/usr` хоста, сеть выключена; file-tools/checkpoint пока host-side (`/tmp` —
-  per-invocation tmpfs). Перенос bwrap на D — отдельный шаг.
+- `regex-log` — тоже образ (`alexgshaw/regex-log:20251031`); в нём нет Python, поэтому его
+  верификатор идёт в отдельном verifier-контейнере (`checkIn: "host"`).
+- **bwrap** (`container.ts`) остаётся только для opencode-baseline (host-side верификатор)
+  и `bench/minimal.ts`; путь задачи его больше не использует.
 
 Портировано (13): `regex-log`, `fix-git`, `log-summary-date-ranges`,
 `openssl-selfsigned-cert`, `git-leak-recovery`, `cobol-modernization`,
@@ -227,8 +228,9 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 | Файл | Роль |
 | --- | --- |
 | `tests/sandbox/docker.ts` | Docker-`Workspace` (rootless: образ → `docker exec`; `signatures` батчем) |
+| `tests/sandbox/docker.test.ts` | rootless: `fetchTo` (docker cp) и parity `list`/`grep`/`listFiles` |
 | `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` в контейнере |
-| `tests/sandbox/container.ts` | bwrap-`Workspace`; файловые инструменты рерайтят префикс `/app/` |
+| `tests/sandbox/container.ts` | bwrap-`Workspace` (opencode-baseline, `bench/minimal`); файловые инструменты рерайтят префикс `/app/` |
 | `tests/sandbox/task.ts` | `SandboxTask` + поиск в кэше Harbor + обёртка верификатора и `pytest`-шим |
 | `tests/sandbox/harness.ts` | `runTask`: материализация → setup → `runAgent` → `checkSetup` → верификатор → reward |
 | `tests/sandbox/tasks/<id>.ts` | дескриптор задачи; `registry.ts` — id → задача |
@@ -280,15 +282,17 @@ Skein. `opencode run --format json` и сессионная БД opencode не �
 
 **Верификатор.** `tests/test_outputs.py` запускается обёрткой без pytest; рядом кладётся
 шим `pytest`, чтобы `import pytest` резолвился без установки. `checkIn: "host"` гонит
-верификатор через bwrap для образа без Python (`git-leak-recovery`, `password-recovery`,
-`crack-7z-hash`); `checkSetup` исполняет команду до верификатора в контейнере задачи
+верификатор в отдельном verifier-контейнере (`SKEIN_VERIFIER_IMAGE`) для образа без Python
+(`regex-log`, `git-leak-recovery`, `password-recovery`, `crack-7z-hash`): `/app` стримится
+task→verifier, тесты копируются `docker cp`, `/app` verifier-образа предварительно
+очищается. `checkSetup` исполняет команду до верификатора в контейнере задачи
 (`fix-ocaml-gc` пересобирает компилятор и пересоздаёт `tests.txt`).
 
 **Изоляция / ограничения.** Docker-задачи держат сеть выключенной (кроме `crack-7z-hash`,
 который ставит p7zip), домашний каталог хоста не монтируется, root-овые файлы вычищаются
-изнутри контейнера при закрытии. bwrap-задачи делят `/usr` хоста, поэтому нужен инструмент
-на хосте. Фоновая задача (`run {background: true}`) и `fetch` пока используют хостовую
-реализацию.
+изнутри контейнера при закрытии. `fetch` скачивает URL на хосте (allowlist/constraints) и
+копирует байты в контейнер; фоновые jobs в rootless-режиме исполняются в контейнере. bwrap
+(`container.ts`) делит `/usr` хоста и используется только opencode-baseline/`minimal`.
 
 **Как добавить задачу.** Напиши `tests/sandbox/tasks/<id>.ts` с `{ id, image?, files?,
 setup?, check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` по умолчанию из

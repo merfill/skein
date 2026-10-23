@@ -1,14 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 
-import { fsWorkspace, type CommandResult, type GrepMatch, type JobHandle, type JobResult, type JobWaitOptions, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
+import { SKIP_DIRS, fsWorkspace, globMatcher, type CommandResult, type GrepMatch, type JobHandle, type JobResult, type JobWaitOptions, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
 // A real-execution workspace backed by Docker, for a ported terminal-bench task: the task's
 // own image already carries the exact environment (repo, toolchain), so there is nothing to
 // install on the host. `run` and the file tools execute `docker exec` inside the container,
-// so `/app`, `/tmp`, and the rest of the task namespace mean the same thing to both. The
-// bind-mounted `/app` tree keeps a host fast path for `grep`/`listFiles` (identical files).
+// so `/app`, `/tmp`, and the rest of the task namespace mean the same thing to both. In the
+// legacy bind-mounted mode, `/app` keeps a host fast path for `grep`/`listFiles` (identical
+// files); in `rootless` mode every operation goes through the container.
 //
 // Why Docker rather than bwrap (`container.ts`): bwrap isolates but shares the host `/usr`,
 // so every task toolchain would have to be installed on the host. The task image provides
@@ -206,9 +207,9 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
     execAt(command, workdir, execTimeoutMs, input);
 
   // File operations run in the task container, so `/tmp` and other container paths mean the
-  // same thing to the file tools and to `bash`. Paths under the mounted workspace keep the
-  // host fast path in `grep`/`listFiles` (the bind mount makes them the same tree), while
-  // paths outside it are served by the container.
+  // same thing to the file tools and to `bash`. In the legacy bind-mount mode, paths under
+  // the workspace keep the host fast path in `grep`/`listFiles`; paths outside it, and every
+  // path in `rootless` mode, are served by the container.
   const read = (path: string): string => {
     const result = execAt(`cat -- ${shellQuote(agentPath(path))}`);
     if (result.code !== 0) {
@@ -249,7 +250,14 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   const signatures = (paths: readonly string[]): Map<string, string> => {
     const out = new Map<string, string>();
     if (paths.length === 0) return out;
-    const list = `${paths.map((path) => `${mount}/${path}`).join("\0")}\0`;
+    const requested = new Map<string, string>();
+    const list = `${paths
+      .map((path) => {
+        const absolute = path.startsWith("/") ? path : `${mount}/${path}`;
+        requested.set(absolute, path);
+        return absolute;
+      })
+      .join("\0")}\0`;
     const result = execInput(
       "xargs -0 stat -c '%n\\0%y\\0%z\\0%s\\0' -- 2>/dev/null || true",
       list,
@@ -261,7 +269,7 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
       const ctime = fields[index + 2] as string;
       const size = fields[index + 3] as string;
       const relative = absolute.startsWith(`${mount}/`) ? absolute.slice(mount.length + 1) : absolute;
-      out.set(relative, `${mtime}:${ctime}:${size}`);
+      out.set(requested.get(absolute) ?? relative, `${mtime}:${ctime}:${size}`);
     }
     return out;
   };
@@ -271,18 +279,56 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
       throw new Error(result.stderr.trim() || result.stdout.trim() || `patch exit ${result.code}`);
     }
   };
-  const containerGrep = (pattern: string, filter: PathFilter): GrepMatch[] => {
-    const scope = agentPath(filter.path ?? mount);
-    const include = filter.include !== undefined ? ` --include=${shellQuote(filter.include)}` : "";
-    const exclude = filter.exclude !== undefined ? ` --exclude=${shellQuote(filter.exclude)}` : "";
-    const command = (flag: string): string =>
-      `grep -rIn${flag} -e ${shellQuote(pattern)}${include}${exclude} -- ${shellQuote(scope)}`;
-    let result = execAt(command("P"));
-    if (result.code === 2 && /support|invalid option/i.test(result.stderr)) {
-      result = execAt(command("E"));
+
+  // File selection mirrors `fsWorkspace`: skip VCS/build dirs (`SKIP_DIRS`) and, for
+  // `listFiles`/`grep`, dot entries; apply the same include/exclude globs; report
+  // workspace-relative paths (not container-absolute). `list()` itself keeps dot files, like
+  // the host walk.
+  const relativeToMount = (path: string): string =>
+    path === mount ? "" : path.startsWith(`${mount}/`) ? path.slice(mount.length + 1) : path;
+  const skipNames = [...SKIP_DIRS].map((name) => `-name ${shellQuote(name)}`).join(" -o ");
+  const skipDirs = `\\( -type d \\( ${skipNames} \\) \\)`;
+  const containerFiles = (filter: PathFilter): string[] => {
+    const scope = posix.normalize(agentPath(filter.path ?? mount));
+    // Rootless mirrors `fsWorkspace`, which rejects paths outside the material root. The
+    // legacy bind-mount mode still serves paths outside `/app` from the container.
+    if (rootless && scope !== mount && !scope.startsWith(`${mount}/`)) {
+      throw new Error(`path escapes workspace: ${filter.path}`);
     }
-    if (result.code === 1) return [];
-    if (result.code !== 0) {
+    let files: string[];
+    if (execAt(`test -f ${shellQuote(scope)}`).code === 0) {
+      files = [scope];
+    } else {
+      if (execAt(`test -d ${shellQuote(scope)}`).code !== 0) {
+        throw new Error(`path not found: ${filter.path ?? "."}`);
+      }
+      const result = execAt(
+        `find ${shellQuote(scope)} -mindepth 1 \\( -name '.*' -o ${skipDirs} \\) -prune -o -type f -print`,
+      );
+      if (result.code !== 0) throw new Error(result.stderr.trim() || `find exit ${result.code}`);
+      files = result.stdout.split("\n").filter((line) => line !== "");
+    }
+    const include = filter.include !== undefined ? globMatcher(filter.include) : undefined;
+    const exclude = filter.exclude !== undefined ? globMatcher(filter.exclude) : undefined;
+    return files
+      .filter((path) => {
+        const relative = relativeToMount(path);
+        return (include === undefined || include(relative)) && (exclude === undefined || !exclude(relative));
+      })
+      .sort();
+  };
+  const containerGrep = (pattern: string, filter: PathFilter): GrepMatch[] => {
+    const files = containerFiles(filter);
+    if (files.length === 0) return [];
+    const list = `${files.join("\0")}\0`;
+    const runGrep = (flag: string): CommandResult =>
+      execInput(`xargs -0 grep -In${flag} -e ${shellQuote(pattern)} --`, list);
+    let result = runGrep("P");
+    if (result.code !== 0 && /support|invalid option/i.test(result.stderr)) result = runGrep("E");
+    if (result.stdout === "") {
+      // `xargs` reports a batch whose grep found nothing (exit 1) as 123. A clean stderr is
+      // what distinguishes that from an invalid pattern or an unreadable file.
+      if ((result.code === 0 || result.code === 123) && result.stderr.trim() === "") return [];
       throw new Error(result.stderr.trim() || `grep exit ${result.code}`);
     }
     return result.stdout
@@ -290,26 +336,23 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
       .filter((line) => line !== "")
       .map((line) => /^(.*?):(\d+):(.*)$/.exec(line))
       .filter((match): match is RegExpExecArray => match !== null)
-      .map((match) => ({ path: match[1] as string, line: Number(match[2]), text: match[3] as string }));
+      .map((match) => ({
+        // Match the host fast path: paths are workspace-relative, not container-absolute.
+        path: relativeToMount(match[1] as string),
+        line: Number(match[2]),
+        text: match[3] as string,
+      }));
   };
-  const containerListFiles = (filter: PathFilter): string[] => {
-    const scope = agentPath(filter.path ?? mount);
-    const result = execAt(`find ${shellQuote(scope)} -type f 2>/dev/null | sort`);
-    if (result.code !== 0) {
-      throw new Error(result.stderr.trim() || `find exit ${result.code}`);
-    }
-    return result.stdout.split("\n").filter((line) => line !== "");
-  };
+  const containerListFiles = (filter: PathFilter): string[] =>
+    containerFiles(filter).map(relativeToMount);
 
   const containerList = (): string[] => {
-    const result = execAt(
-      `find ${shellQuote(mount)} \\( -name .skein -o -name .env -o -name '.env.*' \\) -prune -o -type f -print`,
-    );
+    const result = execAt(`find ${shellQuote(mount)} ${skipDirs} -prune -o -type f -print`);
     if (result.code !== 0) throw new Error(result.stderr.trim() || `list exit ${result.code}`);
     return result.stdout
       .split("\n")
       .filter((line) => line !== "")
-      .map((line) => (line.startsWith(`${mount}/`) ? line.slice(mount.length + 1) : line))
+      .map(relativeToMount)
       .sort();
   };
   const run = (command: string, options: RunOptions = {}): CommandResult => {
@@ -385,14 +428,27 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   };
   const fetchTo = (url: string, path: string): { path: string; bytes: number } => {
     if (!rootless) return base.fetchTo(url, path);
-    // Fetch on the host (allowlist/constraints live there), then write into the container.
-    const temp = `.skein/fetch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    // Fetch on the host (allowlist/constraints live there), then copy the bytes into the
+    // container. `docker cp` keeps binary payloads intact; a utf8 read/write would corrupt
+    // them.
+    const temp = join(root, ".skein", `fetch-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const fetched = base.fetchTo(url, temp);
-    const content = base.read(temp);
+    const target = agentPath(path);
     try {
-      write(path, content);
+      const prepared = execAt(`mkdir -p ${shellQuote(dirname(target))}`);
+      if (prepared.code !== 0) {
+        throw new Error(prepared.stderr.trim() || `fetch target dir failed: ${path}`);
+      }
+      const copied = spawnSync("docker", ["cp", temp, `${name}:${target}`], {
+        encoding: "utf8",
+        timeout: timeoutMs,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+      if (copied.status !== 0) {
+        throw new Error((copied.stderr ?? "").trim() || `fetch copy failed: ${path}`);
+      }
     } finally {
-      rmSync(join(root, temp), { force: true });
+      rmSync(temp, { force: true });
     }
     return { path, bytes: fetched.bytes };
   };

@@ -2,15 +2,22 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Action } from "../../src/llm/schemas";
 import { containerWorkspace } from "./container";
-import { runTask, taskAvailable } from "./harness";
+import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
+import { runTask, taskAvailable, verifierImageAvailable } from "./harness";
 import { scripted } from "./run";
 import { regexLog } from "./tasks/regex-log";
 import { cleanupSandboxes, newSandboxRoot } from "./workspace";
 
-afterEach(cleanupSandboxes);
+afterEach(() => {
+  cleanupContainers();
+  cleanupSandboxes();
+}, 120_000);
 
-// Offline, deterministic: the container primitive (bwrap), the `/app` path rewrite, and the
-// real task harness + verifier. No model, no network, no Docker.
+// The bwrap primitive is kept for the opencode baseline / `bench/minimal`; the task itself now
+// runs on its own image through the rootless Docker path.
+
+// Offline (no model): the bwrap primitive, the `/app` path rewrite, and the real task harness
+// with the rootless task container + verifier container.
 
 describe("sandbox container (bwrap)", () => {
   it("runs a real shell with the workspace at /app and no network", () => {
@@ -40,7 +47,8 @@ const GOOD_REGEX = String.raw`(?=.*(?:^|[^0-9A-Za-z])(?:(?:25[0-5]|2[0-4]\d|1?\d
 const BAD_REGEX = String.raw`\d{4}-\d{2}-\d{2}`;
 
 function proposerFor(regex: string) {
-  const toWork: Action = { operator: "move", state: "orientation", what: "write a regex matching the last date on lines with an IPv4 address", done: "the regex is written" };
+  // The write tool belongs to a productive state (Patch); a write in Orientation is refused.
+  const toWork: Action = { operator: "move", state: "patch", what: "write a regex matching the last date on lines with an IPv4 address", done: "the regex is written" };
   const goal: Action = {
     operator: "apply",
     action: { tool: "bash", command: "pwd" },
@@ -52,16 +60,22 @@ function proposerFor(regex: string) {
   return scripted([toWork, goal, write, stopState, toEnd, stopRequest], stopRequest);
 }
 
-describe.skipIf(!taskAvailable("regex-log"))("regex-log task (real container verifier)", () => {
+const ready =
+  dockerAvailable() &&
+  dockerImageAvailable(regexLog.image ?? "") &&
+  verifierImageAvailable() &&
+  taskAvailable(regexLog.id);
+
+describe.skipIf(!ready)("regex-log task (rootless task + verifier container)", () => {
   it("rewards a correct regex with 1", async () => {
     const run = await runTask(regexLog, proposerFor(GOOD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(1);
     expect(run.check.stdout).toContain("PASS test_regex_matches_dates");
-  }, 60_000);
+  }, 120_000);
 
   it("rewards a wrong regex with 0", async () => {
     const run = await runTask(regexLog, proposerFor(BAD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(0);
     expect(run.check.stdout).toContain("FAIL test_regex_matches_dates");
-  }, 60_000);
+  }, 120_000);
 });

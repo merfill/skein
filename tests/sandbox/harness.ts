@@ -14,10 +14,11 @@ import type { SandboxRunOptions } from "./run";
 import { APT_SHIM, DEFAULT_TASK_CHECK, PYTEST_SHIM, VERIFIER_RUNNER, harborTaskDir, type SandboxTask } from "./task";
 import { newSandboxRoot } from "./workspace";
 
-// Runs a real terminal-bench task against the real engine, without Docker: the environment
-// is materialized into a temp root, the agent runs in a `bwrap` namespace (`container.ts`),
-// and the task's own verifier scores the result. The engine, the projection and the metric
-// extraction are the same as in production — this only swaps the `Workspace`.
+// Runs a real terminal-bench task against the real engine, without Harbor: an image task runs
+// rootless in its own Docker container (`docker.ts`); an image-less fallback materializes a
+// temp root and runs under `bwrap` (`container.ts`). The task's own verifier scores the
+// result. The engine, the projection and the metric extraction are the same as in production —
+// this only swaps the `Workspace`.
 
 export interface TaskRun {
   result: AgentResult;
@@ -128,7 +129,28 @@ function stageVerifierInContainer(workspace: Workspace, task: SandboxTask): void
   workspace.write(`${dst}/pytest.py`, PYTEST_SHIM);
 }
 
-const VERIFIER_IMAGE = process.env.SKEIN_VERIFIER_IMAGE ?? "alexgshaw/fix-code-vulnerability:20251031";
+// Test-only: stage the task's own solution inside the task container, so the offline harness
+// can replay it without extracting `/app` to the host. An offline task's solution may begin
+// with `apt-get install`; a no-op shim on PATH lets it proceed because the image already has
+// the tool. A networked task (crack-7z-hash) keeps the real apt.
+function stageSolutionInContainer(workspace: Workspace, task: SandboxTask, taskDir: string): void {
+  const solution = join(taskDir, "solution", "solve.sh");
+  if (!existsSync(solution)) return;
+  const mount = task.mountPoint ?? "/app";
+  if (task.network === undefined) {
+    const shim = `${mount}/.skein/bin/apt-get`;
+    workspace.write(shim, APT_SHIM);
+    const chmod = workspace.run(`chmod 755 ${shellQuote(shim)}`);
+    if (chmod.code !== 0) throw new Error(`apt shim chmod failed: ${chmod.stderr.trim()}`);
+  }
+  workspace.write(`${mount}/.skein/solve.sh`, readFileSync(solution, "utf8"));
+}
+
+export const VERIFIER_IMAGE = process.env.SKEIN_VERIFIER_IMAGE ?? "alexgshaw/fix-code-vulnerability:20251031";
+
+export function verifierImageAvailable(): boolean {
+  return dockerImageAvailable(VERIFIER_IMAGE);
+}
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
@@ -157,6 +179,14 @@ export function runVerifierCheck(
     if (started.status !== 0) {
       throw new Error(`verifier container start failed: ${(started.stderr ?? "").trim()}`);
     }
+    // Start from an empty `/app`: the verifier image may ship its own tree (the default
+    // `fix-code` image does), and stale files must not leak into the task's verification.
+    const cleared = spawnSync(
+      "docker",
+      ["exec", name, "bash", "-lc", "rm -rf /app/* /app/.[!.]* 2>/dev/null; true"],
+      { encoding: "utf8", timeout: 60_000 },
+    );
+    if (cleared.status !== 0) throw new Error(`verifier /app cleanup failed: ${(cleared.stderr ?? "").trim()}`);
     const copied = spawnSync(
       "bash",
       ["-c", `set -o pipefail; docker exec ${shellQuote(container.name)} tar -C ${shellQuote(mount)} -cf - . | docker exec -i ${shellQuote(name)} tar -C /app -xf -`],
@@ -216,6 +246,7 @@ function openRootlessTask(task: SandboxTask, options: SandboxRunOptions): Opened
   for (const [path, content] of Object.entries(task.files ?? {})) {
     container.write(path.startsWith("/") ? path : `${mount}/${path}`, content);
   }
+  if (options.stageSolution === true) stageSolutionInContainer(container, task, taskDir);
   const checkpoint = createCheckpointWithBackend(new DockerBackend(container, "/tmp/.skein", mount));
   const workspace: Workspace = {
     ...container,
@@ -243,30 +274,19 @@ export function openTaskWorkspace(
   task: SandboxTask,
   options: SandboxRunOptions = {},
 ): OpenedTask {
-  if (task.image !== undefined && options.stageSolution !== true) {
+  if (task.image !== undefined) {
     return openRootlessTask(task, options);
   }
   const { root, request, check } = materializeTask(task, { stageSolution: options.stageSolution });
-  // The checkpoint store lives under `.skein`, so it is skipped by the file tools and never
-  // part of a snapshot. It is mounted read-only into the task so the agent's shell can read
-  // it (db-wal's image has tar/cp but no git) but cannot corrupt the snapshots.
+  // Image-less fallback (none of the ported tasks today): a host root under bwrap. The
+  // checkpoint store lives under `.skein`, so it is skipped by the file tools and never part
+  // of a snapshot; it is mounted read-only so the agent's shell can read it but not corrupt it.
   const checkpoint = createCheckpoint(root);
   const checkpointDest = `${task.mountPoint ?? "/app"}/.skein/checkpoints`;
-  const baseWorkspace =
-    task.image !== undefined
-      ? dockerWorkspace(root, {
-          image: task.image,
-          ...(task.mountPoint !== undefined ? { mountPoint: task.mountPoint } : {}),
-          ...(task.workdir !== undefined ? { workdir: task.workdir } : {}),
-          ...((task.network ?? options.network) !== undefined
-            ? { network: task.network ?? options.network }
-            : {}),
-          mounts: [{ host: checkpoint.dir, dest: checkpointDest, readOnly: true }],
-        })
-      : containerWorkspace(root, {
-          ...(task.mountPoint !== undefined ? { mountPoint: task.mountPoint } : {}),
-          roBinds: [{ host: checkpoint.dir, dest: checkpointDest }],
-        });
+  const baseWorkspace = containerWorkspace(root, {
+    ...(task.mountPoint !== undefined ? { mountPoint: task.mountPoint } : {}),
+    roBinds: [{ host: checkpoint.dir, dest: checkpointDest }],
+  });
   // The engine's revert uses this only for a preimage its calls cannot reconstruct (bash,
   // write, apply_patch, deletions); the layer is absent in a plain filesystem workspace.
   const workspace: Workspace = {

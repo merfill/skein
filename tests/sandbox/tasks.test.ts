@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Action } from "../../src/llm/schemas";
 import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
-import { runTask, taskAvailable } from "./harness";
+import { runTask, taskAvailable, verifierImageAvailable } from "./harness";
 import { scripted } from "./run";
 import { SOLUTION_COMMAND, type SandboxTask } from "./task";
 import { cobolModernization } from "./tasks/cobol-modernization";
@@ -16,6 +16,7 @@ import { logSummaryDateRanges } from "./tasks/log-summary-date-ranges";
 import { modernizeScientificStack } from "./tasks/modernize-scientific-stack";
 import { opensslSelfsignedCert } from "./tasks/openssl-selfsigned-cert";
 import { passwordRecovery } from "./tasks/password-recovery";
+import { regexLog } from "./tasks/regex-log";
 import { cleanupSandboxes } from "./workspace";
 
 afterEach(() => {
@@ -30,6 +31,7 @@ afterEach(() => {
 // `fix-ocaml-gc` is registered but deliberately excluded: its verifier rebuilds the OCaml
 // compiler (minutes), so it is validated on demand, not in the fast offline suite.
 const IMAGE_TASKS: SandboxTask[] = [
+  regexLog,
   logSummaryDateRanges,
   opensslSelfsignedCert,
   gitLeakRecovery,
@@ -52,7 +54,11 @@ const stop: Action = { operator: "stop", why: "done" };
 
 describe("ported image tasks (docker)", () => {
   for (const task of IMAGE_TASKS) {
-    const ready = dockerAvailable() && dockerImageAvailable(task.image ?? "") && taskAvailable(task.id);
+    const ready =
+      dockerAvailable() &&
+      dockerImageAvailable(task.image ?? "") &&
+      taskAvailable(task.id) &&
+      (task.checkIn !== "host" || verifierImageAvailable());
     describe.skipIf(!ready)(task.id, () => {
       it("scores 0 without work", async () => {
         const run = await runTask(task, scripted([...goal(task.id)], stop), { maxTurns: 3 });
@@ -77,6 +83,7 @@ const slowReady =
   process.env.SKEIN_SLOW_TASKS === "1" &&
   dockerAvailable() &&
   dockerImageAvailable(fixOcamlGcTask.image ?? "") &&
+  verifierImageAvailable() &&
   taskAvailable(fixOcamlGcTask.id);
 
 describe.skipIf(!slowReady)("fix-ocaml-gc (slow, rebuild verifier)", () => {

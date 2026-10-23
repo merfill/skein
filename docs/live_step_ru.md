@@ -57,7 +57,8 @@ npx tsx bench/live-step.ts fix-ocaml-gc --net off --auto --turn 20
 - вызовы доксы (`call <tool> <args>`);
 - наблюдения только что исполненного хода (`exit`, хвост вывода);
 - дифф дерева от начального post-setup состояния по checkpoint-хранилищу
-  (`diff -rq trees/0 trees/N`);
+  (`diff -rq /tmp/.skein/trees/0 /app`); в rootless-режиме `diff` исполняется в контейнере
+  задачи, в legacy host-режиме — на хосте;
 - путь к ленте.
 
 Файлы в `--dir`:
