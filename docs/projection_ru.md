@@ -98,13 +98,13 @@
 - **поверхность инструментов** в этом поле связана из `Context.applicable`: на
   `request`/`transition` предложен только `move`, пока состояние открыто — apply-инструменты и
   `stop` (`recall`/`search` всегда), поэтому ход, который движок отклонил бы, нельзя вызвать вовсе;
-- **инструкция ситуации** добавляется в конце каждого хода (временно, не хранится):
+- **хвост хода** добавляется в конце каждого хода (временно, не хранится):
   `request` (выбери первое состояние или `decline`; `what`/`done` — **из запроса**), `plan`
-  (первый шаг состояния), `working` (`turnInstruction`: критерий назван явно — «This state's done
-  criterion: "<criterion>". When it holds, call `stop`; do not over-work the state»),
+  (`planInstruction`: «Call a tool…» + per-turn tail), `working` (`turnInstruction`: per-turn
+  tail — conduct → `what:` → `done`-критерий → closure; на следующем ходу пересобирается),
   `transition` (`transitionInstruction(island)`: источник `what`/`done` — строка `Finish state
   <label>` закрытого состояния; перечислены соседи по `next`; выбери следующее или End),
-  `terminal` (вызови `stop`, когда запрос завершён);
+  `terminal` («This is End.» + hint);
 - **ограничения** добавляются отдельными `system`-сообщениями.
 
 Точная граница базы и ситуации — предмет следующего этапа (составной системный промпт).

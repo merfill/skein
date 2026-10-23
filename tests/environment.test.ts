@@ -281,7 +281,7 @@ describe("session probe projection", () => {
     const start = context.history.find(
       (message) => message.role === "system" && message.text.includes("Start state Orientation"),
     );
-    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
+    expect(start?.text).toBe("Start state Orientation");
     const brief = context.history.find(
       (message) => message.role === "system" && message.text.includes("Workspace map"),
     );
@@ -356,7 +356,7 @@ describe("session probe projection", () => {
     const start = context.history.find(
       (message) => message.role === "system" && message.text.includes("Start state Research"),
     );
-    expect(start?.text).toContain("Goal: investigate the situation and establish the method.");
+    expect(start?.text).toBe("Start state Research");
   });
 });
 

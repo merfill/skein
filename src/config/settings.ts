@@ -17,8 +17,9 @@ export interface Settings {
   llmRetries: number;
   reasoningEffort: string;
   // Whether the doxa's hidden reasoning is journalled and shown back on the tape (the AI SDK
-  // reasoning part round-trips it, `src/llm/client.ts`). Off for the controlled A/B that
-  // isolates "reasoning on the tape" from the harness; the model still reasons either way.
+  // reasoning part round-trips it, `src/llm/client.ts`). On by default; set
+  // `SKEIN_REASONING_TAPE=false` for the controlled A/B that isolates "reasoning on the tape"
+  // from the harness. The model still reasons either way.
   reasoningTape: boolean;
   // Whether model calls are streamed on the wire; `streamText` assembles the reply
   // (`src/llm/structured.ts` `callModel`). Streaming keeps the connection busy while the model

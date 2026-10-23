@@ -279,41 +279,30 @@ function stateBrief(state: State, island: IslandId): string {
   return blocks.join("\n\n");
 }
 
-// Render a state: `Start state <label>` with its goal, its `done` criterion and the island's
-// instruction, then the probe facts and the hint (once, at entry). While the state is open its
-// plan follows; once it is stopped the plan, the brief and the hint are elided — the compact
-// record is `Start state` + `Finish state <label> — <why>` (docs/ir_semantics §7).
+// Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
+// two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
+// (the `stop` reason). The goal is the state's OWN definition (`island.what`), a `user` turn;
+// the doxa's `what` on the move is its articulation, not a replacement. The focused open state
+// also carries the brief and the instruction; its per-turn tail is appended by `buildMessages`.
+// Once stopped the plan and the brief are elided — the compact record is `Start state` + goal +
+// `Finish state` (docs/ir_semantics §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
   const payload = movePayload(state, moveId);
-  const goal = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
-  const criterion =
-    payload?.done !== undefined && payload.done !== ""
-      ? payload.done
-      : island !== undefined
-        ? ISLANDS[island].criterion
-        : "";
-  const sentence = (text: string): string => text.replace(/\.\s*$/, "");
-  const start = [`Start state ${label}`];
-  if (goal !== "") start.push(`Goal: ${sentence(goal)}.`);
-  if (criterion !== "") start.push(`Done when: ${sentence(criterion)}.`);
-  if (island !== undefined && ISLANDS[island].instruction !== "") {
-    start.push("", ISLANDS[island].instruction);
-  }
-  out.push({ role: "system", text: start.join("\n") });
+  const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
+  out.push({ role: "system", text: `Start state ${label}` });
 
-  // The session probe and the hint ride the FOCUSED open state only: older and closed states
-  // are compact records. There is no per-turn tail.
-  const open = stopOf(state, moveId) === undefined;
-  const focused = open && moveId === currentMove(state);
-  if (focused && island !== undefined) {
-    const brief = stateBrief(state, island);
-    if (brief !== "") out.push({ role: "system", text: brief });
-    if (ISLANDS[island].hint !== "") out.push({ role: "system", text: ISLANDS[island].hint });
-  }
-  if (!open) {
+  // The session probe rides the FOCUSED open state only: older and closed states are compact
+  // records. The instruction stays on every state as its static record.
+  const focused = moveId === currentMove(state);
+  const brief = focused && island !== undefined ? stateBrief(state, island) : "";
+  if (brief !== "") out.push({ role: "system", text: brief });
+  if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
+  const goal = what !== "" ? `what: ${what}` : "";
+  if (goal !== "") out.push({ role: "user", text: goal });
+  if (stopOf(state, moveId) !== undefined) {
     out.push({ role: "system", text: closureLine(state, moveId) });
     return;
   }

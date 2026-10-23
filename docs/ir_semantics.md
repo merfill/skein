@@ -481,11 +481,12 @@ nonzero exit.
 what is true on any turn (the role, the principles, the contract, the state set and its
 transitions); appended last each turn (temporary, never stored) is the current situation's
 instruction per situation: `request` (choose the first state, or `decline`; `what`/`done` — from the
-request), `plan` (the state's first step), `working` (`turnInstruction`: the criterion named
-explicitly — "This state's done criterion: "<criterion>". When it holds, call `stop`;
-do not over-work the state"), `transition` (`transitionInstruction(island)`: the source of
-`what`/`done` is the `Finish state <label>` line of the just-finished state; the `next` neighbours
-are listed; choose the next state), `terminal` (call `stop` when the request is complete). The tool names/parameters/descriptions
+request), `plan` (`planInstruction`: "Call a tool…" + the per-turn tail), `working`
+(`turnInstruction`: the per-turn tail — conduct → `what:` → done criterion → closure; never
+stored, rebuilt on the next turn), `transition` (`transitionInstruction(island)`: the source of
+`what`/`done` is the `Finish state <label>` line of the just-finished state; the `next`
+neighbours are listed; choose the next state), `terminal` ("This is End." + the terminal
+state's hint). The tool names/parameters/descriptions
 are **not** in the prompt — they ship in the request's `tools` field, and that field is **bound
 from `Context.applicable`**: on a `request`/`transition` only `move` is offered (plus read-only
 `recall`/`search`), while a state is open the apply tools and `stop` are offered, so a move the

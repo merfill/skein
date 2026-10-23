@@ -161,4 +161,55 @@ export const BASE_PROMPT = assemble(BASE_BLOCKS);
 // `move`'s `what` (never the whole task). Rendered per turn (never stored).
 export const REQUEST_INSTRUCTION = assemble(REQUEST_BLOCKS);
 
+// The plan prompt: the state's first step. The per-turn tail below follows it.
+const MOVE_INSTRUCTION =
+  "Call a tool — the action that advances the goal above. If the state's goal already holds " +
+  "from its entry and the request, `stop` now. Work on the material without consuming it: copy " +
+  "raw artifacts before any command that may checkpoint, delete, or rewrite them.";
+
+// The per-turn tail of an open state, appended last on `plan`/`working`: conduct (the state's
+// own hint), the concretized goal, the done criterion, then the closure. Ordered conduct → goal
+// → stop so the state's behavior sits at the top and the stop criterion stays last. Rendered
+// per turn (never stored), so the next turn's tape is rebuilt without it.
+function stateTail(island?: IslandId, done?: string, what?: string): string {
+  const criterion =
+    done !== undefined && done !== ""
+      ? done
+      : island !== undefined
+        ? ISLANDS[island].criterion
+        : "";
+  const lead =
+    criterion !== ""
+      ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
+      : `This state is done when its goal holds.`;
+  const conduct = island !== undefined ? ISLANDS[island].hint : "";
+  const goal =
+    what !== undefined && what !== ""
+      ? what
+      : island !== undefined
+        ? ISLANDS[island].what
+        : "";
+  return [
+    conduct,
+    goal !== "" ? `what: ${goal}` : "",
+    lead,
+    "When it holds, `stop` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
+  ]
+    .filter((part) => part !== "")
+    .join(" ");
+}
+
+export function turnInstruction(island?: IslandId, done?: string, what?: string): string {
+  return stateTail(island, done, what);
+}
+
+export function planInstruction(island?: IslandId, done?: string, what?: string): string {
+  if (island === undefined) return MOVE_INSTRUCTION;
+  return `${MOVE_INSTRUCTION}\n\n${stateTail(island, done, what)}`;
+}
+
+export const NODE_INSTRUCTIONS = {
+  terminal: `This is End. ${ISLANDS[TERMINAL_ISLAND].hint}`,
+};
+
 export const PROMPT_BLOCKS: readonly PromptBlock[] = [...BASE_BLOCKS, ...REQUEST_BLOCKS];

@@ -42,8 +42,11 @@ and Russian, the Russian version in a file with the `_ru` suffix.
   criteria, transitions, constraints); draft.
 - [states_ru.md](states_ru.md) — the states' goals and acceptance criteria (RU-only draft).
 - [state_testing.md](state_testing.md) · [RU](state_testing_ru.md) — testing the state prompts
-  step by step on a live task: the container, `bench/step.ts`, the tape per situation, results
-  and open problems.
+  step by step on a live task: the container, `bench/live-step.ts`, the tape per situation,
+  results and open problems.
+- [live_step.md](live_step.md) · [RU](live_step_ru.md) — the real engine one turn at a time
+  (`bench/live-step.ts`): a long-lived container, `seed`/`startTurn`, per-turn tape, results and
+  tree diff.
 - [context_design.md](context_design.md) · [RU](context_design_ru.md) — the design rationale
   for the projection (working memory, alternatives).
 
@@ -51,6 +54,9 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 
 - [testing.md](testing.md) · [RU](testing_ru.md) — how to run tests and benches and where the
   output lands.
+- [task_testing.md](task_testing.md) · [RU](task_testing_ru.md) — testing on real tasks: the
+  sandbox (Docker/bwrap), Harbor, the step-by-step `bench/live-step.ts`, and the fast
+  `bench/turn.ts` probe.
 - [plans/implementation_plan.md](plans/implementation_plan.md) · [RU](plans/implementation_plan_ru.md)
   — overall plan, decisions, roadmap, status.
 

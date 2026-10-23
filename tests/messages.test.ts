@@ -67,48 +67,48 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(msgs.map((m) => m.role)).toEqual([
       "system", // base
       "user", // the request (leads the tape)
-      "system", // `Start state` + goal + done + instruction
-      "system", // the state's hint
+      "system", // the `Start state` marker
+      "system", // the island instruction
+      "user", // the state's own goal
       "assistant", "tool", // the first plan item (ls)
       "assistant", "tool", // edit
       "assistant", "tool", // read
+      "system", // the per-turn tail
     ]);
-    // The request is the only user turn; the state's goal is inside the `Start state` message.
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
-    expect(userTexts).toHaveLength(1);
+    expect(userTexts).toHaveLength(2);
     expect(userTexts[0]).toContain("fix the bug");
+    expect(userTexts[1]).toBe("what: know the task's inputs and how success is judged");
     const start = msgs.find((m) => m.role === "system" && String(m.content).includes("Start state"));
-    expect(String(start?.content)).toContain("Goal:");
-    expect(String(start?.content)).toContain("Done when:");
+    expect(String(start?.content)).toBe("Start state Orientation");
     // A native call keeps its content empty (the call is in `tool_calls`).
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);
 
     // The state is a decision, not a tool call: a `Start state` marker, no tool_calls.
-    expect(msgs[2]?.content).toContain("Start state Orientation");
     expect(msgs[2]?.tool_calls).toBeUndefined();
 
     // The state's first plan item is an ordinary `bash` call + its observation.
-    expect(msgs[4]?.tool_calls?.[0]?.function.name).toBe("bash");
-    expect(msgs[4]?.tool_calls?.[0]?.id).toBe("a1");
-    expect(msgs[5]).toMatchObject({ role: "tool", tool_call_id: "a1" });
-    expect(String(msgs[5]?.content)).toContain("[o1] exit 0");
+    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("bash");
+    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a1");
+    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a1" });
+    expect(String(msgs[6]?.content)).toContain("[o1] exit 0");
 
     // A plain command move is its own tool call.
-    expect(msgs[6]?.tool_calls?.[0]?.function.name).toBe("edit");
-    expect(msgs[6]?.tool_calls?.[0]?.id).toBe("a2");
-    expect(msgs[7]).toMatchObject({ role: "tool", tool_call_id: "a2" });
-    expect(String(msgs[7]?.content)).toContain("edit failed: find not found");
+    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("edit");
+    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a2");
+    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a2" });
+    expect(String(msgs[8]?.content)).toContain("edit failed: find not found");
 
     // The alternative is a plain native call: no marker, and the failure body rides only in
     // its own `tool` result (never duplicated into an assistant message).
-    expect(msgs[8]?.tool_calls?.[0]?.function.name).toBe("read");
-    expect(msgs[8]?.tool_calls?.[0]?.id).toBe("a3");
+    expect(msgs[9]?.tool_calls?.[0]?.function.name).toBe("read");
+    expect(msgs[9]?.tool_calls?.[0]?.id).toBe("a3");
     const tape = msgs.slice(2);
     const tapeText = tape.map((m) => String(m.content)).join("\n");
     expect(tapeText).not.toContain("alternative to step");
     expect(tapeText.split("--- current content of ocaml/x.c").length - 1).toBe(1);
-    expect(msgs[9]).toMatchObject({ role: "tool", tool_call_id: "a3" });
+    expect(msgs[10]).toMatchObject({ role: "tool", tool_call_id: "a3" });
   });
 
   it("a refused structural move is an assistant call + a tool reason", async () => {

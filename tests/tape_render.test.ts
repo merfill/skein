@@ -51,41 +51,37 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(project(fold([request()])).history.map(shape)).toEqual([{ role: "user", text: "solve the task" }]);
   });
 
-  it("move -> Start state with goal/done/instruction + hint; action/observation -> call + tool pairs", () => {
+  it("move -> Start state marker, brief, instruction, `what`; action/observation -> call + tool pairs", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The state entry is one `Start state` system message (goal, done, instruction), then the
-    // hint; there is no `user: what` and no per-turn tail.
+    // The state entry is the `Start state` marker, the brief, the island instruction and the
+    // state's own goal as a `user` turn. The per-turn tail is appended by `buildMessages`, not
+    // projected into the tape.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
       ["system", null, false],
       ["system", null, false],
+      ["user", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
       ["assistant", "read", false],
       ["tool", null, true],
     ]);
-    const start = ctx.history[1];
-    expect(start?.text).toContain("Start state Orientation");
-    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
-    expect(start?.text).toContain("Done when:");
-    expect(start?.text).toContain(ISLANDS.orientation.instruction);
-    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.hint);
+    expect(ctx.history[1]?.text).toBe("Start state Orientation");
+    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
+    expect(ctx.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
   });
 
-  it("stop -> the state collapses to its Start (goal/done/instruction) + Finish", () => {
+  it("stop -> the state collapses to its Start marker, instruction, `what` and Finish", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
-    expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system"]);
-    const start = ctx.history[1];
-    expect(start?.text).toContain("Start state Orientation");
-    expect(start?.text).toContain("Goal: know the task's inputs and how success is judged.");
-    expect(start?.text).toContain("Done when:");
-    expect(start?.text).toContain(ISLANDS.orientation.instruction);
-    expect(ctx.history[2]?.text).toBe("Finish state Orientation — done");
-    expect(ctx.history.some((m) => m.role === "user" && m.text.startsWith("what:"))).toBe(false);
+    expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system", "user", "system"]);
+    expect(ctx.history[1]?.text).toBe("Start state Orientation");
+    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
+    expect(ctx.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
+    expect(ctx.history[4]?.text).toBe("Finish state Orientation — done");
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {
@@ -195,16 +191,17 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(() => buildMessages(ctx)).toThrow(/without a callId/);
   });
 
-  it("is the base + one system per constraint, then the tape (no per-turn tail)", async () => {
+  it("is the base + one system per constraint, then the tape and the per-turn tail", async () => {
     const context: Context = {
       history: [{ role: "user", text: "fix" }],
       situation: "working",
       constraints: [{ id: "k1", forbid: ["secret"] }],
     };
     const msgs = await wire(buildMessages(context));
-    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user"]);
+    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user", "system"]);
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
+    expect(String(msgs[3]?.content)).toContain("This state is done when its goal holds.");
   });
 });

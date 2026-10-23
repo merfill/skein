@@ -92,16 +92,19 @@
 
 | Имя | Сообщение | Роль |
 |---|---|---|
-| `start` | `Start state <Label>` + `Goal: <what>.` + `Done when: <done>.` + `instruction` острова | `system` |
+| `start` | `Start state <Label>` — маркер состояния | `system` |
 | `brief` | факты probe для острова (`stateBrief`) | `system` |
-| `hint` | `hint` острова — поведение состояния и stop-подсказка | `system` |
+| `instruction` | `instruction` острова — как действовать | `system` |
+| `what` | `what: <island.what>` — цель состояния | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 Запрос **вверху** ленты (второе сообщение, сразу после базового промпта), на каждом ходу.
-`start`/`brief`/`hint` показываются один раз при входе в состояние; пошагового хвоста и
-`user: what:` нет. `brief` и `hint` элидируются при закрытии; компактная запись — `start` +
-`finish`. Блока `Previous failed attempt` больше нет: запись несут строки `finish` предыдущих
-состояний.
+`start`/`brief`/`instruction`/`what` показываются один раз при входе в состояние. На
+`plan`/`working` последним сообщением каждого хода идёт per-turn tail
+(`planInstruction`/`turnInstruction`): hint → `what:` → `done`-критерий → closure; он не
+хранится и на следующем ходу пересобирается. `brief` элидируется при закрытии; компактная
+запись — `start` + `instruction` + `what` + `finish`. Блока `Previous failed attempt` больше
+нет: запись несут строки `finish` предыдущих состояний.
 
 ### Базовые блоки
 

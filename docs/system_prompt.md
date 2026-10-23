@@ -96,16 +96,19 @@ A state is rendered on the tape, in order:
 
 | Name | Message | Role |
 |---|---|---|
-| `start` | `Start state <Label>` + `Goal: <what>.` + `Done when: <done>.` + the island `instruction` | `system` |
+| `start` | `Start state <Label>` — the state marker | `system` |
 | `brief` | the probe facts for the island (`stateBrief`) | `system` |
-| `hint` | the island `hint` — state-specific conduct and the stop cue | `system` |
+| `instruction` | the island `instruction` — how to act | `system` |
+| `what` | `what: <island.what>` — the state's goal | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 The request **leads** the tape — the second message, right after the base prompt — on every
-turn. `start`/`brief`/`hint` are shown once when the state is entered; there is no per-turn tail
-and no `user: what:`. `brief` and `hint` are elided when the state closes; the compact record is
-`start` + `finish`. The old `Previous failed attempt` block is gone: the previous states'
-`finish` lines carry the record.
+turn. `start`/`brief`/`instruction`/`what` are shown once when the state is entered. On
+`plan`/`working` the last message of every turn is the per-turn tail
+(`planInstruction`/`turnInstruction`): hint → `what:` → done criterion → closure; it is never
+stored and is rebuilt on the next turn. `brief` is elided when the state closes; the compact
+record is `start` + `instruction` + `what` + `finish`. The old `Previous failed attempt` block is
+gone: the previous states' `finish` lines carry the record.
 
 ### Base blocks
 

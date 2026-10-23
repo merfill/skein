@@ -20,12 +20,12 @@ We measure by turns: which state it closed in, or where it went; the volume of `
 content of `why`. Model — `routerai/~deepseek/deepseek-v4-flash-latest`, `SKEIN_TEMPERATURE=0.1`
 (**noisy**: do not draw a conclusion from a single sample, look at `K≥3`).
 
-## 1. Two tools
+## 1. The tools
 
-1. **Live, step by step** — `bench/step.ts` (in the repo). One run = one engine turn: it replays
-   the accumulated action sequence in the task's container, builds the tape and makes **one**
-   model call. This is the everyday tool: walk the states, look at each turn's result, then edit
-   the prompt.
+1. **The real engine, one turn at a time** — `bench/live-step.ts` (see `docs/live_step.md`). One
+   process keeps the task container and the workspace alive; each step is a `runAgent`
+   continuation (`seed`/`startTurn`, `maxTurns: startTurn + 1`). Transitions, refusals, the
+   failed-Patch revert and reasoning-on-the-tape are the engine's. **Use this for behaviour.**
 2. **Offline replay of a recorded turn** — `bench/turn.ts` (in the repo). It takes an
    already-**recorded** turn's tape, edits a message (say, the criterion line) and calls the model
    again — **without a container**. Cheap; for comparing wordings on the same input.
@@ -75,43 +75,35 @@ as the tool call's result.
 
 ### 2.3 The turn driver
 
-`bench/step.ts` — "one turn per run":
+`bench/live-step.ts` — the real engine, one turn per run (details — `docs/live_step.md`):
 
+```sh
+npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 ```
-TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
-```
 
-- reads `seq.json` — an array of `{ turn, action }` (the accumulated actions of previous turns);
-- `materializeTask(task)` gives `{ root, request }`; starts up a `dockerWorkspace`;
-- seeds the journal with the request node and **replays `seq`** through `executeAction` (the
-  commands run in the container);
-- `project` + `buildMessages` builds the tape, `propose` makes **one** model call;
-- writes the result (see §2.4).
-
-The loop: run → take `next-actions.json` → append the actions to `seq.json` under the next `turn`
-→ run again. That is how you "walk the turns", stopping after each.
-
-> Cost note: every run replays the **whole** `seq` in a fresh container. If `seq` contains
-> `./configure`/`make`, the build runs on every turn — turns become slow and expensive (we saw
-> this on Verification).
+- `openTaskWorkspace(task)` materializes the tree, starts the long-lived container and runs the
+  `setup`; it is the same setup as the full run;
+- each turn is a `runAgent` continuation (`seed`/`startTurn`, `maxTurns: startTurn + 1`), so the
+  transitions, refusals, failed-Patch revert and reasoning on the tape are the engine's, not the
+  harness's;
+- after a turn it prints the state, calls, observations, usage, cost and tree diff, writes the
+  tape, and waits for `<dir>/continue` (or continues with `--auto`; `--turn N` stops after N).
 
 ### 2.4 Where the tape is written
 
-Directory — `TAPE_DIR` (default `bench/runs/sandbox-tasks/<task>-step`):
+Directory — `--dir` (default `bench/runs/sandbox-tasks/<ts>-<task>-live-step`):
 
 - `contexts/tNNN.txt` — the turn's **readable tape** (exactly what went to the model);
-- `turns.ndjson` — per turn: `{ turn, situation, island, actions, reasoning }`;
-- `next-actions.json` — the model's proposal (the next turn's actions).
+- `reasoning.ndjson` — the provider's hidden reasoning per turn (diagnostics, not the tape);
+- `turns.ndjson` — per turn: `{ turn, situation, island, actions, usage, cost, stopReason }`;
+- `journal.ndjson` — the full event journal after each turn.
 
-Whole live runs live in `bench/runs/sandbox-tasks/<ts>-<name>/`. Examples: the full path
-`run-loc-restart` (Localization → Patch → Verification), the recorded example
-`rec-orientation-182830` (Orientation t0–t4 with reasoning).
+Whole live runs live in `bench/runs/sandbox-tasks/<ts>-<name>/`.
 
 ### 2.5 Replaying a recorded tape (the current debugging method)
 
-`bench/step.ts` replays a `seq` from scratch. When the question is about **engine transitions**
-(`stop`/`move`, reverting a failed Patch), replay the **tape through `runAgent`**; otherwise the
-hook in `executeNode` is bypassed. `AgentInput.seed` (an existing journal) and `startTurn` (its
+When the question is about **engine transitions** (`stop`/`move`, reverting a failed Patch),
+replay the **tape through `runAgent`**; otherwise the hook in `executeNode` is bypassed. `AgentInput.seed` (an existing journal) and `startTurn` (its
 turn number) resume the loop; `maxTurns` stays absolute.
 
 Checklist:
@@ -223,15 +215,15 @@ user — what: <goal>
 ai — Finish state <Label> — <why from stop>
 ```
 
-**Situation instruction** (at the tail, `system`):
+**The turn's tail** (`system`, except `transition` — a `user` turn):
 
 | situation | what is appended |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — pick the starting state (`move`) or `decline` |
-| `plan` | "Call a tool — the action that advances the goal above." |
-| `working` | `turnInstruction` — the state's criterion + "when it holds, `stop`; a suspicion is enough…" |
+| `plan` | `planInstruction` — "Call a tool…" + the tail: hint → `what:` → done criterion → closure |
+| `working` | `turnInstruction` — the same tail (per turn, never stored) |
 | `transition` | `transitionInstruction` — read the `Finish state` line, pick the next state |
-| `terminal` | "This is End. Call `stop` when the request is complete…" |
+| `terminal` | `NODE_INSTRUCTIONS.terminal` — "This is End. …" |
 
 **What is erased (not shown):**
 - `notes` from `move` — not rendered;
@@ -241,7 +233,8 @@ ai — Finish state <Label> — <why from stop>
 **What is added:**
 - the request — at the top, once;
 - state entry — `ai(Start)` + `system(instruction)` + `user(what)`;
-- the situation's tail instruction;
+- the turn's tail — the open state's per-turn tail (`plan`/`working`) or the situation
+  instruction (never stored; rebuilt on the next turn);
 - tool calls — as `tool_calls` in `ai`; one doxa turn's steps go **in one batch**
   (`ai` with an array of `tool_calls` + N `tool`), not one pair per call.
 
@@ -280,12 +273,11 @@ ai — Finish state <Label> — <why from stop>
   scenario** (neither `major` nor `heap` nor `sweep`); the request is the only source of the task.
   opencode wins not by layout but by behavior: it reads the code widely and **compares the
   "sibling" loops**, and carries through to the tests; it needs no oracle (network off).
-- **Reasoning on the tape (2026-10-17, default).** The doxa now sees its own previous reasoning on
+- **Reasoning on the tape (2026-10-17, default).** The doxa sees its own previous reasoning on
   the tape: the AI SDK (`@ai-sdk/openai-compatible`) round-trips reasoning
-  (`reasoning`/`reasoning_content`), the
-  engine journals a turn's reasoning on its action nodes (`payload.reasoning`), the projection
-  shows it on the turn's assistant message; on by default, `SKEIN_REASONING_TAPE=false` is an A/B
-  switch. A controlled A/B on the full loop (`sandbox-run`, `--net off`, K=3–4): **the moment
+  (`reasoning`/`reasoning_content`), the engine journals a turn's reasoning on its action nodes
+  (`payload.reasoning`), the projection shows it on the turn's assistant message; on by default,
+  `SKEIN_REASONING_TAPE=false` is an A/B switch. A controlled A/B on the full loop (`sandbox-run`, `--net off`, K=3–4): **the moment
   Localization closes does not change** (ON t14,15,14,11 / OFF t14,11,14), but reasoning is ~2.5×
   lower and cost ~40% lower (the added context lands in `cacheRead`, fresh input equal at ~49k).
   Details — `docs/benches/best_bench.md`, section "2026-10-17".
@@ -351,7 +343,8 @@ ai — Finish state <Label> — <why from stop>
 
 > Hypothesis p.1–2 is **closed**: "late closure because the model cannot see its own conclusion" is
 > **not the cause** (the reasoning-on-the-tape A/B, see "Done"; the old n=30 baseline turned out to
-> be a harness artifact — `bench/step.ts` vs the full loop, see §6). So the re-derivation after the
+> be a harness artifact — the old replay harness (`bench/step.ts`, removed) vs the full loop, see
+> §6). So the re-derivation after the
 > finding (Patch in run1: t17–t21 re-read before the edit) is a disposition, not a lack of
 > reasoning on the tape. Hence the new items below.
 
@@ -401,13 +394,14 @@ ai — Finish state <Label> — <why from stop>
 - Copying "a strong suspicion…" from the hint into the criterion as well — **does not help** (~1/3).
 - Textual "hacks" (bringing back B0/anti-diff) — rejected as a special-case fix.
 - **Compare only within one harness.** The baseline `run-loc-restart` (Localization closed at
-  n=30) against the full loop gave a false "win": `bench/step.ts` (replays the whole `seq` each
-  turn) and `sandbox-run` (an incremental loop) are not comparable in turn count. An A/B changes
+  n=30) against the full loop gave a false "win": the old replay harness (`bench/step.ts`,
+  removed; it replayed the whole `seq` each turn) and `sandbox-run` (an incremental loop) are not
+  comparable in turn count. An A/B changes
   **one** factor, in one harness.
 
 ## 7. Code and data
 
-- **Turn driver:** `bench/step.ts` (one turn: replay `seq` in the container + one `propose`).
+- **Turn driver:** `bench/live-step.ts` (the real engine, one turn per run; see §2.3).
 - **Offline turn replay:** `bench/turn.ts` (from a recorded tape, no container).
 - **Container:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
 - **Action execution:** `src/tools/index.ts` (`executeAction`).
@@ -421,8 +415,7 @@ ai — Finish state <Label> — <why from stop>
   (`EnvironmentFact`, subsets), `src/ir/material.ts` (`MaterialFact`, `workspaceBrief`),
   `src/ir/session.ts` (`SESSION_PROBE_ID = "fact:session"`, `probeBrief` for the environment);
   the `add_node kind:"fact"` event — `src/loop/graph.ts` (`runAgent`, `deps.probe`); rendering —
-  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe); the step harness adds
-  the fact in `bench/step.ts` (otherwise its tape diverges from the engine).
+  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe).
 - **Tape:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   instructions — `src/loop/prompt/blocks.ts`, island texts — `src/ir/islands.ts`, tool
   descriptions — `src/llm/tools.ts`.
@@ -431,8 +424,8 @@ ai — Finish state <Label> — <why from stop>
 - **Reasoning via the AI SDK:** `src/llm/client.ts` (`createOpenAICompatible`, `transformBody`);
   a turn's reasoning field — `payload.reasoning` (`src/tools/index.ts`, `executeAction`),
   rendering — `src/ir/project.ts` (`renderPlan`), `src/loop/propose.ts` (the reasoning part),
-  read back from the response — `src/llm/structured.ts` (`invokeTools`). `SKEIN_REASONING_TAPE`;
-  `provider.ts` is removed.
+  read back from the response — `src/llm/structured.ts` (`invokeTools`). `SKEIN_REASONING_TAPE`
+  (default on); `provider.ts` is removed.
 - **Transport — streaming:** `streamText`/`generateText` — `src/llm/structured.ts` (`callModel`,
   `invokeWithRetry`); `SKEIN_STREAMING` (default on, `src/config/settings.ts`).
   `SKEIN_REASONING_TAPE=false` keeps reasoning off the tape. There is no SSE parser/`transformSse`.

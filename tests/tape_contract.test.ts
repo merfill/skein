@@ -1,12 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ISLANDS } from "../src/ir/islands";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project, type Context } from "../src/ir/project";
 import type { Action } from "../src/llm/schemas";
 import { modelCall } from "../src/llm/schemas";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { REQUEST_INSTRUCTION } from "../src/loop/prompt";
+import {
+  NODE_INSTRUCTIONS,
+  REQUEST_INSTRUCTION,
+  planInstruction,
+  turnInstruction,
+} from "../src/loop/prompt";
 import type { Workspace } from "../src/tools/workspace";
 import {
   DEFAULT_FILES,
@@ -48,12 +54,23 @@ afterEach(cleanupWorkspaces);
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
   // Strip the leading system prefix (base + one message per constraint) and the appended
-  // situation prompt: `request` appends a system turn, `transition` a `user` turn. A state's
-  // start/brief/hint are on the tape and must stay.
+  // situation prompt: `request` a system turn, `transition` a `user` turn, `plan`/`working` the
+  // per-turn tail, `terminal` the End instruction. A state's entry (Start marker, brief,
+  // instruction, `what`) is on the tape and must stay.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
-  if (context.situation === "request" && end > start && all[end - 1]?.role === "system") end -= 1;
+  const appended =
+    context.situation === "request"
+      ? REQUEST_INSTRUCTION
+      : context.situation === "plan"
+        ? planInstruction(context.island, context.done, context.what)
+        : context.situation === "working"
+          ? turnInstruction(context.island, context.done, context.what)
+          : context.situation === "terminal"
+            ? NODE_INSTRUCTIONS.terminal
+            : undefined;
+  if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "user") end -= 1;
   return all.slice(start, end);
 }
@@ -84,13 +101,9 @@ const REQ = { role: "user", content: "solve the task" };
 // are native call/result pairs.
 const GOAL_PREFIX = [
   REQ,
-  {
-    role: "system",
-    content: expect.stringMatching(
-      /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
-    ),
-  },
-  { role: "system", content: expect.stringContaining("workspace map is the index") },
+  { role: "system", content: "Start state Orientation" },
+  { role: "system", content: ISLANDS.orientation.instruction },
+  { role: "user", content: "what: know the task's inputs and how success is judged" },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -112,13 +125,9 @@ describe("move: before [request] -> delta -> after", () => {
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      {
-        role: "system",
-        content: expect.stringMatching(
-          /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
-        ),
-      },
-      { role: "system", content: expect.stringContaining("workspace map is the index") },
+      { role: "system", content: "Start state Orientation" },
+      { role: "system", content: ISLANDS.orientation.instruction },
+      { role: "user", content: "what: know the task's inputs and how success is judged" },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -464,12 +473,9 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
       REQ,
-      {
-        role: "system",
-        content: expect.stringMatching(
-          /Start state Orientation[\s\S]*Goal:[\s\S]*Done when:[\s\S]*Read the request and the workspace map/,
-        ),
-      },
+      { role: "system", content: "Start state Orientation" },
+      { role: "system", content: ISLANDS.orientation.instruction },
+      { role: "user", content: "what: know the task's inputs and how success is judged" },
       { role: "system", content: "Finish state Orientation — done" },
     ]);
   });

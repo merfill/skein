@@ -1,8 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import { ISLANDS } from "../src/ir/islands";
 import type { Context } from "../src/ir/project";
 import { PROPOSAL_TOOLS, toolDescriptionsFor } from "../src/llm/tools";
-import { BASE_BLOCKS, BASE_PROMPT, PROMPT_BLOCKS, REQUEST_INSTRUCTION, transitionInstruction } from "../src/loop/prompt";
+import {
+  BASE_BLOCKS,
+  BASE_PROMPT,
+  NODE_INSTRUCTIONS,
+  PROMPT_BLOCKS,
+  REQUEST_INSTRUCTION,
+  planInstruction,
+  transitionInstruction,
+  turnInstruction,
+} from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
 // The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
@@ -283,9 +293,52 @@ describe("context format: tape", () => {
     const result = Array.isArray(tool.content) ? tool.content[0] : undefined;
     expect(result).toMatchObject({ type: "tool-result", toolCallId: "c1" });
     expect((result as { output?: { value?: string } }).output?.value).toContain("boom");
-    // No per-turn tail: the open-state prompt lives on the tape, not appended here.
-    expect(messages.at(-1)?.role).toBe("tool");
-    expect(messages).toHaveLength(5);
+    // A hand-built context without an island still gets the generic per-turn tail.
+    expect(messages.at(-1)).toMatchObject({ role: "system" });
+    expect(String((messages.at(-1) as { content: string }).content)).toContain(
+      "This state is done when its goal holds.",
+    );
+    expect(messages).toHaveLength(6);
+  });
+
+  it("appends the focused state's per-turn tail last on plan and working, never storing it", () => {
+    for (const situation of ["plan", "working"] as const) {
+      const withIsland: Context = { ...context, situation, island: "localization" };
+      const messages = buildMessages(withIsland);
+      const expected =
+        situation === "plan"
+          ? planInstruction("localization")
+          : turnInstruction("localization");
+      expect(messages.at(-1)).toMatchObject({ role: "system", content: expected });
+      expect(String((messages.at(-1) as { content: string }).content)).toContain(
+        ISLANDS.localization.hint,
+      );
+      expect(String((messages.at(-1) as { content: string }).content)).toContain(
+        "what: find the target in the material",
+      );
+      expect(String((messages.at(-1) as { content: string }).content)).toContain(
+        "This state's done criterion:",
+      );
+      expect(String((messages.at(-1) as { content: string }).content)).toContain(
+        "When it holds, `stop` — and nothing else.",
+      );
+      // The tail is derived: the projected history itself carries no extra message, so the
+      // next turn's tape is rebuilt without it.
+      expect(withIsland.history.at(-1)).toMatchObject({ role: "tool" });
+      expect(messages).toHaveLength(withIsland.history.length + 3);
+    }
+  });
+
+  it("keeps the request/transition prompts and the terminal instruction", () => {
+    const request = buildMessages({ ...context, situation: "request", island: "localization" }).at(-1);
+    expect(request).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
+    const transition = buildMessages({ ...context, situation: "transition", island: "localization" }).at(-1);
+    expect(transition).toMatchObject({
+      role: "user",
+      content: transitionInstruction("localization"),
+    });
+    const terminal = buildMessages({ ...context, situation: "terminal", island: "end" }).at(-1);
+    expect(terminal).toMatchObject({ role: "system", content: NODE_INSTRUCTIONS.terminal });
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {

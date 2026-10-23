@@ -178,10 +178,12 @@ describe("projection (the message tape)", () => {
       "user",
       "system",
       "system",
+      "user",
       "assistant",
       "tool",
     ]);
-    expect(context.history[1]?.text).toContain("Start state Orientation");
+    expect(context.history[1]?.text).toBe("Start state Orientation");
+    expect(context.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
     expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);

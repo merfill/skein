@@ -6,6 +6,9 @@ A single place so the commands and output locations are not hunted for across th
 repository. It covers `package.json` (scripts), `bench/` (the synthetic bench and
 gate), `bench/harbor/` (real tasks) and `langgraph/graph.ts` (the instrumentation).
 
+For testing on real tasks (the sandbox, Harbor, the step-by-step `bench/live-step.ts`, and
+the fast `bench/turn.ts` probe), see `docs/task_testing.md`.
+
 ## 1. Layers of verification
 
 | Layer | Command | What it checks | Cost |

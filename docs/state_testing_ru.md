@@ -22,12 +22,12 @@
 `why`. Модель — `routerai/~deepseek/deepseek-v4-flash-latest`, `SKEIN_TEMPERATURE=0.1`
 (**шумно**: по одному сэмплу вывод не делать, смотреть `K≥3`).
 
-## 1. Два инструмента
+## 1. Инструменты
 
-1. **Живой ход за ходом** — `bench/step.ts` (в репозитории). Один запуск = один ход движка:
-   переигрывает накопленную последовательность действий в контейнере задачи, строит ленту и
-   делает **один** вызов модели. Это повседневный инструмент: идём по состояниям, после
-   каждого хода смотрим результат и правим промт.
+1. **Реальный движок, ход за ходом** — `bench/live-step.ts` (см. `docs/live_step_ru.md`). Один
+   процесс держит контейнер задачи и дерево; каждый шаг — продолжение `runAgent`
+   (`seed`/`startTurn`, `maxTurns: startTurn + 1`). Переходы, отказы, откат проваленного Patch и
+   reasoning на ленте — движка. **Для поведения использовать это.**
 2. **Оффлайн-переигрыш записанного хода** — `bench/turn.ts` (в репозитории). Берёт уже
    **записанную** ленту хода, правит сообщение (например, строку критерия) и снова зовёт
    модель — **без контейнера**. Дёшево; для сравнения формулировок на одном и том же входе.
@@ -76,43 +76,34 @@
 
 ### 2.3 Драйвер хода
 
-`bench/step.ts` — «один ход на запуск»:
+`bench/live-step.ts` — реальный движок, один ход на запуск (подробно — `docs/live_step_ru.md`):
 
+```sh
+npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 ```
-TAPE_DIR=<dir> npx tsx bench/step.ts <task-id> <seq.json>
-```
 
-- читает `seq.json` — массив `{ turn, action }` (накопленные действия прошлых ходов);
-- `materializeTask(task)` даёт `{ root, request }`; поднимает `dockerWorkspace`;
-- засевает журнал узлом-запросом и **переигрывает `seq`** через `executeAction` (команды
-  исполняются в контейнере);
-- `project` + `buildMessages` строит ленту, `propose` делает **один** вызов модели;
-- пишет результат (см. §2.4).
-
-Цикл работы: запустили → взяли `next-actions.json` → дописали действия в `seq.json` следующим
-`turn` → запустили снова. Так и «идём по ходам», останавливаясь после каждого.
-
-> Замечание по стоимости: каждый запуск заново переигрывает **весь** `seq` в свежем
-> контейнере. Если в `seq` есть `./configure`/`make`, сборка исполняется на каждом ходу —
-> ходы становятся медленными и дорогими (видели на Verification).
+- `openTaskWorkspace(task)` материализует дерево, поднимает долгоживущий контейнер и выполняет
+  `setup`; это тот же setup, что у полного прогона;
+- каждый ход — продолжение `runAgent` (`seed`/`startTurn`, `maxTurns: startTurn + 1`), поэтому
+  переходы, отказы, откат проваленного Patch и reasoning на ленте — движка, а не харнесса;
+- после хода процесс печатает состояние, вызовы, наблюдения, usage, cost и дифф дерева, пишет
+  ленту и ждёт `<dir>/continue` (или идёт дальше с `--auto`; `--turn N` — остановиться после N).
 
 ### 2.4 Куда пишется лента
 
-Каталог — `TAPE_DIR` (по умолчанию `bench/runs/sandbox-tasks/<task>-step`):
+Каталог — `--dir` (по умолчанию `bench/runs/sandbox-tasks/<ts>-<task>-live-step`):
 
 - `contexts/tNNN.txt` — **читаемая лента** хода (ровно то, что ушло модели);
-- `turns.ndjson` — по ходу: `{ turn, situation, island, actions, reasoning }`;
-- `next-actions.json` — предложение модели (действия следующего хода).
+- `reasoning.ndjson` — скрытый reasoning провайдера по ходам (диагностика, не лента);
+- `turns.ndjson` — по ходу: `{ turn, situation, island, actions, usage, cost, stopReason }`;
+- `journal.ndjson` — полный журнал событий после каждого хода.
 
-Живые прогоны целиком лежат в `bench/runs/sandbox-tasks/<ts>-<name>/`. Примеры: полный
-прогон `run-loc-restart` (Localization → Patch → Verification), записанный пример
-`rec-orientation-182830` (Orientation t0–t4 с рассуждениями).
+Живые прогоны целиком лежат в `bench/runs/sandbox-tasks/<ts>-<name>/`.
 
 ### 2.5 Replay с записанной ленты (как гонять один ход)
 
-`bench/step.ts` переигрывает `seq` с нуля. Если проверяешь **переходы движка** (`stop`/`move`,
-откат неверного Patch), нужен replay **ленты через `runAgent`**, иначе хук в `executeNode`
-обходится. Для этого у `AgentInput` есть `seed` (готовый журнал) и `startTurn` (номер хода);
+Если проверяешь **переходы движка** (`stop`/`move`, откат неверного Patch), нужен replay
+**ленты через `runAgent`**, иначе хук в `executeNode` обходится. Для этого у `AgentInput` есть `seed` (готовый журнал) и `startTurn` (номер хода);
 `maxTurns` остаётся абсолютным.
 
 Чеклист:
@@ -223,15 +214,15 @@ user — what: <цель>
 ai — Finish state <Label> — <why из stop>
 ```
 
-**Инструкция ситуации** (в хвосте, `system`):
+**Хвост хода** (`system`, кроме `transition` — там `user`):
 
 | ситуация | что добавляется |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — выбрать стартовое состояние (`move`) или `decline` |
-| `plan` | «Call a tool — the action that advances the goal above.» |
-| `working` | `turnInstruction` — критерий состояния + «когда он выполнен, `stop`; подозрения достаточно…» |
+| `plan` | `planInstruction` — «Call a tool…» + tail: hint → `what:` → `done`-критерий → closure |
+| `working` | `turnInstruction` — тот же tail (per-turn, не хранится) |
 | `transition` | `transitionInstruction` — прочитать строку `Finish state`, выбрать следующее состояние |
-| `terminal` | «This is End. Call `stop` when the request is complete…» |
+| `terminal` | `NODE_INSTRUCTIONS.terminal` — «This is End. …» |
 
 **Что затирается (не показывается):**
 - `notes` из `move` — не рендерятся;
@@ -241,7 +232,8 @@ ai — Finish state <Label> — <why из stop>
 **Что добавляется:**
 - запрос — вверху, один раз;
 - вход состояния — `ai(Start)` + `system(инструкция)` + `user(what)`;
-- хвост-инструкция ситуации;
+- хвост хода — per-turn tail открытого состояния (`plan`/`working`) или инструкция ситуации
+  (не хранится, на следующем ходу пересобирается);
 - вызовы инструментов — как `tool_calls` в `ai`; шаги одного хода доксы идут **одной пачкой**
   (`ai` с массивом `tool_calls` + N `tool`), а не по паре на вызов.
 
@@ -280,9 +272,10 @@ ai — Finish state <Label> — <why из stop>
   выигрывает не разметкой, а поведением: читает код широко и **сверяет «сестринские» циклы**,
   доводит до тестов; эталон ему не нужен (сеть off).
 - **Reasoning на ленте (2026-10-17, дефолт).** Докса видит на ленте свои прошлые рассуждения:
-  AI SDK (`@ai-sdk/openai-compatible`) round-trip'ит reasoning (`reasoning`/`reasoning_content`), движок
-  журналит reasoning хода на узлах-действий (`payload.reasoning`), проекция показывает его на
-  assistant-сообщении хода; вкл. по умолчанию, `SKEIN_REASONING_TAPE=false` — выключатель для A/B.
+  AI SDK (`@ai-sdk/openai-compatible`) round-trip'ит reasoning (`reasoning`/`reasoning_content`),
+  движок журналит reasoning хода на узлах-действий (`payload.reasoning`), проекция показывает его
+  на assistant-сообщении хода; вкл. по умолчанию, `SKEIN_REASONING_TAPE=false` — выключатель для
+  A/B.
   Контролируемый A/B на полном цикле (`sandbox-run`, `--net off`, K=3–4): **момент закрытия
   локализации не меняется** (ON t14,15,14,11 / OFF t14,11,14), но reasoning ~2.5× меньше и
   стоимость ~40% ниже (добавленный контекст уходит в `cacheRead`, fresh-вход равен ≈49k).
@@ -362,7 +355,7 @@ ai — Finish state <Label> — <why из stop>
 
 > Гипотеза п.1–2 **закрыта**: «позднее закрытие от того, что модель не видит свой вывод» —
 > **не причина** (A/B по reasoning на ленте, см. «Сделано»; прежний baseline n=30 оказался
-> артефактом гарнитуры `bench/step.ts` vs полный цикл — см. §6). Значит, пере-вывод после
+> артефактом гарнитуры: replay-харнесс (`bench/step.ts`, удалён) против полного цикла — см. §6). Значит, пере-вывод после
 > находки (Patch в run1: t17–t21 перечитывал перед правкой) — disposition, а не отсутствие
 > рассуждений на ленте. Отсюда и новые пункты ниже.
 
@@ -413,13 +406,14 @@ ai — Finish state <Label> — <why из stop>
 - Копирование «a strong suspicion…» из хинта ещё и внутрь критерия — **не помогает** (~1/3).
 - Текстовые «костыли» (вернуть B0/anti-diff) — отвергнуты как частное решение.
 - **Сравнивать только в одной гарнитуре.** Baseline `run-loc-restart` (закрытие локализации
-  n=30) против полного цикла дал ложный «выигрыш»: `bench/step.ts` (переигрыш всего `seq` на
-  каждый ход) и `sandbox-run` (инкрементальный цикл) несопоставимы по числу ходов. A/B — только
+  n=30) против полного цикла дал ложный «выигрыш»: прежний replay-харнесс
+  (`bench/step.ts`, удалён; переигрыш всего `seq` на каждый ход) и `sandbox-run`
+  (инкрементальный цикл) несопоставимы по числу ходов. A/B — только
   меняя **один** фактор и в одном харнессе.
 
 ## 7. Код и данные
 
-- **Драйвер хода:** `bench/step.ts` (один ход: переигрыш `seq` в контейнере + один `propose`).
+- **Драйвер хода:** `bench/live-step.ts` (реальный движок, один ход на запуск; см. §2.3).
 - **Оффлайн-переигрыш хода:** `bench/turn.ts` (по записанной ленте, без контейнера).
 - **Контейнер:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
 - **Исполнение действий:** `src/tools/index.ts` (`executeAction`).
@@ -433,8 +427,7 @@ ai — Finish state <Label> — <why из stop>
   (`EnvironmentFact`, подмножества), `src/ir/material.ts` (`MaterialFact`, `workspaceBrief`),
   `src/ir/session.ts` (`SESSION_PROBE_ID = "fact:session"`, `probeBrief` для environment);
   событие `add_node kind:"fact"` — `src/loop/graph.ts` (`runAgent`, `deps.probe`); рендер —
-  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe); в шаговом харнессе
-  факт добавляет `bench/step.ts` (иначе лента расходится с движком).
+  `src/ir/project.ts` (`stateBrief`: Workspace/Orientation result/Probe).
 - **Лента:** `src/ir/project.ts` (`project`), `src/loop/propose.ts` (`buildMessages`),
   инструкции — `src/loop/prompt/blocks.ts`, тексты островов — `src/ir/islands.ts`,
   описания инструментов — `src/llm/tools.ts`.
@@ -443,7 +436,8 @@ ai — Finish state <Label> — <why из stop>
 - **Reasoning через AI SDK:** `src/llm/client.ts` (`createOpenAICompatible`, `transformBody`),
   поле reasoning хода — `payload.reasoning` (`src/tools/index.ts`, `executeAction`), рендер —
   `src/ir/project.ts` (`renderPlan`), `src/loop/propose.ts` (reasoning part), возврат из
-  ответа — `src/llm/structured.ts` (`invokeTools`). `SKEIN_REASONING_TAPE`; `provider.ts` удалён.
+  ответа — `src/llm/structured.ts` (`invokeTools`). `SKEIN_REASONING_TAPE` (дефолт on);
+  `provider.ts` удалён.
 - **Транспорт — стриминг:** `streamText`/`generateText` — `src/llm/structured.ts` (`callModel`,
   `invokeWithRetry`); `SKEIN_STREAMING` (дефолт on, `src/config/settings.ts`).
   `SKEIN_REASONING_TAPE=false` — reasoning не попадает на ленту. SSE-парсера/`transformSse` нет.

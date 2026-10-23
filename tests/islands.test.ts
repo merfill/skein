@@ -120,10 +120,11 @@ describe("islands: the projection highlights the state", () => {
     expect(context.situation).toBe("working");
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
-    // The state entry is one `Start state` system message carrying the state's own goal.
+    // The entry is a `Start state` marker, the island instruction and the state's own goal as
+    // a `user` turn.
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
-    expect(start).toContain("Start state Orientation");
-    expect(start).toContain("Goal: know the task's inputs and how success is judged.");
+    expect(start).toBe("Start state Orientation");
+    expect(context.history.some((m) => m.role === "user" && m.text === "what: know the task's inputs and how success is judged")).toBe(true);
     const messages = buildMessages(context);
     expect(messages.some((message) => String(message.content) === start)).toBe(true);
   });

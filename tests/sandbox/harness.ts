@@ -5,7 +5,7 @@ import { probeSession } from "../../src/loop/probe";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { CommandResult, Workspace } from "../../src/tools/workspace";
-import { createCheckpoint } from "./checkpoint";
+import { createCheckpoint, type Checkpoint } from "./checkpoint";
 import { containerWorkspace } from "./container";
 import { dockerWorkspace } from "./docker";
 import type { SandboxRunOptions } from "./run";
@@ -88,11 +88,23 @@ export function stageVerifier(root: string, task: SandboxTask): void {
   writeFileSync(join(testsDst, "pytest.py"), PYTEST_SHIM);
 }
 
-export async function runTask(
+// The task's engine-ready world: its root, request, verifier command, the container-backed
+// workspace with the checkpoint layer, and the per-turn snapshot hook. Shared by the full run
+// (`runTask`) and the turn-at-a-time driver (`bench/live-step.ts`), so both run the same
+// environment and the same setup.
+export interface OpenedTask {
+  workspace: Workspace;
+  root: string;
+  request: string;
+  check: string;
+  checkpoint: Checkpoint;
+  capture: (label: string) => void;
+}
+
+export function openTaskWorkspace(
   task: SandboxTask,
-  propose: Proposer,
   options: SandboxRunOptions = {},
-): Promise<TaskRun> {
+): OpenedTask {
   const { root, request, check } = materializeTask(task, { stageSolution: options.stageSolution });
   // The checkpoint store lives under `.skein`, so it is skipped by the file tools and never
   // part of a snapshot. It is mounted read-only into the task so the agent's shell can read
@@ -142,6 +154,15 @@ export async function runTask(
     }
   };
   capture("initial");
+  return { workspace, root, request, check, checkpoint, capture };
+}
+
+export async function runTask(
+  task: SandboxTask,
+  propose: Proposer,
+  options: SandboxRunOptions = {},
+): Promise<TaskRun> {
+  const { workspace, root, request, check, capture } = openTaskWorkspace(task, options);
   let turn = 0;
   const proposeWithCheckpoint: Proposer = async (context) => {
     capture(`turn-${turn}`);

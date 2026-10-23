@@ -257,11 +257,13 @@ describe("tool calling", () => {
     ]);
   });
 
-  it("invokeTools maps the provider's reasoning", async () => {
+  it("invokeTools maps the provider's reasoning when it is on the tape", async () => {
     const model = mockModel(() =>
       toolReply([{ name: "list", args: {} }], "", "tool-calls", "the tail advance looks wrong"),
     );
-    const proposal = await agent(model, [{ role: "user", content: "go" }]);
+    const proposal = await agent(model, [{ role: "user", content: "go" }], {
+      settings: { ...offline, reasoningTape: true },
+    });
     expect(proposal.reasoning).toBe("the tail advance looks wrong");
   });
 

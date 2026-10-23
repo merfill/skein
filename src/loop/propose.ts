@@ -4,7 +4,14 @@ import type { Context, TapeMessage } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
 import { invokeTools, type ToolsOptions } from "../llm/structured";
 import { toolDescriptionsFor, toolNamesFor } from "../llm/tools";
-import { BASE_PROMPT, REQUEST_INSTRUCTION, transitionInstruction } from "./prompt";
+import {
+  BASE_PROMPT,
+  NODE_INSTRUCTIONS,
+  REQUEST_INSTRUCTION,
+  planInstruction,
+  transitionInstruction,
+  turnInstruction,
+} from "./prompt";
 
 export type Proposer = (context: Context) => Promise<Proposals>;
 
@@ -72,8 +79,9 @@ function toMessage(message: TapeMessage, names: Map<string, string>): ModelMessa
 }
 
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
-// the tape itself. No instruction is appended per turn: the base prompt carries the contract and
-// the tape carries the state (a clean transcript, like a plain coding agent; docs/ir_semantics §7).
+// the tape itself, then the situation's prompt (the request/transition instruction, the open
+// state's per-turn tail, or the terminal instruction). The base prompt carries the contract and
+// the tape carries the state (docs/ir_semantics §7).
 export function buildMessages(context: Context): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "system", content: BASE_PROMPT }];
   for (const constraint of context.constraints) {
@@ -84,16 +92,27 @@ export function buildMessages(context: Context): ModelMessage[] {
   }
   const names = toolNames(context.history);
   for (const message of context.history) messages.push(toMessage(message, names));
-  // Only the situations outside a state append a prompt: the request (choose the first state)
-  // and the transition (after a `Finish state` line). A state's start/brief/hint live on the
-  // tape; there is no per-turn tail. The transition one is a `user` turn: a provider treats a
-  // trailing assistant text (the closed state's `Finish` line) followed only by a `system`
-  // message as a prefix/prefill and refuses the `move` function call; a `user` turn after it
-  // clears that rule (docs/ir_semantics §7).
+  // Each situation appends its own last message. An open state gets the per-turn tail (conduct,
+  // goal, criterion, closure): never stored, so the next turn rebuilds without it. The
+  // transition one is a `user` turn: a provider treats a trailing assistant text (the closed
+  // state's `Finish` line) followed only by a `system` message as a prefix/prefill and refuses
+  // the `move` function call; a `user` turn after it clears that rule (docs/ir_semantics §7).
   if (context.situation === "request") {
     messages.push({ role: "system", content: REQUEST_INSTRUCTION });
+  } else if (context.situation === "plan") {
+    messages.push({
+      role: "system",
+      content: planInstruction(context.island, context.done, context.what),
+    });
+  } else if (context.situation === "working") {
+    messages.push({
+      role: "system",
+      content: turnInstruction(context.island, context.done, context.what),
+    });
   } else if (context.situation === "transition") {
     messages.push({ role: "user", content: transitionInstruction(context.island) });
+  } else if (context.situation === "terminal") {
+    messages.push({ role: "system", content: NODE_INSTRUCTIONS.terminal });
   }
   return messages;
 }

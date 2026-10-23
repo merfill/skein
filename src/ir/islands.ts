@@ -70,12 +70,12 @@ export const ISLANDS: Record<IslandId, Island> = {
     instruction:
       "Read the request and the workspace map: root, repository status, top-level entries. Name " +
       "the acceptance as the request declares it. If the request and the map already name the " +
-      "inputs and the acceptance, `stop`.",
+      "inputs and the acceptance, `stop` now. Do not list inside the entries, verify build " +
+      "targets or paths, read file contents, or inspect history or data formats — those belong " +
+      "to the next state.",
     hint:
-      "The workspace map is the index; the request is the acceptance. Do not go inside " +
-      "entries, check paths, or inspect build state, configs, history, or contents — those " +
-      "belong to the next state. Even if the request points to a file, do not open it here: " +
-      "the acceptance is already named; file contents belong to the next state.",
+      "The workspace map is the index; the request is the acceptance. Do not list inside " +
+      "entries, check paths, or inspect build state, configs, history, or contents.",
     applies: INSPECT,
     next: [
       {
@@ -107,11 +107,10 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Start from the workspace map (filesystem facts) and the environment (available tools). " +
       "Think about what the code is supposed to do from the filenames and the directory " +
       "structure: list the relevant directories and choose the candidate files by name — the " +
-      "implementation and the definitions or headers it uses — then inspect those. Work from " +
-      "the file you are reading: its own comments and the neighbouring code are the evidence. " +
-      "Find the sibling that performs the same traversal or operation — the neighbouring loop " +
-      "or function — and follow its pattern. A suspected cause is enough to stop — do not look " +
-      "for a different bug. criterion: \"" + LOCALIZATION_CRITERION + "\".",
+      "implementation and the definitions or headers it uses — then inspect those. Compare the " +
+      "target with the sibling that performs the same traversal or operation — the neighbouring " +
+      "loop or function — and use its pattern as the reference. A suspected cause is enough to " +
+      "stop — do not look for a different bug.",
     applies: INSPECT,
     next: [
       {

@@ -471,12 +471,12 @@ workspace). **Оконный** `recall` или любой `search` — друг�
 **Системная часть** собирается по ситуации, а не монолитом: базовый промпт несёт только то, что
 верно на любом ходу (роль, принципы, контракт, набор состояний и переходы); в конце каждого хода
 (временно, не хранится) добавляется инструкция текущей ситуации — по одной строке на ситуацию:
-`request` (выбери первое состояние или `decline`; `what`/`done` — из запроса), `plan` (первый
-шаг состояния), `working` (`turnInstruction`: критерий назван явно — «This state's done
-criterion: "<criterion>". When it holds, call `stop`; do not over-work the state»),
-`transition` (`transitionInstruction(island)`: источник `what`/`done` — строка `Finish state
-<label>` закрытого состояния; перечислены соседи по `next`; выбери следующее), `terminal` (вызови
-`stop`, когда запрос завершён). Имена/параметры/описания инструментов **не** в
+`request` (выбери первое состояние или `decline`; `what`/`done` — из запроса), `plan`
+(`planInstruction`: «Call a tool…» + per-turn tail), `working` (`turnInstruction`: per-turn
+tail — conduct → `what:` → `done`-критерий → closure; не хранится, на следующем ходу
+пересобирается), `transition` (`transitionInstruction(island)`: источник `what`/`done` — строка
+`Finish state <label>` закрытого состояния; перечислены соседи по `next`; выбери следующее),
+`terminal` (`This is End.` + hint терминального состояния). Имена/параметры/описания инструментов **не** в
 промпте — они уходят полем `tools` запроса, и это поле **связано из `Context.applicable`**: на
 `request`/`transition` предложен только `move` (плюс read-only `recall`/`search`), пока
 состояние открыто — apply-инструменты и `stop`; поэтому ход, который движок отклонил бы, нельзя

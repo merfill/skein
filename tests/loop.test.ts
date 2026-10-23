@@ -89,7 +89,9 @@ describe("reasoning budget", () => {
     const settings = loadSettings({ SKEIN_TEMPERATURE: "0.5" } as NodeJS.ProcessEnv);
     expect(settings.temperature).toBe(0.5);
     expect(settings.reasoningEffort).toBe("low");
+    expect(settings.reasoningTape).toBe(true);
     expect(loadSettings({ SKEIN_REASONING_EFFORT: "high" } as NodeJS.ProcessEnv).reasoningEffort).toBe("high");
+    expect(loadSettings({ SKEIN_REASONING_TAPE: "false" } as NodeJS.ProcessEnv).reasoningTape).toBe(false);
     expect(settings.live).toBe(false);
   });
 });
@@ -651,16 +653,18 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; the move adds the `Start state` message (goal, done,
-    // instruction) and the hint (the request leads the tape); the first apply seeds the plan.
+    // A fresh request is a single user turn; the move adds the `Start state` marker, the
+    // instruction and the state's own goal (the request leads the tape); the first apply seeds
+    // the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "system", "system"]);
-    expect(roles[2]).toEqual(["user", "system", "system", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
+    expect(roles[2]).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
       "system",
       "system",
+      "user",
       "assistant",
       "tool",
       "assistant",
@@ -1026,7 +1030,7 @@ describe("runAgent", () => {
     expect(context.history[1]?.text).toContain("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
-    // The state IS its goal: the goal (the state's own `what`) is inside the `Start state` message.
+    // The state IS its goal: the state's own `what` rides a `user` turn after the entry.
     const goal =
       context.history.map((message) => message.text).find((text) => text.includes("know the task's inputs")) ?? "";
     expect(goal).toContain("know the task's inputs");
