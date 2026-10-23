@@ -209,7 +209,10 @@ export const ISLANDS: Record<IslandId, Island> = {
       "read-only; create and change the script, output, and scratch copies. Search with a script, " +
       "not by hand: enumerate candidates or decodings and keep only those that pass the source's " +
       "own check. A candidate that matches only the declared form is not accepted. Include a " +
-      "negative control: a wrong candidate that fits the form must be rejected. Do not fabricate.",
+      "negative control: a wrong candidate that fits the form must be rejected. Do not fabricate. " +
+      "If the method needs a tool that is not on PATH, fix the environment — try the package " +
+      "manager or network — before writing a replacement; a missing tool is not evidence that it " +
+      "cannot be installed.",
     applies: RECOVER_TOOLS,
     next: [
       {

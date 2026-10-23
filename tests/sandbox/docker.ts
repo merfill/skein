@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 
-import { fsWorkspace, type CommandResult, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
+import { fsWorkspace, type CommandResult, type GrepMatch, type JobHandle, type JobResult, type JobWaitOptions, type PathFilter, type RunOptions, type Workspace } from "../../src/tools/workspace";
 
 // A real-execution workspace backed by Docker, for a ported terminal-bench task: the task's
 // own image already carries the exact environment (repo, toolchain), so there is nothing to
-// install on the host. `run` executes `docker exec` inside the container; the file tools
-// operate on the same `/app` tree via a host bind mount and `fsWorkspace`.
+// install on the host. `run` and the file tools execute `docker exec` inside the container,
+// so `/app`, `/tmp`, and the rest of the task namespace mean the same thing to both. The
+// bind-mounted `/app` tree keeps a host fast path for `grep`/`listFiles` (identical files).
 //
 // Why Docker rather than bwrap (`container.ts`): bwrap isolates but shares the host `/usr`,
 // so every task toolchain would have to be installed on the host. The task image provides
@@ -33,6 +36,10 @@ export interface DockerOptions {
   // Docker network mode; `none` (default) keeps the agent offline.
   network?: string;
   runTimeoutMs?: number;
+  // Start the task image directly, without extracting `/app` into a host root and binding it
+  // back. File operations then run entirely via `docker exec`; `root` is an empty host dir
+  // used only by the `Workspace` interface (background jobs/fetch are not supported here).
+  rootless?: boolean;
   // Extra bind mounts and environment for an agent that runs INSIDE the container
   // (opencode); the engine's own runs do not need them.
   mounts?: DockerMount[];
@@ -48,6 +55,7 @@ export interface DockerOptions {
 export interface DockerWorkspace extends Workspace {
   name: string;
   exec(command: string, timeoutMs?: number): CommandResult;
+  execInput(command: string, input: string, timeoutMs?: number): CommandResult;
 }
 
 // Generous by default: a task's own build (fix-ocaml-gc, crack-7z-hash) runs inside the
@@ -91,8 +99,9 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   const workdir = options.workdir ?? mount;
   const network = options.network ?? "none";
   const timeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
-  // The job registry lives on the host `fsWorkspace`; give it the container's cap so a
-  // background poll waits as long as a foreground run in the container would.
+  const rootless = options.rootless === true;
+  // The host base is used by the bind-mounted fast path and by background jobs/fetch. In
+  // rootless mode it is an empty interface root; file operations/grep/list go to the container.
   const base = fsWorkspace(root, { runTimeoutMs: timeoutMs });
   counter += 1;
   const name = `skein-${process.pid}-${Date.now()}-${counter}`;
@@ -101,12 +110,14 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   // preserves the image's ownership (often root), which the host user then cannot read or
   // edit through the file tools; piping through the host `tar` (run as the host user) makes
   // the extracted tree host-owned.
-  const extracted = spawnSync(
-    "bash",
-    ["-c", `set -o pipefail; docker run --rm --entrypoint tar ${shellQuote(options.image)} -C ${shellQuote(mount)} -cf - . | tar -C ${shellQuote(root)} -xf -`],
-    { encoding: "utf8", timeout: 600_000, maxBuffer: 64 * 1024 * 1024 },
-  );
-  if (extracted.status !== 0) throw new Error(`image extract failed: ${(extracted.stderr ?? "").trim()}`);
+  if (!rootless) {
+    const extracted = spawnSync(
+      "bash",
+      ["-c", `set -o pipefail; docker run --rm --entrypoint tar ${shellQuote(options.image)} -C ${shellQuote(mount)} -cf - . | tar -C ${shellQuote(root)} -xf -`],
+      { encoding: "utf8", timeout: 600_000, maxBuffer: 64 * 1024 * 1024 },
+    );
+    if (extracted.status !== 0) throw new Error(`image extract failed: ${(extracted.stderr ?? "").trim()}`);
+  }
 
   // A long-lived container with the root bind-mounted at the WORKDIR; the agent's `run`
   // goes through `docker exec` so every command sees the same tree.
@@ -114,7 +125,7 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
     "run", "-d", "--name", name,
     "--entrypoint", "sleep",
     "--network", network,
-    "-v", `${root}:${mount}`,
+    ...(rootless ? [] : ["-v", `${root}:${mount}`]),
     ...(options.mounts ?? []).flatMap((entry) => [
       "-v",
       `${entry.host}:${entry.dest}${entry.readOnly === true ? ":ro" : ""}`,
@@ -150,14 +161,34 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   const containerFilter = (filter: PathFilter): PathFilter =>
     filter.path === undefined ? filter : { ...filter, path: containerPath(filter.path) };
 
-  const exec = (command: string, execTimeoutMs = timeoutMs, execWorkdir = workdir): CommandResult => {
-    const result = spawnSync(
-      "docker",
-      // `umask 000` so files the agent creates inside (as root) are world-writable and the
-      // host file tools can read/edit them (the two share the bind-mounted tree).
-      ["exec", "-w", execWorkdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`],
-      { encoding: "utf8", timeout: execTimeoutMs, maxBuffer: 64 * 1024 * 1024 },
-    );
+  // The agent-visible path in the container. Absolute paths are container paths; relative
+  // ones resolve like `bash` does (against the task WORKDIR), not against the host root.
+  const agentPath = (path: string): string => {
+    if (path === mount) return mount;
+    if (path.startsWith(`${mount}/`)) return path;
+    if (path.startsWith("/")) return path;
+    return `${workdir}/${path}`;
+  };
+  const outsideMount = (path: string | undefined): boolean =>
+    path !== undefined && path.startsWith("/") && path !== mount && !path.startsWith(`${mount}/`);
+
+  const execAt = (
+    command: string,
+    execWorkdir = workdir,
+    execTimeoutMs = timeoutMs,
+    input?: string,
+  ): CommandResult => {
+    // `umask 000` so files the agent creates inside (as root) are world-writable and the
+    // host checkpoint can read them (the workspace is a bind-mounted tree).
+    const args = ["exec"];
+    if (input !== undefined) args.push("-i");
+    args.push("-w", execWorkdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`);
+    const result = spawnSync("docker", args, {
+      encoding: "utf8",
+      timeout: execTimeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+      ...(input !== undefined ? { input } : {}),
+    });
     const timedOut =
       result.signal === "SIGTERM" ||
       (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
@@ -169,27 +200,234 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
       ...(result.signal !== undefined && result.signal !== null ? { signal: result.signal } : {}),
     };
   };
+  const exec = (command: string, execTimeoutMs = timeoutMs): CommandResult =>
+    execAt(command, workdir, execTimeoutMs);
+  const execInput = (command: string, input: string, execTimeoutMs = timeoutMs): CommandResult =>
+    execAt(command, workdir, execTimeoutMs, input);
+
+  // File operations run in the task container, so `/tmp` and other container paths mean the
+  // same thing to the file tools and to `bash`. Paths under the mounted workspace keep the
+  // host fast path in `grep`/`listFiles` (the bind mount makes them the same tree), while
+  // paths outside it are served by the container.
+  const read = (path: string): string => {
+    const result = execAt(`cat -- ${shellQuote(agentPath(path))}`);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `read failed: ${path}`);
+    }
+    return result.stdout;
+  };
+  const write = (path: string, content: string): void => {
+    const target = agentPath(path);
+    const result = execAt(
+      `mkdir -p ${shellQuote(dirname(target))} && cat > ${shellQuote(target)}`,
+      workdir,
+      timeoutMs,
+      content,
+    );
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `write failed: ${path}`);
+    }
+  };
+  const exists = (path: string): boolean =>
+    execAt(`test -e ${shellQuote(agentPath(path))}`).code === 0;
+  const version = (path: string): string => {
+    const result = execAt(`sha1sum -- ${shellQuote(agentPath(path))}`);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `sha1 failed: ${path}`);
+    }
+    return result.stdout.trim().split(/\s+/)[0] ?? "";
+  };
+  const signature = (path: string): string => {
+    const result = execAt(`stat -c '%y:%z:%s' -- ${shellQuote(agentPath(path))}`);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `stat failed: ${path}`);
+    }
+    return result.stdout.trim();
+  };
+  // Batch form for the engine's before/after mutation scan: one `stat` process for the
+  // whole workspace instead of one `docker exec` per file (thousands).
+  const signatures = (paths: readonly string[]): Map<string, string> => {
+    const out = new Map<string, string>();
+    if (paths.length === 0) return out;
+    const list = `${paths.map((path) => `${mount}/${path}`).join("\0")}\0`;
+    const result = execInput(
+      "xargs -0 stat -c '%n\\0%y\\0%z\\0%s\\0' -- 2>/dev/null || true",
+      list,
+    );
+    const fields = result.stdout.split("\0");
+    for (let index = 0; index + 3 < fields.length; index += 4) {
+      const absolute = fields[index] as string;
+      const mtime = fields[index + 1] as string;
+      const ctime = fields[index + 2] as string;
+      const size = fields[index + 3] as string;
+      const relative = absolute.startsWith(`${mount}/`) ? absolute.slice(mount.length + 1) : absolute;
+      out.set(relative, `${mtime}:${ctime}:${size}`);
+    }
+    return out;
+  };
+  const applyPatch = (patch: string, strip = 1): void => {
+    const result = execAt(`patch -p${strip} --forward --batch`, mount, timeoutMs, patch);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || result.stdout.trim() || `patch exit ${result.code}`);
+    }
+  };
+  const containerGrep = (pattern: string, filter: PathFilter): GrepMatch[] => {
+    const scope = agentPath(filter.path ?? mount);
+    const include = filter.include !== undefined ? ` --include=${shellQuote(filter.include)}` : "";
+    const exclude = filter.exclude !== undefined ? ` --exclude=${shellQuote(filter.exclude)}` : "";
+    const command = (flag: string): string =>
+      `grep -rIn${flag} -e ${shellQuote(pattern)}${include}${exclude} -- ${shellQuote(scope)}`;
+    let result = execAt(command("P"));
+    if (result.code === 2 && /support|invalid option/i.test(result.stderr)) {
+      result = execAt(command("E"));
+    }
+    if (result.code === 1) return [];
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `grep exit ${result.code}`);
+    }
+    return result.stdout
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => /^(.*?):(\d+):(.*)$/.exec(line))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => ({ path: match[1] as string, line: Number(match[2]), text: match[3] as string }));
+  };
+  const containerListFiles = (filter: PathFilter): string[] => {
+    const scope = agentPath(filter.path ?? mount);
+    const result = execAt(`find ${shellQuote(scope)} -type f 2>/dev/null | sort`);
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `find exit ${result.code}`);
+    }
+    return result.stdout.split("\n").filter((line) => line !== "");
+  };
+
+  const containerList = (): string[] => {
+    const result = execAt(
+      `find ${shellQuote(mount)} \\( -name .skein -o -name .env -o -name '.env.*' \\) -prune -o -type f -print`,
+    );
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `list exit ${result.code}`);
+    return result.stdout
+      .split("\n")
+      .filter((line) => line !== "")
+      .map((line) => (line.startsWith(`${mount}/`) ? line.slice(mount.length + 1) : line))
+      .sort();
+  };
   const run = (command: string, options: RunOptions = {}): CommandResult => {
-    // `docker exec -w` wants an absolute path in the container: resolve the workspace path
-    // under the mount so a relative `workdir` means the tree the agent sees.
     const execWorkdir =
-      options.workdir !== undefined ? `${mount}/${containerPath(options.workdir)}` : workdir;
-    return exec(command, options.timeoutMs ?? timeoutMs, execWorkdir);
+      options.workdir === undefined
+        ? workdir
+        : options.workdir.startsWith("/")
+          ? options.workdir
+          : `${workdir}/${options.workdir}`;
+    return execAt(command, execWorkdir, options.timeoutMs ?? timeoutMs);
+  };
+
+  const execDetached = (command: string, execWorkdir = workdir): CommandResult => {
+    const result = spawnSync(
+      "docker",
+      ["exec", "-d", "-w", execWorkdir, name, "bash", "-lc", `set -o pipefail; umask 000; ${command}`],
+      { encoding: "utf8", timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
+    );
+    return {
+      code: result.status ?? 1,
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+    };
+  };
+
+  // Background commands run in the task container, like `run`; the job writes its logs and
+  // exit code under the container-local checkpoint store so `pollJob` can read them.
+  const jobDir = "/tmp/.skein/jobs";
+  const jobs = new Map<string, { command: string; startedAt: number; id: string }>();
+  let jobCounter = 0;
+  const startJob = (command: string, _options: JobWaitOptions = {}): JobHandle => {
+    jobCounter += 1;
+    const id = `job-${jobCounter}`;
+    const startedAt = Date.now();
+    const out = `${jobDir}/${id}.out`;
+    const err = `${jobDir}/${id}.err`;
+    const code = `${jobDir}/${id}.code`;
+    const result = execDetached(
+      `mkdir -p ${shellQuote(jobDir)} && ( ${command} ) > ${shellQuote(out)} 2> ${shellQuote(err)}; echo $? > ${shellQuote(code)}`,
+    );
+    if (result.code !== 0) {
+      throw new Error(result.stderr.trim() || `job start failed: ${command}`);
+    }
+    jobs.set(id, { command, startedAt, id });
+    return { id, pid: 0, command };
+  };
+  const pollJob = (id: string, options: JobWaitOptions = {}): JobResult | undefined => {
+    const job = jobs.get(id);
+    if (job === undefined) return undefined;
+    const code = `${jobDir}/${id}.code`;
+    const out = `${jobDir}/${id}.out`;
+    const err = `${jobDir}/${id}.err`;
+    const steps = Math.max(1, Math.ceil((options.waitMs ?? 0) / 100));
+    const script =
+      `for i in $(seq 1 ${steps}); do [ -f ${shellQuote(code)} ] && break; sleep 0.1; done; ` +
+      `if [ -f ${shellQuote(code)} ]; then printf 'DONE%s' "$(cat ${shellQuote(code)})"; else printf RUNNING; fi; ` +
+      `printf '\\0'; tail -c 8000 ${shellQuote(out)} 2>/dev/null || true; ` +
+      `printf '\\0'; tail -c 8000 ${shellQuote(err)} 2>/dev/null || true`;
+    const result = execAt(script, workdir, Math.max(5000, (options.waitMs ?? 0) + 5000));
+    const [statePart = "RUNNING", stdout = "", stderr = ""] = result.stdout.split("\0");
+    const done = statePart.startsWith("DONE");
+    const exit = done ? Number.parseInt(statePart.slice(4), 10) : Number.NaN;
+    return {
+      id,
+      command: job.command,
+      state: done ? "done" : "running",
+      startedAt: job.startedAt,
+      exitCode: done && Number.isFinite(exit) ? exit : null,
+      signal: null,
+      stdout,
+      stderr,
+    };
+  };
+  const fetchTo = (url: string, path: string): { path: string; bytes: number } => {
+    if (!rootless) return base.fetchTo(url, path);
+    // Fetch on the host (allowlist/constraints live there), then write into the container.
+    const temp = `.skein/fetch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const fetched = base.fetchTo(url, temp);
+    const content = base.read(temp);
+    try {
+      write(path, content);
+    } finally {
+      rmSync(join(root, temp), { force: true });
+    }
+    return { path, bytes: fetched.bytes };
   };
 
   return {
     ...base,
+    root: rootless ? mount : base.root,
     displayRoot: mount,
-    read: (path) => base.read(containerPath(path)),
-    version: (path) => base.version(containerPath(path)),
-    signature: (path) => base.signature(containerPath(path)),
-    write: (path, content) => base.write(containerPath(path), content),
-    exists: (path) => base.exists(containerPath(path)),
-    grep: (pattern, filter) => base.grep(pattern, containerFilter(filter ?? {})),
-    listFiles: (filter) => base.listFiles(containerFilter(filter ?? {})),
+    read,
+    version,
+    signature,
+    signatures,
+    write,
+    exists,
+    grep: (pattern, filter) =>
+      rootless
+        ? containerGrep(pattern, filter ?? {})
+        : outsideMount(filter?.path)
+          ? containerGrep(pattern, filter as PathFilter)
+          : base.grep(pattern, containerFilter(filter ?? {})),
+    list: rootless ? containerList : base.list,
+    listFiles: (filter) =>
+      rootless
+        ? containerListFiles(filter ?? {})
+        : outsideMount(filter?.path)
+          ? containerListFiles(filter as PathFilter)
+          : base.listFiles(containerFilter(filter ?? {})),
+    startJob,
+    pollJob,
+    fetchTo,
+    applyPatch,
     run,
     name,
     exec,
+    execInput,
   };
 }
 

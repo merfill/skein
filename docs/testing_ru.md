@@ -209,13 +209,15 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 Реальные задачи terminal-bench гоняются локально настоящим движком и родным верификатором
 задачи на двух бэкендах:
 
-- **Docker** (задачи с образом). Родной образ задачи (`alexgshaw/<task>:20251031`) несёт
-  точное окружение, на хост ничего не ставится. `/app` образа копируется во временный
-  корень, затем контейнер `sleep` бинд-маунтит этот корень в `/app`; `run` = `docker
-  exec`. Сеть по умолчанию `none`, выставлен разумный `--ulimit nofile` (valgrind), и git
-  `safe.directory=*` (файлы образа принадлежат его пользователю, не root).
+- **Docker rootless** (задачи с образом). Родной образ задачи
+  (`alexgshaw/<task>:20251031`) несёт точное окружение, на хост ничего не ставится.
+  Контейнер стартует прямо из образа; `/app` **не** копируется на хост и не бинд-маунтится.
+  File-tools, `grep/list`, `bash`, фоновые jobs и checkpoint — через `docker exec`; store
+  `/tmp/.skein` в контейнере (`DockerBackend`). Сеть по умолчанию `none`, выставлен
+  `--ulimit nofile` (valgrind) и git `safe.directory=*`.
 - **bwrap** (`container.ts`, для `regex-log`). Временный корень хоста в `/app` под `bwrap`
-  с read-only `/usr` хоста, сеть выключена — для задачи без своего образа.
+  с read-only `/usr` хоста, сеть выключена; file-tools/checkpoint пока host-side (`/tmp` —
+  per-invocation tmpfs). Перенос bwrap на D — отдельный шаг.
 
 Портировано (13): `regex-log`, `fix-git`, `log-summary-date-ranges`,
 `openssl-selfsigned-cert`, `git-leak-recovery`, `cobol-modernization`,
@@ -224,7 +226,8 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 
 | Файл | Роль |
 | --- | --- |
-| `tests/sandbox/docker.ts` | Docker-`Workspace` (`/app` образа → временный корень → `docker exec`) |
+| `tests/sandbox/docker.ts` | Docker-`Workspace` (rootless: образ → `docker exec`; `signatures` батчем) |
+| `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` в контейнере |
 | `tests/sandbox/container.ts` | bwrap-`Workspace`; файловые инструменты рерайтят префикс `/app/` |
 | `tests/sandbox/task.ts` | `SandboxTask` + поиск в кэше Harbor + обёртка верификатора и `pytest`-шим |
 | `tests/sandbox/harness.ts` | `runTask`: материализация → setup → `runAgent` → `checkSetup` → верификатор → reward |
@@ -243,16 +246,17 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
-`--net off` (по умолчанию `on`) лишает интернета **хостовые** инструменты: `fetch` и фоновый
-`run` движка выполняются на хосте, а не в контейнере задачи (тот и так `--network none`),
-поэтому CLI гонит их `curl` через allowlist-прокси, разрешающий только API модели. Baseline
-для сравнения — прогон opencode с `--net off` (`opencode-run.ts`, §3.6).
+`--net off` (по умолчанию `on`) лишает интернета **хостовый** `fetch` (и хостовые `run` там,
+где они есть): CLI гонит их `curl` через allowlist-прокси, разрешающий только API модели.
+Контейнер задачи остаётся `--network none` (если задача не задала `network`); `run`/jobs в
+rootless D исполняются в контейнере. Baseline для сравнения — opencode с `--net off`
+(`opencode-run.ts`).
 
 Прогон использует собственный `maxTurns` задачи, если он задан (build-heavy задача вроде
 `fix-ocaml-gc` ставит 60 — её критерий пересобирает весь компилятор, а каждый фоновый опрос
 стоит хода), иначе 24; явный `--turns N` переопределяет и то, и другое.
 
-Вывод — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (проекция по ходам),
+Вывод — `bench/runs/sandbox-tasks/<ts>-<id>-<random>/`: `contexts.ndjson` (проекция по ходам),
 `result.json` (`stopReason`, `reward`, результат верификатора, IR-журнал), `metrics.json`
 (те же итоги/разрезы, что в §3.5), `reward.txt` (оценка верификатора).
 
@@ -265,9 +269,12 @@ reverse-прокси на `baseURL` (`api-log-proxy.mjs`): пишутся сыр
 Skein. `opencode run --format json` и сессионная БД opencode не отдают ни промпт, ни текст
 рассуждений.
 
-Верификатор задачи кладётся под `.skein/tests/` **после** хода агента (в обоих харнессах),
-никогда до: shell агента видит `.skein`, хотя файловые тулы его пропускают, а harbor-овский
-`test.sh` задачи пере-клонирует ровно ту ревизию с багом (то есть называет решение).
+Верификатор задачи кладётся под `.skein/tests/` **после** хода агента, никогда до: shell
+агента видит `.skein`, хотя файловые тулы его пропускают, а harbor-овский `test.sh` задачи
+пере-клонирует ровно ту ревизию с багом (то есть называет решение). Для `checkIn:"task"`
+тесты пишутся в контейнер; для `checkIn:"host"` — отдельный verifier-контейнер
+(`SKEIN_VERIFIER_IMAGE`, по умолчанию `fix-code`): `/app` стримится task→verifier tar-пайпом,
+тесты — `docker cp`; host-копии `/app` нет.
 Верификатор заново материализуется из кэша задачи в момент проверки, поэтому reward
 воспроизводим.
 

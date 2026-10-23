@@ -25,7 +25,8 @@ import { dirname, join } from "node:path";
 // A read-only checkpoint of the task root, taken by the harness (never the engine) before the
 // agent and at each turn. The store is content-addressed: an unchanged file is stored once and
 // every snapshot tree hardlinks the same immutable blob, so per-turn snapshots cost metadata,
-// not another copy of the tree.
+// not another copy of the tree. The signature cache keeps an unchanged file from being read
+// and hashed every turn.
 //
 // The tree is a plain directory of hardlinks/lists/symlinks, not a git repository: task images
 // do not reliably carry git (db-wal has tar/cp but no git), while `cp -a` is everywhere. The
@@ -34,6 +35,10 @@ import { dirname, join } from "node:path";
 // Scope: the task root, excluding `.skein` (harness/verifier/jobs) and `.env` files (secrets).
 // A nested or root `.git` IS captured here (it is an ordinary directory to tar-like walking,
 // unlike a shadow git index), so git-state tasks can be restored too.
+//
+// The algorithm is environment-independent: `CheckpointBackend` supplies the filesystem
+// primitives. `HostBackend` runs them on the host; a container backend runs the same algorithm
+// with `docker exec` (so `/app` need not be copied to the host).
 
 const README = `Skein workspace checkpoints (read-only).
 
@@ -64,16 +69,37 @@ fi
 cp -a "$src" "\${3:-$2}"
 `;
 
-interface Entry {
+export interface ScanEntry {
   // Workspace-relative path, `/`-separated.
   path: string;
   kind: "file" | "dir" | "symlink";
+  mode?: number;
+  mtimeMs?: number;
+  ctimeMs?: number;
+  size?: number;
+  // A symlink's target.
+  link?: string;
+}
+
+export interface CheckpointEntry extends ScanEntry {
   // A file's blob key (content + mode + mtime), a symlink's target, or "" for a directory.
   value: string;
-  // The source permission bits, so a restored path keeps its executable/read-only state.
-  mode?: number;
-  // The source modification time (ms), preserved so a build's `make` sees the same order.
-  mtime?: number;
+}
+
+// The filesystem primitives the checkpoint algorithm needs. A host implementation uses `fs`;
+// a container implementation runs batched `docker exec` commands against the task namespace.
+export interface CheckpointBackend {
+  // Store root: a host path for HostBackend, a container path for the Docker backend.
+  readonly dir: string;
+  // One walk of the workspace, excluding `.skein` and secrets; no file contents are read.
+  scan(): ScanEntry[];
+  // Content hashes for the given workspace-relative files. Unreadable files are omitted.
+  hash(paths: readonly string[]): Map<string, string>;
+  // Create the object blobs (when new) and a hardlink tree for a snapshot.
+  writeTree(tree: string, entries: readonly CheckpointEntry[]): void;
+  // Put one path back from a snapshot tree; return the resulting workspace version, or
+  // "absent" when the snapshot did not have the path.
+  restore(tree: string, path: string): string;
 }
 
 export interface SnapshotRecord {
@@ -118,118 +144,104 @@ function hashFile(path: string): string {
   return hash.digest("hex");
 }
 
-function walk(root: string, dir: string, out: Entry[]): void {
-  let entries;
-  try {
-    entries = readdirSync(join(root, dir), { withFileTypes: true });
-  } catch {
-    // An unreadable directory (a container-run tool can create root-only paths) is skipped.
-    return;
-  }
-  for (const entry of entries) {
-    // `.skein` holds the harness's own files; `.env` carries secrets and never enters a snapshot.
-    if (entry.name === ".skein" || entry.name === ".env" || entry.name.startsWith(".env.")) continue;
-    const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
-    const full = join(root, path);
-    try {
-      if (entry.isDirectory()) {
-        out.push({ path, kind: "dir", value: "", mode: statSync(full).mode & 0o777 });
-        walk(root, path, out);
-      } else if (entry.isSymbolicLink()) {
-        out.push({ path, kind: "symlink", value: readlinkSync(full) });
-      } else if (entry.isFile()) {
-        // Mode and mtime are part of the key: two snapshots of a file with the same bytes but a
-        // different executable bit or build-relevant mtime must not share one blob.
-        const stat = statSync(full);
-        const mode = stat.mode & 0o777;
-        const mtime = Math.floor(stat.mtimeMs);
-        out.push({ path, kind: "file", value: `${hashFile(full)}-${mode.toString(8)}-${mtime}`, mode, mtime });
-      }
-      // Sockets/FIFOs/devices are not workspace state; skip them rather than fail the run.
-    } catch {
-      // The host cannot read a root-owned file (e.g. `john/run/john.log` written inside the
-      // task container) or it vanished mid-walk. The checkpoint is best-effort over what the
-      // host can read; one such file must not abort the whole run.
-    }
-  }
-}
-
-function manifestHash(entries: readonly Entry[]): string {
+function manifestHash(entries: readonly CheckpointEntry[]): string {
   const hash = createHash("sha256");
   for (const entry of entries) hash.update(`${entry.kind}\u0000${entry.value}\u0000${entry.path}\n`);
   return hash.digest("hex");
 }
 
-export function createCheckpoint(root: string): Checkpoint {
-  const dir = join(root, ".skein", "checkpoints");
-  const objects = join(dir, "objects");
-  const trees = join(dir, "trees");
-  mkdirSync(objects, { recursive: true });
-  mkdirSync(trees, { recursive: true });
-  writeFileSync(join(dir, "README"), README);
-  writeFileSync(join(dir, "restore.sh"), RESTORE);
-  chmodSync(join(dir, "restore.sh"), 0o755);
-  // A pointer one level up, so a plain `ls .skein` reveals the store.
-  writeFileSync(join(dir, "..", "README"), "Workspace checkpoints (read-only): .skein/checkpoints/README\n");
+function present(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-  const runId = randomUUID();
-  const snapshots: SnapshotRecord[] = [];
-  let lastHash: string | undefined;
-  let temp = 0;
+// The host filesystem backend: the original checkpoint implementation, now behind the
+// primitive interface. Tests and bwrap/virtual workspaces use it directly.
+export class HostBackend implements CheckpointBackend {
+  readonly root: string;
+  readonly dir: string;
 
-  // `lstat` so a dangling symlink still counts as present.
-  const present = (path: string): boolean => {
-    try {
-      lstatSync(path);
-      return true;
-    } catch {
-      return false;
+  constructor(root: string) {
+    this.root = root;
+    this.dir = join(root, ".skein", "checkpoints");
+    this.ensureStore();
+  }
+
+  private ensureStore(): void {
+    mkdirSync(join(this.dir, "objects"), { recursive: true });
+    mkdirSync(join(this.dir, "trees"), { recursive: true });
+    writeFileSync(join(this.dir, "README"), README);
+    writeFileSync(join(this.dir, "restore.sh"), RESTORE);
+    chmodSync(join(this.dir, "restore.sh"), 0o755);
+    // A pointer one level up, so a plain `ls .skein` reveals the store.
+    writeFileSync(join(this.dir, "..", "README"), "Workspace checkpoints (read-only): .skein/checkpoints/README\n");
+  }
+
+  scan(): ScanEntry[] {
+    const out: ScanEntry[] = [];
+    const walk = (dir: string): void => {
+      let entries;
+      try {
+        entries = readdirSync(join(this.root, dir), { withFileTypes: true });
+      } catch {
+        // An unreadable directory (a container-run tool can create root-only paths) is skipped.
+        return;
+      }
+      for (const entry of entries) {
+        // `.skein` holds the harness's own files; `.env` carries secrets and never enters a snapshot.
+        if (entry.name === ".skein" || entry.name === ".env" || entry.name.startsWith(".env.")) continue;
+        const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+        const full = join(this.root, path);
+        try {
+          if (entry.isDirectory()) {
+            out.push({ path, kind: "dir", mode: statSync(full).mode & 0o777 });
+            walk(path);
+          } else if (entry.isSymbolicLink()) {
+            out.push({ path, kind: "symlink", link: readlinkSync(full) });
+          } else if (entry.isFile()) {
+            const stat = statSync(full);
+            out.push({
+              path,
+              kind: "file",
+              mode: stat.mode & 0o777,
+              mtimeMs: stat.mtimeMs,
+              ctimeMs: stat.ctimeMs,
+              size: stat.size,
+            });
+          }
+          // Sockets/FIFOs/devices are not workspace state; skip them rather than fail the run.
+        } catch {
+          // The host cannot read a root-owned file (e.g. `john/run/john.log` written inside the
+          // task container) or it vanished mid-walk. The checkpoint is best-effort over what the
+          // host can read; one such file must not abort the whole run.
+        }
+      }
+    };
+    walk("");
+    return out;
+  }
+
+  hash(paths: readonly string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (const path of paths) {
+      try {
+        out.set(path, hashFile(join(this.root, path)));
+      } catch {
+        // Unreadable or vanished: the snapshot skips it, as the walk used to.
+      }
     }
-  };
-  // Match `fsWorkspace.version` (sha1 of the body); a missing file is `absent`, the same
-  // marker the engine records for a deletion.
-  const versionOf = (path: string): string => {
-    try {
-      // Match `fsWorkspace.version` exactly: it hashes the utf8-decoded body, not raw bytes.
-      return createHash("sha1").update(readFileSync(join(root, path), "utf8")).digest("hex");
-    } catch {
-      return "absent";
-    }
-  };
+    return out;
+  }
 
-  // Copy a blob into the store only when its content is new. The temporary name is unique per
-  // process so parallel snapshots of the same content cannot leave a half-written object.
-  const ensureBlob = (key: string, source: string, mode: number, mtime: number): void => {
-    const target = join(objects, key);
-    if (existsSync(target)) return;
-    temp += 1;
-    const staging = `${target}.tmp-${process.pid}-${temp}`;
-    copyFileSync(source, staging);
-    chmodSync(staging, mode);
-    const seconds = mtime / 1000;
-    utimesSync(staging, seconds, seconds);
-    try {
-      renameSync(staging, target);
-    } catch (error) {
-      // Another writer won the race: the object is already there, which is all we need.
-      if (existsSync(target)) unlinkSync(staging);
-      else throw error;
-    }
-  };
-
-  const snapshot = (label?: string): SnapshotRecord => {
-    const entries: Entry[] = [];
-    walk(root, "", entries);
-    const hash = manifestHash(entries);
-    const previous = snapshots.at(-1);
-    if (lastHash === hash && previous !== undefined) return previous;
-
-    const id = snapshots.length;
-    const relativeTree = `trees/${id}`;
-    const tree = join(dir, relativeTree);
-    mkdirSync(tree, { recursive: true });
+  writeTree(tree: string, entries: readonly CheckpointEntry[]): void {
+    const treeDir = join(this.dir, tree);
+    mkdirSync(treeDir, { recursive: true });
     for (const entry of entries) {
-      const dest = join(tree, entry.path);
+      const dest = join(treeDir, entry.path);
       if (entry.kind === "dir") {
         mkdirSync(dest, { recursive: true });
         continue;
@@ -244,20 +256,21 @@ export function createCheckpoint(root: string): Checkpoint {
         continue;
       }
       const mode = entry.mode ?? 0o644;
+      const mtime = entry.mtimeMs ?? Date.now();
       try {
-        ensureBlob(entry.value, join(root, entry.path), mode, entry.mtime ?? Date.now());
+        this.ensureBlob(entry.value, join(this.root, entry.path), mode, mtime);
       } catch {
         // The host cannot read this file (root-owned, or it vanished after the walk).
         continue;
       }
-      const blob = join(objects, entry.value);
+      const blob = join(this.dir, "objects", entry.value);
       try {
         linkSync(blob, dest);
       } catch {
         // A filesystem without hardlinks still gets a correct (if larger) snapshot.
         copyFileSync(blob, dest);
         chmodSync(dest, mode);
-        const seconds = (entry.mtime ?? Date.now()) / 1000;
+        const seconds = mtime / 1000;
         utimesSync(dest, seconds, seconds);
       }
     }
@@ -266,8 +279,113 @@ export function createCheckpoint(root: string): Checkpoint {
     for (const entry of entries
       .filter((candidate) => candidate.kind === "dir" && candidate.mode !== undefined)
       .sort((a, b) => b.path.length - a.path.length)) {
-      chmodSync(join(tree, entry.path), entry.mode as number);
+      chmodSync(join(treeDir, entry.path), entry.mode as number);
     }
+  }
+
+  restore(tree: string, path: string): string {
+    const source = join(this.dir, tree, path);
+    const dest = join(this.root, path);
+    if (!present(source)) {
+      // The Patch created this path; the pre-patch tree did not have it.
+      rmSync(dest, { recursive: true, force: true });
+      return "absent";
+    }
+    const stat = lstatSync(source);
+    if (present(dest)) rmSync(dest, { recursive: true, force: true });
+    mkdirSync(dirname(dest), { recursive: true });
+    if (stat.isSymbolicLink()) {
+      symlinkSync(readlinkSync(source), dest);
+    } else if (stat.isDirectory()) {
+      mkdirSync(dest, { recursive: true });
+    } else {
+      copyFileSync(source, dest);
+      chmodSync(dest, stat.mode & 0o777);
+      utimesSync(dest, stat.atimeMs / 1000, stat.mtimeMs / 1000);
+    }
+    return this.versionOf(path);
+  }
+
+  private ensureBlob(key: string, source: string, mode: number, mtimeMs: number): void {
+    const target = join(this.dir, "objects", key);
+    if (existsSync(target)) return;
+    const staging = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
+    copyFileSync(source, staging);
+    chmodSync(staging, mode);
+    const seconds = mtimeMs / 1000;
+    utimesSync(staging, seconds, seconds);
+    try {
+      renameSync(staging, target);
+    } catch (error) {
+      // Another writer won the race: the object is already there, which is all we need.
+      if (existsSync(target)) unlinkSync(staging);
+      else throw error;
+    }
+  }
+
+  private versionOf(path: string): string {
+    try {
+      // Match `fsWorkspace.version` exactly: it hashes the utf8-decoded body, not raw bytes.
+      return createHash("sha1").update(readFileSync(join(this.root, path), "utf8")).digest("hex");
+    } catch {
+      return "absent";
+    }
+  }
+}
+
+interface CachedFile {
+  // mtimeMs:ctimeMs:size:mode — cheap to obtain and enough to know the content can be reused.
+  signature: string;
+  value: string;
+}
+
+export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpoint {
+  const dir = backend.dir;
+  const runId = randomUUID();
+  const snapshots: SnapshotRecord[] = [];
+  let lastHash: string | undefined;
+  const signatureCache = new Map<string, CachedFile>();
+
+  const snapshot = (label?: string): SnapshotRecord => {
+    const scan = backend.scan();
+    const missing: string[] = [];
+    const signatures = new Map<string, string>();
+    for (const entry of scan) {
+      if (entry.kind !== "file") continue;
+      const signature = `${entry.mtimeMs}:${entry.ctimeMs}:${entry.size}:${entry.mode}`;
+      signatures.set(entry.path, signature);
+      const cached = signatureCache.get(entry.path);
+      if (cached === undefined || cached.signature !== signature) missing.push(entry.path);
+    }
+    const hashes = backend.hash(missing);
+    const entries: CheckpointEntry[] = [];
+    for (const entry of scan) {
+      if (entry.kind !== "file") {
+        entries.push({ ...entry, value: entry.kind === "symlink" ? entry.link ?? "" : "" });
+        continue;
+      }
+      const signature = signatures.get(entry.path) as string;
+      const cached = signatureCache.get(entry.path);
+      if (cached !== undefined && cached.signature === signature) {
+        entries.push({ ...entry, value: cached.value });
+        continue;
+      }
+      const hash = hashes.get(entry.path);
+      if (hash === undefined) continue; // unreadable; skip like the old walk
+      const mode = entry.mode ?? 0o644;
+      const mtime = Math.floor(entry.mtimeMs ?? Date.now());
+      const value = `${hash}-${mode.toString(8)}-${mtime}`;
+      signatureCache.set(entry.path, { signature, value });
+      entries.push({ ...entry, value });
+    }
+
+    const hash = manifestHash(entries);
+    const previous = snapshots.at(-1);
+    if (lastHash === hash && previous !== undefined) return previous;
+
+    const id = snapshots.length;
+    const relativeTree = `trees/${id}`;
+    backend.writeTree(relativeTree, entries);
 
     const record: SnapshotRecord = {
       id,
@@ -290,36 +408,22 @@ export function createCheckpoint(root: string): Checkpoint {
     if (run !== runId || !Number.isInteger(id) || id < 0 || id >= snapshots.length) {
       throw new Error(`unknown checkpoint ${token}`);
     }
-    const tree = join(dir, "trees", String(id));
+    const tree = `trees/${id}`;
     const restored: { path: string; version: string }[] = [];
     for (const path of paths) {
       if (path === "" || path.startsWith("/") || path.split("/").includes("..")) {
         throw new Error(`checkpoint restore path escapes the workspace: ${path}`);
       }
-      const source = join(tree, path);
-      const dest = join(root, path);
-      if (!present(source)) {
-        // The Patch created this path; the pre-patch tree did not have it.
-        rmSync(dest, { recursive: true, force: true });
-        restored.push({ path, version: "absent" });
-        continue;
-      }
-      const stat = lstatSync(source);
-      if (present(dest)) rmSync(dest, { recursive: true, force: true });
-      mkdirSync(dirname(dest), { recursive: true });
-      if (stat.isSymbolicLink()) {
-        symlinkSync(readlinkSync(source), dest);
-      } else if (stat.isDirectory()) {
-        mkdirSync(dest, { recursive: true });
-      } else {
-        copyFileSync(source, dest);
-        chmodSync(dest, stat.mode & 0o777);
-        utimesSync(dest, stat.atimeMs / 1000, stat.mtimeMs / 1000);
-      }
-      restored.push({ path, version: versionOf(path) });
+      // The restored content invalidates the signature of that path for the next snapshot.
+      signatureCache.delete(path);
+      restored.push({ path, version: backend.restore(tree, path) });
     }
     return restored;
   };
 
   return { dir, runId, snapshots, snapshot, checkpoint, restore };
+}
+
+export function createCheckpoint(root: string): Checkpoint {
+  return createCheckpointWithBackend(new HostBackend(root));
 }

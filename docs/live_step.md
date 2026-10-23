@@ -9,8 +9,9 @@
 This is the **only** step-by-step driver. The old replay harness (`bench/step.ts`, removed)
 replayed a recorded action sequence and called `propose` directly, bypassing `executeNode`: the
 journal carried no `payload.reasoning`, and transitions/refusals/staleness were the harness's.
-`bench/live-step.ts` keeps the real loop: `runAgent` runs on the host, the task's container only
-executes the tool calls, and the process stays alive between turns.
+`bench/live-step.ts` keeps the real loop: `runAgent` and the projection run on the host, while
+the file tools, `bash`, background jobs and the checkpoint live in the task container (rootless
+Docker; no host copy of `/app`), and the process stays alive between turns.
 
 ## 2. Invocation
 
@@ -23,7 +24,7 @@ Options:
 
 | flag | meaning |
 |---|---|
-| `--net on\|off` | host-side `fetch`/`run` network (off routes through the API allowlist proxy; the task container is always `--network none`) |
+| `--net on\|off` | host-side `fetch` network (off routes through the API allowlist proxy); `run`/jobs execute in the container; the task container is always `--network none` |
 | `--dir <path>` | trace directory (default `bench/runs/sandbox-tasks/<ts>-<id>-live-step`) |
 | `--signal <path>` | continue file (default `<dir>/continue`) |
 | `--auto` | do not wait between turns |
@@ -34,9 +35,10 @@ Without `--auto` the process prints the turn and waits; `touch <dir>/continue` a
 
 ## 3. How a turn is executed
 
-1. `openTaskWorkspace(task, { network })` (`tests/sandbox/harness.ts`) materializes the task,
-   starts the long-lived container, runs the task's setup and captures the initial checkpoint.
-   This is the same helper the full run (`runTask`) uses.
+1. For Docker, `openTaskWorkspace(task, { network })` (`tests/sandbox/harness.ts`) takes the
+   rootless path: the container starts from the image, `/app` is not copied to the host, and the
+   checkpoint lives in `/tmp/.skein`; it runs the task's setup and captures the initial
+   checkpoint. This is the same helper the full run (`runTask`) uses.
 2. The first call is a normal `runAgent` with `maxTurns: 1`; it seeds the request and the
    session probe.
 3. Every later call passes the previous `events` as `seed` and `startTurn = result.turns`, with

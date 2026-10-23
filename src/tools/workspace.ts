@@ -103,6 +103,9 @@ export interface Workspace {
   read(path: string): string;
   version(path: string): string;
   signature(path: string): string;
+  // Batch form of `signature` for a listed set of files. Container-backed workspaces
+  // override this to avoid one process per file; the host implementation is a loop.
+  signatures?(paths: readonly string[]): Map<string, string>;
   write(path: string, content: string): void;
   exists(path: string): boolean;
   list(): string[];
@@ -558,6 +561,18 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
     signature: (path) => {
       const stat = statSync(abs(path));
       return `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+    },
+    signatures: (paths) => {
+      const out = new Map<string, string>();
+      for (const path of paths) {
+        try {
+          const stat = statSync(abs(path));
+          out.set(path, `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`);
+        } catch {
+          // A build can delete a temporary file between listing and stat.
+        }
+      }
+      return out;
     },
     write: (path, content) => {
       const full = abs(path);

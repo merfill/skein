@@ -45,15 +45,17 @@
 
 - **Образ задачи уже содержит нужное окружение** (репозиторий, тулчейн), поэтому на хосте
   ничего устанавливать не надо.
-- Дерево `WORKDIR` образа один раз выгружается в **временный корень на хосте** (tar-пайп,
-  чтобы владельцем стал пользователь хоста, а не root образа).
-- Затем поднимается **долгоживущий контейнер**:
-  `docker run -d --entrypoint sleep -v <root>:/app --network none -w /app <image> infinity`.
-  Флаг `--network none` (по умолчанию) держит агента **оффлайн**.
-- Команды идут через `docker exec` **в этот же контейнер**, так что все шаги видят одно дерево.
-- Файловые инструменты (`read`/`grep`/`list`/`edit`/`write`) работают с **тем же** деревом
-  через `fsWorkspace` (bind-mount), поэтому правки «видны» и хосту, и контейнеру.
-- Уборка — `cleanupContainers()` (изнутри контейнера стирает mount, затем `docker rm`).
+- Для Docker-задач контейнер стартует **прямо из образа**:
+  `docker run -d --entrypoint sleep --network none -w /app <image> infinity`. `/app` не
+  выгружается в host temp-root и не бинд-маунтится (`rootless`); host-копии `/app` нет.
+- Команды, файловые инструменты (`read`/`grep`/`list`/`edit`/`write`), `bash`, фоновые jobs и
+  checkpoint идут через `docker exec` в этот же контейнер, поэтому `/app` и `/tmp` означают
+  одно и то же и для инструментов, и для shell.
+- Checkpoint store — `/tmp/.skein` **в контейнере** (`DockerBackend`); `/app/.skein/checkpoints`
+  — symlink на него.
+- Для задач без образа (`bwrap`, `container.ts`) workspace — host-root, file-tools пока host
+  `fsWorkspace`, `/tmp` — per-invocation tmpfs; перенос bwrap на D ещё не сделан.
+- Уборка — `cleanupContainers()` (`docker rm` контейнера; host-mount для `/app` больше нет).
 
 ### 2.2 Исполнение команд
 
@@ -82,8 +84,9 @@
 npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 ```
 
-- `openTaskWorkspace(task)` материализует дерево, поднимает долгоживущий контейнер и выполняет
-  `setup`; это тот же setup, что у полного прогона;
+- `openTaskWorkspace(task)` для Docker идёт rootless-путём: контейнер из образа, `/app` не
+  копируется на хост, checkpoint — `/tmp/.skein`; выполняется `setup`; это тот же setup, что
+  у полного прогона;
 - каждый ход — продолжение `runAgent` (`seed`/`startTurn`, `maxTurns: startTurn + 1`), поэтому
   переходы, отказы, откат проваленного Patch и reasoning на ленте — движка, а не харнесса;
 - после хода процесс печатает состояние, вызовы, наблюдения, usage, cost и дифф дерева, пишет
@@ -249,6 +252,11 @@ ai — Finish state <Label> — <why из stop>
 
 ### Сделано (сегодня)
 
+- **D rootless (2026-10-23).** Docker-задачи идут без host-копии `/app`: file-tools, `grep/list`,
+  `bash`, jobs и checkpoint — в контейнере; checkpoint store `/tmp/.skein` (`DockerBackend`);
+  verifier для `checkIn:"host"` — отдельный контейнер (`SKEIN_VERIFIER_IMAGE`). Найден и
+  исправлен 5-минутный `signatureMap` (per-file `docker exec` → batched `signatures`). Crack
+  после фикса: 24 хода, reward=1, request_addressed.
 - **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход состояния —
   `ai(Start)` + `system(инструкция)` + `user(what)`; `notes`/`move.what` не показываются.
 - **Добавлена per-island `instruction`** (`src/ir/islands.ts`) — «как действовать в
@@ -410,12 +418,20 @@ ai — Finish state <Label> — <why из stop>
   (`bench/step.ts`, удалён; переигрыш всего `seq` на каждый ход) и `sandbox-run`
   (инкрементальный цикл) несопоставимы по числу ходов. A/B — только
   меняя **один** фактор и в одном харнессе.
+- **Per-file `signature` в контейнере (2026-10-23).** `signatureMap` до/после каждого `apply bash`
+  вызывал `workspace.signature(path)` на каждый файл; в rootless Docker это `docker exec stat`
+  на файл. На crack (2673 files) — ~5 минут на действие при idle-контейнере. Батчевый
+  `Workspace.signatures()` (один `xargs stat`) устраняет это; не возвращать per-file exec.
 
 ## 7. Код и данные
 
 - **Драйвер хода:** `bench/live-step.ts` (реальный движок, один ход на запуск; см. §2.3).
 - **Оффлайн-переигрыш хода:** `bench/turn.ts` (по записанной ленте, без контейнера).
-- **Контейнер:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
+- **Контейнер:** `tests/sandbox/docker.ts` (`dockerWorkspace`, `rootless`; `signatures`).
+- **Checkpoint:** `tests/sandbox/checkpoint.ts` (`CheckpointBackend`/`HostBackend`) и
+  `tests/sandbox/checkpoint-docker.ts` (`DockerBackend`; store `/tmp/.skein`).
+- **Verifier контейнер:** `tests/sandbox/harness.ts` (`runVerifierCheck`,
+  `SKEIN_VERIFIER_IMAGE`).
 - **Исполнение действий:** `src/tools/index.ts` (`executeAction`).
 - **Откат проваленного Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
   `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); событие `revert` —

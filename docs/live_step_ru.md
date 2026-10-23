@@ -9,8 +9,9 @@
 Это **единственный** пошаговый раннер. Прежний replay-харнесс (`bench/step.ts`, удалён)
 переигрывал записанную последовательность действий и вызывал `propose` напрямую, обходя
 `executeNode`: в журнале не было `payload.reasoning`, а переходы/отказы/staleness были
-харнесса. `bench/live-step.ts` сохраняет реальный цикл: `runAgent` работает на хосте,
-контейнер задачи исполняет только вызовы инструментов, а процесс живёт между ходами.
+харнесса. `bench/live-step.ts` сохраняет реальный цикл: `runAgent` и проекция работают на хосте,
+а файловые инструменты, `bash`, фоновые jobs и checkpoint — в контейнере задачи
+(rootless Docker; host-копии `/app` нет), процесс живёт между ходами.
 
 ## 2. Запуск
 
@@ -23,7 +24,7 @@ npx tsx bench/live-step.ts fix-ocaml-gc --net off --auto --turn 20
 
 | флаг | смысл |
 |---|---|
-| `--net on\|off` | сеть для хостовых `fetch`/`run` (off — через allowlist-прокси API; контейнер задачи всегда `--network none`) |
+| `--net on\|off` | сеть для хостового `fetch` (off — через allowlist-прокси API); `run`/jobs — в контейнере; контейнер задачи всегда `--network none` |
 | `--dir <path>` | каталог трассы (по умолчанию `bench/runs/sandbox-tasks/<ts>-<id>-live-step`) |
 | `--signal <path>` | файл-сигнал продолжения (по умолчанию `<dir>/continue`) |
 | `--auto` | не ждать между ходами |
@@ -34,9 +35,10 @@ npx tsx bench/live-step.ts fix-ocaml-gc --net off --auto --turn 20
 
 ## 3. Как исполняется ход
 
-1. `openTaskWorkspace(task, { network })` (`tests/sandbox/harness.ts`) материализует задачу,
-   поднимает долгоживущий контейнер, выполняет `setup` и снимает начальный checkpoint. Это тот
-   же helper, что использует полный прогон (`runTask`).
+1. `openTaskWorkspace(task, { network })` (`tests/sandbox/harness.ts`) для Docker идёт
+   rootless-путём: контейнер стартует из образа, `/app` не копируется на хост, checkpoint живёт
+   в `/tmp/.skein`; выполняется `setup` и снимается начальный checkpoint. Это тот же helper, что
+   использует полный прогон (`runTask`).
 2. Первый вызов — обычный `runAgent` с `maxTurns: 1`; он засевает запрос и session probe.
 3. Каждый следующий вызов получает предыдущие `events` как `seed` и `startTurn = result.turns`,
    а `maxTurns: startTurn + 1`. `executeNode` по-прежнему исполняет настоящий ход: классификация,

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { TurnMeter } from "../../bench/metrics";
@@ -38,15 +38,17 @@ export interface LiveTaskOptions {
 export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): Promise<LiveTaskResult> {
   const settings = loadSettings();
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  // Parallel runs of the same task can share the millisecond timestamp; a unique suffix keeps
-  // each run's trace (contexts/metrics/result) separate instead of interleaving one directory.
-  let dir = options.dir ?? join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}`);
-  if (options.dir === undefined) {
-    for (let suffix = 1; existsSync(dir); suffix += 1) {
-      dir = join("bench", "runs", "sandbox-tasks", `${ts}-${task.id}-${suffix}`);
-    }
+  // Parallel runs of the same task can share the millisecond timestamp; create the trace dir
+  // atomically with a random suffix so two processes cannot claim the same path.
+  const runsRoot = join("bench", "runs", "sandbox-tasks");
+  let dir: string;
+  if (options.dir !== undefined) {
+    dir = options.dir;
+    mkdirSync(dir, { recursive: true });
+  } else {
+    mkdirSync(runsRoot, { recursive: true });
+    dir = mkdtempSync(join(runsRoot, `${ts}-${task.id}-`));
   }
-  mkdirSync(dir, { recursive: true });
 
   // The provider's hidden reasoning is on the assembled reply; capture it turn by turn so a
   // run stays debuggable.
@@ -117,6 +119,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
         .join("\n\n"),
     );
     const before = snapshot(meter);
+    const modelStarted = Date.now();
     const proposal = await proposeModel(model, context, {
       settings,
       rebuild,
@@ -131,6 +134,11 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
         console.error(`[${task.id}] llm call failed: ${error instanceof Error ? error.message : String(error)}`);
       },
     });
+    const modelMs = Date.now() - modelStarted;
+    if (process.env.SKEIN_TIMINGS === "1") console.info(`[timing] model t${turn} ${modelMs}ms`);
+    if (process.env.SKEIN_TRACE_ACTIONS === "1") {
+      console.info(`[${task.id}] t${turn} actions=${JSON.stringify(proposal.actions).slice(0, 1200)}`);
+    }
     const usage = delta(snapshot(meter), before);
     const action = proposal.actions[0]!;
     const tools = proposal.actions.map((a) => (a.operator === "apply" ? a.action.tool : a.operator));

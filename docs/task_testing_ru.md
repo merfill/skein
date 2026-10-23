@@ -32,15 +32,21 @@ Harbor:
   `tests/sandbox/tasks/registry.ts`;
 - файлы задачи (`instruction.md`, `tests/`, `solution/`) читаются из кэша Harbor
   `~/.cache/harbor/tasks/<hash>/<id>/` и никогда не копируются в репозиторий;
-- задача с `image` идёт в Docker: `/app` образа выгружается в temp-root, затем
-  `docker run -d --entrypoint sleep -v <root>:/app ...`; команды — `docker exec`. Задача без
-  `image` идёт через `bwrap` (`tests/sandbox/container.ts`);
-- `setup` выполняется до агента; **verifier ставится после агента**
-  (`stageVerifier`), чтобы `test.sh` не утёк в workspace;
+- задача с `image` идёт в Docker **rootless**: контейнер стартует прямо из образа, `/app`
+  **не** выгружается в host temp-root и не бинд-маунтится; файловые инструменты
+  (`read/write/edit/grep/list`), `bash`, фоновые jobs и checkpoint работают в контейнере
+  через `docker exec`. Store — `/tmp/.skein` в контейнере (`DockerBackend`). Задача без
+  `image` идёт через `bwrap` (`tests/sandbox/container.ts`) — там file-tools/checkpoint пока
+  host-side;
+- `setup` выполняется до агента; **verifier ставится после агента**, чтобы `test.sh` не утёк
+  в workspace: `checkIn:"task"` — файлы тестов пишутся в контейнер, `checkIn:"host"` —
+  отдельный verifier-контейнер (`SKEIN_VERIFIER_IMAGE`, по умолчанию `fix-code`): `/app`
+  стримится task→verifier tar-пайпом, тесты — `docker cp`; host-копии `/app` нет;
 - `checkSetup` (например, пересборка OCaml) выполняется перед verifier;
-- checkpoint-слой (`createCheckpoint`) даёт read-only снапшоты и revert проваленного Patch;
+- checkpoint-слой (`CheckpointBackend`; `HostBackend` для bwrap/virtual, `DockerBackend` для
+  Docker) даёт read-only снапшоты и revert проваленного Patch;
 - `runTask`/`openTaskWorkspace` (`tests/sandbox/harness.ts`) — общий setup для полного
-  прогона и пошагового драйвера.
+  прогона и пошагового драйвера; для Docker — rootless-путь.
 
 Полезные поля `SandboxTask`: `image`, `workdir`, `mountPoint`, `setup`, `check`,
 `checkIn` (`"task"`/`"host"`), `checkSetup`, `maxTurns`, `network`.
@@ -52,11 +58,15 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
 - без `--turns` берётся `task.maxTurns` (например, 60 у `fix-ocaml-gc`), иначе 24;
-- `--net off` (рекомендуется) закрывает **хостовые** `fetch`/`run` allowlist-прокси (только
-  API модели); контейнер задачи всё равно `--network none`, если задача не задала `network`;
-- каждый прогон пишет `bench/runs/sandbox-tasks/<ts>-<id>/`:
-  `contexts.ndjson`, `result.json`, `metrics.json`, `reward.txt`, `reasoning.ndjson`;
-- `reward=1` — verifier задачи прошёл; `stop=request_addressed` — движок закрыл запрос.
+- `--net off` (рекомендуется) закрывает **хостовый** `fetch` allowlist-прокси (только API
+  модели); `run`/jobs в rootless D идут в контейнере. Контейнер задачи остаётся
+  `--network none`, если задача не задала `network`;
+- каждый прогон пишет `bench/runs/sandbox-tasks/<ts>-<id>-<random>/` (уникальный суффикс —
+  параллельные прогоны не делят каталог): `contexts.ndjson`, `result.json`, `metrics.json`,
+  `reward.txt`, `reasoning.ndjson`;
+- `reward=1` — verifier задачи прошёл; `stop=request_addressed` — движок закрыл запрос;
+- для диагностики: `SKEIN_TIMINGS=1` печатает `capture`/`model` timing,
+  `SKEIN_TRACE_ACTIONS=1` — аргументы действий.
 
 ### Оффлайн-проверка задачи (без модели)
 
@@ -271,6 +281,7 @@ npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/<job>
 - **Транспортный `llm_error`/retry** — смотреть `turns.ndjson`/лог; внутренний retry не теряет
   ходы, но стоимость растёт.
 - **Verifier видит свой `test.sh`?** — он ставится только после агента
-  (`stageVerifier`); если правишь harness, не переносить staging до прогона.
+  (`stageVerifierInContainer` для `checkIn:"task"`, verifier-контейнер для `checkIn:"host"`);
+  если правишь harness, не переносить staging до прогона.
 - **Контейнер остался** — `docker ps | grep skein`, затем `docker rm -f <name>`; штатно
   `cleanupContainers()` делает это сам.

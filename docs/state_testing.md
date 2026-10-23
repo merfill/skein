@@ -43,15 +43,17 @@ Implementation — `tests/sandbox/docker.ts`, function `dockerWorkspace(root, op
 
 - **The task image already holds the environment** (repo, toolchain), so nothing is installed on
   the host.
-- The image's `WORKDIR` tree is dumped once into a **temporary root on the host** (tar pipe, so
-  the owner becomes the host user, not the image's root).
-- Then a **long-lived container** is started:
-  `docker run -d --entrypoint sleep -v <root>:/app --network none -w /app <image> infinity`.
-  The `--network none` flag (default) keeps the agent **offline**.
-- Commands go through `docker exec` **into that same container**, so every step sees one tree.
-- The file tools (`read`/`grep`/`list`/`edit`/`write`) work on the **same** tree through
-  `fsWorkspace` (bind-mount), so edits are "visible" to both the host and the container.
-- Cleanup — `cleanupContainers()` (wipes the mount from inside the container, then `docker rm`).
+- For Docker tasks the container starts **directly from the image**:
+  `docker run -d --entrypoint sleep --network none -w /app <image> infinity`. `/app` is not
+  extracted to a host temp root and not bind-mounted (`rootless`); there is no host copy.
+- Commands, the file tools (`read`/`grep`/`list`/`edit`/`write`), `bash`, background jobs and
+  the checkpoint run through `docker exec` in that container, so `/app` and `/tmp` mean the same
+  thing to the tools and to the shell.
+- The checkpoint store is `/tmp/.skein` **inside the container** (`DockerBackend`);
+  `/app/.skein/checkpoints` is a symlink to it.
+- Tasks without an image (`bwrap`, `container.ts`) keep a host root, host `fsWorkspace` file
+  tools and a per-invocation `/tmp`; bwrap is not on D yet.
+- Cleanup — `cleanupContainers()` (`docker rm`; no `/app` host mount to wipe).
 
 ### 2.2 Running commands
 
@@ -81,8 +83,9 @@ as the tool call's result.
 npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 ```
 
-- `openTaskWorkspace(task)` materializes the tree, starts the long-lived container and runs the
-  `setup`; it is the same setup as the full run;
+- for Docker, `openTaskWorkspace(task)` takes the rootless path: the container starts from the
+  image, `/app` is not copied to the host, the checkpoint lives in `/tmp/.skein`; it runs the
+  `setup`; this is the same setup as the full run;
 - each turn is a `runAgent` continuation (`seed`/`startTurn`, `maxTurns: startTurn + 1`), so the
   transitions, refusals, failed-Patch revert and reasoning on the tape are the engine's, not the
   harness's;
@@ -250,6 +253,11 @@ ai — Finish state <Label> — <why from stop>
 
 ### Done (today)
 
+- **Rootless D (2026-10-23).** Docker tasks run without a host copy of `/app`: file tools,
+  `grep/list`, `bash`, jobs and the checkpoint live in the container; the checkpoint store is
+  `/tmp/.skein` (`DockerBackend`); `checkIn:"host"` uses a verifier container
+  (`SKEIN_VERIFIER_IMAGE`). The 5-minute `signatureMap` (per-file `docker exec` → batched
+  `signatures`) was found and fixed. Crack after the fix: 24 turns, reward=1, request_addressed.
 - **The tape's shape was reworked** (see §3): the request at the top, once; state entry —
   `ai(Start)` + `system(instruction)` + `user(what)`; `notes`/`move.what` not shown.
 - **A per-island `instruction` was added** (`src/ir/islands.ts`) — "how to act in the state",
@@ -403,7 +411,11 @@ ai — Finish state <Label> — <why from stop>
 
 - **Turn driver:** `bench/live-step.ts` (the real engine, one turn per run; see §2.3).
 - **Offline turn replay:** `bench/turn.ts` (from a recorded tape, no container).
-- **Container:** `tests/sandbox/docker.ts` (`dockerWorkspace`).
+- **Container:** `tests/sandbox/docker.ts` (`dockerWorkspace`, `rootless`; `signatures`).
+- **Checkpoint:** `tests/sandbox/checkpoint.ts` (`CheckpointBackend`/`HostBackend`) and
+  `tests/sandbox/checkpoint-docker.ts` (`DockerBackend`; store `/tmp/.skein`).
+- **Verifier container:** `tests/sandbox/harness.ts` (`runVerifierCheck`,
+  `SKEIN_VERIFIER_IMAGE`).
 - **Action execution:** `src/tools/index.ts` (`executeAction`).
 - **Reverting a failed Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
   `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); the `revert` event —

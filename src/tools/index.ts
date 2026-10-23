@@ -314,8 +314,10 @@ function runSearch(
 }
 
 function signatureMap(workspace: Workspace): Map<string, string> {
+  const paths = workspace.list();
+  if (workspace.signatures !== undefined) return workspace.signatures(paths);
   const signatures = new Map<string, string>();
-  for (const path of workspace.list()) {
+  for (const path of paths) {
     try {
       signatures.set(path, workspace.signature(path));
     } catch {

@@ -205,14 +205,15 @@ tokens are in
 Real terminal-bench tasks run locally with the real engine and the task's own verifier, on
 two backends:
 
-- **Docker** (image tasks). The task's own image (`alexgshaw/<task>:20251031`) carries the
-  exact environment, so nothing is installed on the host. The image's `/app` is copied into
-  a temp root, then a `sleep` container bind-mounts that root at `/app`; `run` is `docker
-  exec`. Network is `none` by default, a sane `--ulimit nofile` is set (valgrind), and git
-  `safe.directory=*` (the image's files are owned by its own user, not root).
+- **Docker rootless** (image tasks). The task's own image
+  (`alexgshaw/<task>:20251031`) carries the exact environment, so nothing is installed on the
+  host. The container starts directly from the image; `/app` is **not** copied to the host or
+  bind-mounted. File tools, `grep/list`, `bash`, background jobs and the checkpoint run through
+  `docker exec`; the store is `/tmp/.skein` in the container (`DockerBackend`). Network is
+  `none` by default, a sane `--ulimit nofile` is set (valgrind), and git `safe.directory=*`.
 - **bwrap** (`container.ts`, used by `regex-log`). A host temp root mounted at `/app` under
-  `bwrap`, sharing the host `/usr` read-only, network off — for a task with no dedicated
-  image.
+  `bwrap`, sharing the host `/usr` read-only, network off; its file tools/checkpoint are still
+  host-side (`/tmp` is per-invocation). Moving bwrap to D is a separate step.
 
 Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsigned-cert`,
 `git-leak-recovery`, `cobol-modernization`, `modernize-scientific-stack`,
@@ -221,7 +222,8 @@ Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsig
 
 | File | Role |
 | --- | --- |
-| `tests/sandbox/docker.ts` | the Docker `Workspace` (image `/app` → temp root → `docker exec`) |
+| `tests/sandbox/docker.ts` | the Docker `Workspace` (rootless: image → `docker exec`; batched `signatures`) |
+| `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` in the container |
 | `tests/sandbox/container.ts` | the bwrap `Workspace`; file tools rewrite the `/app/` prefix |
 | `tests/sandbox/task.ts` | `SandboxTask` + Harbor-cache lookup + the pytest-free verifier runner and a `pytest` shim |
 | `tests/sandbox/harness.ts` | `runTask`: materialize → setup → `runAgent` → `checkSetup` → verifier → reward |
@@ -240,16 +242,17 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
-`--net off` (default `on`) denies the HOST-side tools their internet: the engine's `fetch` and
-background `run` execute on the host, not in the task container (which is `--network none`
-regardless), so the CLI routes their `curl` through an allowlist proxy that permits only the
-model API. The platform baseline is the opencode `--net off` run (`opencode-run.ts`, §3.6).
+`--net off` (default `on`) denies the HOST-side `fetch` (and host `run` where present) their
+internet: the CLI routes their `curl` through an allowlist proxy that permits only the model
+API. The task container remains `--network none` unless the task sets `network`; in rootless D
+`run`/jobs execute in the container. The platform baseline is the opencode `--net off` run
+(`opencode-run.ts`).
 
 A run uses the task's own `maxTurns` when set (a build-heavy task like `fix-ocaml-gc`
 sets 60 — its criterion rebuilds the whole compiler and each background poll costs a
 turn), else 24; an explicit `--turns N` overrides both.
 
-Output — `bench/runs/sandbox-tasks/<ts>-<id>/`: `contexts.ndjson` (the projection per
+Output — `bench/runs/sandbox-tasks/<ts>-<id>-<random>/`: `contexts.ndjson` (the projection per
 turn), `result.json` (`stopReason`, `reward`, the verifier result, the IR journal),
 `metrics.json` (the same totals/splits as §3.5), `reward.txt` (the verifier's score).
 
@@ -262,10 +265,13 @@ logging reverse proxy on the `baseURL` (`api-log-proxy.mjs`): the raw
 reasoning) are the analogues of Skein's artifacts. `opencode run --format json` and
 opencode's session DB expose neither the prompt nor the reasoning text.
 
-The task's verifier is staged under `.skein/tests/` **after** the agent has run (both
-harnesses), never before: the agent's shell can read `.skein` even though its file tools skip
-it, and the task's Harbor `test.sh` re-clones the exact revision to fix (it names the
-solution). The verifier is re-materialized from the task cache at check time, so the reward
+The task's verifier is staged under `.skein/tests/` **after** the agent has run, never before:
+the agent's shell can read `.skein` even though its file tools skip it, and the task's Harbor
+`test.sh` re-clones the exact revision to fix (it names the solution). `checkIn:"task"` writes
+the tests into the container; `checkIn:"host"` uses a separate verifier container
+(`SKEIN_VERIFIER_IMAGE`, default `fix-code`): `/app` is streamed task→verifier with a tar pipe,
+tests are copied with `docker cp`; there is no host copy of `/app`. The verifier is
+re-materialized from the task cache at check time, so the reward
 stays reproducible.
 
 **Verifier.** The task's `tests/test_outputs.py` is run by a pytest-free wrapper; a `pytest`

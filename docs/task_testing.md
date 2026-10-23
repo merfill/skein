@@ -31,16 +31,22 @@ engine** (`runAgent`), the real tools and **the task's own verifier**, without H
   `tests/sandbox/tasks/registry.ts`;
 - the task files (`instruction.md`, `tests/`, `solution/`) come from the Harbor cache
   `~/.cache/harbor/tasks/<hash>/<id>/` and are never copied into the repository;
-- a task with `image` runs in Docker: the image's `/app` is copied into a temp root, then
-  `docker run -d --entrypoint sleep -v <root>:/app ...`; commands are `docker exec`. A task
-  without `image` runs under `bwrap` (`tests/sandbox/container.ts`);
-- `setup` runs before the agent; the **verifier is staged after the agent**
-  (`stageVerifier`) so `test.sh` cannot leak into the workspace;
+- a task with `image` runs in Docker **rootless**: the container starts from the image;
+  `/app` is **not** extracted to a host temp root or bind-mounted. File tools
+  (`read/write/edit/grep/list`), `bash`, background jobs and the checkpoint run in the
+  container via `docker exec`; the store is `/tmp/.skein` inside the container
+  (`DockerBackend`). A task without `image` runs under `bwrap`
+  (`tests/sandbox/container.ts`) — its file tools/checkpoint are still host-side;
+- `setup` runs before the agent; the **verifier is staged after the agent** so `test.sh`
+  cannot leak into the workspace: `checkIn:"task"` writes the tests into the container,
+  `checkIn:"host"` uses a separate verifier container (`SKEIN_VERIFIER_IMAGE`, default
+  `fix-code`): `/app` is streamed task→verifier with a tar pipe, tests are copied with
+  `docker cp`; there is no host copy of `/app`;
 - `checkSetup` (e.g. an OCaml rebuild) runs before the verifier;
-- the checkpoint layer (`createCheckpoint`) provides read-only snapshots and the failed-Patch
-  revert;
+- the checkpoint layer (`CheckpointBackend`; `HostBackend` for bwrap/virtual,
+  `DockerBackend` for Docker) provides read-only snapshots and the failed-Patch revert;
 - `runTask`/`openTaskWorkspace` (`tests/sandbox/harness.ts`) is the shared setup for the full
-  run and the step driver.
+  run and the step driver; Docker takes the rootless path.
 
 Useful `SandboxTask` fields: `image`, `workdir`, `mountPoint`, `setup`, `check`,
 `checkIn` (`"task"`/`"host"`), `checkSetup`, `maxTurns`, `network`.
@@ -52,13 +58,16 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
 - without `--turns`, `task.maxTurns` is used (e.g. 60 for `fix-ocaml-gc`), else 24;
-- `--net off` (recommended) denies the **host-side** `fetch`/`run` via an allowlist proxy
-  (model API only); the task container is still `--network none` unless the task sets
-  `network`;
-- each run writes `bench/runs/sandbox-tasks/<ts>-<id>/`:
-  `contexts.ndjson`, `result.json`, `metrics.json`, `reward.txt`, `reasoning.ndjson`;
+- `--net off` (recommended) denies the **host-side** `fetch` via an allowlist proxy (model API
+  only); in rootless D `run`/jobs execute in the container. The task container is still
+  `--network none` unless the task sets `network`;
+- each run writes `bench/runs/sandbox-tasks/<ts>-<id>-<random>/` (a unique suffix keeps
+  parallel runs separate): `contexts.ndjson`, `result.json`, `metrics.json`, `reward.txt`,
+  `reasoning.ndjson`;
 - `reward=1` — the task's verifier passed; `stop=request_addressed` — the engine closed the
-  request.
+  request;
+- diagnostics: `SKEIN_TIMINGS=1` prints `capture`/`model` timing, `SKEIN_TRACE_ACTIONS=1`
+  prints the action arguments.
 
 ### Offline task check (no model)
 
