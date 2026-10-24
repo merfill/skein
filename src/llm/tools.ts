@@ -181,8 +181,8 @@ const PATCH_BASH_SUFFIX =
   "This state changes the target: make the change specific and targeted; do not use wildcard " +
   "edits or deletes and do not touch unrelated files.";
 const RECOVERY_BASH_SUFFIX =
-  "This state reconstructs data from a source: you may create and modify files (the search " +
-  "script, the output, scratch copies); keep the source read-only; do not edit the source.";
+  "This state reconstructs data from a source: you may create and modify files (the output, " +
+  "scratch copies); keep the source read-only; do not edit the source.";
 const CONSTRUCTION_BASH_SUFFIX =
   "This state builds a new artifact: write only the artifact and its acceptance check; do not " +
   "modify the source or unrelated files.";
@@ -221,8 +221,8 @@ const PATCH_APPLY_PATCH_SUFFIX =
   "This state changes the target: apply only the diff the goal names; do not delete or rename " +
   "files outside the goal; check the patch paths; a wrong patch may not be revertible.";
 const RECOVERY_WRITE_SUFFIX =
-  "This state reconstructs data from a source: write the search script, the required output, or " +
-  "scratch copies; do not overwrite the source.";
+  "This state reconstructs data from a source: write the required output or scratch copies; do " +
+  "not overwrite the source.";
 const CONSTRUCTION_EDIT_SUFFIX =
   "This state builds a new artifact: edit only the artifact you are building; do not modify the " +
   "source or unrelated files.";

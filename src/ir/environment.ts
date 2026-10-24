@@ -52,8 +52,8 @@ const RESEARCH_GROUPS: readonly EnvironmentGroup[] = [
   "archive",
   "net",
 ];
-// Recovery writes the search script and the output, so it uses the same tool surface as
-// Research and also needs the workspace root.
+// Recovery writes the output and scratch copies, so it uses the same tool surface as Research
+// and also needs the workspace root.
 const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
 // Construction and Verification run the project's build and its declared check.
 const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["build", "compilers", "test", "interpreters", "pkg"];

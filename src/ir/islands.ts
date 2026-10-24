@@ -34,7 +34,7 @@ export interface Island {
   hint: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
-  // existing artifact, Recovery writes only the output/search script, Construction builds a new
+  // existing artifact, Recovery writes the output and scratch copies, Construction builds a new
   // artifact. The island still never closes a state and never gates a `move` — it delimits the
   // ACTION surface only (docs/ir_semantics.md §2.5).
   applies: readonly string[];
@@ -44,7 +44,7 @@ export interface Island {
 }
 
 // The tool sets a state's `applies` is drawn from. The write-class belongs to the productive
-// states only — Patch (existing artifact), Recovery (output/search script), Construction (new
+// states only — Patch (existing artifact), Recovery (output/scratch copies), Construction (new
 // artifact); inspection states never get it.
 const INSPECT: readonly string[] = ["read", "grep", "list", "bash", "webfetch"];
 const WRITE: readonly string[] = ["edit", "write", "apply_patch"];
@@ -201,20 +201,14 @@ export const ISLANDS: Record<IslandId, Island> = {
       "integrity/consistency check passes — a match to the declared form or mere presence in the " +
       "source is not enough",
     instruction:
-      "Reconstruct the hidden data from the source. You may and should create and modify files: " +
-      "write the search script, the required output, and any scratch copies you need. Keep the " +
-      "source itself read-only — work on copies or decoded copies; do not edit the source. Use " +
-      "the method and the source check Research named; do not re-derive the container structure. " +
-      "Keep the script minimal. Run it in place. Do not synthesize values.",
+      "Reconstruct the hidden data from the source. You may create and modify files: the " +
+      "required output and scratch copies. Keep the source itself read-only — work on copies or " +
+      "decoded copies; do not edit the source.",
     hint:
-      "Apply the method Research named; do not re-discover the source structure. The source stays " +
-      "read-only; create and change the script, output, and scratch copies. Search with a script, " +
-      "not by hand: enumerate candidates or decodings and keep only those that pass the source's " +
-      "own check. A candidate that matches only the declared form is not accepted. Include a " +
-      "negative control: a wrong candidate that fits the form must be rejected. Do not fabricate. " +
-      "If the method needs a tool that is not on PATH, fix the environment — try the package " +
-      "manager or network — before writing a replacement; a missing tool is not evidence that it " +
-      "cannot be installed.",
+      "Keep the source read-only; write the required output and scratch copies. Do not " +
+      "fabricate. If a needed tool is not on PATH, fix the environment — try the package manager " +
+      "or network — before writing a replacement; a missing tool is not evidence that it cannot " +
+      "be installed.",
     applies: RECOVER_TOOLS,
     next: [
       {

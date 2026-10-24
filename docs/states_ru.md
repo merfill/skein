@@ -212,28 +212,25 @@ declared form и **не** «кандидат буквально есть в ба
 - **`done`:** `the required output exists, is derived from the source, and the source's own
   integrity/consistency check passes — a match to the declared form or mere presence in the
   source is not enough`
-- **Метод:** написать скрипт/процедуру, которая перебирает кандидатов/декодирования и проверяет
-  каждого по **source-проверке** (checksum, hash, container metadata, structural invariant,
-  known records). **Создавать и менять файлы можно и нужно** — скрипт, output, scratch-копии;
-  read-only только сам источник. Использовать метод и source-проверку, названные `Research`; не
-  переизобретать структуру контейнера и держать скрипт минимальным. Запустить на месте. **Не
-  перебирать кандидатов вручную в диалоге.** Форма кандидата сама по себе — не acceptance.
-  Если методу нужен отсутствующий в PATH инструмент — **починить окружение** (пакетный
-  менеджер/сеть), а не переписывать стандартный инструмент: отсутствие в PATH не доказывает,
-  что поставить его нельзя.
-- **Probe (environment subset):** `root`, `interpreters`, `tools`, `missing` — язык для скрипта-поиска и
+- **Метод:** **source-проверка** — свидетельство самого источника: checksum/hash,
+  header/metadata, known record или собственный валидатор формата (archive test, database
+  integrity check). Использовать её, чтобы сузить задачу до одного кандидата. Создавать и менять
+  файлы можно — output, scratch-копии; read-only только сам источник. **Не перебирать кандидатов
+  вручную в диалоге.** Форма кандидата сама по себе — не acceptance. Если методу нужен
+  отсутствующий в PATH инструмент — **починить окружение** (пакетный менеджер/сеть), а не
+  переписывать стандартный инструмент: отсутствие в PATH не доказывает, что поставить его нельзя.
+- **Probe (environment subset):** `root`, `interpreters`, `tools`, `missing` — язык поиска и
   инструменты проверки. Карта материала не дублируется.
 - **Границы:** источник — свидетельство, а не объект правки; не синтезировать значения; если
-  deliverable — изменённый артефакт, это Patch. Скрипт держит поиск вне ленты: модель видит
-  компактный результат, а не тысячи кандидатов. Negative control: кандидат, проходящий форму, но
-  не source-проверку, должен быть отвергнут.
+  deliverable — изменённый артефакт, это Patch. Поиск держится вне ленты: модель видит компактный
+  результат, а не тысячи кандидатов. Кандидат, проходящий форму, но не source-проверку,
+  отвергается.
 - **Переход:**
   - → **End**, когда output записан и source-проверка прошла;
   - → **Research**, когда метод/source-проверка не сработали (нет кандидатов, все отвергнуты);
   - остаться/повторить, когда ошибка исполнения (путь, формат, выбор кандидата);
-- **Пример (password-recovery):** скрипт перебирает пары фрагментов, строит
-  `PASSWORD=<candidate>\n`, сверяет CRC32 с central directory (`0xb0725dc4`), проверяет формат,
-  пишет все совпадения; negative control — неверный кандидат отвергнут.
+- **Пример (password-recovery):** ZIP-структура и central directory/CRC сужают до одного
+  кандидата (`PASSWORD=8XDP5Q2RT9ZK7VB3BV4WW54`).
 - **Пример (db-wal-recovery):** скрипт перебирает декодирования/фреймы, проверяет SQLite
   integrity, извлекает записи и пишет `recovered.json`.
 - **Пример (crack-7z-hash):** скрипт запускает `john` и извлекает `secret_file.txt`, затем
@@ -328,8 +325,7 @@ declared form и **не** «кандидат буквально есть в ба
 Когда задача не поставляет acceptance-команду, `Recovery`/`Construction` **сами** пишут и
 запускают проверку как часть своей работы:
 
-- Recovery — source-derived: checksum/hash/container metadata/structural invariant/known records +
-  negative control;
+- Recovery — source-derived: checksum/hash/container metadata/structural invariant/known records;
 - Construction — spec/source-derived: тест-харнесс, дифференциальный прогон, `openssl verify`.
 
 Для `Patch` acceptance — отдельная процедура проекта (сборка/тесты), поэтому после него идёт
