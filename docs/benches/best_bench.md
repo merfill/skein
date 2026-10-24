@@ -282,8 +282,9 @@ artifacts before any command that may checkpoint, delete, or rewrite them"), and
 `Verification → Patch` rule in `transitionInstruction`.
 
 **Harness: workspace checkpoint.** A read-only snapshot of the task root at
-`<root>/.skein/checkpoints`: content-addressed blobs plus hardlinked trees `trees/<n>/` (initial
-after `setup`, then per turn), with `restore.sh`/`README`; mounted read-only into the container
+`<root>/.skein/checkpoints`: hardlinked snapshot trees `trees/<n>/` (initial after `setup`, then
+per turn; unchanged files are hardlinked from the previous tree and only the delta is copied),
+with `restore.sh`/`README`; mounted read-only into the container
 (docker `-v :ro`, bwrap `--ro-bind`). Files the host cannot read (a root-owned
 `john/run/john.log`) are **skipped best-effort**: otherwise the snapshot threw and the run ended
 as `llm_error` — that produced the false 0/5 on crack in the first batch. Reverting the last

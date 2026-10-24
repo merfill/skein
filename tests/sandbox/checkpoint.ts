@@ -3,7 +3,6 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
-  existsSync,
   linkSync,
   lstatSync,
   mkdirSync,
@@ -12,21 +11,19 @@ import {
   readSync,
   readdirSync,
   readlinkSync,
-  renameSync,
   rmSync,
   statSync,
   symlinkSync,
-  unlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 
 // A read-only checkpoint of the task root, taken by the harness (never the engine) before the
-// agent and at each turn. The store is content-addressed: an unchanged file is stored once and
-// every snapshot tree hardlinks the same immutable blob, so per-turn snapshots cost metadata,
-// not another copy of the tree. The signature cache keeps an unchanged file from being read
-// and hashed every turn.
+// agent and at each turn. Each new snapshot clones the previous tree with hardlinks and applies
+// only the delta, so a changed turn costs metadata for the unchanged files and a copy of the
+// changed ones — not a copy of the whole tree. The signature cache keeps an unchanged file from
+// being read and hashed every turn.
 //
 // The tree is a plain directory of hardlinks/lists/symlinks, not a git repository: task images
 // do not reliably carry git (db-wal has tar/cp but no git), while `cp -a` is everywhere. The
@@ -43,7 +40,8 @@ import { dirname, join } from "node:path";
 const README = `Skein workspace checkpoints (read-only).
 
 trees/<n>/ is the workspace at snapshot <n>; tree 0 is the initial (post-setup) state.
-Files there are hardlinks to immutable blobs, so do not modify them; copy a path out to restore.
+Unchanged files are hardlinks to earlier snapshots, so do not modify them; copy a path out
+to restore.
 
   ls -a .skein/checkpoints/trees
   diff <path> .skein/checkpoints/trees/<n>/<path>
@@ -82,8 +80,26 @@ export interface ScanEntry {
 }
 
 export interface CheckpointEntry extends ScanEntry {
-  // A file's blob key (content + mode + mtime), a symlink's target, or "" for a directory.
+  // A file's content key (content + mode + mtime), a symlink's target, or "" for a directory.
   value: string;
+}
+
+// One current entry and the entry it replaces in the base tree (undefined for a new path).
+export interface TreeChange {
+  entry: CheckpointEntry;
+  base?: CheckpointEntry;
+}
+
+export interface TreeDelta {
+  changes: TreeChange[];
+  // Base paths absent from the current tree.
+  removed: string[];
+}
+
+export interface TreeBase {
+  // Workspace-relative tree to clone before applying the delta.
+  tree: string;
+  delta: TreeDelta;
 }
 
 // The filesystem primitives the checkpoint algorithm needs. A host implementation uses `fs`;
@@ -95,8 +111,9 @@ export interface CheckpointBackend {
   scan(): ScanEntry[];
   // Content hashes for the given workspace-relative files. Unreadable files are omitted.
   hash(paths: readonly string[]): Map<string, string>;
-  // Create the object blobs (when new) and a hardlink tree for a snapshot.
-  writeTree(tree: string, entries: readonly CheckpointEntry[]): void;
+  // Materialize a snapshot tree. With no base, build it from `entries`; with a base,
+  // hardlink-clone `base.tree` and apply only the delta.
+  writeTree(tree: string, entries: readonly CheckpointEntry[], base?: TreeBase): void;
   // Put one path back from a snapshot tree; return the resulting workspace version, or
   // "absent" when the snapshot did not have the path.
   restore(tree: string, path: string): string;
@@ -150,6 +167,35 @@ function manifestHash(entries: readonly CheckpointEntry[]): string {
   return hash.digest("hex");
 }
 
+function sameEntry(left: CheckpointEntry, right: CheckpointEntry): boolean {
+  return (
+    left.kind === right.kind &&
+    left.value === right.value &&
+    (left.mode ?? 0) === (right.mode ?? 0)
+  );
+}
+
+// What a backend must change to turn `base` into `current`. Unchanged entries are reused by
+// the hardlink clone; a path whose kind or content key changed is a replacement.
+function diffEntries(
+  base: readonly CheckpointEntry[],
+  current: readonly CheckpointEntry[],
+): TreeDelta {
+  const previous = new Map(base.map((entry) => [entry.path, entry]));
+  const present = new Set(current.map((entry) => entry.path));
+  const changes: TreeChange[] = [];
+  for (const entry of current) {
+    const old = previous.get(entry.path);
+    if (old === undefined) {
+      changes.push({ entry });
+    } else if (!sameEntry(old, entry)) {
+      changes.push({ entry, base: old });
+    }
+  }
+  const removed = base.filter((entry) => !present.has(entry.path)).map((entry) => entry.path);
+  return { changes, removed };
+}
+
 function present(path: string): boolean {
   try {
     lstatSync(path);
@@ -172,7 +218,6 @@ export class HostBackend implements CheckpointBackend {
   }
 
   private ensureStore(): void {
-    mkdirSync(join(this.dir, "objects"), { recursive: true });
     mkdirSync(join(this.dir, "trees"), { recursive: true });
     writeFileSync(join(this.dir, "README"), README);
     writeFileSync(join(this.dir, "restore.sh"), RESTORE);
@@ -237,49 +282,104 @@ export class HostBackend implements CheckpointBackend {
     return out;
   }
 
-  writeTree(tree: string, entries: readonly CheckpointEntry[]): void {
+  writeTree(tree: string, entries: readonly CheckpointEntry[], base?: TreeBase): void {
     const treeDir = join(this.dir, tree);
-    mkdirSync(treeDir, { recursive: true });
+    rmSync(treeDir, { recursive: true, force: true });
+    if (base !== undefined) {
+      this.cloneTree(base.tree, tree);
+      this.applyDelta(tree, base.delta);
+      return;
+    }
     for (const entry of entries) {
+      if (entry.kind === "dir") {
+        mkdirSync(join(treeDir, entry.path), { recursive: true });
+      } else {
+        this.copyEntry(join(treeDir, entry.path), entry);
+      }
+    }
+    this.applyDirModes(treeDir, entries.filter((entry) => entry.kind === "dir"));
+  }
+
+  // Hardlink the previous snapshot's files into the new tree; directories and symlinks are
+  // recreated (a directory cannot be hardlinked). The inode is shared, so a changed file must
+  // be removed before it is copied, otherwise the write would reach the base tree too.
+  private cloneTree(baseTree: string, tree: string): void {
+    const source = join(this.dir, baseTree);
+    const target = join(this.dir, tree);
+    const walk = (relative: string): void => {
+      const from = relative === "" ? source : join(source, relative);
+      const to = relative === "" ? target : join(target, relative);
+      const stat = lstatSync(from);
+      if (stat.isDirectory()) {
+        mkdirSync(to, { recursive: true });
+        for (const child of readdirSync(from)) walk(relative === "" ? child : `${relative}/${child}`);
+        chmodSync(to, stat.mode & 0o777);
+      } else if (stat.isSymbolicLink()) {
+        mkdirSync(dirname(to), { recursive: true });
+        symlinkSync(readlinkSync(from), to);
+      } else {
+        mkdirSync(dirname(to), { recursive: true });
+        try {
+          linkSync(from, to);
+        } catch {
+          // A filesystem without hardlinks still gets a correct (if larger) snapshot.
+          copyFileSync(from, to);
+          chmodSync(to, stat.mode & 0o777);
+        }
+      }
+    };
+    walk("");
+  }
+
+  private applyDelta(tree: string, delta: TreeDelta): void {
+    const treeDir = join(this.dir, tree);
+    const byDepth = (a: string, b: string): number => b.split("/").length - a.split("/").length;
+    for (const path of [...delta.removed].sort(byDepth)) {
+      rmSync(join(treeDir, path), { recursive: true, force: true });
+    }
+    for (const { entry, base } of delta.changes) {
       const dest = join(treeDir, entry.path);
       if (entry.kind === "dir") {
+        if (base !== undefined && base.kind !== "dir") rmSync(dest, { recursive: true, force: true });
         mkdirSync(dest, { recursive: true });
         continue;
       }
-      mkdirSync(dirname(dest), { recursive: true });
-      if (entry.kind === "symlink") {
-        try {
-          symlinkSync(entry.value, dest);
-        } catch {
-          // A vanished/unreadable link is skipped like any other best-effort entry.
-        }
-        continue;
-      }
-      const mode = entry.mode ?? 0o644;
-      const mtime = entry.mtimeMs ?? Date.now();
-      try {
-        this.ensureBlob(entry.value, join(this.root, entry.path), mode, mtime);
-      } catch {
-        // The host cannot read this file (root-owned, or it vanished after the walk).
-        continue;
-      }
-      const blob = join(this.dir, "objects", entry.value);
-      try {
-        linkSync(blob, dest);
-      } catch {
-        // A filesystem without hardlinks still gets a correct (if larger) snapshot.
-        copyFileSync(blob, dest);
-        chmodSync(dest, mode);
-        const seconds = mtime / 1000;
-        utimesSync(dest, seconds, seconds);
-      }
+      // Remove the old inode first: `cp` into a hardlinked destination would write through
+      // to every snapshot that shares it.
+      rmSync(dest, { recursive: true, force: true });
+      this.copyEntry(dest, entry);
     }
-    // Directory modes are applied after the children exist (a read-only source dir must not
-    // block creating its own entries).
-    for (const entry of entries
-      .filter((candidate) => candidate.kind === "dir" && candidate.mode !== undefined)
-      .sort((a, b) => b.path.length - a.path.length)) {
-      chmodSync(join(treeDir, entry.path), entry.mode as number);
+    this.applyDirModes(
+      treeDir,
+      delta.changes.filter(({ entry }) => entry.kind === "dir").map(({ entry }) => entry),
+    );
+  }
+
+  private copyEntry(dest: string, entry: CheckpointEntry): void {
+    mkdirSync(dirname(dest), { recursive: true });
+    try {
+      if (entry.kind === "symlink") {
+        symlinkSync(entry.value, dest);
+        return;
+      }
+      copyFileSync(join(this.root, entry.path), dest);
+      chmodSync(dest, entry.mode ?? 0o644);
+      const seconds = (entry.mtimeMs ?? Date.now()) / 1000;
+      utimesSync(dest, seconds, seconds);
+    } catch {
+      // The host cannot read this file (root-owned, or it vanished after the walk).
+    }
+  }
+
+  // Directory modes are applied after the children exist (a read-only source dir must not
+  // block creating its own entries), deepest first so a parent chmod cannot close its child.
+  private applyDirModes(treeDir: string, dirs: readonly CheckpointEntry[]): void {
+    for (const entry of [...dirs].sort((a, b) => b.path.split("/").length - a.path.split("/").length)) {
+      try {
+        chmodSync(join(treeDir, entry.path), entry.mode ?? 0o755);
+      } catch {
+        // A vanished directory is skipped like any other best-effort entry.
+      }
     }
   }
 
@@ -306,23 +406,6 @@ export class HostBackend implements CheckpointBackend {
     return this.versionOf(path);
   }
 
-  private ensureBlob(key: string, source: string, mode: number, mtimeMs: number): void {
-    const target = join(this.dir, "objects", key);
-    if (existsSync(target)) return;
-    const staging = `${target}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
-    copyFileSync(source, staging);
-    chmodSync(staging, mode);
-    const seconds = mtimeMs / 1000;
-    utimesSync(staging, seconds, seconds);
-    try {
-      renameSync(staging, target);
-    } catch (error) {
-      // Another writer won the race: the object is already there, which is all we need.
-      if (existsSync(target)) unlinkSync(staging);
-      else throw error;
-    }
-  }
-
   private versionOf(path: string): string {
     try {
       // Match `fsWorkspace.version` exactly: it hashes the utf8-decoded body, not raw bytes.
@@ -344,6 +427,7 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
   const runId = randomUUID();
   const snapshots: SnapshotRecord[] = [];
   let lastHash: string | undefined;
+  let previousEntries: readonly CheckpointEntry[] | undefined;
   const signatureCache = new Map<string, CachedFile>();
 
   const snapshot = (label?: string): SnapshotRecord => {
@@ -385,7 +469,11 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
 
     const id = snapshots.length;
     const relativeTree = `trees/${id}`;
-    backend.writeTree(relativeTree, entries);
+    const base =
+      previous !== undefined && previousEntries !== undefined
+        ? { tree: previous.tree, delta: diffEntries(previousEntries, entries) }
+        : undefined;
+    backend.writeTree(relativeTree, entries, base);
 
     const record: SnapshotRecord = {
       id,
@@ -396,6 +484,7 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
     };
     snapshots.push(record);
     lastHash = hash;
+    previousEntries = entries;
     return record;
   };
 

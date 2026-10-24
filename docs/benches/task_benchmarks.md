@@ -213,9 +213,11 @@ The table shows medians, with the range in parentheses.
   visible output (3.5k versus 3.1k).
 - Cost medians are nearly equal: **1.500 ₽** for Skein versus **1.599 ₽** for opencode.
   opencode's only expensive run is r3: 44 steps, 2.97 ₽.
-- Cell time: Skein 1 228–1 283 s, opencode 922–1 026 s. But Skein's figure includes the initial
-  checkpoint (~2 minutes), which opencode does not have; Skein's agent time is not recorded,
-  opencode's is 444–560 s. Wall-clock is therefore not a clean agent comparison.
+- Cell time: Skein 1 228–1 283 s, opencode 922–1 026 s. But Skein's figure includes the old
+  full-tree checkpoint (measured separately on this host: ~18 s initial and ~13 s per changed
+  turn; since replaced by delta snapshots — ~1 s initial, ~0.4 s per changed turn), which
+  opencode does not have; Skein's agent time is not recorded, opencode's is 444–560 s.
+  Wall-clock is therefore not a clean agent comparison.
 - K=3, one backend, same-day. This is a direction, not statistics; the old 10-23/10-11 data
   used a different model (`deepseek-flash`/DeepSeek) and is not comparable with 10-24.
 

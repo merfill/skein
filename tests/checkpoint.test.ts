@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -69,6 +69,35 @@ describe("workspace checkpoint", () => {
     const idle = checkpoint.snapshot("turn-2");
     expect(idle.id).toBe(1);
     expect(checkpoint.snapshots).toHaveLength(2);
+  });
+
+  it("applies a delta without touching the base tree", () => {
+    const root = makeRoot();
+    writeFileSync(join(root, "a.txt"), "one\n", { mode: 0o644 });
+    writeFileSync(join(root, "b.txt"), "two\n");
+    mkdirSync(join(root, "dir"), { recursive: true });
+    writeFileSync(join(root, "dir", "child.txt"), "child\n");
+    symlinkSync("a.txt", join(root, "link"));
+
+    const checkpoint = createCheckpoint(root);
+    const first = checkpoint.snapshot("initial");
+
+    chmodSync(join(root, "a.txt"), 0o755);
+    rmSync(join(root, "dir"), { recursive: true });
+    unlinkSync(join(root, "link"));
+    symlinkSync("b.txt", join(root, "link"));
+    writeFileSync(join(root, "new.txt"), "new\n");
+    const second = checkpoint.snapshot("turn-1");
+
+    const old = join(checkpoint.dir, first.tree);
+    const next = join(checkpoint.dir, second.tree);
+    expect(statSync(join(old, "a.txt")).mode & 0o777).toBe(0o644);
+    expect(statSync(join(next, "a.txt")).mode & 0o777).toBe(0o755);
+    expect(readFileSync(join(old, "dir", "child.txt"), "utf8")).toBe("child\n");
+    expect(existsSync(join(next, "dir"))).toBe(false);
+    expect(readlinkSync(join(old, "link"))).toBe("a.txt");
+    expect(readlinkSync(join(next, "link"))).toBe("b.txt");
+    expect(readFileSync(join(next, "new.txt"), "utf8")).toBe("new\n");
   });
 
   it("skips a file the host cannot read instead of failing the run", () => {

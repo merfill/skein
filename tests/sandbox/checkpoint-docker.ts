@@ -1,18 +1,20 @@
 import { dirname } from "node:path";
 
-import type { CheckpointBackend, CheckpointEntry, ScanEntry } from "./checkpoint";
+import type { CheckpointBackend, CheckpointEntry, ScanEntry, TreeBase, TreeDelta } from "./checkpoint";
 import type { DockerWorkspace } from "./docker";
 
 // The same checkpoint algorithm as `HostBackend`, but the filesystem primitives run inside the
 // task container through batched `docker exec` calls. `/app` never leaves the container: the
-// host sends a `find` manifest, hashes only the changed files, and a small bash script performs
-// the `cp`/`ln`/`mkdir` operations in the container's `/tmp/.skein` store. The store is visible
-// to the agent through `/app/.skein/checkpoints -> /tmp/.skein`.
+// host sends a `find` manifest, hashes only the changed files, and a small bash script clones
+// the previous tree with `cp -al` and copies only the changed paths in the container's
+// `/tmp/.skein` store. The store is visible to the agent through
+// `/app/.skein/checkpoints -> /tmp/.skein`.
 
 const README = `Skein workspace checkpoints (read-only).
 
 trees/<n>/ is the workspace at snapshot <n>; tree 0 is the initial (post-setup) state.
-Files there are hardlinks to immutable blobs, so do not modify them; copy a path out to restore.
+Unchanged files are hardlinks to earlier snapshots, so do not modify them; copy a path out
+to restore.
 
   ls -a .skein/checkpoints/trees
   diff <path> .skein/checkpoints/trees/<n>/<path>
@@ -40,6 +42,13 @@ cp -a "$src" "\${3:-$2}"
 
 const q = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
+const byDepth = (left: string, right: string): number =>
+  right.split("/").length - left.split("/").length;
+
+// Deepest first, so a parent chmod cannot close its child.
+const dirEntries = (entries: readonly CheckpointEntry[]): CheckpointEntry[] =>
+  entries.filter((entry) => entry.kind === "dir").sort((left, right) => byDepth(left.path, right.path));
+
 export class DockerBackend implements CheckpointBackend {
   readonly dir: string;
   private readonly workspace: DockerWorkspace;
@@ -54,7 +63,7 @@ export class DockerBackend implements CheckpointBackend {
 
   private ensureStore(): void {
     const result = this.workspace.exec(
-      `mkdir -p ${q(`${this.dir}/objects`)} ${q(`${this.dir}/trees`)} ${q(`${this.mount}/.skein`)} && ` +
+      `mkdir -p ${q(`${this.dir}/trees`)} ${q(`${this.mount}/.skein`)} && ` +
         `ln -sfn ${q(this.dir)} ${q(`${this.mount}/.skein/checkpoints`)}`,
     );
     if (result.code !== 0) throw new Error(`checkpoint store init failed: ${result.stderr.trim()}`);
@@ -110,33 +119,80 @@ export class DockerBackend implements CheckpointBackend {
     return out;
   }
 
-  writeTree(tree: string, entries: readonly CheckpointEntry[]): void {
+  writeTree(tree: string, entries: readonly CheckpointEntry[], base?: TreeBase): void {
     const treeDir = `${this.dir}/${tree}`;
-    const objects = `${this.dir}/objects`;
-    const lines = ["set -e", `mkdir -p ${q(objects)} ${q(treeDir)}`];
+    // A delta that touches most of the tree is cheaper as one fresh copy than as thousands
+    // of per-path shell commands.
+    if (base !== undefined && base.delta.changes.length + base.delta.removed.length <= 512) {
+      if (this.writeDelta(treeDir, base.tree, base.delta)) return;
+    }
+    this.writeFull(treeDir, entries);
+  }
+
+  // One tar stream for the initial tree: no per-file process, and the captured list already
+  // excludes `.skein` and secrets. If the image has no usable tar, fall back to per-entry `cp`.
+  private writeFull(treeDir: string, entries: readonly CheckpointEntry[]): void {
+    const list = `${this.dir}/scan.list`;
+    const script = [
+      "set -e",
+      `rm -rf ${q(treeDir)}`,
+      `mkdir -p ${q(treeDir)}`,
+      `find ${q(this.mount)} -mindepth 1 \\( -name .skein -o -name .env -o -name '.env.*' \\) -prune -o ` +
+        `\\( -type f -o -type d -o -type l \\) -printf '%P\\0' > ${q(list)}`,
+      `tar -C ${q(this.mount)} --null -T ${q(list)} -cf - | tar -C ${q(treeDir)} -xf -`,
+    ].join("\n");
+    const result = this.workspace.execInput("bash -s", `${script}\n`);
+    if (result.code === 0) return;
+    this.writeFullEntries(treeDir, entries);
+  }
+
+  private writeFullEntries(treeDir: string, entries: readonly CheckpointEntry[]): void {
+    const lines = ["set -e", `rm -rf ${q(treeDir)}`, `mkdir -p ${q(treeDir)}`];
     for (const entry of entries) {
       const dest = `${treeDir}/${entry.path}`;
       if (entry.kind === "dir") {
         lines.push(`mkdir -p ${q(dest)}`);
-        continue;
+      } else if (entry.kind === "symlink") {
+        lines.push(`mkdir -p ${q(dirname(dest))}`, `ln -sfn ${q(entry.value)} ${q(dest)}`);
+      } else {
+        lines.push(`mkdir -p ${q(dirname(dest))}`, `cp -a ${q(`${this.mount}/${entry.path}`)} ${q(dest)}`);
       }
-      lines.push(`mkdir -p ${q(dirname(dest))}`);
-      if (entry.kind === "symlink") {
-        lines.push(`ln -sfn ${q(entry.value)} ${q(dest)}`);
-        continue;
-      }
-      const object = `${objects}/${entry.value}`;
-      const source = `${this.mount}/${entry.path}`;
-      lines.push(`[ -e ${q(object)} ] || cp -p ${q(source)} ${q(object)}`);
-      lines.push(`ln ${q(object)} ${q(dest)} 2>/dev/null || cp -p ${q(object)} ${q(dest)}`);
     }
-    for (const entry of entries
-      .filter((candidate) => candidate.kind === "dir" && candidate.mode !== undefined)
-      .sort((a, b) => b.path.length - a.path.length)) {
-      lines.push(`chmod ${(entry.mode as number).toString(8)} ${q(`${treeDir}/${entry.path}`)}`);
+    for (const entry of dirEntries(entries)) {
+      lines.push(`chmod ${(entry.mode ?? 0o755).toString(8)} ${q(`${treeDir}/${entry.path}`)}`);
     }
     const result = this.workspace.execInput("bash -s", `${lines.join("\n")}\n`);
     if (result.code !== 0) throw new Error(`checkpoint writeTree failed: ${result.stderr.trim()}`);
+  }
+
+  // Clone the previous tree with hardlinks and touch only the changed paths. A file must be
+  // removed before it is copied: writing through a hardlink would change every snapshot that
+  // shares the inode.
+  private writeDelta(treeDir: string, baseTree: string, delta: TreeDelta): boolean {
+    const lines = [
+      "set -e",
+      `rm -rf ${q(treeDir)}`,
+      `cp -al ${q(`${this.dir}/${baseTree}`)} ${q(treeDir)}`,
+    ];
+    for (const path of [...delta.removed].sort(byDepth)) {
+      lines.push(`rm -rf ${q(`${treeDir}/${path}`)}`);
+    }
+    for (const { entry, base } of delta.changes) {
+      const dest = `${treeDir}/${entry.path}`;
+      if (entry.kind === "dir") {
+        if (base !== undefined && base.kind !== "dir") lines.push(`rm -rf ${q(dest)}`);
+        lines.push(`mkdir -p ${q(dest)}`);
+        continue;
+      }
+      lines.push(`rm -rf ${q(dest)}`, `mkdir -p ${q(dirname(dest))}`);
+      if (entry.kind === "symlink") lines.push(`ln -sfn ${q(entry.value)} ${q(dest)}`);
+      else lines.push(`cp -a ${q(`${this.mount}/${entry.path}`)} ${q(dest)}`);
+    }
+    for (const entry of dirEntries(delta.changes.map(({ entry }) => entry))) {
+      lines.push(`chmod ${(entry.mode ?? 0o755).toString(8)} ${q(`${treeDir}/${entry.path}`)}`);
+    }
+    const result = this.workspace.execInput("bash -s", `${lines.join("\n")}\n`);
+    return result.code === 0;
   }
 
   restore(tree: string, path: string): string {

@@ -305,8 +305,9 @@ acceptance». Маркеры `Start state` / `Finish state` — `system`, зак
 `Verification → Patch` по умолчанию в `transitionInstruction`.
 
 **Harness: workspace checkpoint.** Read-only снапшот task root:
-`<root>/.skein/checkpoints` — content-addressed блобы + hardlink-деревья `trees/<n>/`
-(initial после `setup`, далее per-turn), `restore.sh`/`README`; в контейнер монтируется
+`<root>/.skein/checkpoints` — hardlink-деревья `trees/<n>/` (initial после `setup`, далее
+per-turn; неизменённые файлы хардлинкуются из предыдущего дерева, копируется только дельта),
+`restore.sh`/`README`; в контейнер монтируется
 read-only (docker `-v :ro`, bwrap `--ro-bind`). Недоступные host-процессу файлы (root-owned
 `john/run/john.log`) **пропускаются best-effort**: иначе snapshot падал и run завершался
 `llm_error` — это дало ложные 0/5 на crack в первом батче. Revert последнего Patch теперь
