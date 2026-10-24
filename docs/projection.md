@@ -26,9 +26,9 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 | Turn | Messages |
 |---|---|
-| `move` | a **state is a decision, not a tool call**: an `assistant` marker `Start state <label>`, the state's `instruction` as a `system` turn, the current state's fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), then the state's goal as a `user` turn (`what: <the island's goal>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
+| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, then the state's goal as a `user` turn (`what: <island.what>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
-| `stop` | the state's closure, rendered as an `assistant` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
+| `stop` | the state's closure, rendered as a `system` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
 Every plan item is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
@@ -44,12 +44,13 @@ thousands of artifacts.
 - the **probe** is one session `fact` (`add_node kind:"fact"`, `id: fact:session`) carrying
   `{ environment, material }`, recorded at request start. It is not a separate message after the
   request; the projection emits the block as a `system` turn before the **current** state's goal
-  `user` turn. Orientation gets `Workspace` — the workspace map (`root`, repo, entries/paths);
+  `user` turn. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
+  starts outside the root, repo, entries/paths);
   Localization and Research get the same map as `Orientation result` (Research also gets `Probe`
   with interpreters/tools); Patch gets it as `Workspace`; Recovery/Construction/Verification get
   `Probe` (environment) under its own heading. Closed states carry no block; the request turn has none;
-- the workspace map is deterministic: `root`, repo status, top-level entries (full paths for
-  small materials), file count. Environment, extensions, configs, build commands and build state
+- the workspace map is deterministic: `root`, `cwd` (when it differs), repo status, top-level
+  entries (full paths for small materials), file count. Environment, extensions, configs, build commands and build state
   are **not** shown in Orientation; a declared command is never presented as the acceptance;
 - its states (`move` children) render in order: an **open** state (and the current closed one
   awaiting the transition) renders its `Start state` marker, its `instruction` (`system`) and its

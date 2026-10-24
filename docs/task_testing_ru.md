@@ -109,6 +109,30 @@ npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off]
 Тот же образ и verifier, другой агент. Трасса: `opencode.txt`, `metrics.json`,
 `api-requests.ndjson`, `api-responses.ndjson`, `contexts.ndjson`, `reasoning.ndjson`.
 
+### Матрица на одну задачу
+
+`matrix.ts` прогоняет всю сетку `agent × net × repeat` для **одной** задачи, каждая ячейка —
+в своём дочернем процессе (изолированный прокси-env `--net off`, убивается по wall-clock
+таймауту):
+
+```sh
+npx tsx tests/sandbox/matrix.ts regex-log \
+  --agents skein,opencode --nets on,off --repeat 3 \
+  --concurrency 6 --timeout 1200 --resume
+```
+
+- задача — аргумент, а не зашитый список: полная кампания — это вызов на каждую задачу
+  (shell-цикл снаружи); дефолта «все задачи» нет;
+- `--turns` (Skein) по умолчанию `task.maxTurns`; `--max-steps` ограничивает opencode;
+  `--timeout` — жёсткий wall-clock ячейки (агент + verifier);
+- ячейки `--net off` для задачи, которой нужна сеть (crack), помечаются `unsupported` и не
+  запускаются;
+- `--resume` пропускает готовые ячейки; `--only-failed` перезапускает всё, что не `ok`;
+  `--dry` печатает сетку без запуска;
+- результат: `bench/runs/matrix/<ts>-<task>/` с `manifest.json` (обновляется по ячейкам),
+  `summary.json` и `cells/<agent>-net<mode>-r<n>/` (обычные файлы трассы плюс `run.log`).
+  Убитая ячейка оставляет `.timeout`; `--resume` её перезапустит.
+
 ## 2. Harbor
 
 Harbor — официальный runner terminal-bench. Он запускает задачу целиком (среда, агент,
@@ -261,6 +285,10 @@ npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --net off --turns 60
 # пошагово, с паузами
 npx tsx bench/live-step.ts fix-ocaml-gc --net off --dir /tmp/opencode/loc
 touch /tmp/opencode/loc/continue
+
+# матрица на одну задачу (агенты × сеть × повторы), с resume
+npx tsx tests/sandbox/matrix.ts regex-log --agents skein,opencode --nets on,off --repeat 3 --dry
+npx tsx tests/sandbox/matrix.ts regex-log --agents skein,opencode --nets on,off --repeat 3 --concurrency 6 --timeout 1200 --resume
 
 # быстрый A/B записанного хода
 npx tsx bench/turn.ts <run> --list

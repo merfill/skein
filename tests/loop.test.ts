@@ -1032,8 +1032,8 @@ describe("runAgent", () => {
     expect(texts).toContain("run build");
     // The state IS its goal: the state's own `what` rides a `user` turn after the entry.
     const goal =
-      context.history.map((message) => message.text).find((text) => text.includes("know the task's inputs")) ?? "";
-    expect(goal).toContain("know the task's inputs");
+      context.history.map((message) => message.text).find((text) => text.includes("name the workspace root")) ?? "";
+    expect(goal).toContain("name the workspace root");
   });
 
   it("refuses a repeated read and names the stored result", async () => {

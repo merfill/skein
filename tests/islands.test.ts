@@ -124,7 +124,13 @@ describe("islands: the projection highlights the state", () => {
     // a `user` turn.
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
     expect(start).toBe("Start state Orientation");
-    expect(context.history.some((m) => m.role === "user" && m.text === "what: know the task's inputs and how success is judged")).toBe(true);
+    expect(
+      context.history.some(
+        (m) =>
+          m.role === "user" &&
+          m.text === "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+      ),
+    ).toBe(true);
     const messages = buildMessages(context);
     expect(messages.some((message) => String(message.content) === start)).toBe(true);
   });

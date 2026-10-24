@@ -97,8 +97,8 @@ declared form и **не** «кандидат буквально есть в ба
 ### 2.1 Orientation
 
 - **Предмет:** материал и способ судить успех.
-- **Цель:** освоиться — узнать, что существует и как проверяется успех.
-- **`what`:** `map the material and how success is judged`
+- **Цель:** назвать, где проект и что в нём есть, и какая приёмка объявлена в запросе.
+- **`what`:** `name the workspace root, its top-level entries, the repository status, and the acceptance the request declares`
 - **`done`:** `the material is known — what exists (files, records, images, a repository) — and
   how success is judged (an in-workspace command, an external verifier, or declared
   constraints); whether it is under version control is noted when relevant`
@@ -109,7 +109,8 @@ declared form и **не** «кандидат буквально есть в ба
   environment, расширения, конфиги, команды сборки и build state: это не её цель.
 - **Границы:** не ищет дефект, не воспроизводит сбой, не описывает ситуацию глубоко, не
   сверяется с upstream и не разбирает историю версий глубже VCS-статуса из probe. Сбой,
-  замеченный по ходу, — в `notes`/итог, не задерживаясь.
+  замеченный по ходу, — в `notes`/итог, не задерживаясь. Не пересказывает, не интерпретирует
+  и не решает задачу; запрос — только источник acceptance. Не создаёт и не меняет файлы.
 - **Переход:**
   - → **Localization**, когда цель — найти артефакт (дефект кода, файл, запись, образ);
   - → **Research**, когда цель — ситуация/метод (скрытые данные, legacy-поведение, спека,
@@ -316,9 +317,9 @@ declared form и **не** «кандидат буквально есть в ба
 - **Patch:** Verification не прошёл:
   - изменение неверно, объект тот же → **Patch**;
   - объект/координаты в сомнении → **Localization**.
-- Ошибка должна ехать на ленте: `why` упавшего состояния + блок `Previous failed attempt` для
-  Research/Recovery/Construction, как сейчас для Patch/Localization. Несколько попыток
-  допустимо; гейта нет — модель решает.
+- Ошибка едет на ленте в `Finish`-строках закрытых `Patch`/`Verification` (`why` упавшего
+  состояния); отдельного блока `Previous failed attempt` текущая реализация не рендерит.
+  Несколько попыток допустимо; гейта нет — модель решает.
 - Если независимой source-проверки нет, состояние не закрывается «на веру»: честный стоп с указанием,
   что проверено и что нет.
 

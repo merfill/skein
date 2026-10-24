@@ -180,41 +180,28 @@ raw output never reaches the tape; a replay reads the recorded fact instead of p
 `environment` also carries `network: on|off` — the agent's mode, recorded by the harness (not
 guessed by a shell); it tells a state whether a missing runtime can be installed.
 
-**State entry** (shown for every state; the block only for the current one):
+**State entry** (shown for every state; the brief only for the focused open one):
 
 ```
-ai       — Start state <Label>
+system   — Start state <Label>
+system   — <focused brief: Workspace map / Orientation result / Probe>
 system   — <island instruction: how to act in this state>
 user     — what: <island.what>
-system — <Workspace in Orientation/Patch / Orientation result in L,R / Probe elsewhere>
-user   — what: <the island's goal>
+…plan…
+system   — <per-turn tail: hint, what (doxa articulation), criterion, closure>  [not stored]
 ```
 
-**Returning to Localization or Patch after a failure** (the current open state only): right after
-`ai: Start state Localization`/`Start state Patch` comes another `system` — the **last** failed
-attempt, assembled by logos from the journal:
+**Returning to Localization or Patch after a failure.** The current implementation renders **no**
+separate `Previous failed attempt` block (`tests/revert.test.ts` and `tests/tape_render.test.ts`
+assert this). The failure stays on the tape in the closed `Patch` and `Verification` `Finish`
+lines: the failed Verification's `stop.why` is a literal retelling of the failure (command, exit,
+actual error), not a code diagnosis.
 
-```
-system — Previous failed attempt:
-           Patch: runtime/shared_heap.c
-             <the actual find from edit>
-             ->
-             <the actual replace>
-           Verification: <literal retelling of the failure: command, exit, actual error>
-           This change has been reverted in the workspace; the tree is back to its pre-patch state.
-           Do not repeat this change. A different change is required; it may be in the same file or even the same loop.
-```
-
-The source is the change's `payload.call` and the doxa's `stop.why` on the failed `verification`
-— a literal retelling of the failure (command, exit, actual error), not a code diagnosis and not
-the mechanical last failing command/tail. The last attempt only; older ones are already on the
-tape. A Patch that changed no file renders `Patch: no file changed.`
-
-The engine performs the revert on the failure transition `Verification → Patch/Localization`: it emits a
-`revert` event (files + new versions) and restores the pre-patch tree. The block is rendered for
-the **currently open** Localization or Patch. If the revert is impossible (e.g. `write`/`apply_patch`
-without a preimage in Phase 1), the block says `The failed change is still in the workspace.` — do
-not pretend it was reverted.
+The engine performs the revert on the failure transition `Verification → Patch/Localization`: it
+emits a `revert` event (files + new versions) and restores the pre-patch tree. Closed states'
+plans are elided, so the actual edit is not re-rendered; the model sees the `Finish` lines and
+the pre-patch tree. If the revert is impossible (e.g. `write`/`apply_patch` without a preimage),
+the change stays in the tree and no separate warning is put on the tape — a known gap.
 
 **Open state** — after that come the plan's steps: each doxa turn is a pair
 `ai(tool_calls=[…])` + one `tool(result)` per call.
@@ -222,10 +209,10 @@ not pretend it was reverted.
 **Closed state** — the plan is **elided**: only these remain
 
 ```
-ai — Start state <Label>
+system — Start state <Label>
 system — <instruction>
-user — what: <goal>
-ai — Finish state <Label> — <why from stop>
+user   — what: <goal>
+system — Finish state <Label> — <why from stop>
 ```
 
 **The turn's tail** (`system`, except `transition` — a `user` turn):
@@ -240,7 +227,8 @@ ai — Finish state <Label> — <why from stop>
 
 **What is erased (not shown):**
 - `notes` from `move` — not rendered;
-- `what` from `move` — not rendered (the goal comes from the island definition);
+- `what` from `move` — not rendered in the block (it shows `island.what`); if the doxa set
+  `what`, it goes to the per-turn tail;
 - **a closed state's plan** — all `ai`/`tool` pairs are replaced by a single `Finish state` line.
 
 **What is added:**
@@ -498,15 +486,16 @@ ai — Finish state <Label> — <why from stop>
      preimage (`write`) and a reverse patch (`apply_patch`), all-or-nothing.
   4. **Harness.** Promote the temporary replay loop (`seed` + container + reverse diff) into
      `bench/`; checklist — §2.5.
-  5. **Shell hygiene: cwd.** `bash` starts in the workspace root (`/app`), while the repo is in
-     `/app/ocaml`; a general fix: show the cwd in the `bash` observation or distinguish the
-     workspace/repo root.
+  5. **Shell hygiene: cwd (fixed 2026-10-24).** The workspace map now carries `cwd` when the
+     shell starts outside the material root (a task `workdir`). The material probe's `git
+     status` excludes the engine's `.skein` scaffolding from the dirty count and runs with
+     `GIT_OPTIONAL_LOCKS=0`, so it does not rewrite `.git/index`.
   6. **Meta-doubt** (§5 p.4): does the `ai` marker `Start/Finish state` get in the way.
   7. The Patch/Verification state texts — `docs/states_ru.md` §2.4, §2.7.
 - **Orientation result vs probe (2026-10-20).** One `fact:session` (`environment` + `material`)
-  is recorded at request start. `material` is the workspace map: `root`, repo status, top-level
-  entries (full paths for small materials), file count; no configs, build commands, extensions or
-  build state. Orientation renders it as `Workspace`; Localization and Research get the same map
+  is recorded at request start. `material` is the workspace map: `root`, `cwd` (when the shell
+  starts outside the root), repo status, top-level entries (full paths for small materials),
+  file count; no configs, build commands, extensions or build state. Orientation renders it as `Workspace`; Localization and Research get the same map
   as `Orientation result` (Research also gets `Probe` with interpreters/tools); other states get
   `Probe` (environment) under its own heading. Orientation's goal is narrowed to the inputs and
   the acceptance declared by the request; if the map and request already name them, the first

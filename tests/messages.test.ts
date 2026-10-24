@@ -78,7 +78,9 @@ describe("message wrappers: the wire JSON of the tape", () => {
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
     expect(userTexts).toHaveLength(2);
     expect(userTexts[0]).toContain("fix the bug");
-    expect(userTexts[1]).toBe("what: know the task's inputs and how success is judged");
+    expect(userTexts[1]).toBe(
+      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    );
     const start = msgs.find((m) => m.role === "system" && String(m.content).includes("Start state"));
     expect(String(start?.content)).toBe("Start state Orientation");
     // A native call keeps its content empty (the call is in `tool_calls`).

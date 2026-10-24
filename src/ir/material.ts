@@ -22,6 +22,9 @@ export interface MaterialEntry {
 
 export interface MaterialFact {
   root: string;
+  // Where the agent's shell starts when it differs from `root` (a task WORKDIR such as
+  // `/app/personal-site`); relative shell paths resolve against it, not against `root`.
+  cwd?: string;
   repos: MaterialRepo[];
   entries: MaterialEntry[];
   // The full path list for small materials; empty for large trees (entries carry counts).
@@ -48,6 +51,7 @@ function repoLine(repo: MaterialRepo): string {
 export function workspaceLines(fact: MaterialFact): string[] {
   const lines: string[] = [];
   if (fact.root !== "") lines.push(`root: ${code(fact.root)}`);
+  if (fact.cwd !== undefined && fact.cwd !== "" && fact.cwd !== fact.root) lines.push(`cwd: ${code(fact.cwd)}`);
   if (fact.repos.length === 0) {
     const scope = fact.root !== "" ? ` under ${fact.root}` : "";
     lines.push(`repo: none (no .git/.hg/.svn${scope})`);

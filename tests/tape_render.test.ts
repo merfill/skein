@@ -70,7 +70,9 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
     expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
+    expect(ctx.history[3]?.text).toBe(
+      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    );
   });
 
   it("stop -> the state collapses to its Start marker, instruction, `what` and Finish", () => {
@@ -80,7 +82,9 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system", "user", "system"]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
     expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
+    expect(ctx.history[3]?.text).toBe(
+      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    );
     expect(ctx.history[4]?.text).toBe("Finish state Orientation — done");
   });
 

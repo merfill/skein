@@ -7,7 +7,7 @@ import { parseNetworkMode } from "./network";
 import { cleanupSandboxes } from "./workspace";
 
 // Live run of a ported terminal-bench task (no Harbor):
-//   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
+//   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off] [--dir <dir>]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>/ and prints the token breakdown.
 // For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/testing.md §3.6.
 
@@ -22,6 +22,7 @@ async function main(): Promise<void> {
   if (task === undefined) throw new Error(`unknown task ${id}; known: ${Object.keys(TASKS).join(", ")}`);
 
   const turns = arg("--turns", "");
+  const dir = arg("--dir", "");
   const net = parseNetworkMode(arg("--net", "on"));
   // `off` removes the network from the agent container and, for the engine's host-side
   // tools (`fetch`, background `run`), routes their `curl` through an allowlist proxy that
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
     const result = await runLiveTask(task, {
       maxTurns: turns === "" ? (task.maxTurns ?? 24) : Number(turns),
       network: net,
+      ...(dir !== "" ? { dir } : {}),
     });
     const t = result.summary?.totals;
     if (t === undefined) throw new Error(`no metrics for ${task.id}`);

@@ -103,6 +103,9 @@ and Russian, the Russian version in a file with the `_ru` suffix.
   leaderboard of the best runs (top-10; currently `fix-ocaml-gc`).
 - [benches/bench_report.md](benches/bench_report.md) · [RU](benches/bench_report_ru.md) — Skein
   vs opencode: metrics, caveats, the controlled `ref-localize` experiment.
+- [benches/compare_skein_opencode.md](benches/compare_skein_opencode.md) ·
+  [RU](benches/compare_skein_opencode_ru.md) — the per-task matrix comparison of Skein and
+  opencode (`tests/sandbox/matrix.ts`): one section per task, tokens as the primary axis.
 - [benches/fix_ocaml_gc_ideal.md](benches/fix_ocaml_gc_ideal.md) · [RU](benches/fix_ocaml_gc_ideal_ru.md)
   — the reference trajectory (the model instance).
 - [benches/fix_ocaml_gc_investigation.md](benches/fix_ocaml_gc_investigation.md) ·

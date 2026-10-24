@@ -215,6 +215,11 @@ describe("workspace map", () => {
     const workspace = workspaceBrief({ ...material, repos: [] }, "Workspace map");
     expect(workspace).toContain("repo: none (no .git/.hg/.svn under /app)");
   });
+
+  it("shows the shell cwd only when it differs from the root", () => {
+    expect(workspaceBrief({ ...material, cwd: "/app/ocaml" }, "Workspace map")).toContain("cwd: /app/ocaml");
+    expect(workspaceBrief({ ...material, cwd: "/app" }, "Workspace map")).not.toContain("cwd:");
+  });
 });
 
 describe("material probe", () => {
@@ -237,18 +242,22 @@ describe("material probe", () => {
   });
 
   it("records a git repository without executing the project", () => {
+    const commands: string[] = [];
     const run = (command: string): CommandResult => {
-      const stdout = command.includes("rev-parse --show-toplevel")
-        ? "/repo\n"
-        : command.includes("rev-parse --abbrev-ref HEAD")
-          ? "main\n"
-          : command.includes("rev-parse --short HEAD")
-            ? "abc1234\n"
-            : command.includes("status --porcelain")
-              ? " M a\n?? b\n"
-              : command.includes("log -n")
-                ? "abc1234\tfix sweep\n"
-                : "";
+      commands.push(command);
+      const stdout = command === "pwd"
+        ? ""
+        : command.includes("rev-parse --show-toplevel")
+          ? "/repo\n"
+          : command.includes("rev-parse --abbrev-ref HEAD")
+            ? "main\n"
+            : command.includes("rev-parse --short HEAD")
+              ? "abc1234\n"
+              : command.includes("status --porcelain")
+                ? " M a\n?? b\n?? .skein/\n"
+                : command.includes("log -n")
+                  ? "abc1234\tfix sweep\n"
+                  : "";
       return { code: 0, stdout, stderr: "" };
     };
     const workspace = fakeWorkspace({
@@ -267,10 +276,24 @@ describe("material probe", () => {
         commits: [{ hash: "abc1234", subject: "fix sweep" }],
       },
     ]);
+    // The engine's own `.skein` scaffolding does not count as a changed file, and `status`
+    // must not refresh (write) the index.
+    expect(commands).toContain("GIT_OPTIONAL_LOCKS=0 git -C '/repo' status --porcelain");
     expect(map?.entries).toEqual([
       { name: "Makefile", kind: "file" },
       { name: "src", kind: "dir", files: 1 },
     ]);
+  });
+
+  it("records the shell cwd when the workspace workdir differs from the root", () => {
+    const workspace = fakeWorkspace({
+      list: () => ["README.md"],
+      run: (command) =>
+        command === "pwd"
+          ? { code: 0, stdout: "/repo/sub\n", stderr: "" }
+          : { code: 0, stdout: "", stderr: "" },
+    });
+    expect(probeMaterial(workspace)?.cwd).toBe("/repo/sub");
   });
 
   it("is deterministic", () => {

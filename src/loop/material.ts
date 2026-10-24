@@ -32,6 +32,18 @@ function isSecret(path: string): boolean {
   return name === ".env" || name.startsWith(".env.");
 }
 
+// The engine's own checkpoint directory lives under the workspace root (`<mount>/.skein`);
+// it is scaffolding, not material, so it must not count as a dirty file.
+const ENGINE_DIR = ".skein";
+
+function isEngineStatusLine(line: string): boolean {
+  // `git status --porcelain` is `XY <path>` (a rename is `old -> new`).
+  const path = line.slice(3).trim();
+  const target = path.includes(" -> ") ? (path.split(" -> ").pop() as string) : path;
+  const clean = target.replace(/^"(.*)"$/, "$1");
+  return clean === ENGINE_DIR || clean.startsWith(`${ENGINE_DIR}/`);
+}
+
 // Top-level entries, with a file count for directories. No extension histogram and no
 // configuration parsing: both are noise for Orientation.
 function entriesOf(files: readonly string[], truncated: { value: boolean }): MaterialEntry[] {
@@ -79,7 +91,7 @@ function gitRepo(workspace: Workspace, dir: string, io: (path: string) => string
   const canonical = root.stdout.trim() === "" ? cwd : root.stdout.trim();
   const branch = run(workspace, `${at} rev-parse --abbrev-ref HEAD`);
   const head = run(workspace, `${at} rev-parse --short HEAD`);
-  const status = run(workspace, `${at} status --porcelain`);
+  const status = run(workspace, `GIT_OPTIONAL_LOCKS=0 ${at} status --porcelain`);
   const log = run(workspace, `${at} log -n ${MAX_COMMITS} --format=%h%x09%s`);
   const commits: { hash: string; subject: string }[] = [];
   if (log !== undefined && log.code === 0) {
@@ -95,7 +107,9 @@ function gitRepo(workspace: Workspace, dir: string, io: (path: string) => string
   if (branch !== undefined && branch.code === 0 && branch.stdout.trim() !== "") repo.branch = branch.stdout.trim();
   if (head !== undefined && head.code === 0 && head.stdout.trim() !== "") repo.head = head.stdout.trim();
   if (status !== undefined && status.code === 0) {
-    repo.dirty = status.stdout.split("\n").filter((line) => line.trim() !== "").length;
+    repo.dirty = status.stdout
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !isEngineStatusLine(line)).length;
   }
   return repo;
 }
@@ -183,8 +197,13 @@ export function probeMaterial(
   const entries = entriesOf(files, truncated);
   const paths = pathsOf(files);
   const repos = repositoryRoots(workspace, files, truncated, io);
+  // Where the agent's shell starts. It can differ from the material root (a task WORKDIR);
+  // without it the model resolves relative shell paths against the wrong directory.
+  const pwd = run(workspace, "pwd");
+  const cwd = pwd !== undefined && pwd.code === 0 ? pwd.stdout.trim().replace(/\/+$/, "") : "";
   const fact: MaterialFact = {
     root,
+    ...(cwd !== "" && cwd !== base ? { cwd } : {}),
     repos,
     entries,
     paths,

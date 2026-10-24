@@ -26,9 +26,9 @@
 
 | Ход | Сообщения |
 |---|---|
-| `move` | **состояние — это решение, а не вызов инструмента**: маркер `assistant` `Start state <label>`, инструкция состояния ходом `system`, блок факта текущего состояния ходом `system` (`Workspace`/`Orientation result`/`Probe`), затем цель состояния ходом `user` (`what: <цель острова>`). Запрос — второе сообщение ленты (сразу после базового промпта), на **каждом** ходу, не убирается |
+| `move` | **состояние — это решение, а не вызов инструмента**: маркер `system` `Start state <label>`, блок факта текущего состояния ходом `system` (`Workspace`/`Orientation result`/`Probe`), инструкция состояния ходом `system`, затем цель состояния ходом `user` (`what: <island.what>`). Запрос — второе сообщение ленты (сразу после базового промпта), на **каждом** ходу, не убирается |
 | `apply` | `assistant` (вызов) + `tool` (наблюдение); первый `apply` после `move` засевает план состояния и его первый пункт |
-| `stop` | закрытие состояния, рендерится маркером `assistant` `Finish state <label> — <why>`; вызова инструмента не добавляет. На терминальном состоянии запрос завершается |
+| `stop` | закрытие состояния, рендерится маркером `system` `Finish state <label> — <why>`; вызова инструмента не добавляет. На терминальном состоянии запрос завершается |
 | `decline` | `assistant` (причина `why`): запрос отклонён |
 
 Каждый пункт плана — пара `assistant` + `tool`; первый `apply` после `move` засевает план
@@ -44,13 +44,14 @@
 - **probe** — один сессионный `fact` (`add_node kind:"fact"`, `id: fact:session`) с
   `{ environment, material }`, записанный на старте запроса. Он не идёт отдельным сообщением
   после запроса; проекция выбирает нужный блок для цели **текущего** состояния, после `what:`.
-  Orientation получает `Workspace` — карту workspace (`root`, repo, entries/paths); Localization
+  Orientation получает `Workspace` — карту workspace (`root`, `cwd` если shell стартует не в
+  root, repo, entries/paths); Localization
   и Research получают ту же карту как `Orientation result` (Research — плюс `Probe` с
   interpreters/tools); Patch получает её же как `Workspace`; Recovery/Construction/Verification —
   `Probe` (environment) отдельным заголовком. Блок идёт отдельным `system`-ходом перед целью
   (`user`), а не приклеен к `what:`. Закрытые состояния блоков не несут; на request-ходу их нет;
-- карта workspace детерминирована: `root`, repo-статус, top-level entries (для маленьких
-  материалов — paths), число файлов. Environment, расширения, конфиги, команды сборки и build
+- карта workspace детерминирована: `root`, `cwd` (если отличается), repo-статус, top-level
+  entries (для маленьких материалов — paths), число файлов. Environment, расширения, конфиги, команды сборки и build
   state в Orientation **не** показываются; объявленная команда не выдаётся за acceptance;
 - его состояния (дети `move`) рендерятся по порядку: **открытое** (и текущее закрытое в
   ожидании перехода) состояние рендерит маркер `Start state`, инструкцию (`system`) и цель

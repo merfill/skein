@@ -109,6 +109,28 @@ npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off]
 Same image and verifier, a different agent. Trace: `opencode.txt`, `metrics.json`,
 `api-requests.ndjson`, `api-responses.ndjson`, `contexts.ndjson`, `reasoning.ndjson`.
 
+### Matrix for one task
+
+`matrix.ts` runs the whole `agent × net × repeat` grid for **one** task, each cell in its own
+child process (isolated `--net off` proxy env, killable on a wall-clock timeout):
+
+```sh
+npx tsx tests/sandbox/matrix.ts regex-log \
+  --agents skein,opencode --nets on,off --repeat 3 \
+  --concurrency 6 --timeout 1200 --resume
+```
+
+- the task is an argument, not a baked-in list: the full campaign is one invocation per task
+  (a shell loop outside); there is no "all tasks" default;
+- `--turns` (Skein) defaults to `task.maxTurns`; `--max-steps` caps opencode; `--timeout` is
+  the hard wall clock of a cell (agent + verifier);
+- cells with `--net off` for a task that declares `network` (crack) are `unsupported`, not run;
+- `--resume` skips finished cells; `--only-failed` reruns everything not `ok`; `--dry` prints
+  the grid without spawning;
+- output: `bench/runs/matrix/<ts>-<task>/` with `manifest.json` (updated per cell),
+  `summary.json`, and `cells/<agent>-net<mode>-r<n>/` (the usual trace files plus `run.log`).
+  A killed cell leaves `.timeout`; `--resume` reruns it.
+
 ## 2. Harbor
 
 Harbor is the official terminal-bench runner. It runs a task end to end (environment, agent,
@@ -261,6 +283,10 @@ npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --net off --turns 60
 # step by step, with pauses
 npx tsx bench/live-step.ts fix-ocaml-gc --net off --dir /tmp/opencode/loc
 touch /tmp/opencode/loc/continue
+
+# matrix for one task (agents × net × repeat), resumable
+npx tsx tests/sandbox/matrix.ts regex-log --agents skein,opencode --nets on,off --repeat 3 --dry
+npx tsx tests/sandbox/matrix.ts regex-log --agents skein,opencode --nets on,off --repeat 3 --concurrency 6 --timeout 1200 --resume
 
 # quick A/B of a recorded turn
 npx tsx bench/turn.ts <run> --list

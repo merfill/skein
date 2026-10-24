@@ -425,23 +425,20 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
   reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
-  `Start state <label>` marker (an `assistant` turn), then the state's `instruction` (a `system`
-  turn), then the state's goal as a `user` turn (`what: <the island's goal>`). The doxa's
-  `move.what`/`move.notes` are **not** shown: the goal comes from the island definition. The
-  request is the second message of the tape (right after the base prompt), on **every** turn —
-  never dropped;
-- **returning to Localization or Patch.** For the **current open** `localization` or `patch`
-  state, right after `Start state` comes a `system` "Previous failed attempt" message: the actual change of the last
-  `patch` (from `payload.call`) and the failed `verification`'s `stop.why` — the doxa's literal
-  retelling of the failure (command, exit, actual error), not a code diagnosis and not the
-  mechanical last failing command/tail. It is a projection of existing events
-  (`mutates`/`observation`/`stop`), not a status
-  or a gate; `stop` still closes only by the doxa. Only the last attempt is shown (earlier ones
-  remain on the tape as `Finish state` lines);
+  `Start state <label>` marker (a `system` turn), then the state's `instruction` (a `system`
+  turn), then the state's goal as a `user` turn (`what: <the island's goal>`). `move.notes` are
+  not shown; `move.what` — the doxa's articulation — goes to the per-turn tail (when set), while
+  the state block shows `island.what`. The request is the second message of the tape (right
+  after the base prompt), on **every** turn — never dropped;
+- **returning to Localization or Patch.** The failure stays on the tape in the closed `patch`
+  and `verification` `Finish` lines (the literal `stop.why`, not a code diagnosis). On the
+  `Verification → Patch/Localization` transition the engine writes a `revert` event and restores
+  the files to pre-patch; the current implementation renders **no** separate "Previous failed
+  attempt" block (see `tests/revert.test.ts`). `stop` still closes only by the doxa;
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
   observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
   `item`), so the first plan item is an ordinary tool call;
-- `stop` — the state's closure renders as a `Finish state <label> — <why>` marker (an `assistant`
+- `stop` — the state's closure renders as a `Finish state <label> — <why>` marker (a `system`
   turn), read from the `move.stop` relation; it adds no tool call. At the terminal state `stop`
   ends the request;
 - `decline` — `assistant` with the reason (`why`): the request is declined;

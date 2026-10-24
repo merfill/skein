@@ -62,20 +62,22 @@ export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
     id: "orientation",
     label: "Orientation",
-    what: "know the task's inputs and how success is judged",
+    what: "name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
     criterion:
       "the workspace root and its top-level entries are known; the repository status is noted; " +
       "and the acceptance is named from the request — an in-workspace command, an external " +
       "verifier, or declared constraints",
     instruction:
-      "Read the request and the workspace map: root, repository status, top-level entries. Name " +
-      "the acceptance as the request declares it. If the request and the map already name the " +
-      "inputs and the acceptance, `stop` now. Do not list inside the entries, verify build " +
-      "targets or paths, read file contents, or inspect history or data formats — those belong " +
-      "to the next state.",
+      "Read the workspace map: root, repository status, top-level entries. The request is only " +
+      "the source of the acceptance — name it as the request declares it; do not restate, " +
+      "interpret, or solve the task. This state only reads the map: do not create or modify " +
+      "files. If the map and the request already name those, `stop` now. Do not list inside the " +
+      "entries, verify build targets or paths, read file contents, or inspect history or data " +
+      "formats — those belong to the next state.",
     hint:
-      "The workspace map is the index; the request is the acceptance. Do not list inside " +
-      "entries, check paths, or inspect build state, configs, history, or contents.",
+      "The map is the index; the request names the acceptance. Name them; do not restate the " +
+      "task or work on it. Do not list inside entries, check paths, or inspect build state, " +
+      "configs, history, or contents.",
     applies: INSPECT,
     next: [
       {

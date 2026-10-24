@@ -132,7 +132,9 @@ describe("the tape: request and state", () => {
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toBe("what: know the task's inputs and how success is judged");
+    expect(context.history[3]?.text).toBe(
+      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    );
     expect(context.history[4]?.text).toBe("[a1] make test");
     expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
   });

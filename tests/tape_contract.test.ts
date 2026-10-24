@@ -103,7 +103,7 @@ const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
   { role: "system", content: ISLANDS.orientation.instruction },
-  { role: "user", content: "what: know the task's inputs and how success is judged" },
+  { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -127,7 +127,7 @@ describe("move: before [request] -> delta -> after", () => {
       REQ,
       { role: "system", content: "Start state Orientation" },
       { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "user", content: "what: know the task's inputs and how success is judged" },
+      { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -475,7 +475,7 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
       REQ,
       { role: "system", content: "Start state Orientation" },
       { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "user", content: "what: know the task's inputs and how success is judged" },
+      { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
       { role: "system", content: "Finish state Orientation — done" },
     ]);
   });

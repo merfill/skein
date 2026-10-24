@@ -110,7 +110,9 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
   // rootless mode it is an empty interface root; file operations/grep/list go to the container.
   const base = fsWorkspace(root, { runTimeoutMs: timeoutMs });
   counter += 1;
-  const name = `skein-${process.pid}-${Date.now()}-${counter}`;
+  // `SKEIN_CONTAINER_PREFIX` lets an out-of-process runner kill a timed-out run's containers
+  // by name: the runner knows the prefix, not the pid of the process that actually created them.
+  const name = `skein-${process.env.SKEIN_CONTAINER_PREFIX ?? process.pid}-${Date.now()}-${counter}`;
 
   // Extract the image's WORKDIR tree into the host root via a tar pipe. A plain `docker cp`
   // preserves the image's ownership (often root), which the host user then cannot read or

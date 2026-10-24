@@ -170,8 +170,9 @@ system   — инструкция текущей ситуации (plan/working/
 после запроса **нет**.
 
 **Probe** — один сессионный `fact` (`id: fact:session`, payload `{ environment, material }`),
-записанный на старте запроса (`src/loop/probe.ts`). `material` — карта workspace (`root`, repo,
-entries/paths, files), без конфигов, команд сборки и расширений. Проекция показывает её как
+записанный на старте запроса (`src/loop/probe.ts`). `material` — карта workspace (`root`, `cwd`
+если shell стартует не в root, repo, entries/paths, files), без конфигов, команд сборки и
+расширений. Проекция показывает её как
 `Workspace` в Orientation; в Localization/Research та же карта идёт как `Orientation result`
 (Research дополнительно получает `Probe` с interpreters/tools); Patch получает её же как
 `Workspace`; остальные состояния получают `Probe` (environment) отдельным заголовком. Закрытые состояния блоков не несут, на request-ходу
@@ -179,41 +180,29 @@ entries/paths, files), без конфигов, команд сборки и р�
 угаданный shell); он говорит, можно ли ставить отсутствующий рантайм. Полный вывод probe на
 ленту не попадает; replay читает записанный факт.
 
-**Вход в состояние** (показывается для каждого состояния; блок — только у текущего):
+**Вход в состояние** (показывается для каждого состояния; brief — только у текущего открытого):
 
 ```
-ai       — Start state <Label>
+system   — Start state <Label>
+system   — <brief: Workspace map / Orientation result / Probe>
 system   — <инструкция острова: как действовать в этом состоянии>
-user     — what: <цель острова (island.what)>
-system — <Workspace в Orientation/Patch / Orientation result в L,R / Probe в остальных>
-user   — what: <цель острова>
+user     — what: <island.what>
+…план…
+system   — <per-turn tail: hint, what (артикуляция доксы), критерий, closure>  [не хранится]
 ```
 
-**Возврат в Localization или Patch после провала** (только текущее открытое состояние): сразу
-после `ai: Start state Localization`/`Start state Patch` идёт ещё одно `system` — **последняя**
-неудачная попытка, собранная логосом из журнала:
+**Возврат в Localization или Patch после провала.** Отдельного блока `Previous failed attempt`
+текущая реализация **не рендерит** (это проверяют `tests/revert.test.ts` и
+`tests/tape_render.test.ts`). Провал остаётся на ленте в `Finish`-строках закрытых `Patch` и
+`Verification`: `stop.why` упавшей Verification — буквальный пересказ ошибки (команда, exit,
+фактический текст), а не диагноз кода.
 
-```
-system — Previous failed attempt:
-           Patch: runtime/shared_heap.c
-             <фактический find из edit>
-             ->
-             <фактический replace>
-           Verification: <буквальный пересказ ошибки: команда, exit, фактический текст>
-           This change has been reverted in the workspace; the tree is back to its pre-patch state.
-           Do not repeat this change. A different change is required; it may be in the same file or even the same loop.
-```
-
-Источник — `payload.call` правки и `stop.why` доксы у упавшей `verification`: буквальный
-пересказ ошибки (команда, exit, фактический текст), а не диагноз кода и не механический
-последний упавший `bash` с хвостом. Только последняя попытка; более ранние уже в ленте. Если
-Patch не менял файл — `Patch: no file changed.`
-
-Откат делает движок на переходе `Verification → Patch/Localization` по провалу: он пишет событие
-`revert` (файлы + новые версии) и возвращает дерево к pre-patch. Блок рендерится для
-**текущей открытой** Localization или Patch. Если откат невозможен (например, `write`/`apply_patch` без
-preimage в Phase 1), блок говорит `The failed change is still in the workspace.` — не
-притворяйся, что оно откатано.
+Откат делает движок на переходе `Verification → Patch/Localization` по провалу: он пишет
+событие `revert` (файлы + новые версии) и возвращает дерево к pre-patch. Планы закрытых
+состояний элидируются, поэтому фактическая правка отдельно не рендерится — модель видит
+`Finish`-строки и pre-patch дерево. Если откат невозможен (например, `write`/`apply_patch` без
+preimage), изменение остаётся в дереве, а отдельного предупреждения на ленту нет — известный
+пробел.
 
 **Открытое состояние** — после этого идут шаги плана: каждый ход доксы — пара
 `ai(tool_calls=[…])` + по одному `tool(результат)` на вызов.
@@ -221,10 +210,10 @@ preimage в Phase 1), блок говорит `The failed change is still in the
 **Закрытое состояние** — план **элидируется**: остаются только
 
 ```
-ai — Start state <Label>
+system — Start state <Label>
 system — <инструкция>
-user — what: <цель>
-ai — Finish state <Label> — <why из stop>
+user   — what: <island.what>
+system — Finish state <Label> — <why из stop>
 ```
 
 **Хвост хода** (`system`, кроме `transition` — там `user`):
@@ -239,7 +228,8 @@ ai — Finish state <Label> — <why из stop>
 
 **Что затирается (не показывается):**
 - `notes` из `move` — не рендерятся;
-- `what` из `move` — не рендерится (цель берётся из определения острова);
+- `what` из `move` — не рендерится в блоке (там `island.what`); если докса задала `what`, он
+  идёт в per-turn tail;
 - **план закрытого состояния** — все пары `ai`/`tool` заменяются одной строкой `Finish state`.
 
 **Что добавляется:**
@@ -513,8 +503,10 @@ ai — Finish state <Label> — <why из stop>
      (`write`) и reverse patch (`apply_patch`), all-or-nothing.
   4. **Харнесс.** Временный replay-цикл (`seed` + контейнер + reverse diff) перенести в
      `bench/` как штатный инструмент; чеклист — §2.5.
-  5. **Shell-гигиена: cwd.** `bash` стартует из workspace root (`/app`), а репо — в `/app/ocaml`;
-     общий фикс — показывать cwd в наблюдении `bash` или различать workspace/repo root.
+  5. **Shell-гигиена: cwd (исправлено 2026-10-24).** Карта workspace теперь несёт `cwd`, если
+     shell стартует вне material root (task `workdir`). `git status` в probe больше не считает
+     служебный `.skein` изменённым файлом и запускается с `GIT_OPTIONAL_LOCKS=0`, поэтому не
+     перезаписывает `.git/index`.
   6. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
   7. Тексты состояний Patch/Verification — `docs/states_ru.md` §2.4, §2.7.
 - **Orientation result vs probe (2026-10-20).** Один `fact:session` (`environment` + `material`)
