@@ -200,7 +200,13 @@ export function parseProbe(stdout: string): EnvironmentFact {
   return { root, found, missing };
 }
 
-export function probeEnvironment(workspace: Workspace): EnvironmentFact | undefined {
+export interface ProbeOptions {
+  // The agent's network policy, known to the harness; not probed by a shell. It is the fact
+  // that tells a state whether a missing runtime can be installed.
+  network?: "on" | "off";
+}
+
+export function probeEnvironment(workspace: Workspace, options: ProbeOptions = {}): EnvironmentFact | undefined {
   let result;
   try {
     result = workspace.run(script(), { timeoutMs: PROBE_TIMEOUT_MS });
@@ -214,14 +220,15 @@ export function probeEnvironment(workspace: Workspace): EnvironmentFact | undefi
     fact.root = workspace.root;
   }
   if (result.timedOut === true) fact.partial = true;
+  if (options.network !== undefined) fact.network = options.network;
   return fact.root !== "" && (fact.found.length > 0 || fact.missing.length > 0) ? fact : undefined;
 }
 
 // The session probe: environment and material, journalled once as `SESSION_PROBE_ID`.
 // Each half can be absent (a failed shell or an unreadable tree) independently; the
 // projection renders whatever was actually observed.
-export function probeSession(workspace: Workspace): SessionProbe | undefined {
-  const environment = probeEnvironment(workspace);
+export function probeSession(workspace: Workspace, options: ProbeOptions = {}): SessionProbe | undefined {
+  const environment = probeEnvironment(workspace, options);
   // The material map's paths must read the way the agent sees them: the probe shell's PWD
   // (the container's mount point) wins over the host-side workspace root.
   const root =

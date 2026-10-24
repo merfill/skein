@@ -38,19 +38,22 @@ engine** (`runAgent`), the real tools and **the task's own verifier**, without H
   `/tmp/.skein` inside the container (`DockerBackend`). A task without `image` (none today)
   would fall back to `bwrap`
   (`tests/sandbox/container.ts`), which is kept for the opencode baseline/`minimal`;
-- `setup` runs before the agent; the **verifier is staged after the agent** so `test.sh`
-  cannot leak into the workspace: `checkIn:"task"` writes the tests into the container,
-  `checkIn:"host"` uses a separate verifier container (`SKEIN_VERIFIER_IMAGE`, default
-  `fix-code`): `/app` is streamed task→verifier with a tar pipe, tests are copied with
-  `docker cp`; there is no host copy of `/app`;
-- `checkSetup` (e.g. an OCaml rebuild) runs before the verifier;
+- `setup` runs before the agent; the task's own **`tests/test.sh`** runs after the agent, in
+  the agent's container, exactly as Harbor runs it. The tests are copied to `/tests` only then,
+  so they cannot leak into the workspace. `test.sh` bootstraps its own runtime (`apt`/`uv`/
+  `pip`), and the reward is its `/logs/verifier/reward.txt` (not its exit code);
+- the verifier keeps its own network: `--net off` detaches the network from the **agent** only
+  (`tests/sandbox/network.ts`). `checkIn`/`checkSetup` are legacy/bwrap-only; opencode also
+  runs the task's `test.sh`.
+
 - the checkpoint layer (`CheckpointBackend`; `HostBackend` for bwrap/virtual,
   `DockerBackend` for Docker) provides read-only snapshots and the failed-Patch revert;
 - `runTask`/`openTaskWorkspace` (`tests/sandbox/harness.ts`) is the shared setup for the full
   run and the step driver; Docker takes the rootless path.
 
-Useful `SandboxTask` fields: `image`, `workdir`, `mountPoint`, `setup`, `check`,
-`checkIn` (`"task"`/`"host"`), `checkSetup`, `maxTurns`, `network`.
+Useful `SandboxTask` fields: `image`, `workdir`, `mountPoint`, `setup`, `maxTurns`,
+`network` (the task requires network for the agent), and — for the legacy/opencode path only —
+`check`, `checkIn`, `checkSetup`.
 
 ### Full run
 
@@ -59,9 +62,12 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
 - without `--turns`, `task.maxTurns` is used (e.g. 60 for `fix-ocaml-gc`), else 24;
-- `--net off` (recommended) denies the **host-side** `fetch` via an allowlist proxy (model API
-  only); in rootless D `run`/jobs execute in the container. The task container is still
-  `--network none` unless the task sets `network`;
+- `--net on` (Harbor-like) gives the agent the bridge; `--net off` detaches it from the
+  agent and denies the **host-side** `fetch` via an allowlist proxy (model API only). The
+  verifier always keeps its network, so `test.sh` can install Python/pytest. A task that
+  requires network for the agent (`crack-7z-hash`) is refused under `--net off`;
+- `metrics.json` records `network` (requested), `networkAgent`, `networkVerifier`,
+  `acceptance` (`test.sh`) and `rewardSource` (`reward.txt`);
 - each run writes `bench/runs/sandbox-tasks/<ts>-<id>-<random>/` (a unique suffix keeps
   parallel runs separate): `contexts.ndjson`, `result.json`, `metrics.json`, `reward.txt`,
   `reasoning.ndjson`;
@@ -283,7 +289,10 @@ npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/<job>
   reasoning, `--responses` the raw responses.
 - **Transport `llm_error`/retry** — check `turns.ndjson`/the log; an internal retry does not
   lose turns but costs more.
-- **Verifier sees its own `test.sh`?** — it is staged only after the agent
-  (`stageVerifier`); if you touch the harness, do not move staging before the run.
+- **Verifier sees its own `test.sh`?** — it is copied to `/tests` only after the agent and
+  runs in its container; if you touch the harness, do not move staging before the run.
+- **`test.sh` failed at apt/uv/pip** — the verifier keeps its own network even under
+  `--net off`; inspect stderr in `result.json`. `rewardSource:"missing"` means
+  `/logs/verifier/reward.txt` never appeared.
 - **A container is left behind** — `docker ps | grep skein`, then `docker rm -f <name>`;
   normally `cleanupContainers()` handles it.

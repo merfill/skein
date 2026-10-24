@@ -24,7 +24,7 @@ Options:
 
 | flag | meaning |
 |---|---|
-| `--net on\|off` | host-side `fetch` network (off routes through the API allowlist proxy); `run`/jobs execute in the container; the task container is always `--network none` |
+| `--net on\|off` | agent network (`on` = bridge, `off` = detached); host-side `fetch` off routes through the API allowlist proxy; this driver does not run the verifier |
 | `--dir <path>` | trace directory (default `bench/runs/sandbox-tasks/<ts>-<id>-live-step`) |
 | `--signal <path>` | continue file (default `<dir>/continue`) |
 | `--auto` | do not wait between turns |

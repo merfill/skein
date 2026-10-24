@@ -3,6 +3,7 @@ import { cleanupContainers } from "./docker";
 import { runLiveTask } from "./live";
 import { startAllowlistProxy, type AllowlistProxy } from "./proxy";
 import { TASKS } from "./tasks/registry";
+import { parseNetworkMode } from "./network";
 import { cleanupSandboxes } from "./workspace";
 
 // Live run of a ported terminal-bench task (no Harbor):
@@ -21,12 +22,12 @@ async function main(): Promise<void> {
   if (task === undefined) throw new Error(`unknown task ${id}; known: ${Object.keys(TASKS).join(", ")}`);
 
   const turns = arg("--turns", "");
-  const net = arg("--net", "on") === "off" ? "off" : "on";
-  // `off` denies the HOST-side tools their internet: the engine's `fetch` and background
-  // `run` execute on the host (not in the task container, which is `--network none` anyway),
-  // so their `curl` is routed through an allowlist proxy that permits only the model API. The
-  // model call is permitted either way — undici ignores the env proxy or, if not, the host is
-  // allowlisted.
+  const net = parseNetworkMode(arg("--net", "on"));
+  // `off` removes the network from the agent container and, for the engine's host-side
+  // tools (`fetch`, background `run`), routes their `curl` through an allowlist proxy that
+  // permits only the model API. The verifier keeps its own network: every task's `test.sh`
+  // bootstraps its runtime there (see `network.ts`). The model call is permitted either way —
+  // undici ignores the env proxy or, if not, the host is allowlisted.
   let proxy: AllowlistProxy | undefined;
   if (net === "off") {
     const apiHost = new URL(loadSettings().apiUrl).hostname;

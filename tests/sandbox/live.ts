@@ -9,6 +9,7 @@ import type { Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { runTask } from "./harness";
 import { delta, snapshot, summarize, type MetricsSummary, type TurnMetric } from "./metrics";
+import type { NetworkMode } from "./network";
 import type { SandboxTask } from "./task";
 
 // One live run of a ported task with the real model, writing a trace dir and returning the
@@ -30,9 +31,10 @@ export interface LiveTaskOptions {
   maxTurns: number;
   dir?: string;
   quiet?: boolean;
-  // Recorded in `metrics.json` for traceability: "off" means the host-side tools (`fetch`,
-  // background `run`) were denied the internet by the CLI's allowlist proxy.
-  network?: "on" | "off";
+  // `off` removes the network from the AGENT (and from the host-side tools via the CLI's
+  // allowlist proxy); the verifier keeps its own network, so `test.sh` can install its
+  // runtime. See `network.ts`.
+  network?: NetworkMode;
 }
 
 export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): Promise<LiveTaskResult> {
@@ -152,7 +154,10 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   };
 
   const started = Date.now();
-  const run = await runTask(task, propose, { maxTurns: options.maxTurns });
+  const run = await runTask(task, propose, {
+    maxTurns: options.maxTurns,
+    network: options.network ?? "on",
+  });
   const elapsedMs = Date.now() - started;
   const refused = new Set(
     run.result.events
@@ -162,14 +167,21 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   for (const record of turns) record.refused = refused.has(record.turn);
 
   const summary = summarize(turns);
+  const network = {
+    network: run.network.requested,
+    networkAgent: run.network.agent,
+    networkVerifier: run.network.verifier,
+    acceptance: run.acceptance,
+    rewardSource: run.rewardSource,
+  };
   writeFileSync(join(dir, "reward.txt"), `${run.reward}\n`);
   writeFileSync(
     join(dir, "metrics.json"),
-    JSON.stringify({ task: task.id, network: options.network ?? "on", reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
+    JSON.stringify({ task: task.id, ...network, reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
   );
   writeFileSync(
     join(dir, "result.json"),
-    JSON.stringify({ stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, reward: run.reward, check: run.check, events: run.result.events }, null, 2),
+    JSON.stringify({ stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, reward: run.reward, ...network, check: run.check, events: run.result.events }, null, 2),
   );
   return {
     task: task.id,

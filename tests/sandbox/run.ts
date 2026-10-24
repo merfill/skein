@@ -4,6 +4,7 @@ import type { Action, Proposals } from "../../src/llm/schemas";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { Workspace } from "../../src/tools/workspace";
+import type { NetworkMode } from "./network";
 import { sandboxWorkspace, type SandboxSpec } from "./workspace";
 
 // Run the real loop against a virtual workspace. `propose` is injected, so a test can be
@@ -17,8 +18,9 @@ export interface SandboxRunOptions {
   // the offline harness test can replay it. Never set on a live run (it would leak the
   // answer to the agent).
   stageSolution?: boolean;
-  // Docker network mode for the task container; "none" (default) keeps the agent offline.
-  network?: string;
+  // Agent network mode. `on` gives the agent the bridge; `off` detaches it for the agent
+  // phase only — the verifier always keeps its own network (`network.ts`).
+  network?: NetworkMode;
 }
 
 export interface SandboxRun {

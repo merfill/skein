@@ -4,9 +4,8 @@ import { join } from "node:path";
 
 import { loadSettings } from "../../src/config/settings";
 import type { CommandResult } from "../../src/tools/workspace";
-import { containerWorkspace } from "./container";
 import { dockerWorkspace, type DockerWorkspace } from "./docker";
-import { materializeTask, stageVerifier } from "./harness";
+import { materializeTask, runTestSh } from "./harness";
 import { startApiLogProxy, type ApiLogProxy } from "./api-log-proxy";
 import { writeCapture } from "./opencode-capture";
 import { parseOpenCodeStream, type OpenCodeMetric } from "./opencode-metrics";
@@ -49,6 +48,7 @@ export interface OpenCodeResult {
   network: "on" | "off";
   reward: number;
   check: CommandResult;
+  rewardSource: "reward.txt" | "missing";
   metric: OpenCodeMetric;
   elapsedMs: number;
   dir: string;
@@ -83,7 +83,7 @@ export async function runOpenCodeTask(
   }
   mkdirSync(dir, { recursive: true });
 
-  const { root, request, check } = materializeTask(task);
+  const { root, request } = materializeTask(task);
   writeFileSync(join(root, ".skein", "instruction.txt"), request);
 
   // opencode config (passed with OPENCODE_CONFIG, so the host's global config is ignored).
@@ -165,21 +165,17 @@ export async function runOpenCodeTask(
     writeFileSync(join(dir, "opencode.err.txt"), run.stderr);
     const metric = parseOpenCodeStream(run.stdout);
 
-    // The verifier is staged only now — after the agent, before the check — so the agent's
-    // workspace never contained it.
-    stageVerifier(root, task);
-
-    // The same pre-verifier rebuild and verifier as the engine harness.
-    if (task.checkSetup !== undefined) ws.run(task.checkSetup);
-    const checker = task.checkIn === "host" ? containerWorkspace(root) : ws;
-    const checked = checker.run(check);
-    const reward = checked.code === 0 ? 1 : 0;
+    // The task's own `tests/test.sh`, staged and run in the agent's container after it —
+    // exactly the engine path, so the two agents have identical acceptance.
+    const outcome = runTestSh(task, ws);
+    const checked = outcome.checked;
+    const reward = outcome.reward;
 
     writeFileSync(join(dir, "reward.txt"), `${reward}\n`);
     writeFileSync(
       join(dir, "metrics.json"),
       JSON.stringify(
-        { task: task.id, agent: "opencode", network: options.network, model, variant, reward, check: checked, metric, elapsedMs },
+        { task: task.id, agent: "opencode", network: options.network, networkAgent: "bridge", networkVerifier: "bridge", acceptance: "test.sh", rewardSource: outcome.rewardSource, model, variant, reward, check: checked, metric, elapsedMs },
         null,
         2,
       ),
@@ -191,7 +187,7 @@ export async function runOpenCodeTask(
           `(visible ${metric.visibleOutput} + reason ${metric.reasoningTokens}) cacheR=${metric.cacheRead}`,
       );
     }
-    return { task: task.id, network: options.network, reward, check: checked, metric, elapsedMs, dir, run };
+    return { task: task.id, network: options.network, reward, check: checked, rewardSource: outcome.rewardSource, metric, elapsedMs, dir, run };
   } finally {
     await proxy?.close();
     if (logProxy !== undefined) {

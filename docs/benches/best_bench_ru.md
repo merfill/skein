@@ -818,6 +818,37 @@ goal-into-move (507k).
   fresh 55 060, cache 92%; пик контекста 78 572) — выше, чем с сетью (#7): без оракула Skein
   выводит строку вручную. Та же однострочная правка `p += Whsize_hd(hd);` → `p += wh;`.
 
+## 2026-10-24 — сеть, приёмка `test.sh`, network probe, Construction A/B
+
+**Harness.** Docker-задача теперь принимается родным `tests/test.sh` в контейнере агента
+после него; reward читается из `/logs/verifier/reward.txt`, а не из exit code. `--net`
+управляет только агентом: `on` — bridge, `off` — сеть снята; verifier всегда с сетью, потому
+что `test.sh` сам ставит runtime (`uv`/Python). `checkIn`/`SKEIN_VERIFIER_IMAGE` ушли из
+task-пути. В probe добавлен engine-owned `network: on|off`; он рендерится в environment brief.
+
+**`regex-log`, old prompt + probe, K=3.** Все reward=1.
+
+| режим | turns (median) | ₽ median | reasoning median |
+|---|---:|---:|---:|
+| net off | **13** (13/13/13) | **1.842** | 17 362 |
+| net on | 16 (18/13/16) | **1.599** | 10 641 |
+
+**opencode в той же песочнице, `test.sh`.** net on — 15 шагов / ~1.61₽; net off — 17 шагов /
+~1.62₽ (цена оценена по ставкам провайдера). Python в образе нет; opencode с сетью on сам его
+не ставит и проверяет Perl.
+
+**Construction A/B — отрицательный.** Новый промт (declared engine, do not weaken) дал off
+median 17 / 1.906₽, on 15 / 1.762₽ против old+probe 13 / 1.842₽ и 16 / 1.599₽. Ребро
+`Orientation → Construction` дало off 17 / 2.022₽, on 13 / 2.025₽. Оба откачены. Дешёвый
+`bench/turn.ts --rebuild` показал, что выбор перехода корректен (`regex-log` 9/9 Construction,
+`cobol` 3/3 Research, `openssl` 3/3 Construction), но Research структурно полезен: без него
+reasoning переезжает в Construction и стоимость растёт.
+
+Каталоги: `bench/runs/sandbox-tasks/2026-10-24T07-00-47-*` (old off),
+`…07-11-47-*` (old on), `…06-21-55-*` / `…06-50-22-*` (prompt A/B),
+`…07-08-30-*` / `…07-51-06-*` / `…07-54-46-*` (edge A/B),
+`…05-41-47-*` / `…05-44-35-*` (opencode on/off).
+
 ## Дальше
 
 - **2026-10-18:** checkpoint/revert и обобщённые состояния дали 5/5 на

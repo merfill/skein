@@ -28,6 +28,10 @@ export interface EnvironmentFact {
   root: string;
   found: EnvironmentTool[];
   missing: { name: string; group: EnvironmentGroup }[];
+  // The agent's network policy, recorded by the harness (not discovered by a shell): this is
+  // the fact that decides whether a missing runtime can be installed. The verifier has its
+  // own network and is not described here.
+  network?: "on" | "off";
   // The probe hit its time budget; the listed facts are still observations, not a
   // complete picture.
   partial?: boolean;
@@ -90,6 +94,13 @@ export function environmentBrief(fact: EnvironmentFact, island?: IslandId): stri
     island === "construction" ||
     island === "verification";
   if (showRoot && fact.root !== "") lines.push(`root: ${fact.root}`);
+  if (fact.network !== undefined) {
+    lines.push(
+      fact.network === "off"
+        ? "network: off — no external downloads; package installs that need the network will fail"
+        : "network: on",
+    );
+  }
 
   const tools = found.filter((tool) => TOOL_GROUPS.has(tool.group)).sort((a, b) => a.name.localeCompare(b.name));
   for (const group of ["vcs", "build", "compilers", "interpreters", "test", "pkg"] as const) {

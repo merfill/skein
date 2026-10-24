@@ -674,6 +674,38 @@ inside the task image; the task's own verifier scores the result (`check.code = 
   network (#7): without an oracle Skein has to derive the line by hand. Same one-line edit
   `p += Whsize_hd(hd);` → `p += wh;`.
 
+## 2026-10-24 — network modes, `test.sh` acceptance, network probe, Construction A/B
+
+**Harness.** A Docker task is now accepted by the task's own `tests/test.sh` in the agent's
+container after it; the reward comes from `/logs/verifier/reward.txt`, not the exit code.
+`--net` controls the agent only: `on` = bridge, `off` = detached; the verifier always has
+network because `test.sh` installs its own runtime (`uv`/Python). `checkIn`/
+`SKEIN_VERIFIER_IMAGE` left the task path. The probe now carries an engine-owned
+`network: on|off`, rendered in the environment brief.
+
+**`regex-log`, old prompt + probe, K=3.** All reward=1.
+
+| mode | turns (median) | ₽ median | reasoning median |
+|---|---:|---:|---:|
+| net off | **13** (13/13/13) | **1.842** | 17,362 |
+| net on | 16 (18/13/16) | **1.599** | 10,641 |
+
+**opencode in the same sandbox, `test.sh`.** net on — 15 steps / ~1.61₽; net off — 17 steps /
+~1.62₽ (cost estimated from the provider rates). The image has no Python; with network on
+opencode still does not install it and uses Perl.
+
+**Construction A/B — negative.** The new prompt (declared engine, do not weaken) gave off
+median 17 / 1.906₽, on 15 / 1.762₽ versus old+probe 13 / 1.842₽ and 16 / 1.599₽. The
+`Orientation → Construction` edge gave off 17 / 2.022₽, on 13 / 2.025₽. Both reverted. The
+cheap `bench/turn.ts --rebuild` check showed the transition choice is correct (`regex-log` 9/9
+Construction, `cobol` 3/3 Research, `openssl` 3/3 Construction), but Research is structurally
+useful: without it the reasoning moves into Construction and the cost rises.
+
+Run dirs: `bench/runs/sandbox-tasks/2026-10-24T07-00-47-*` (old off),
+`…07-11-47-*` (old on), `…06-21-55-*` / `…06-50-22-*` (prompt A/B),
+`…07-08-30-*` / `…07-51-06-*` / `…07-54-46-*` (edge A/B),
+`…05-41-47-*` / `…05-44-35-*` (opencode on/off).
+
 ## Next
 
 - **2026-10-18:** checkpoint/revert and the generalized states gave 5/5 on

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { probeSession } from "../../src/loop/probe";
@@ -9,7 +9,8 @@ import type { CommandResult, Workspace } from "../../src/tools/workspace";
 import { createCheckpoint, createCheckpointWithBackend, type Checkpoint } from "./checkpoint";
 import { DockerBackend } from "./checkpoint-docker";
 import { containerWorkspace } from "./container";
-import { dockerImageAvailable, dockerWorkspace, type DockerWorkspace } from "./docker";
+import { dockerWorkspace, type DockerWorkspace } from "./docker";
+import { resolveNetwork, type NetworkPlan } from "./network";
 import type { SandboxRunOptions } from "./run";
 import { APT_SHIM, DEFAULT_TASK_CHECK, PYTEST_SHIM, VERIFIER_RUNNER, harborTaskDir, type SandboxTask } from "./task";
 import { newSandboxRoot } from "./workspace";
@@ -24,7 +25,15 @@ export interface TaskRun {
   result: AgentResult;
   workspace: Workspace;
   reward: number;
+  // The acceptance that produced the reward: the task's own `test.sh` (Harbor's path) or,
+  // on the legacy/bwrap path, the task's `check` command.
+  acceptance: "test.sh" | "task-check";
+  // Where the reward came from. `reward.txt` is written by `test.sh` and is authoritative;
+  // `exit` is the legacy check's exit code; `missing` means `test.sh` did not produce one
+  // (an infrastructure failure in the verifier phase).
+  rewardSource: "reward.txt" | "exit" | "missing";
   check: CommandResult;
+  network: NetworkPlan;
   root: string;
   request: string;
 }
@@ -102,32 +111,13 @@ export interface OpenedTask {
   check: string;
   checkpoint: Checkpoint;
   capture: (label: string) => void;
+  network: NetworkPlan;
   // Docker tasks run the image directly; `/app` is never extracted to the host.
   rootless?: boolean;
   container?: DockerWorkspace;
 }
 
-// Stage the verifier INSIDE the task container: the task's own pytest files plus the
-// pytest-free runner and shim. Called after the agent, so `.skein/tests` is absent during the
-// run. The task's image must carry Python (`checkIn: "task"`).
-function stageVerifierInContainer(workspace: Workspace, task: SandboxTask): void {
-  const src = join(harborTaskDir(task.id), "tests");
-  const dst = `${task.mountPoint ?? "/app"}/.skein/tests`;
-  const walk = (dir: string, rel: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const source = join(dir, entry.name);
-      const path = rel === "" ? entry.name : `${rel}/${entry.name}`;
-      if (entry.isDirectory()) {
-        walk(source, path);
-      } else if (entry.isFile()) {
-        workspace.write(`${dst}/${path}`, readFileSync(source, "utf8"));
-      }
-    }
-  };
-  walk(src, "");
-  workspace.write(`${dst}/run.py`, VERIFIER_RUNNER);
-  workspace.write(`${dst}/pytest.py`, PYTEST_SHIM);
-}
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 
 // Test-only: stage the task's own solution inside the task container, so the offline harness
 // can replay it without extracting `/app` to the host. An offline task's solution may begin
@@ -146,102 +136,71 @@ function stageSolutionInContainer(workspace: Workspace, task: SandboxTask, taskD
   workspace.write(`${mount}/.skein/solve.sh`, readFileSync(solution, "utf8"));
 }
 
-export const VERIFIER_IMAGE = process.env.SKEIN_VERIFIER_IMAGE ?? "alexgshaw/fix-code-vulnerability:20251031";
+const TEST_SH = "bash /tests/test.sh";
+const VERIFIER_TIMEOUT_MS = 900_000;
 
-export function verifierImageAvailable(): boolean {
-  return dockerImageAvailable(VERIFIER_IMAGE);
+// Stage the task's own `tests/` at `/tests` INSIDE the agent's container, exactly where
+// Harbor puts them. Called only after the agent has run, so the verifier is never visible
+// during the work (fix-ocaml-gc's test.sh re-clones the solution).
+function stageTestSh(container: DockerWorkspace, task: SandboxTask): void {
+  const prepared = container.exec("rm -rf /tests /logs/verifier && mkdir -p /tests /logs/verifier");
+  if (prepared.code !== 0) throw new Error(prepared.stderr.trim() || "test dirs failed");
+  const staged = spawnSync(
+    "docker",
+    ["cp", `${join(harborTaskDir(task.id), "tests")}/.`, `${container.name}:/tests`],
+    { encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (staged.status !== 0) {
+    throw new Error((staged.stderr ?? "").trim() || "test.sh staging failed");
+  }
 }
 
-const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+export interface VerificationOutcome {
+  checked: CommandResult;
+  reward: number;
+  rewardSource: "reward.txt" | "missing";
+}
 
-// A task whose image lacks the verifier's runtime (`checkIn: "host"`) gets a verifier
-// CONTAINER instead of a host copy: `/app` is streamed task -> verifier with a tar pipe, the
-// tests are copied with `docker cp`, and the check runs in the verifier image. `/app` never
-// lands on the host.
-export function runVerifierCheck(
-  task: SandboxTask,
-  container: DockerWorkspace,
-  check: string,
-): CommandResult {
-  if (!dockerImageAvailable(VERIFIER_IMAGE)) {
-    throw new Error(`verifier image not available: ${VERIFIER_IMAGE} (set SKEIN_VERIFIER_IMAGE)`);
+// Run the task's own `tests/test.sh` in the agent's container and read the verdict it wrote.
+// Shared by the engine path and the opencode baseline so both are accepted by exactly the
+// same script. Called only after the agent; its network is the caller's responsibility.
+export function runTestSh(task: SandboxTask, container: DockerWorkspace): VerificationOutcome {
+  stageTestSh(container, task);
+  const checked = container.run(TEST_SH, { timeoutMs: VERIFIER_TIMEOUT_MS });
+  const verdict = readReward(container);
+  return { checked, reward: verdict.reward, rewardSource: verdict.source };
+}
+
+// `test.sh` writes the verdict to `/logs/verifier/reward.txt`; its exit code is not the
+// reward (the scripts end with a successful `echo`, even when pytest failed). A missing file
+// is a verifier failure, not a pass.
+function readReward(container: DockerWorkspace): { reward: number; source: "reward.txt" | "missing" } {
+  const result = container.exec("cat /logs/verifier/reward.txt");
+  const raw = result.stdout.trim();
+  if (result.code === 0 && (raw === "0" || raw === "1")) {
+    return { reward: Number(raw), source: "reward.txt" };
   }
-  const name = `skein-verifier-${process.pid}-${Date.now()}`;
-  const testsRoot = newSandboxRoot(`skein-verifier-${task.id}-`);
-  stageVerifier(testsRoot, task);
-  const mount = container.displayRoot ?? "/app";
-  try {
-    const started = spawnSync(
-      "docker",
-      ["run", "-d", "--name", name, "--entrypoint", "sleep", "--network", "none", "-w", "/app", VERIFIER_IMAGE, "infinity"],
-      { encoding: "utf8", timeout: 120_000 },
-    );
-    if (started.status !== 0) {
-      throw new Error(`verifier container start failed: ${(started.stderr ?? "").trim()}`);
-    }
-    // Start from an empty `/app`: the verifier image may ship its own tree (the default
-    // `fix-code` image does), and stale files must not leak into the task's verification.
-    const cleared = spawnSync(
-      "docker",
-      ["exec", name, "bash", "-lc", "rm -rf /app/* /app/.[!.]* 2>/dev/null; true"],
-      { encoding: "utf8", timeout: 60_000 },
-    );
-    if (cleared.status !== 0) throw new Error(`verifier /app cleanup failed: ${(cleared.stderr ?? "").trim()}`);
-    const copied = spawnSync(
-      "bash",
-      ["-c", `set -o pipefail; docker exec ${shellQuote(container.name)} tar -C ${shellQuote(mount)} -cf - . | docker exec -i ${shellQuote(name)} tar -C /app -xf -`],
-      { encoding: "utf8", timeout: 600_000, maxBuffer: 64 * 1024 * 1024 },
-    );
-    if (copied.status !== 0) {
-      throw new Error(`workspace copy to verifier failed: ${(copied.stderr ?? "").trim()}`);
-    }
-    const mkdir = spawnSync("docker", ["exec", name, "mkdir", "-p", "/app/.skein/tests"], {
-      encoding: "utf8",
-      timeout: 60_000,
-    });
-    if (mkdir.status !== 0) throw new Error(`verifier tests dir failed: ${(mkdir.stderr ?? "").trim()}`);
-    const staged = spawnSync("docker", ["cp", `${testsRoot}/.`, `${name}:/app/.`], {
-      encoding: "utf8",
-      timeout: 120_000,
-    });
-    if (staged.status !== 0) throw new Error(`verifier tests copy failed: ${(staged.stderr ?? "").trim()}`);
-    const checked = spawnSync("docker", ["exec", "-w", "/app", name, "bash", "-lc", `set -o pipefail; ${check}`], {
-      encoding: "utf8",
-      timeout: 600_000,
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    const timedOut =
-      checked.signal === "SIGTERM" ||
-      (checked.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
-    return {
-      code: checked.status ?? (timedOut ? 124 : 1),
-      stdout: checked.stdout ?? "",
-      stderr: checked.stderr ?? "",
-      ...(timedOut ? { timedOut: true } : {}),
-      ...(checked.signal !== undefined && checked.signal !== null ? { signal: checked.signal } : {}),
-    };
-  } finally {
-    spawnSync("docker", ["rm", "-f", name], { stdio: "ignore", timeout: 60_000 });
-    rmSync(testsRoot, { recursive: true, force: true });
-  }
+  return { reward: 0, source: "missing" };
 }
 
 // Docker tasks: start the task image directly. No `tar | tar`, no `-v root:/app`; the
 // checkpoint store lives in the container (`/tmp/.skein`) and the host only orchestrates.
-function openRootlessTask(task: SandboxTask, options: SandboxRunOptions): OpenedTask {
+function openRootlessTask(task: SandboxTask, options: SandboxRunOptions, network: NetworkPlan): OpenedTask {
   const taskDir = harborTaskDir(task.id);
   const request = task.request ?? readFileSync(join(taskDir, "instruction.md"), "utf8");
-  const check = task.check ?? DEFAULT_TASK_CHECK;
+  const check = TEST_SH;
   const root = newSandboxRoot(`skein-rootless-${task.id}-`);
   const mount = task.mountPoint ?? "/app";
+  // Rootless Docker cannot connect a network to a container started with `--network none`.
+  // Start on the verifier's network, detach it for an offline agent, and reattach it before
+  // `test.sh` (Harbor's verifier has network; see `network.ts`).
+  const startNetwork = task.network ?? (network.verifier === "host" ? "bridge" : network.verifier);
   const container = dockerWorkspace(root, {
     image: task.image as string,
     rootless: true,
+    network: startNetwork,
     ...(task.mountPoint !== undefined ? { mountPoint: task.mountPoint } : {}),
     ...(task.workdir !== undefined ? { workdir: task.workdir } : {}),
-    ...((task.network ?? options.network) !== undefined
-      ? { network: task.network ?? options.network }
-      : {}),
   });
   for (const [path, content] of Object.entries(task.files ?? {})) {
     container.write(path.startsWith("/") ? path : `${mount}/${path}`, content);
@@ -259,6 +218,9 @@ function openRootlessTask(task: SandboxTask, options: SandboxRunOptions): Opened
       throw new Error(`task ${task.id} setup failed (exit ${result.code}): ${command}\n${result.stderr}`);
     }
   }
+  // There is no task `setup` today; if one appears, it runs before this point and keeps the
+  // network. The agent starts after the detach, so `off` is honest for its work.
+  if (network.agent === "none") container.detachNetwork(startNetwork);
   const capture = (label: string): void => {
     try {
       checkpoint.snapshot(label);
@@ -267,15 +229,19 @@ function openRootlessTask(task: SandboxTask, options: SandboxRunOptions): Opened
     }
   };
   capture("initial");
-  return { workspace, root, request, check, checkpoint, capture, rootless: true, container };
+  return { workspace, root, request, check, checkpoint, capture, network, rootless: true, container };
 }
 
 export function openTaskWorkspace(
   task: SandboxTask,
   options: SandboxRunOptions = {},
 ): OpenedTask {
+  const network = resolveNetwork(options.network ?? "on");
   if (task.image !== undefined) {
-    return openRootlessTask(task, options);
+    if (task.network !== undefined && network.requested === "off") {
+      throw new Error(`task ${task.id} requires network; run with --net on`);
+    }
+    return openRootlessTask(task, options, network);
   }
   const { root, request, check } = materializeTask(task, { stageSolution: options.stageSolution });
   // Image-less fallback (none of the ported tasks today): a host root under bwrap. The
@@ -315,7 +281,7 @@ export function openTaskWorkspace(
     }
   };
   capture("initial");
-  return { workspace, root, request, check, checkpoint, capture };
+  return { workspace, root, request, check, checkpoint, capture, network: { ...network, agent: "host", verifier: "host" } };
 }
 
 export async function runTask(
@@ -323,7 +289,7 @@ export async function runTask(
   propose: Proposer,
   options: SandboxRunOptions = {},
 ): Promise<TaskRun> {
-  const { workspace, root, request, check, capture, rootless, container } = openTaskWorkspace(task, options);
+  const { workspace, root, request, check, capture, network, rootless, container } = openTaskWorkspace(task, options);
   let turn = 0;
   const timings = process.env.SKEIN_TIMINGS === "1";
   const proposeWithCheckpoint: Proposer = async (context) => {
@@ -340,7 +306,7 @@ export async function runTask(
       propose: proposeWithCheckpoint,
       workspace,
       maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
-      probe: probeSession,
+      probe: (workspace) => probeSession(workspace, { network: network.requested }),
     },
     {
       request: { id: "r1", text: request },
@@ -348,22 +314,27 @@ export async function runTask(
     },
   );
 
-  // The verifier is staged only now — after the agent, before the check — so the agent's
-  // workspace never contained it.
+  // Acceptance is staged only now — after the agent, before the check — so the agent's
+  // workspace never contained it. On the Docker path this is the task's own `tests/test.sh`,
+  // exactly as Harbor runs it: in the agent's container, with the agent's environment, and
+  // with the verifier's network (independent of `--net off`). `checkSetup` is not run: the
+  // task's `test.sh` owns its own preparation (fix-ocaml-gc re-clones, rebuilds and recreates
+  // tests.txt there).
   let checkRoot = root;
   let checked: CommandResult;
+  let reward: number;
+  let rewardSource: TaskRun["rewardSource"];
+  let acceptance: TaskRun["acceptance"];
   if (rootless) {
-    // A pre-verifier step in the task container (e.g. fix-ocaml-gc rebuilds and regenerates
-    // the tests.txt the verifier reads); its exit code is left to the verifier to reflect.
-    if (task.checkSetup !== undefined) workspace.run(task.checkSetup);
-    if (task.checkIn === "host") {
-      // The image lacks the verifier runtime: stream `/app` into a verifier container and run
-      // the check there. `/app` never lands on the host.
-      checked = runVerifierCheck(task, container as DockerWorkspace, check);
-    } else {
-      stageVerifierInContainer(workspace, task);
-      checked = workspace.run(check);
+    const docker = container as DockerWorkspace;
+    if (network.agent !== network.verifier) {
+      docker.attachNetwork(network.verifier === "host" ? "bridge" : network.verifier);
     }
+    const verdict = runTestSh(task, docker);
+    checked = verdict.checked;
+    reward = verdict.reward;
+    rewardSource = verdict.rewardSource;
+    acceptance = "test.sh";
   } else {
     stageVerifier(root, task);
     // A pre-verifier step in the task container (e.g. fix-ocaml-gc rebuilds and regenerates
@@ -373,12 +344,18 @@ export async function runTask(
     // verifier's runtime (git-leak-recovery has no Python) can run it via bwrap on the host.
     const checker = task.checkIn === "host" ? containerWorkspace(root) : workspace;
     checked = checker.run(check);
+    reward = checked.code === 0 ? 1 : 0;
+    rewardSource = "exit";
+    acceptance = "task-check";
   }
   return {
     result,
     workspace,
-    reward: checked.code === 0 ? 1 : 0,
+    reward,
+    acceptance,
+    rewardSource,
     check: checked,
+    network,
     root: checkRoot,
     request,
   };

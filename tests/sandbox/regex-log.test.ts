@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Action } from "../../src/llm/schemas";
 import { containerWorkspace } from "./container";
 import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
-import { runTask, taskAvailable, verifierImageAvailable } from "./harness";
+import { runTask, taskAvailable } from "./harness";
 import { scripted } from "./run";
 import { regexLog } from "./tasks/regex-log";
 import { cleanupSandboxes, newSandboxRoot } from "./workspace";
@@ -16,8 +16,9 @@ afterEach(() => {
 // The bwrap primitive is kept for the opencode baseline / `bench/minimal`; the task itself now
 // runs on its own image through the rootless Docker path.
 
-// Offline (no model): the bwrap primitive, the `/app` path rewrite, and the real task harness
-// with the rootless task container + verifier container.
+// Offline (no model): the bwrap primitive, the `/app` path rewrite, and the real task harness.
+// The verifier is the task's own `tests/test.sh`, run in the agent's container after it, as
+// Harbor does; `test.sh` installs Python itself, so the image needs none.
 
 describe("sandbox container (bwrap)", () => {
   it("runs a real shell with the workspace at /app and no network", () => {
@@ -61,21 +62,18 @@ function proposerFor(regex: string) {
 }
 
 const ready =
-  dockerAvailable() &&
-  dockerImageAvailable(regexLog.image ?? "") &&
-  verifierImageAvailable() &&
-  taskAvailable(regexLog.id);
+  dockerAvailable() && dockerImageAvailable(regexLog.image ?? "") && taskAvailable(regexLog.id);
 
-describe.skipIf(!ready)("regex-log task (rootless task + verifier container)", () => {
+describe.skipIf(!ready)("regex-log task (rootless task + test.sh)", () => {
   it("rewards a correct regex with 1", async () => {
     const run = await runTask(regexLog, proposerFor(GOOD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(1);
-    expect(run.check.stdout).toContain("PASS test_regex_matches_dates");
-  }, 120_000);
+    expect(run.check.stdout).toMatch(/PASSED.*test_regex_matches_dates|test_regex_matches_dates.*PASSED/);
+  }, 300_000);
 
   it("rewards a wrong regex with 0", async () => {
     const run = await runTask(regexLog, proposerFor(BAD_REGEX), { maxTurns: 6 });
     expect(run.reward).toBe(0);
-    expect(run.check.stdout).toContain("FAIL test_regex_matches_dates");
-  }, 120_000);
+    expect(run.check.stdout).toMatch(/FAILED.*test_regex_matches_dates|test_regex_matches_dates.*FAILED/);
+  }, 300_000);
 });

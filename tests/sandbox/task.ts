@@ -10,10 +10,11 @@ import { join } from "node:path";
 //
 //   { id, files?, setup?, check?, mountPoint? }
 //
-// `request` defaults to the cached `instruction.md`; `check` defaults to running the
-// cached verifier (`tests/test_outputs.py`) — the task overrides either when its criterion
-// differs. `files` are the environment's own files (a Docker `COPY`), `setup` are the
-// commands a Dockerfile/setup.sh would run before the agent.
+// `request` defaults to the cached `instruction.md`. On the Docker path the reward comes from
+// the task's own `tests/test.sh` (staged after the agent, run in its container, like Harbor):
+// `check`, `checkIn` and `checkSetup` are for the legacy/bwrap and opencode paths only.
+// `files` are the environment's own files (a Docker `COPY`), `setup` are the commands a
+// Dockerfile/setup.sh would run before the agent.
 
 export interface SandboxTask {
   id: string;
@@ -26,21 +27,22 @@ export interface SandboxTask {
   // environment, so no host install is needed. `workdir` is the task WORKDIR inside it.
   image?: string;
   workdir?: string;
-  // Where the verifier runs. "task" (default) runs it in the task image; "host" runs it in a
-  // separate verifier container (`SKEIN_VERIFIER_IMAGE`) for an image that lacks the verifier's
-  // runtime (e.g. `git-leak-recovery` has git but no Python). The legacy host/bwrap path uses
-  // it too when the task has no image.
+  // Legacy/bwrap and opencode verifier placement. The rootless Docker path ignores it and
+  // runs the task's `tests/test.sh` in the agent's container. "host" runs the check through
+  // bwrap on the host (for an image-less task whose image would otherwise supply the runtime).
   checkIn?: "task" | "host";
   // The turn budget for a live run (default 24). A build-heavy task needs more: the
   // criterion triggers a full rebuild, and a foreground run of it blocks for minutes but is
   // one turn (`fix-ocaml-gc` sets 60, like the Harbor acceptance). An explicit `--turns`
   // overrides it.
   maxTurns?: number;
-  // A command run in the task container before the verifier (e.g. `fix-ocaml-gc` rebuilds
-  // the compiler and regenerates tests.txt, which the verifier then reads).
+  // A pre-verifier command for the legacy/bwrap and opencode paths. The rootless Docker path
+  // does not run it: the task's `test.sh` owns its own preparation (fix-ocaml-gc re-clones,
+  // rebuilds and regenerates tests.txt there).
   checkSetup?: string;
-  // Docker network mode for the task container. Default "none" (offline); a task whose work
-  // genuinely needs the network (crack-7z-hash installs p7zip) sets "bridge".
+  // The task requires network for the AGENT (crack-7z-hash installs p7zip and a Perl module).
+  // `--net off` refuses such a task instead of silently leaving it on the bridge. The
+  // verifier always has network (`network.ts`).
   network?: string;
 }
 

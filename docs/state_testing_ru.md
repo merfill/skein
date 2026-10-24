@@ -46,18 +46,23 @@
 - **Образ задачи уже содержит нужное окружение** (репозиторий, тулчейн), поэтому на хосте
   ничего устанавливать не надо.
 - Для Docker-задач контейнер стартует **прямо из образа**:
-  `docker run -d --entrypoint sleep --network none -w /app <image> infinity`. `/app` не
-  выгружается в host temp-root и не бинд-маунтится (`rootless`); host-копии `/app` нет.
+  `docker run -d --entrypoint sleep --network <bridge|none> -w /app <image> infinity`. `/app`
+  не выгружается в host temp-root и не бинд-маунтится (`rootless`); host-копии `/app` нет.
+  Rootless Docker не умеет подключать сеть к контейнеру, стартовавшему с `--network none`,
+  поэтому контейнер всегда стартует на bridge: при `--net off` bridge снимается с агента
+  после setup и возвращается перед `test.sh`.
 - Команды, файловые инструменты (`read`/`grep`/`list`/`edit`/`write`), `bash`, фоновые jobs и
   checkpoint идут через `docker exec` в этот же контейнер, поэтому `/app` и `/tmp` означают
   одно и то же и для инструментов, и для shell; `grep`/`listFiles` возвращают
   workspace-relative пути, как `fsWorkspace`.
 - Checkpoint store — `/tmp/.skein` **в контейнере** (`DockerBackend`); `/app/.skein/checkpoints`
   — symlink на него.
-- Все ported задачи, включая `regex-log`, идут этим путём (у `regex-log` верификатор — в
-  отдельном verifier-контейнере, т.к. в образе нет Python). `bwrap` (`container.ts`) остался
-  только для opencode-baseline/`bench/minimal`: там workspace — host-root, file-tools —
-  host `fsWorkspace`, `/tmp` — per-invocation tmpfs.
+- Все ported задачи, включая `regex-log`, идут этим путём. Приёмка — родной
+  `tests/test.sh` задачи, который после агента копируется в `/tests` и запускается в этом же
+  контейнере; он сам ставит Python (`uv`), поэтому образ может быть без него. `bwrap`
+  (`container.ts`) остался только для `bench/minimal` и image-less fallback: там workspace —
+  host-root, file-tools — host `fsWorkspace`, `/tmp` — per-invocation tmpfs. opencode-baseline
+  идёт legacy bind-mounted Docker-путём и той же приёмкой `test.sh`.
 - Уборка — `cleanupContainers()` (`docker rm` контейнера; host-mount для `/app` больше нет).
 
 ### 2.2 Исполнение команд
@@ -170,7 +175,9 @@ entries/paths, files), без конфигов, команд сборки и р�
 `Workspace` в Orientation; в Localization/Research та же карта идёт как `Orientation result`
 (Research дополнительно получает `Probe` с interpreters/tools); Patch получает её же как
 `Workspace`; остальные состояния получают `Probe` (environment) отдельным заголовком. Закрытые состояния блоков не несут, на request-ходу
-их нет. Полный вывод probe на ленту не попадает; replay читает записанный факт.
+их нет. `environment` также несёт `network: on|off` — режим агента, записанный harness (не
+угаданный shell); он говорит, можно ли ставить отсутствующий рантайм. Полный вывод probe на
+ленту не попадает; replay читает записанный факт.
 
 **Вход в состояние** (показывается для каждого состояния; блок — только у текущего):
 
@@ -257,9 +264,13 @@ ai — Finish state <Label> — <why из stop>
 
 - **D rootless (2026-10-23).** Docker-задачи идут без host-копии `/app`: file-tools, `grep/list`,
   `bash`, jobs и checkpoint — в контейнере; checkpoint store `/tmp/.skein` (`DockerBackend`);
-  verifier для `checkIn:"host"` — отдельный контейнер (`SKEIN_VERIFIER_IMAGE`). Найден и
-  исправлен 5-минутный `signatureMap` (per-file `docker exec` → batched `signatures`). Crack
-  после фикса: 24 хода, reward=1, request_addressed.
+  тогда verifier для `checkIn:"host"` шёл в отдельный контейнер (`SKEIN_VERIFIER_IMAGE`);
+  позже заменено на родной `test.sh` в контейнере агента. Найден и исправлен 5-минутный
+  `signatureMap` (per-file `docker exec` → batched `signatures`). Crack после фикса: 24 хода,
+  reward=1, request_addressed.
+- **Приёмка через `test.sh` (2026-10-24).** Docker-путь запускает родной `tests/test.sh`
+  задачи после агента в его контейнере (как Harbor) и читает `/logs/verifier/reward.txt`.
+  `--net off` снимает сеть только с агента; verifier всегда с сетью.
 - **D закрыт (2026-10-23, session 10).** `regex-log` переведён на свой образ + verifier-контейнер
   (bwrap ушёл из task-пути); `stageSolution` идёт rootless; `live-step` считает дифф деревом
   внутри контейнера; `fetchTo` копирует байты через `docker cp`; `grep/list/listFiles` в
@@ -437,8 +448,8 @@ ai — Finish state <Label> — <why из stop>
 - **Контейнер:** `tests/sandbox/docker.ts` (`dockerWorkspace`, `rootless`; `signatures`).
 - **Checkpoint:** `tests/sandbox/checkpoint.ts` (`CheckpointBackend`/`HostBackend`) и
   `tests/sandbox/checkpoint-docker.ts` (`DockerBackend`; store `/tmp/.skein`).
-- **Verifier контейнер:** `tests/sandbox/harness.ts` (`runVerifierCheck`,
-  `SKEIN_VERIFIER_IMAGE`).
+- **Приёмка:** `tests/sandbox/harness.ts` (`stageTestSh`, `runTask`: `test.sh` → `reward.txt`);
+  сеть агента/verifier — `tests/sandbox/network.ts`.
 - **Исполнение действий:** `src/tools/index.ts` (`executeAction`).
 - **Откат проваленного Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
   `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); событие `revert` —

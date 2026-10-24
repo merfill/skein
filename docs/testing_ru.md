@@ -213,12 +213,15 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
   не ставится. Контейнер стартует прямо из образа; `/app` **не** копируется на хост и не
   бинд-маунтится. File-tools, `grep/list`, `bash`, фоновые jobs и checkpoint — через
   `docker exec`; `grep`/`listFiles` возвращают workspace-relative пути, как `fsWorkspace`.
-  Store `/tmp/.skein` в контейнере (`DockerBackend`). Сеть по умолчанию `none`, выставлен
-  `--ulimit nofile` (valgrind) и git `safe.directory=*`.
-- `regex-log` — тоже образ (`alexgshaw/regex-log:20251031`); в нём нет Python, поэтому его
-  верификатор идёт в отдельном verifier-контейнере (`checkIn: "host"`).
-- **bwrap** (`container.ts`) остаётся только для opencode-baseline (host-side верификатор)
-  и `bench/minimal.ts`; путь задачи его больше не использует.
+  Store `/tmp/.skein` в контейнере (`DockerBackend`). Сеть агента следует `--net`
+  (`on` = bridge, `off` = отключена); выставлен `--ulimit nofile` (valgrind) и git
+  `safe.directory=*`.
+- Приёмка — родной **`tests/test.sh`** задачи: он ставится после агента и запускается в его
+  контейнере (путь Harbor). Скрипт сам поднимает рантайм (`apt`/`uv`/`pip`), поэтому
+  `regex-log` не нужен Python в образе. У verifier своя сеть даже при offline-агенте;
+  reward — `/logs/verifier/reward.txt`.
+- **bwrap** (`container.ts`) остаётся только для `bench/minimal.ts` и image-less fallback;
+  opencode-baseline идёт legacy bind-mounted Docker-путём, путь задачи — rootless.
 
 Портировано (13): `regex-log`, `fix-git`, `log-summary-date-ranges`,
 `openssl-selfsigned-cert`, `git-leak-recovery`, `cobol-modernization`,
@@ -230,9 +233,10 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 | `tests/sandbox/docker.ts` | Docker-`Workspace` (rootless: образ → `docker exec`; `signatures` батчем) |
 | `tests/sandbox/docker.test.ts` | rootless: `fetchTo` (docker cp) и parity `list`/`grep`/`listFiles` |
 | `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` в контейнере |
-| `tests/sandbox/container.ts` | bwrap-`Workspace` (opencode-baseline, `bench/minimal`); файловые инструменты рерайтят префикс `/app/` |
-| `tests/sandbox/task.ts` | `SandboxTask` + поиск в кэше Harbor + обёртка верификатора и `pytest`-шим |
-| `tests/sandbox/harness.ts` | `runTask`: материализация → setup → `runAgent` → `checkSetup` → верификатор → reward |
+| `tests/sandbox/container.ts` | bwrap-`Workspace` (`bench/minimal`, image-less fallback); файловые инструменты рерайтят префикс `/app/` |
+| `tests/sandbox/task.ts` | `SandboxTask` + поиск в кэше Harbor + legacy-обёртка верификатора и `pytest`-шим |
+| `tests/sandbox/network.ts` | `--net on/off`: сеть агента и сеть verifier |
+| `tests/sandbox/harness.ts` | `runTask`: материализация → setup → `runAgent` → stage `test.sh` → запуск → `reward.txt` |
 | `tests/sandbox/tasks/<id>.ts` | дескриптор задачи; `registry.ts` — id → задача |
 | `tests/sandbox/sandbox-run.ts` | live-CLI |
 
@@ -248,11 +252,12 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
-`--net off` (по умолчанию `on`) лишает интернета **хостовый** `fetch` (и хостовые `run` там,
-где они есть): CLI гонит их `curl` через allowlist-прокси, разрешающий только API модели.
-Контейнер задачи остаётся `--network none` (если задача не задала `network`); `run`/jobs в
-rootless D исполняются в контейнере. Baseline для сравнения — opencode с `--net off`
-(`opencode-run.ts`).
+`--net on` (как в Harbor) даёт агенту bridge. `--net off` снимает сеть с агента и лишает
+интернета **хостовый** `fetch` (и хостовые `run` там, где они есть): CLI гонит их `curl`
+через allowlist-прокси, разрешающий только API модели. Verifier независим и всегда с сетью —
+`test.sh` ставит через неё свой рантайм. Задача, которой сеть нужна агенту
+(`crack-7z-hash`), при `--net off` отклоняется. Baseline для сравнения — opencode с
+`--net off` (`opencode-run.ts`).
 
 Прогон использует собственный `maxTurns` задачи, если он задан (build-heavy задача вроде
 `fix-ocaml-gc` ставит 60 — её критерий пересобирает весь компилятор, а каждый фоновый опрос
@@ -271,33 +276,31 @@ reverse-прокси на `baseURL` (`api-log-proxy.mjs`): пишутся сыр
 Skein. `opencode run --format json` и сессионная БД opencode не отдают ни промпт, ни текст
 рассуждений.
 
-Верификатор задачи кладётся под `.skein/tests/` **после** хода агента, никогда до: shell
-агента видит `.skein`, хотя файловые тулы его пропускают, а harbor-овский `test.sh` задачи
-пере-клонирует ровно ту ревизию с багом (то есть называет решение). Для `checkIn:"task"`
-тесты пишутся в контейнер; для `checkIn:"host"` — отдельный verifier-контейнер
-(`SKEIN_VERIFIER_IMAGE`, по умолчанию `fix-code`): `/app` стримится task→verifier tar-пайпом,
-тесты — `docker cp`; host-копии `/app` нет.
-Верификатор заново материализуется из кэша задачи в момент проверки, поэтому reward
-воспроизводим.
+Родной `tests/` задачи копируется в `/tests` **после** хода агента, никогда до: иначе shell
+агента его прочтёт, а harbor-овский `test.sh` пере-клонирует ровно ту ревизию с багом (то
+есть называет решение). `test.sh` идёт в контейнере агента с его окружением, поэтому
+поставленный агентом пакет виден приёмке. Верификатор заново материализуется из кэша задачи
+в момент проверки, поэтому reward воспроизводим.
 
-**Верификатор.** `tests/test_outputs.py` запускается обёрткой без pytest; рядом кладётся
-шим `pytest`, чтобы `import pytest` резолвился без установки. `checkIn: "host"` гонит
-верификатор в отдельном verifier-контейнере (`SKEIN_VERIFIER_IMAGE`) для образа без Python
-(`regex-log`, `git-leak-recovery`, `password-recovery`, `crack-7z-hash`): `/app` стримится
-task→verifier, тесты копируются `docker cp`, `/app` verifier-образа предварительно
-очищается. `checkSetup` исполняет команду до верификатора в контейнере задачи
-(`fix-ocaml-gc` пересобирает компилятор и пересоздаёт `tests.txt`).
+**Верификатор.** Reward — `/logs/verifier/reward.txt`, который пишет `test.sh`; его exit code
+не авторитетен (скрипты заканчиваются успешным `echo`, даже когда pytest упал). Отсутствие
+файла — сбой верификатора, не pass. `test.sh` сам ставит `uv`/Python/pytest, а для
+`fix-ocaml-gc` пере-клонирует и пересобирает компилятор — поэтому verifier ходит в сеть даже
+при offline-агенте. `checkIn`/`checkSetup` остаются только для legacy/bwrap; opencode тоже
+запускает родной `test.sh`.
 
-**Изоляция / ограничения.** Docker-задачи держат сеть выключенной (кроме `crack-7z-hash`,
-который ставит p7zip), домашний каталог хоста не монтируется, root-овые файлы вычищаются
-изнутри контейнера при закрытии. `fetch` скачивает URL на хосте (allowlist/constraints) и
+**Изоляция / ограничения.** `--net off` снимает сеть с агента (задача, которой она нужна,
+`crack-7z-hash`, отклоняется); verifier сохраняет свою сеть. Домашний каталог хоста не
+монтируется, root-овые файлы вычищаются изнутри контейнера при закрытии. `fetch` скачивает URL на хосте (allowlist/constraints) и
 копирует байты в контейнер; фоновые jobs в rootless-режиме исполняются в контейнере. bwrap
-(`container.ts`) делит `/usr` хоста и используется только opencode-baseline/`minimal`.
+(`container.ts`) делит `/usr` хоста и используется только `bench/minimal` и image-less
+fallback.
 
 **Как добавить задачу.** Напиши `tests/sandbox/tasks/<id>.ts` с `{ id, image?, files?,
 setup?, check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` по умолчанию из
-кэшированного `instruction.md`, `check` — из кэшированного `tests/test_outputs.py`;
-`files` повторяют Docker `COPY`, `setup` — шаг Dockerfile/`setup.sh`. Зарегистрируй в
+кэшированного `instruction.md`; Docker-путь берёт кэшированный `tests/test.sh`; `files`
+повторяют Docker `COPY`, `setup` — шаг Dockerfile/`setup.sh`. `check`/`checkIn`/`checkSetup` —
+legacy. Зарегистрируй в
 `tasks/registry.ts`. Сначала проверь офлайн (no-op → `reward=0`, родной `solution/solve.sh`
 → `reward=1`), потом живой прогон.
 

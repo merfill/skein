@@ -209,12 +209,15 @@ tasks take one path, **Docker rootless**:
   is installed on the host. The container starts directly from the image; `/app` is **not**
   copied to the host or bind-mounted. File tools, `grep/list`, `bash`, background jobs and the
   checkpoint run through `docker exec`; `grep`/`listFiles` return workspace-relative paths like
-  `fsWorkspace`. The store is `/tmp/.skein` in the container (`DockerBackend`). Network is
-  `none` by default, a sane `--ulimit nofile` is set (valgrind), and git `safe.directory=*`.
-- `regex-log` also runs its own image (`alexgshaw/regex-log:20251031`); it has no Python, so
-  its verifier runs in a separate verifier container (`checkIn: "host"`).
-- **bwrap** (`container.ts`) remains only for the opencode baseline (host-side verifier) and
-  `bench/minimal.ts`; the task path no longer uses it.
+  `fsWorkspace`. The store is `/tmp/.skein` in the container (`DockerBackend`). The agent's
+  network follows `--net` (`on` = bridge, `off` = detached); a sane `--ulimit nofile` is set
+  (valgrind), and git `safe.directory=*`.
+- Acceptance is the task's own **`tests/test.sh`**, staged after the agent and run in the
+  agent's container (Harbor's path). It bootstraps its runtime (`apt`/`uv`/`pip`), so
+  `regex-log` needs no Python in its image. The verifier keeps its own network even when the
+  agent is offline; the reward is `/logs/verifier/reward.txt`.
+- **bwrap** (`container.ts`) remains only for `bench/minimal.ts` and the image-less fallback;
+  the opencode baseline uses the legacy bind-mounted Docker path, and the task path is rootless.
 
 Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsigned-cert`,
 `git-leak-recovery`, `cobol-modernization`, `modernize-scientific-stack`,
@@ -226,9 +229,10 @@ Ported (13): `regex-log`, `fix-git`, `log-summary-date-ranges`, `openssl-selfsig
 | `tests/sandbox/docker.ts` | the Docker `Workspace` (rootless: image → `docker exec`; batched `signatures`) |
 | `tests/sandbox/docker.test.ts` | rootless: `fetchTo` (docker cp) and `list`/`grep`/`listFiles` parity |
 | `tests/sandbox/checkpoint-docker.ts` | `DockerBackend`: checkpoint store `/tmp/.skein` in the container |
-| `tests/sandbox/container.ts` | the bwrap `Workspace` (opencode baseline, `bench/minimal`); file tools rewrite the `/app/` prefix |
-| `tests/sandbox/task.ts` | `SandboxTask` + Harbor-cache lookup + the pytest-free verifier runner and a `pytest` shim |
-| `tests/sandbox/harness.ts` | `runTask`: materialize → setup → `runAgent` → `checkSetup` → verifier → reward |
+| `tests/sandbox/container.ts` | the bwrap `Workspace` (`bench/minimal`, image-less fallback); file tools rewrite the `/app/` prefix |
+| `tests/sandbox/task.ts` | `SandboxTask` + Harbor-cache lookup + the legacy pytest-free runner and shim |
+| `tests/sandbox/network.ts` | `--net on/off`: agent attachment vs verifier attachment |
+| `tests/sandbox/harness.ts` | `runTask`: materialize → setup → `runAgent` → stage `test.sh` → run → `reward.txt` |
 | `tests/sandbox/tasks/<id>.ts` | one task's descriptor; `registry.ts` maps id → task |
 | `tests/sandbox/sandbox-run.ts` | the live CLI |
 
@@ -244,11 +248,12 @@ SKEIN_SLOW_TASKS=1 SKEIN_LIVE=false npx vitest run tests/sandbox/tasks.test.ts -
 npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
-`--net off` (default `on`) denies the HOST-side `fetch` (and host `run` where present) their
-internet: the CLI routes their `curl` through an allowlist proxy that permits only the model
-API. The task container remains `--network none` unless the task sets `network`; in rootless D
-`run`/jobs execute in the container. The platform baseline is the opencode `--net off` run
-(`opencode-run.ts`).
+`--net on` (Harbor-like) gives the agent the bridge. `--net off` detaches it from the agent
+and denies the HOST-side `fetch` (and host `run` where present) their internet: the CLI routes
+their `curl` through an allowlist proxy that permits only the model API. The verifier is
+independent and always has network — `test.sh` needs it to install its runtime. A task that
+requires network for the agent (`crack-7z-hash`) is refused under `--net off`. The platform
+baseline is the opencode `--net off` run (`opencode-run.ts`).
 
 A run uses the task's own `maxTurns` when set (a build-heavy task like `fix-ocaml-gc`
 sets 60 — its criterion rebuilds the whole compiler and each background poll costs a
@@ -267,33 +272,30 @@ logging reverse proxy on the `baseURL` (`api-log-proxy.mjs`): the raw
 reasoning) are the analogues of Skein's artifacts. `opencode run --format json` and
 opencode's session DB expose neither the prompt nor the reasoning text.
 
-The task's verifier is staged under `.skein/tests/` **after** the agent has run, never before:
-the agent's shell can read `.skein` even though its file tools skip it, and the task's Harbor
-`test.sh` re-clones the exact revision to fix (it names the solution). `checkIn:"task"` writes
-the tests into the container; `checkIn:"host"` uses a separate verifier container
-(`SKEIN_VERIFIER_IMAGE`, default `fix-code`): `/app` is streamed task→verifier with a tar pipe,
-tests are copied with `docker cp`; there is no host copy of `/app`. The verifier is
-re-materialized from the task cache at check time, so the reward
-stays reproducible.
+The task's own `tests/` is copied to `/tests` **after** the agent has run, never before: the
+agent's shell can read `/tests` otherwise, and the task's Harbor `test.sh` re-clones the exact
+revision to fix (it names the solution). `test.sh` runs in the agent's container with its
+environment, so an agent-installed package is visible to acceptance. The verifier is
+re-materialized from the task cache at check time, so the reward stays reproducible.
 
-**Verifier.** The task's `tests/test_outputs.py` is run by a pytest-free wrapper; a `pytest`
-shim is staged so `import pytest` resolves without installing it. `checkIn: "host"` runs the
-verifier in a separate verifier container (`SKEIN_VERIFIER_IMAGE`) for an image without Python
-(`regex-log`, `git-leak-recovery`, `password-recovery`, `crack-7z-hash`): `/app` is streamed
-task→verifier, the tests are copied with `docker cp`, and the verifier image's `/app` is
-cleared first. `checkSetup` runs a pre-verifier command in the task container (`fix-ocaml-gc`
-rebuilds the compiler and regenerates `tests.txt`).
+**Verifier.** The reward is `/logs/verifier/reward.txt`, written by `test.sh`; its exit code is
+not authoritative (the scripts end with a successful `echo` even when pytest failed). A
+missing file is a verifier failure, not a pass. `test.sh` installs its own `uv`/Python/pytest
+and, for `fix-ocaml-gc`, re-clones and rebuilds the compiler — the verifier runs with network
+even when the agent is offline. `checkIn`/`checkSetup` remain only for the legacy/bwrap path;
+opencode also runs the task's `test.sh`.
 
-**Isolation / limitations.** Docker tasks keep the network off (except `crack-7z-hash`,
-which installs p7zip), mount no host home, and root-owned files are wiped from inside the
-container on teardown. `fetch` downloads on the host (allowlist/constraints) and copies the
+**Isolation / limitations.** `--net off` removes the agent's network (a task that requires it,
+`crack-7z-hash`, is refused); the verifier keeps its own network. No host home is mounted, and
+root-owned files are wiped from inside the container on teardown. `fetch` downloads on the host (allowlist/constraints) and copies the
 bytes into the container; background jobs in rootless mode run in the container. bwrap
-(`container.ts`) shares the host `/usr` and is used only by the opencode baseline/`minimal`.
+(`container.ts`) shares the host `/usr` and is used only by `bench/minimal` and the image-less
+fallback.
 
 **Adding a task.** Write `tests/sandbox/tasks/<id>.ts` with `{ id, image?, files?, setup?,
 check?, workdir?, checkIn?, checkSetup?, network?, maxTurns? }` — `request` defaults to the cached
-`instruction.md`, `check` to the cached `tests/test_outputs.py`; `files` mirror a Docker
-`COPY`, `setup` a Dockerfile/`setup.sh` step. Register it in `tasks/registry.ts`. Verify it
+`instruction.md`; the Docker path uses the cached `tests/test.sh`; `files` mirror a Docker
+`COPY`, `setup` a Dockerfile/`setup.sh` step. `check`/`checkIn`/`checkSetup` are legacy. Register it in `tasks/registry.ts`. Verify it
 offline first (a no-op proposer → `reward=0`, the task's `solution/solve.sh` → `reward=1`),
 then run live.
 

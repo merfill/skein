@@ -39,18 +39,22 @@ Harbor:
   Store — `/tmp/.skein` в контейнере (`DockerBackend`).
   Задача без `image` (сейчас таких нет) упала бы в `bwrap` (`tests/sandbox/container.ts`),
   который оставлен для opencode-baseline/`minimal`;
-- `setup` выполняется до агента; **verifier ставится после агента**, чтобы `test.sh` не утёк
-  в workspace: `checkIn:"task"` — файлы тестов пишутся в контейнер, `checkIn:"host"` —
-  отдельный verifier-контейнер (`SKEIN_VERIFIER_IMAGE`, по умолчанию `fix-code`): `/app`
-  стримится task→verifier tar-пайпом, тесты — `docker cp`; host-копии `/app` нет;
-- `checkSetup` (например, пересборка OCaml) выполняется перед verifier;
+- `setup` выполняется до агента; **родной `tests/test.sh` задачи** запускается после агента
+  в контейнере агента, ровно как в Harbor. Тесты копируются в `/tests` только в этот момент,
+  поэтому не могут утечь в workspace. `test.sh` сам поднимает рантайм (`apt`/`uv`/`pip`), а
+  reward — его `/logs/verifier/reward.txt` (не exit code);
+- у verifier своя сеть: `--net off` снимает сеть только с **агента**
+  (`tests/sandbox/network.ts`). `checkIn`/`checkSetup` — только для legacy/bwrap; opencode тоже
+  запускает родной `test.sh` задачи.
+
 - checkpoint-слой (`CheckpointBackend`; `HostBackend` для bwrap/virtual, `DockerBackend` для
   Docker) даёт read-only снапшоты и revert проваленного Patch;
 - `runTask`/`openTaskWorkspace` (`tests/sandbox/harness.ts`) — общий setup для полного
   прогона и пошагового драйвера; для Docker — rootless-путь.
 
-Полезные поля `SandboxTask`: `image`, `workdir`, `mountPoint`, `setup`, `check`,
-`checkIn` (`"task"`/`"host"`), `checkSetup`, `maxTurns`, `network`.
+Полезные поля `SandboxTask`: `image`, `workdir`, `mountPoint`, `setup`, `maxTurns`,
+`network` (задаче нужна сеть агенту), а для legacy/opencode-пути — `check`, `checkIn`,
+`checkSetup`.
 
 ### Полный прогон
 
@@ -59,9 +63,12 @@ npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off]
 ```
 
 - без `--turns` берётся `task.maxTurns` (например, 60 у `fix-ocaml-gc`), иначе 24;
-- `--net off` (рекомендуется) закрывает **хостовый** `fetch` allowlist-прокси (только API
-  модели); `run`/jobs в rootless D идут в контейнере. Контейнер задачи остаётся
-  `--network none`, если задача не задала `network`;
+- `--net on` (как в Harbor) даёт агенту bridge; `--net off` снимает его с агента и
+  закрывает **хостовый** `fetch` allowlist-прокси (только API модели). У verifier сеть
+  остаётся всегда, чтобы `test.sh` мог поставить Python/pytest. Задача, которой сеть нужна
+  агенту (`crack-7z-hash`), при `--net off` отклоняется;
+- `metrics.json` пишет `network` (запрошенный), `networkAgent`, `networkVerifier`,
+  `acceptance` (`test.sh`) и `rewardSource` (`reward.txt`);
 - каждый прогон пишет `bench/runs/sandbox-tasks/<ts>-<id>-<random>/` (уникальный суффикс —
   параллельные прогоны не делят каталог): `contexts.ndjson`, `result.json`, `metrics.json`,
   `reward.txt`, `reasoning.ndjson`;
@@ -281,8 +288,10 @@ npx tsx bench/agents_compare.ts ~/.skein-bench/harbor/<job>
   печатает reasoning, `--responses` — сырые ответы.
 - **Транспортный `llm_error`/retry** — смотреть `turns.ndjson`/лог; внутренний retry не теряет
   ходы, но стоимость растёт.
-- **Verifier видит свой `test.sh`?** — он ставится только после агента
-  (`stageVerifierInContainer` для `checkIn:"task"`, verifier-контейнер для `checkIn:"host"`);
-  если правишь harness, не переносить staging до прогона.
+- **Verifier видит свой `test.sh`?** — он копируется в `/tests` только после агента и
+  запускается в его контейнере; если правишь harness, не переносить staging до прогона.
+- **`test.sh` упал на apt/uv/pip** — у verifier своя сеть, даже при `--net off`; проверь
+  `docker exec`/stderr в `result.json`. `rewardSource:"missing"` означает, что
+  `/logs/verifier/reward.txt` не появился.
 - **Контейнер остался** — `docker ps | grep skein`, затем `docker rm -f <name>`; штатно
   `cleanupContainers()` делает это сам.

@@ -180,6 +180,12 @@ describe("environment probe", () => {
     expect(environmentBrief(environment, "end")).toBe("");
   });
 
+  it("shows the agent's network policy with the environment", () => {
+    expect(environmentBrief({ ...environment, network: "off" }, "construction")).toContain("network: off");
+    expect(environmentBrief({ ...environment, network: "off" }, "construction")).toContain("package installs");
+    expect(environmentBrief({ ...environment, network: "on" }, "construction")).toContain("network: on");
+  });
+
   it("marks a timed-out probe as partial", () => {
     const brief = environmentBrief({ ...environment, partial: true }, "research");
     expect(brief).toContain("partial");
@@ -375,8 +381,9 @@ describe("session probe", () => {
         stderr: "",
       }),
     });
-    const probe = probeSession(workspace);
+    const probe = probeSession(workspace, { network: "off" });
     expect(probe?.environment?.root).toBe("/app");
+    expect(probe?.environment?.network).toBe("off");
     expect(probe?.environment?.found.map((tool) => tool.name)).toEqual(["git", "python3"]);
     expect(probe?.material?.files).toBe(2);
     expect(workspaceBrief(probe?.material as MaterialFact, "Workspace map")).toContain("Workspace map");

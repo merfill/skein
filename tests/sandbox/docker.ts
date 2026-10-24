@@ -57,6 +57,11 @@ export interface DockerWorkspace extends Workspace {
   name: string;
   exec(command: string, timeoutMs?: number): CommandResult;
   execInput(command: string, input: string, timeoutMs?: number): CommandResult;
+  // Connect/disconnect a network on the running container. Rootless Docker refuses to
+  // reconnect a container started with `--network none`, so callers start on the bridge and
+  // detach for the agent when the run is offline, then reattach for the verifier.
+  attachNetwork(network: string): void;
+  detachNetwork(network: string): void;
 }
 
 // Generous by default: a task's own build (fix-ocaml-gc, crack-7z-hash) runs inside the
@@ -205,6 +210,14 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
     execAt(command, workdir, execTimeoutMs);
   const execInput = (command: string, input: string, execTimeoutMs = timeoutMs): CommandResult =>
     execAt(command, workdir, execTimeoutMs, input);
+  const attachNetwork = (network: string): void => {
+    const result = docker(["network", "connect", network, name]);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `network connect ${network} failed`);
+  };
+  const detachNetwork = (network: string): void => {
+    const result = docker(["network", "disconnect", network, name]);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `network disconnect ${network} failed`);
+  };
 
   // File operations run in the task container, so `/tmp` and other container paths mean the
   // same thing to the file tools and to `bash`. In the legacy bind-mount mode, paths under
@@ -484,6 +497,8 @@ export function dockerWorkspace(root: string, options: DockerOptions): DockerWor
     name,
     exec,
     execInput,
+    attachNetwork,
+    detachNetwork,
   };
 }
 

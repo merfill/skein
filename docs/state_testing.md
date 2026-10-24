@@ -44,18 +44,23 @@ Implementation — `tests/sandbox/docker.ts`, function `dockerWorkspace(root, op
 - **The task image already holds the environment** (repo, toolchain), so nothing is installed on
   the host.
 - For Docker tasks the container starts **directly from the image**:
-  `docker run -d --entrypoint sleep --network none -w /app <image> infinity`. `/app` is not
-  extracted to a host temp root and not bind-mounted (`rootless`); there is no host copy.
+  `docker run -d --entrypoint sleep --network <bridge|none> -w /app <image> infinity`. `/app`
+  is not extracted to a host temp root and not bind-mounted (`rootless`); there is no host
+  copy. Rootless Docker cannot attach a network to a container started with `--network none`,
+  so the container always starts on the bridge: with `--net off` it is detached from the agent
+  after setup and reattached before `test.sh`.
 - Commands, the file tools (`read`/`grep`/`list`/`edit`/`write`), `bash`, background jobs and
   the checkpoint run through `docker exec` in that container, so `/app` and `/tmp` mean the same
   thing to the tools and to the shell; `grep`/`listFiles` return workspace-relative paths like
   `fsWorkspace`.
 - The checkpoint store is `/tmp/.skein` **inside the container** (`DockerBackend`);
   `/app/.skein/checkpoints` is a symlink to it.
-- Every ported task, including `regex-log`, takes this path (`regex-log`'s verifier runs in a
-  separate verifier container because its image has no Python). `bwrap` (`container.ts`)
-  remains only for the opencode baseline/`bench/minimal`: there the workspace is a host root,
-  the file tools are host `fsWorkspace`, and `/tmp` is per-invocation.
+- Every ported task, including `regex-log`, takes this path. Acceptance is the task's own
+  `tests/test.sh`: after the agent it is copied to `/tests` and run in the same container; it
+  installs Python itself (`uv`), so the image may have none. `bwrap` (`container.ts`) remains
+  only for `bench/minimal` and the image-less fallback: there the workspace is a host root, the
+  file tools are host `fsWorkspace`, and `/tmp` is per-invocation. The opencode baseline uses
+  the legacy bind-mounted Docker path and the same `test.sh` acceptance.
 - Cleanup — `cleanupContainers()` (`docker rm`; no `/app` host mount to wipe).
 
 ### 2.2 Running commands
@@ -172,6 +177,8 @@ entries/paths, files), with no configs, build commands or extensions. The projec
 (Research also gets `Probe` with interpreters/tools); Patch gets it as `Workspace`; other states
 get `Probe` (environment) under its own heading. Closed states carry no block and the request turn has none. The probe's
 raw output never reaches the tape; a replay reads the recorded fact instead of probing again.
+`environment` also carries `network: on|off` — the agent's mode, recorded by the harness (not
+guessed by a shell); it tells a state whether a missing runtime can be installed.
 
 **State entry** (shown for every state; the block only for the current one):
 
@@ -258,9 +265,14 @@ ai — Finish state <Label> — <why from stop>
 
 - **Rootless D (2026-10-23).** Docker tasks run without a host copy of `/app`: file tools,
   `grep/list`, `bash`, jobs and the checkpoint live in the container; the checkpoint store is
-  `/tmp/.skein` (`DockerBackend`); `checkIn:"host"` uses a verifier container
-  (`SKEIN_VERIFIER_IMAGE`). The 5-minute `signatureMap` (per-file `docker exec` → batched
-  `signatures`) was found and fixed. Crack after the fix: 24 turns, reward=1, request_addressed.
+  `/tmp/.skein` (`DockerBackend`); `checkIn:"host"` then used a verifier container
+  (`SKEIN_VERIFIER_IMAGE`), later replaced by the task's own `test.sh` in the agent's
+  container. The 5-minute `signatureMap` (per-file `docker exec` → batched `signatures`) was
+  found and fixed. Crack after the fix: 24 turns, reward=1, request_addressed.
+- **Acceptance via `test.sh` (2026-10-24).** The Docker path runs the task's own
+  `tests/test.sh` after the agent in its container (like Harbor) and reads
+  `/logs/verifier/reward.txt`. `--net off` detaches the network from the agent only; the
+  verifier always keeps it.
 - **D is closed (2026-10-23, session 10).** `regex-log` now runs its own image + verifier
   container (bwrap left the task path); `stageSolution` is rootless; `live-step` computes the
   tree diff inside the container; `fetchTo` copies bytes via `docker cp`; rootless
@@ -421,8 +433,8 @@ ai — Finish state <Label> — <why from stop>
 - **Container:** `tests/sandbox/docker.ts` (`dockerWorkspace`, `rootless`; `signatures`).
 - **Checkpoint:** `tests/sandbox/checkpoint.ts` (`CheckpointBackend`/`HostBackend`) and
   `tests/sandbox/checkpoint-docker.ts` (`DockerBackend`; store `/tmp/.skein`).
-- **Verifier container:** `tests/sandbox/harness.ts` (`runVerifierCheck`,
-  `SKEIN_VERIFIER_IMAGE`).
+- **Acceptance:** `tests/sandbox/harness.ts` (`stageTestSh`, `runTask`: `test.sh` →
+  `reward.txt`); agent/verifier network — `tests/sandbox/network.ts`.
 - **Action execution:** `src/tools/index.ts` (`executeAction`).
 - **Reverting a failed Patch:** `src/ir/attempts.ts` (`isFailedVerificationMove`,
   `lastPatchBefore`, `revertLastPatch`, `revertFailedPatch`); the `revert` event —

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { Action } from "../../src/llm/schemas";
 import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
-import { runTask, taskAvailable, verifierImageAvailable } from "./harness";
+import { runTask, taskAvailable } from "./harness";
 import { scripted } from "./run";
 import { SOLUTION_COMMAND, type SandboxTask } from "./task";
 import { cobolModernization } from "./tasks/cobol-modernization";
@@ -55,10 +55,7 @@ const stop: Action = { operator: "stop", why: "done" };
 describe("ported image tasks (docker)", () => {
   for (const task of IMAGE_TASKS) {
     const ready =
-      dockerAvailable() &&
-      dockerImageAvailable(task.image ?? "") &&
-      taskAvailable(task.id) &&
-      (task.checkIn !== "host" || verifierImageAvailable());
+      dockerAvailable() && dockerImageAvailable(task.image ?? "") && taskAvailable(task.id);
     describe.skipIf(!ready)(task.id, () => {
       it("scores 0 without work", async () => {
         const run = await runTask(task, scripted([...goal(task.id)], stop), { maxTurns: 3 });
@@ -83,7 +80,6 @@ const slowReady =
   process.env.SKEIN_SLOW_TASKS === "1" &&
   dockerAvailable() &&
   dockerImageAvailable(fixOcamlGcTask.image ?? "") &&
-  verifierImageAvailable() &&
   taskAvailable(fixOcamlGcTask.id);
 
 describe.skipIf(!slowReady)("fix-ocaml-gc (slow, rebuild verifier)", () => {

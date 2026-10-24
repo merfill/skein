@@ -35,6 +35,7 @@ import { probeSession } from "../src/loop/probe";
 import { buildMessages, promptText, propose as proposeModel } from "../src/loop/propose";
 import { cleanupContainers } from "../tests/sandbox/docker";
 import { openTaskWorkspace } from "../tests/sandbox/harness";
+import { parseNetworkMode } from "../tests/sandbox/network";
 import { startAllowlistProxy, type AllowlistProxy } from "../tests/sandbox/proxy";
 import { TASKS } from "../tests/sandbox/tasks/registry";
 import { cleanupSandboxes } from "../tests/sandbox/workspace";
@@ -47,7 +48,7 @@ function arg(name: string, fallback: string): string {
 const taskId = process.argv[2]?.startsWith("--") === false ? (process.argv[2] as string) : "fix-ocaml-gc";
 const stopTurn = Number(arg("--turn", "0"));
 const auto = process.argv.includes("--auto");
-const net = arg("--net", "on") === "off" ? "off" : "on";
+const net = parseNetworkMode(arg("--net", "on"));
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const dir = arg("--dir", join("bench", "runs", "sandbox-tasks", `${stamp}-${taskId}-live-step`));
 const signal = arg("--signal", join(dir, "continue"));
@@ -142,9 +143,10 @@ async function main(): Promise<void> {
       "running setup and the initial checkpoint…",
   );
   const openedAt = Date.now();
-  // `--net` gates the HOST's fetch/run through the allowlist proxy; the task container keeps
-  // its own network mode (`task.network`, default `none`).
-  const opened = openTaskWorkspace(task);
+  // `--net off` detaches the network from the agent container and gates the HOST's fetch/run
+  // through the allowlist proxy. The verifier keeps its own network (`network.ts`); this
+  // step driver does not run it.
+  const opened = openTaskWorkspace(task, { network: net });
   const { workspace, request } = opened;
   // The diff compares the initial checkpoint tree with the agent-visible live tree. For
   // rootless Docker both are container paths (`/tmp/.skein/trees/0` and `/app`); the host
@@ -221,7 +223,7 @@ async function main(): Promise<void> {
           propose,
           workspace,
           maxTurns: startTurn + 1,
-          probe: probeSession,
+          probe: (workspace) => probeSession(workspace, { network: net }),
         },
         events === undefined
           ? { request: { id: "r1", text: request } }

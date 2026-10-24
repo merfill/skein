@@ -24,7 +24,7 @@ npx tsx bench/live-step.ts fix-ocaml-gc --net off --auto --turn 20
 
 | флаг | смысл |
 |---|---|
-| `--net on\|off` | сеть для хостового `fetch` (off — через allowlist-прокси API); `run`/jobs — в контейнере; контейнер задачи всегда `--network none` |
+| `--net on\|off` | сеть агента (`on` — bridge, `off` — снята); для хостового `fetch` off — через allowlist-прокси API; verifier не запускается этим драйвером |
 | `--dir <path>` | каталог трассы (по умолчанию `bench/runs/sandbox-tasks/<ts>-<id>-live-step`) |
 | `--signal <path>` | файл-сигнал продолжения (по умолчанию `<dir>/continue`) |
 | `--auto` | не ждать между ходами |
