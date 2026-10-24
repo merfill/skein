@@ -366,7 +366,10 @@ export function killContainers(prefix: string): void {
 async function runCell(task: SandboxTask, cell: CellResult, options: Options): Promise<CellMetrics & { status: CellStatus; elapsedMs: number; error?: string }> {
   rmSync(cell.dir, { recursive: true, force: true });
   mkdirSync(cell.dir, { recursive: true });
-  const prefix = `matrix-${cell.agent}-${cell.network}-r${cell.repeat}-${Date.now().toString(36)}`;
+  // Include the task and the matrix process: parallel matrices started in the same
+  // millisecond otherwise share a prefix, and `killContainers` would remove each other's
+  // cells (a finished cell calls it as a safety net).
+  const prefix = `matrix-${task.id}-${cell.agent}-${cell.network}-r${cell.repeat}-${process.pid}-${Date.now().toString(36)}`;
   const started = Date.now();
   // No `TMPDIR` override: tsx keeps its IPC socket under it and opencode's legacy Docker path
   // bind-mounts the sandbox root (a relative `-v` source is read as a named volume). Isolation

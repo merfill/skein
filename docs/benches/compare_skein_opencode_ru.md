@@ -67,17 +67,17 @@ handoff (17.77 / 0.36 / 71.09) отличаются на ~3%; по возмож�
 |---|---|---|
 | regex-log | 2026-10-24 | 12/12 reward=1, см. §3 |
 | openssl-selfsigned-cert | 2026-10-24 | 11/12 reward=1 (один промах opencode `off`), см. §4 |
-| fix-git | — | ожидает |
-| log-summary-date-ranges | — | ожидает |
-| git-leak-recovery | — | ожидает |
-| cobol-modernization | — | ожидает |
-| modernize-scientific-stack | — | ожидает |
-| fix-ocaml-gc | — | ожидает |
-| custom-memory-heap-crash | — | ожидает |
-| password-recovery | — | ожидает |
-| crack-7z-hash | — | ожидает (без ячеек `off`) |
-| db-wal-recovery | — | ожидает |
-| fix-code-vulnerability | — | ожидает |
+| fix-git | 2026-10-24 | см. `task_benchmarks_ru.md` §10 |
+| log-summary-date-ranges | 2026-10-24 | см. `task_benchmarks_ru.md` §7 |
+| git-leak-recovery | 2026-10-24 | см. `task_benchmarks_ru.md` §11 |
+| cobol-modernization | 2026-10-24 (K=1) | см. `task_benchmarks_ru.md` §16 |
+| modernize-scientific-stack | 2026-10-24 | см. `task_benchmarks_ru.md` §5 |
+| fix-ocaml-gc | 2026-10-24 (net off) | см. `task_benchmarks_ru.md` §4 |
+| custom-memory-heap-crash | 2026-10-24 | см. `task_benchmarks_ru.md` §12 |
+| password-recovery | 2026-10-24 (K=1) | см. `task_benchmarks_ru.md` §13 |
+| crack-7z-hash | 2026-10-24 (K=1, `net on`) | см. `task_benchmarks_ru.md` §15 |
+| db-wal-recovery | 2026-10-24 (K=1) | см. `task_benchmarks_ru.md` §14 |
+| fix-code-vulnerability | 2026-10-24 | см. `task_benchmarks_ru.md` §9 |
 
 ## 3. regex-log (2026-10-24)
 

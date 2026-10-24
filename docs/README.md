@@ -106,6 +106,10 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [benches/compare_skein_opencode.md](benches/compare_skein_opencode.md) ·
   [RU](benches/compare_skein_opencode_ru.md) — the per-task matrix comparison of Skein and
   opencode (`tests/sandbox/matrix.ts`): one section per task, tokens as the primary axis.
+- [benches/task_benchmarks.md](benches/task_benchmarks.md) ·
+  [RU](benches/task_benchmarks_ru.md) — per-task benchmark pages for the article: what each
+  task is, how it is solved, and the Skein vs opencode results (`net on`/`off`); filled one
+  task at a time.
 - [benches/fix_ocaml_gc_ideal.md](benches/fix_ocaml_gc_ideal.md) · [RU](benches/fix_ocaml_gc_ideal_ru.md)
   — the reference trajectory (the model instance).
 - [benches/fix_ocaml_gc_investigation.md](benches/fix_ocaml_gc_investigation.md) ·

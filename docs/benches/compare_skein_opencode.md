@@ -68,17 +68,17 @@ reproduces all six Skein `costRub` values to < 0.001 ₽. The earlier handoff ra
 |---|---|---|
 | regex-log | 2026-10-24 | 12/12 reward=1, see §3 |
 | openssl-selfsigned-cert | 2026-10-24 | 11/12 reward=1 (one opencode `off` miss), see §4 |
-| fix-git | — | pending |
-| log-summary-date-ranges | — | pending |
-| git-leak-recovery | — | pending |
-| cobol-modernization | — | pending |
-| modernize-scientific-stack | — | pending |
-| fix-ocaml-gc | — | pending |
-| custom-memory-heap-crash | — | pending |
-| password-recovery | — | pending |
-| crack-7z-hash | — | pending (no `off` cells) |
-| db-wal-recovery | — | pending |
-| fix-code-vulnerability | — | pending |
+| fix-git | 2026-10-24 | see `task_benchmarks.md` §10 |
+| log-summary-date-ranges | 2026-10-24 | see `task_benchmarks.md` §7 |
+| git-leak-recovery | 2026-10-24 | see `task_benchmarks.md` §11 |
+| cobol-modernization | 2026-10-24 (K=1) | see `task_benchmarks.md` §16 |
+| modernize-scientific-stack | 2026-10-24 | see `task_benchmarks.md` §5 |
+| fix-ocaml-gc | 2026-10-24 (net off) | see `task_benchmarks.md` §4 |
+| custom-memory-heap-crash | 2026-10-24 | see `task_benchmarks.md` §12 |
+| password-recovery | 2026-10-24 (K=1) | see `task_benchmarks.md` §13 |
+| crack-7z-hash | 2026-10-24 (K=1, `net on`) | see `task_benchmarks.md` §15 |
+| db-wal-recovery | 2026-10-24 (K=1) | see `task_benchmarks.md` §14 |
+| fix-code-vulnerability | 2026-10-24 | see `task_benchmarks.md` §9 |
 
 ## 3. regex-log (2026-10-24)
 
