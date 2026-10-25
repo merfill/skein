@@ -59,7 +59,7 @@ function journal(): Event[] {
 }
 
 describe("message wrappers: the wire JSON of the tape", () => {
-  it("the request leads the tape, then the state's Start (goal/done/instruction) + hint; results are tool messages", async () => {
+  it("the request leads the tape, then the state's Start + instruction + goal and hint; results are tool messages", async () => {
     const base = fold(journal());
     const drift = focusEvents(base);
     const msgs = await wire(buildMessages(project(drift.length > 0 ? fold(drift, base) : base)));

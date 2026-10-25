@@ -180,7 +180,7 @@ system   — инструкция текущей ситуации (plan/working/
 угаданный shell); он говорит, можно ли ставить отсутствующий рантайм. Полный вывод probe на
 ленту не попадает; replay читает записанный факт.
 
-**Вход в состояние** (показывается для каждого состояния; brief — только у текущего открытого):
+**Вход в состояние** (показывается, пока состояние открыто; brief — только у текущего):
 
 ```
 system   — Start state <Label>
@@ -211,12 +211,10 @@ preimage), изменение остаётся в дереве, а отдель�
 
 ```
 system — Start state <Label>
-system — <инструкция>
-user   — what: <island.what>
 system — Finish state <Label> — <why из stop>
 ```
 
-**Хвост хода** (`system`, кроме `transition` — там `user`):
+**Хвост хода** (`system`; `transition` — тоже `system`):
 
 | ситуация | что добавляется |
 |---|---|
@@ -265,8 +263,9 @@ system — Finish state <Label> — <why из stop>
   (bwrap ушёл из task-пути); `stageSolution` идёт rootless; `live-step` считает дифф деревом
   внутри контейнера; `fetchTo` копирует байты через `docker cp`; `grep/list/listFiles` в
   rootless соблюдают `SKIP_DIRS`/dot-entries/include-exclude, как `fsWorkspace`.
-- **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход состояния —
-  `ai(Start)` + `system(инструкция)` + `user(what)`; `notes`/`move.what` не показываются.
+- **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход открытого состояния —
+  `ai(Start)` + `system(инструкция)` + `user(цель)`; `notes` нет; `move.what` идёт в per-turn
+  хвост открытого состояния.
 - **Добавлена per-island `instruction`** (`src/ir/islands.ts`) — «как действовать в
   состоянии», рендерится `system`-сообщением при входе.
   - Orientation: «исследуй репозиторий поиском, прочти документацию проекта (README, HACKING)…
@@ -481,7 +480,7 @@ system — Finish state <Label> — <why из stop>
 - **Закрыто:** «reasoning не на ленте → позднее закрытие» (дефолт, A/B — `docs/benches/best_bench_ru.md`, 2026-10-17).
 - **Сделано:** стриминг-транспорт; возврат в Localization с последней неудачной попыткой;
   провайдерская совместимость (нет `tool_choice`, пустой `reasoning_content`, thinking-off
-  fallback, transition-инструкция как `user`); откат проваленного Patch на
+  fallback, transition-инструкция как `system`); откат проваленного Patch на
   `Verification → Patch/Localization`; failure-stop в Verification; `seed`/`startTurn` для replay —
   см. §5, §7.
 - **Живой статус (2026-10-17).** `fix-ocaml-gc --net on`, K=3 до фикса: транспорт 3/3 без

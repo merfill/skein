@@ -112,10 +112,10 @@ never nested under it.
 | transition to the next state | the current state is **finished** (it is stopped) | add a `move` (a new child of the request, a sibling of the previous state); `return` out of the finished state, then `descend` | the finished state is left behind; focus → the new `move` | `empty_state`, `state_open` | `OP-MV-2` |
 | terminal | the state is `end` | as above (no `what`); the terminal state accepts `stop` directly (`OP-ST`) | moving to the terminal is the sign of the end | `empty_state` | `OP-MV-3` |
 
-- **Projection** (`PRJ-MV`): the tape gains a `Start state <label>` marker (an `assistant` turn),
-  the state's `instruction` (a `system` turn) and the state's goal as a `user` turn
-  (`what: <the island's goal>`). Once the state is stopped it renders a `Finish state <label> —
-  <why>` marker (from the `move.stop` relation); the state's own plan turns are elided (§7).
+- **Projection** (`PRJ-MV`): an open state gains a `Start state <label>` marker (an `assistant`
+  turn), the state's `instruction` (a `system` turn) and its goal (`user`). Once stopped it is
+  only `Start state <label>` / `Finish state <label> — <why>` (from the `move.stop` relation);
+  its brief, instruction, goal and plan turns are elided (§7).
 - **Notes.** A `move` is refused while a state is still open (`state_open`). The engine does
   **not** gate a `move` by a criterion: the doxa decides when a state is finished (it `stop`s
   it) and where to go next. `what` is required except for the terminal `end`.
@@ -411,7 +411,7 @@ Tool **failures** (a fail observation): missing file (`read`), bad scope (`grep`
   children; the plan hangs off the `move`.
 - a refusal/failure changes the projection.
 - a finished state (a closed state, or the stopped terminal) does not remain the focus; its
-  plan turns leave the tape and only its `Start state` / goal / `Finish state` triple remains.
+  turns leave the tape and only its `Start state` / `Finish state` remains.
 - secrets live only in `.env`; small results may be inlined, never secrets.
 
 Helpers already implement the first four: `tests/invariants.ts`.

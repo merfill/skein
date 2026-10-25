@@ -21,8 +21,8 @@ Inside one request, memory works like this:
 
 - the request text is shown to the model on every turn — it leads the tape;
 - the actions and results of an open state are visible while it is open;
-- when a state is closed through `stop`, its plan turns leave the tape: a compact
-  `Start state` / goal / `Finish state` record remains;
+- when a state is closed through `stop`, its turns leave the tape: only
+  `Start state` / `Finish state` remains;
 - the facts themselves do not disappear: they live in the tree and are addressable by id via
   `recall`/`search`.
 

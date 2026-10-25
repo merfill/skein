@@ -69,7 +69,14 @@ describe("system prompt: base + node assembly", () => {
     expect(fromOrientation).toContain("Localization"); // a reachable candidate
     expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
     expect(fromOrientation).not.toContain("Patch"); // only the focused state's `next` targets
+    expect(fromOrientation).toContain("Only these states are reachable from Orientation");
+    expect(fromOrientation).toContain("find a defect in an existing artifact");
+    expect(fromOrientation).toContain("establish a situation or a method");
     expect(fromOrientation).toMatch(/`what`.*`done`/i);
+    expect(fromOrientation).toContain("Choose the next state only");
+    expect(fromOrientation).toContain("Call `move` alone");
+    expect(fromOrientation).not.toContain("notes");
+    expect(REQUEST_INSTRUCTION).not.toContain("notes");
     const fromVerification = transitionInstruction("verification");
     expect(fromVerification).toContain("Finish state Verification");
     expect(fromVerification).toContain("Localization"); // the corrective edge
@@ -164,6 +171,10 @@ describe("system prompt: tool contract", () => {
     const description = move?.function.description ?? "";
     expect(description).not.toContain("sketch");
     expect(description).toContain("never batch");
+    expect(description).not.toContain("notes");
+    const properties = ((move?.function.parameters ?? {}) as { properties?: Record<string, unknown> })
+      .properties ?? {};
+    expect(properties).not.toHaveProperty("notes");
     const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("localization")}`;
     for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
       expect(prompt, `prompt must not mention ${removed}`).not.toContain(removed);
@@ -344,7 +355,7 @@ describe("context format: tape", () => {
     expect(request).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
     const transition = buildMessages({ ...context, situation: "transition", island: "localization" }).at(-1);
     expect(transition).toMatchObject({
-      role: "user",
+      role: "system",
       content: transitionInstruction("localization"),
     });
     const terminal = buildMessages({ ...context, situation: "terminal", island: "end" }).at(-1);
@@ -375,10 +386,9 @@ describe("context format: tape", () => {
       constraints: [],
     };
     const messages = buildMessages(transition);
-    // A `user` turn, not `system`: a trailing assistant text followed only by `system` is a
-    // provider "prefix" and refuses the `move` function call.
+    // The transition rule is an engine `system` instruction, not a user request.
     expect(messages.at(-1)).toMatchObject({
-      role: "user",
+      role: "system",
       content: transitionInstruction("orientation"),
     });
     expect(String((messages.at(-1) as { content: string }).content)).toContain("Localization");

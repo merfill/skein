@@ -65,12 +65,11 @@ const patchParams = z.object({
 // The state: the island of work the doxa will work in AND the state's goal text (`what`) and its
 // stop criterion (`done`) — the state IS its goal (docs/plans/archive/goal_into_move_plan.md).
 // Only `state` is required: `what` falls back to the island's goal and `done` to its criterion
-// when omitted. `notes` carries the request's presumptions (assumptions to verify) into the state.
+// when omitted.
 const moveParams = z.object({
   state: z.enum(ISLAND_IDS),
   what: z.string().optional(),
   done: z.string().optional(),
-  notes: z.string().optional(),
 });
 const stopParams = z.object({ why: z.string() });
 const declineParams = z.object({ why: z.string().optional() });
@@ -81,7 +80,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "move",
     description:
-      `Declare the state you will work in: move { state, what, done, notes }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object or situation this state works on — optional; leave it out and the state's default goal applies. done = the criterion for THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do another state's work — name the place or situation, do not derive the result. notes = what the request presumes about this state, carried in as an assumption to verify against the material. One short sentence each — up to ~20 words.`,
+      `Declare the state you will work in: move { state, what, done }. Call \`move\` alone — never batch it with other calls. Only \`state\` is required. what = the object or situation this state works on — optional; leave it out and the state's default goal applies. done = the criterion for THIS state — optional; leave it out and the state's default criterion applies. Never restate the whole task and never do another state's work — name the place or situation, do not derive the result. One short sentence each — up to ~20 words.`,
     schema: moveParams,
   },
   {
@@ -403,7 +402,6 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         state: a.state,
         what: typeof a.what === "string" ? a.what : "",
         ...(typeof a.done === "string" ? { done: a.done } : {}),
-        ...pick("notes"),
       };
       break;
     case "recall":

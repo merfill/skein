@@ -75,17 +75,13 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     );
   });
 
-  it("stop -> the state collapses to its Start marker, instruction, `what` and Finish", () => {
+  it("stop -> the state collapses to its Start and Finish markers", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
-    expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system", "user", "system"]);
+    expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system"]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
-    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toBe(
-      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
-    );
-    expect(ctx.history[4]?.text).toBe("Finish state Orientation — done");
+    expect(ctx.history[2]?.text).toBe("Finish state Orientation — done");
   });
 
   it("unactionable(decline) -> a terminal assistant text", () => {

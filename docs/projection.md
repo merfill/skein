@@ -16,25 +16,26 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 ## 2. Roles and the moves
 
-- `system` — the base prompt, the constraints, each state's `instruction` (shown once at entry),
-  the **current** state's fact block (`Workspace` in Orientation/Patch, `Orientation result` in
-  Localization/Research, `Probe` elsewhere), and the current situation's instruction (appended
-  last, temporary); closed states carry no block;
-- `user` — the request (leads the tape, every turn) and each state's goal;
+- `system` — the base prompt, the constraints, each **open** state's `instruction` (shown once at
+  entry), the **current** state's fact block (`Workspace` in Orientation/Patch, `Orientation
+  result` in Localization/Research, `Probe` elsewhere), and the current situation's instruction
+  (appended last, temporary); a closed state carries no instruction or fact block;
+- `user` — the request (leads the tape, every turn) and each **open** state's goal;
 - `assistant` — the state markers and the doxa's calls;
 - `tool` — command results.
 
 | Turn | Messages |
 |---|---|
-| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, then the state's goal as a `user` turn (`what: <island.what>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
+| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, and — while the state is open — its goal as a `user` turn (`what: <island.what>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
 | `stop` | the state's closure, rendered as a `system` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
 Every plan item is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
 state's plan. A command that ran and mutated a file (an edit) has no observation, so its `tool`
-message reads `mutated <path>`. A state is the triple `Start state <label>` / goal / `Finish
-state <label>` and, while open, its plan. The `Finish state` marker carries **only** the label
+message reads `mutated <path>`. An open state is `Start state <label>` / `instruction` / goal
+(`user`) / plan; a closed one is only `Start state <label>` / `Finish state <label>`. The
+`Finish state` marker carries **only** the label
 and the `stop` reason — never the list of changed files: a state that runs a build mutates
 thousands of artifacts.
 
@@ -43,8 +44,8 @@ thousands of artifacts.
 - the request is the first `user` turn (right after the base prompt), on every turn;
 - the **probe** is one session `fact` (`add_node kind:"fact"`, `id: fact:session`) carrying
   `{ environment, material }`, recorded at request start. It is not a separate message after the
-  request; the projection emits the block as a `system` turn before the **current** state's goal
-  `user` turn. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
+  request; the projection emits the block as a `system` turn before the **current** state's
+  instruction. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
   starts outside the root, repo, entries/paths);
   Localization and Research get the same map as `Orientation result` (Research also gets `Probe`
   with interpreters/tools); Patch gets it as `Workspace`; Recovery/Construction/Verification get
@@ -52,13 +53,12 @@ thousands of artifacts.
 - the workspace map is deterministic: `root`, `cwd` (when it differs), repo status, top-level
   entries (full paths for small materials), file count. Environment, extensions, configs, build commands and build state
   are **not** shown in Orientation; a declared command is never presented as the acceptance;
-- its states (`move` children) render in order: an **open** state (and the current closed one
-  awaiting the transition) renders its `Start state` marker, its `instruction` (`system`) and its
-  goal (`user`) after the block, then its plan items; a state **left behind** collapses to
-  `Start state <label>` / `instruction` / goal / `Finish state <label> — <why>` without the
-  block. No plan turns and no separate `stop` message remain;
-- the doxa's `move.what`/`move.notes` are **not** shown: a state's goal comes from its island
-  definition (`Island.what`), and the request's presumptions are not carried as `notes`;
+- its states (`move` children) render in order: an **open** state (the current one) renders its
+  `Start state` marker, brief, `instruction` (`system`), goal (`user`) and plan items; a state
+  **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
+  No brief, instruction, goal, plan turns or separate `stop` message remain;
+- the doxa's `move.what` rides the open state's per-turn tail; `move.notes` is **not** shown and
+  the request's presumptions are not carried as `notes`;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns leave the tape;
   only its triple remains. Only the view goes, not the data: the tree stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter

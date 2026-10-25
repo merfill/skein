@@ -997,7 +997,7 @@ describe("runAgent", () => {
     expect(result.events.some((event) => event.type === "record_rejection")).toBe(false);
   });
 
-  it("renders the request's state and goal as a tape", () => {
+  it("renders the request's state as a tape", () => {
     const state = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "task", payload: { text: "green" }, seq: 0 } },
       {

@@ -21,11 +21,11 @@ import {
 import type { Node } from "./types";
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
-// (docs/ir_semantics.md §7). The request is the user turn; each state is a `move` call and
-// its result — while the state is open the result confirms the move and the plan's
-// call/observation pairs follow; once the state is stopped its turns are elided and the
-// `move` result carries the state's own closure, the `stop` reason read from the `move.stop`
-// relation (docs/plans/archive/goal_into_move_plan.md). There is no goal node: the state IS its goal.
+// (docs/ir_semantics.md §7). The request is the only `user` turn; a state renders as
+// `Start state` / instruction markers and, while open, its plan's call/observation pairs. Once
+// the state is stopped its turns are elided and the `Finish state` marker carries the stop
+// reason read from the `move.stop` relation (docs/plans/archive/goal_into_move_plan.md). There
+// is no goal node: the state IS its goal.
 
 export type Situation = "request" | "plan" | "working" | "transition" | "terminal";
 
@@ -279,33 +279,30 @@ function stateBrief(state: State, island: IslandId): string {
   return blocks.join("\n\n");
 }
 
-// Render a state: its boundaries and its goal. A state is a decision, not a tool call, so it is
-// two markers around a goal: `Start state <label>` and — once closed — `Finish state <label>`
-// (the `stop` reason). The goal is the state's OWN definition (`island.what`), a `user` turn;
-// the doxa's `what` on the move is its articulation, not a replacement. The focused open state
-// also carries the brief and the instruction; its per-turn tail is appended by `buildMessages`.
-// Once stopped the plan and the brief are elided — the compact record is `Start state` + goal +
-// `Finish state` (docs/ir_semantics §7).
+// Render a state: its boundaries. A state is a decision, not a tool call, so it is two markers:
+// `Start state <label>` and — once closed — `Finish state <label>` (the `stop` reason). A closed
+// state is exactly that pair: no brief, instruction, goal, or plan. An open state carries the
+// focused brief, the instruction, its goal as a `user` turn, and its plan; `buildMessages`
+// appends the per-turn tail (docs/ir_semantics §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : move?.label ?? "state";
-  const payload = movePayload(state, moveId);
-  const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
   out.push({ role: "system", text: `Start state ${label}` });
-
-  // The session probe rides the FOCUSED open state only: older and closed states are compact
-  // records. The instruction stays on every state as its static record.
-  const focused = moveId === currentMove(state);
-  const brief = focused && island !== undefined ? stateBrief(state, island) : "";
-  if (brief !== "") out.push({ role: "system", text: brief });
-  if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
-  const goal = what !== "" ? `what: ${what}` : "";
-  if (goal !== "") out.push({ role: "user", text: goal });
   if (stopOf(state, moveId) !== undefined) {
     out.push({ role: "system", text: closureLine(state, moveId) });
     return;
   }
+
+  // The session probe rides the FOCUSED open state only.
+  const focused = moveId === currentMove(state);
+  const brief = focused && island !== undefined ? stateBrief(state, island) : "";
+  if (brief !== "") out.push({ role: "system", text: brief });
+  if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
+
+  const payload = movePayload(state, moveId);
+  const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
+  if (what !== "") out.push({ role: "user", text: `what: ${what}` });
   renderPlan(state, moveId, out);
 }
 

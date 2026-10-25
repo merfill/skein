@@ -5,8 +5,8 @@
 > overrides the criterion (optional), and `notes` are recorded but never rendered. The state
 > block renders **`island.what`**, not `move.what`; the per-turn tail carries the doxa's
 > articulation (if any), the criterion and the closure. `Start state` / `Finish state` markers
-> are **`system`**, the transition instruction is a `user` turn, and the request leads the tape
-> on every turn. `recall`/`search` are offered only while a state is open; a failed Verification
+> are **`system`**, the transition instruction is a `system` turn, and the request leads the
+> tape on every turn. `recall`/`search` are offered only while a state is open; a failed Verification
 > defaults to **Patch** (Localization only when the object/coordinates are in doubt), and the
 > engine reverts the last Patch.
 >
@@ -249,9 +249,9 @@ R  request "I broke the build; make test must pass"         (root: no plan, no s
        └─ stop ─▶ s6
 ```
 
-On the tape a closed state is the compact record `Start state <label>` / instruction /
-`what: <island.what>` / `Finish state <label> — <why>`: the plan and the brief are elided, the
-instruction stays. The plan and the rest are available only in an open state (or via `recall`).
+On the tape a closed state is only `Start state <label>` / `Finish state <label> — <why>`: its
+brief, instruction, goal and plan are elided. They remain available in an open state (or via
+`recall`).
 
 ### 4.2 What to notice
 

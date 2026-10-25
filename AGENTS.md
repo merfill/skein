@@ -5,6 +5,26 @@ the IR**, not a message tape. The conceptual frame is doxa/logos: the LLM (doxa)
 only proposes, the engine and the witness (logos) decide, the journal and the
 projection are the protocol.
 
+## The context is a projection (non-monotone)
+
+The journal (IR/graph) is monotone: events are appended, nodes are never rewritten. The
+prompt is **not** a transcript: `project(state)` rebuilds `Context` every turn, and
+`buildMessages` assembles the messages from scratch. The projection is **non-monotone** —
+content can disappear from the view as the focus moves.
+
+- message 0 is always `BASE_PROMPT`; the request is always the leading `user` turn;
+- an **open** state renders `Start state` + brief + instruction + its goal (`user`) + plan;
+  a **closed** state renders only `Start state` + `Finish state` — no brief, instruction, goal,
+  or plan turns;
+- the situation tail (`request`/`plan`/`working`/`transition`/`terminal`) is appended per turn,
+  never stored; `transition` is a `system` turn;
+- "closed" does not delete nodes: they stay in the journal and are addressable via
+  `recall`/`search`; only the projection stops selecting them;
+- `project` is deterministic: same events → same `Context`.
+
+When changing the prompt/tape, change the render predicates in `project`/`buildMessages`, not a
+stored history. Do not reason about the context as an append-only chat transcript.
+
 ## Documents
 
 Start at `docs/README.md` — the documentation index (concepts, the IR, the model

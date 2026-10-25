@@ -36,16 +36,11 @@ const renderStates = (ids: readonly IslandId[]): string =>
   ids.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 const START_STATES = renderStates(START_ISLANDS);
 
-// How to set the state's `notes` at the request — the state's goal and criterion are its own
-// (from the island); the request only contributes presumptions to verify. At a transition the
-// source is the state you just finished (its `Finish` line); the request is the overall context.
-const REQUEST_NOTES =
-  "Take the state's own goal as it stands — do not fold the request into `what`; leave `done` out " +
-  "(the state's default criterion applies). `notes` = what the request presumes about this state, " +
-  "in the context of the material (the area, files, records, or the acceptance it points to) — " +
-  "carried in as an assumption to verify against the material, since the request may be wrong. " +
-  "The environment and material facts are the engine's; do not repeat them in `notes`. One short " +
-  "line — up to ~20 words.";
+// How to set the state's `what` at the request: the state's goal and criterion are its own
+// (from the island); the request only names the object or situation the state will work on.
+const REQUEST_WHAT =
+  "`what` names the object or situation this state will work on — one short phrase, up to ~20 " +
+  "words; do not restate the request or the task. Leave `done` out: the state's own criterion applies.";
 
 // The base: the stable system prompt, in block order. B1 is the role; B2 the principles; B3
 // the state map; B4 the moves (transitions). It does NOT repeat the tool descriptions — those
@@ -86,10 +81,10 @@ Never expose or commit secrets or keys. Report concisely; no preamble or summary
   },
 ];
 
-// The request prompt (`request`): the request scenario (a fresh request: choose the first state, or decline). It carries the
-// request's presumptions into the state as `notes`; the state's own goal and criterion stand as-is
-// (docs/ir_semantics.md §2.5). Appended as a system message at the end of the request turn
-// (never stored).
+// The request prompt (`request`): the request scenario (a fresh request: choose the first state, or
+// decline). `what` names the object or situation the state will work on; the state's own goal and
+// criterion stand as-is (docs/ir_semantics.md §2.5). Appended as a system message at the end of the
+// request turn (never stored).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "request",
@@ -98,7 +93,7 @@ const REQUEST_BLOCKS: readonly PromptBlock[] = [
 Startable states:
 ${START_STATES}
 
-${REQUEST_NOTES}`,
+${REQUEST_WHAT}`,
   },
 ];
 
@@ -108,7 +103,7 @@ function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
       return [
-        "Choose Localization only when the deliverable is a change to an existing artifact and the next work is to name it or its cause — a file, function, record, image, or commit. A source that exists is not automatically the target: choose Research when the deliverable is a new artifact built from a specification or source behaviour, hidden/encoded/deleted data, a situation, or a method.",
+        "Choose Localization when the task is to find a defect in an existing artifact — a file, a function, a record, an image, or a commit — and the next work is to name that artifact, its coordinates, and a suspected cause. Choose Research when the task is to establish a situation or a method: reconstruct hidden, encoded, or deleted data; build from a specification or a source behaviour; or determine how something works.",
       ];
     case "localization":
       return [
@@ -131,11 +126,10 @@ function transitionRule(island?: IslandId): string[] {
   }
 }
 
-// The transition prompt (`transition`): the finished-state scenario: the tape above carries the record (each finished state is a
-// `Start state` / goal / `Finish state` triple) and the user's request. The hint names the states
-// reachable from the focused one and carries the request's presumptions into the next state as
-// `notes` — the next state's OWN goal stands as-is (never carried from the `Finish` line).
-// Dynamic, like `turnInstruction`.
+// The transition prompt (`transition`): the finished-state scenario: the tape above carries the
+// record (each finished state is a `Start state` / `Finish state` pair) and the user's request.
+// The hint names the states reachable from the focused one; the next state's OWN goal stands
+// as-is (never carried from the `Finish` line). Dynamic, like `turnInstruction`.
 export function transitionInstruction(island?: IslandId): string {
   const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
   const candidates = [...new Set<IslandId>(targets)];
@@ -145,11 +139,17 @@ export function transitionInstruction(island?: IslandId): string {
     label !== undefined
       ? `Your result is the line \`Finish state ${label} — …\` above — read it.`
       : `Your result is the finished state's \`Finish\` line above — read it.`;
+  const reachable =
+    label !== undefined
+      ? `Only these states are reachable from ${label} — choose one of them.`
+      : `Only these states are reachable — choose one of them.`;
   return [
     `${head} From it and the user's request, choose the next state: call \`move\` to enter it.${canFinish ? " If the work is done, \`move\` to End." : ""}`,
     `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
+    reachable,
     ...transitionRule(island),
-    `Take the next state's own goal as it stands — do not fold the finished state's result or the request into \`what\`; leave \`done\` out (the state's default criterion applies). \`notes\` = what the request and the just-finished result presume about this state — carried in as assumptions to verify against the material. One short line — up to ~20 words.`,
+    "Choose the next state only. Do not design, derive, or solve that state's work on this turn; its tools and instruction come after the move.",
+    `Call \`move\` alone. Set \`what\` to the object or situation the next state will work on — the artifact, record, or situation, not the task — in one short phrase, up to ~20 words. Do not restate the request, the finished state's result, or the plan. Leave \`done\` out: the state's own criterion applies.`,
   ].join("\n\n");
 }
 

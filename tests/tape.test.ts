@@ -121,8 +121,8 @@ describe("the tape: request and state", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    // The request leads the tape; then the state's entry (`Start state`, instruction, the
-    // state's own goal as a `user` turn), then each plan item as a native call + tool result.
+    // The request leads the tape; then the state's entry (`Start state`, instruction, goal),
+    // then each plan item as a native call + tool result.
     expect(roles(context.history)).toEqual([
       "user",
       "system",
@@ -266,7 +266,7 @@ describe("the tape: edge cases", () => {
       ...stopNode("s1", "all green", 7, "m1"),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "system", "system", "user", "system"]);
+    expect(roles(context.history)).toEqual(["user", "system", "system"]);
     expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
     expect(texts(context.history)).toContain("Finish state Localization — all green");

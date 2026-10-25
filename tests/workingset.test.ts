@@ -90,8 +90,8 @@ describe("the message tape under a long horizon", () => {
       { request: { id: "r1", text: "collapse" } },
     );
 
-    // After the state closes, its plan turns leave the tape; only its closure marker, in the
-    // `Start state` / goal / `Finish state` triple, remains.
+    // After the state closes, its plan turns leave the tape; only its closure marker, between
+    // `Start state` and `Finish state`, remains.
     const last = contexts.at(-1);
     const texts = last?.history.map((message) => message.text).join("\n") ?? "";
     expect(texts).toContain("Finish state Orientation — A is done");

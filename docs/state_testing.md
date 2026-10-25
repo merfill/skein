@@ -180,7 +180,7 @@ raw output never reaches the tape; a replay reads the recorded fact instead of p
 `environment` also carries `network: on|off` — the agent's mode, recorded by the harness (not
 guessed by a shell); it tells a state whether a missing runtime can be installed.
 
-**State entry** (shown for every state; the brief only for the focused open one):
+**State entry** (shown while the state is open; the brief only for the focused one):
 
 ```
 system   — Start state <Label>
@@ -210,12 +210,10 @@ the change stays in the tree and no separate warning is put on the tape — a kn
 
 ```
 system — Start state <Label>
-system — <instruction>
-user   — what: <goal>
 system — Finish state <Label> — <why from stop>
 ```
 
-**The turn's tail** (`system`, except `transition` — a `user` turn):
+**The turn's tail** (`system`; `transition` is also a `system` turn):
 
 | situation | what is appended |
 |---|---|
@@ -265,8 +263,9 @@ system — Finish state <Label> — <why from stop>
   container (bwrap left the task path); `stageSolution` is rootless; `live-step` computes the
   tree diff inside the container; `fetchTo` copies bytes via `docker cp`; rootless
   `grep/list/listFiles` honor `SKIP_DIRS`/dot entries/include-exclude like `fsWorkspace`.
-- **The tape's shape was reworked** (see §3): the request at the top, once; state entry —
-  `ai(Start)` + `system(instruction)` + `user(what)`; `notes`/`move.what` not shown.
+- **The tape's shape was reworked** (see §3): the request at the top, once; an open state entry —
+  `ai(Start)` + `system(instruction)` + `user(goal)`; no `notes`; `move.what` rides the open
+  state's per-turn tail.
 - **A per-island `instruction` was added** (`src/ir/islands.ts`) — "how to act in the state",
   rendered as a `system` message on entry.
   - Orientation: "explore the repository with the search tools, read the project's docs (README,
@@ -464,7 +463,7 @@ system — Finish state <Label> — <why from stop>
 - **Closed:** "reasoning not on the tape → late closure" (shipped as the default, A/B — `docs/benches/best_bench.md`, 2026-10-17).
 - **Done:** the streaming transport; the failed-attempt record on returning to Localization; the
   meta-provider fixes (no `tool_choice`, empty `reasoning_content`, thinking-off fallback, the
-  transition instruction as `user`); the revert of the failed Patch on
+  transition instruction as `system`); the revert of the failed Patch on
   `Verification → Patch/Localization`; the failure-stop in Verification; `seed`/`startTurn` for replay —
   see §5, §7.
 - **Live status (2026-10-17).** `fix-ocaml-gc --net on`, K=3 before the fix: transport 3/3 with no

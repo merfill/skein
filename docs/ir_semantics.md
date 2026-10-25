@@ -400,8 +400,8 @@ accumulating transcript. The same events always give the same tape.
 
 **Roles:** `system` (the stable base prompt, the constraints, each state's `instruction` — shown
 once when the state is entered — and, appended last and temporary, the current situation's
-instruction), `user` (the request — it **leads** the tape, on every turn — and each state's goal),
-`assistant` (the state markers and the doxa's calls), `tool` (command results).
+instruction), `user` (the request — it **leads** the tape, on every turn — and each open state's
+goal), `assistant` (the state markers and the doxa's calls), `tool` (command results).
 The **working steps** use the native tool-calling contract: an `apply` is an `assistant` with
 `tool_calls` (the tool name and arguments), its result a `tool` with `tool_call_id`. A batch is
 one `assistant` with N `tool_calls`, then the N `tool` results in order. A **state change**, by
@@ -414,7 +414,7 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 **States and their messages:**
 
 - `fact` — a session fact, not a call and not a separate message after the request. The
-  projection emits the block as a `system` turn before the **current** state's goal (`user`). One
+  projection emits the block as a `system` turn before the **current** state's instruction. One
   `fact:session` carries `{ environment, material }`: available tools (with versions where they
   are cheap), VCS status, top-level entries/paths and the file count. Orientation gets
   `Workspace` (the map); Localization and Research get the same map as `Orientation result`
@@ -426,10 +426,10 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
   `Start state <label>` marker (a `system` turn), then the state's `instruction` (a `system`
-  turn), then the state's goal as a `user` turn (`what: <the island's goal>`). `move.notes` are
-  not shown; `move.what` — the doxa's articulation — goes to the per-turn tail (when set), while
-  the state block shows `island.what`. The request is the second message of the tape (right
-  after the base prompt), on **every** turn — never dropped;
+  turn), then — while open — its goal as a `user` turn (`what: <island.what>`). `move.notes` is
+  not shown; `move.what` — the doxa's articulation — goes to the per-turn tail (when set). The
+  request is the second message of the tape (right after the base prompt), on **every** turn —
+  never dropped;
 - **returning to Localization or Patch.** The failure stays on the tape in the closed `patch`
   and `verification` `Finish` lines (the literal `stop.why`, not a code diagnosis). On the
   `Verification → Patch/Localization` transition the engine writes a `revert` event and restores
@@ -446,16 +446,17 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   with the reason (`rejected <move>: <reason>`, next turn; no node). A `recall`/`search` is a
   regular step: an `action` + its `observation` on the state's tape (see above).
 
-So a **state** is `Start state <label>` / `instruction` (`system`) / goal (`user`) / `Finish state
-<label>` and, while it is open, its plan (the `apply` calls and their results). Alternative commands carry a
+So an **open state** is `Start state <label>` / `instruction` (`system`) / goal (`user`) and its
+plan (the `apply` calls and their results); a **closed state** is only `Start state <label>` /
+`Finish state <label> — <why>`. Alternative commands carry a
 marker (`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one
 line** referencing the observation (`see [obsId]`), never an inlined body. Each `apply` result
 exposes the node id (`[id] …`) so it can be addressed by id with `recall`/`search`.
 
 **The tape is not monotone.** A finished state — the current one awaiting the transition, or one
-already left behind — collapses to `Start state <label>` / `instruction` / goal / `Finish state
-<label> — <why>`; its plan turns (the `apply` calls and their results) leave the tape. Only the
-view goes, not the data: the tree stays complete.
+already left behind — collapses to `Start state <label>` / `Finish state <label> — <why>`; its
+brief, instruction, goal and plan turns leave the tape. Only the view goes, not the data: the
+tree stays complete.
 
 **The doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
 the tape; its meaning lives in the `why` fields.
@@ -503,8 +504,8 @@ as `allowedTools`).
    the `move`; every action is an alternative of exactly one item. A state is never an item's
    alternative, and the request has no goal of its own.
 7. `stop` is a relation on the `move`, never a plan item.
-8. A closed state's plan turns leave the tape: only `Start state <label>` / `instruction` / goal /
-   `Finish state <label> — <why>` remains (§7).
+8. A closed state's turns leave the tape: only `Start state <label>` / `Finish state <label> —
+   <why>` remains (§7).
 9. A `move`'s `state` is the doxa's authored label: it never gates a `move` and never closes a
    state (closure is `stop` alone). It delimits the open state's action surface — the tools the
    island's `applies` admits; a tool outside it is refused (`not_in_state`), but the doxa can

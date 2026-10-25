@@ -34,8 +34,8 @@ function toolNames(history: readonly TapeMessage[]): Map<string, string> {
 
 // The tape renders the model's own history as a native tool-calling transcript: an assistant
 // move is an `assistant` message carrying `tool-call` parts, a command result is a `tool`
-// message answering it. Only the request and the situation's transition are `user` turns — no
-// result is ever smuggled in as a user message.
+// message answering it. Only the request is a `user` turn — no result is ever smuggled in as a
+// user message.
 function toMessage(message: TapeMessage, names: Map<string, string>): ModelMessage {
   if (message.role === "assistant") {
     const calls = callsOf(message);
@@ -94,9 +94,9 @@ export function buildMessages(context: Context): ModelMessage[] {
   for (const message of context.history) messages.push(toMessage(message, names));
   // Each situation appends its own last message. An open state gets the per-turn tail (conduct,
   // goal, criterion, closure): never stored, so the next turn rebuilds without it. The
-  // transition one is a `user` turn: a provider treats a trailing assistant text (the closed
-  // state's `Finish` line) followed only by a `system` message as a prefix/prefill and refuses
-  // the `move` function call; a `user` turn after it clears that rule (docs/ir_semantics §7).
+  // transition one is a `system` turn: it is the engine's rule for choosing the next state, not
+  // a user request. The tape already ends with the finished state's `Finish` line, so the rule
+  // follows it as another system turn (docs/ir_semantics §7).
   if (context.situation === "request") {
     messages.push({ role: "system", content: REQUEST_INSTRUCTION });
   } else if (context.situation === "plan") {
@@ -110,7 +110,7 @@ export function buildMessages(context: Context): ModelMessage[] {
       content: turnInstruction(context.island, context.done, context.what),
     });
   } else if (context.situation === "transition") {
-    messages.push({ role: "user", content: transitionInstruction(context.island) });
+    messages.push({ role: "system", content: transitionInstruction(context.island) });
   } else if (context.situation === "terminal") {
     messages.push({ role: "system", content: NODE_INSTRUCTIONS.terminal });
   }

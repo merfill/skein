@@ -124,9 +124,9 @@ tape of `user`/`assistant`/`tool` turns (rebuilt from the tree), the current sit
 assembles the model messages: the base prompt, the constraints, the history, and — appended last
 (temporary) — the current situation's instruction. A state is a decision, not a tool call: it is
 rendered as a `Start state <label>` marker (an `assistant` turn), the state's `instruction` (a
-`system` turn), and its goal as a `user` turn (`what: <the island's goal>`); a finished state
-collapses to `Start state <label>` / `instruction` / goal / `Finish state <label> — <why>` (the
-`stop` reason, read from the `move.stop` relation) — the plan turns leave the tape. The request is
+`system` turn) and — while open — its goal (`user`); a finished state collapses to `Start state
+<label>` / `Finish state <label> — <why>` (the `stop` reason, read from the `move.stop`
+relation) — its brief, instruction, goal and plan turns leave the tape. The request is
 the second message of the tape (right after the base prompt), on every turn. The `tool` messages
 carry the bounded inline body (an inspection result's head, a command's tail, when large); the
 full body is addressed by id via `recall`/`search`. A structural move refused by `classify`

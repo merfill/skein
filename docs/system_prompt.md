@@ -88,7 +88,7 @@ Situation prompts are **named**, not numbered. Only two are appended, and only o
 | Name | Situation | Role |
 |---|---|---|
 | `request` | fresh request | `system` |
-| `transition` | after a `Finish state` line | `user` |
+| `transition` | after a `Finish state` line | `system` |
 
 ### State tape
 
@@ -99,16 +99,16 @@ A state is rendered on the tape, in order:
 | `start` | `Start state <Label>` — the state marker | `system` |
 | `brief` | the probe facts for the island (`stateBrief`) | `system` |
 | `instruction` | the island `instruction` — how to act | `system` |
-| `what` | `what: <island.what>` — the state's goal | `user` |
+| `what` | `what: <island.what>` — the state's goal (open state only) | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 The request **leads** the tape — the second message, right after the base prompt — on every
-turn. `start`/`brief`/`instruction`/`what` are shown once when the state is entered. On
-`plan`/`working` the last message of every turn is the per-turn tail
+turn. `start`/`brief`/`instruction`/`what` are shown once when the state is entered and only
+while it is open. On `plan`/`working` the last message of every turn is the per-turn tail
 (`planInstruction`/`turnInstruction`): hint → `what:` → done criterion → closure; it is never
-stored and is rebuilt on the next turn. `brief` is elided when the state closes; the compact
-record is `start` + `instruction` + `what` + `finish`. The old `Previous failed attempt` block is
-gone: the previous states' `finish` lines carry the record.
+stored and is rebuilt on the next turn. When the state closes, only `start` + `finish` remain.
+The old `Previous failed attempt` block is gone: the previous states' `finish` lines carry the
+record.
 
 ### Base blocks
 
@@ -259,9 +259,9 @@ gone: the previous states' `finish` lines carry the record.
   states that tools are state-scoped. See `docs/prompt_state_machine_concept.md` §4.2 and
   `docs/ir_semantics.md` §2.5/§8.9.
 - **Phase 20 (2026-10-15).** A **state is a decision, not a tool call**: `move`/`stop` render as
-  `Start state <label>` / `Finish state <label> — <why>` markers with the goal as a `user` turn,
-  and the request is a temporary `user` turn shown only at a state decision (`request` /
-  `transition`); the `move` JSON result is gone. `turnInstruction` restates the state's criterion
+  `Start state <label>` / `Finish state <label> — <why>` markers (the goal turn is shown only
+  while the state is open; `move.what` rides the per-turn tail), and the request is a temporary
+  `user` turn shown only at a state decision (`request` / `transition`); the `move` JSON result is gone. `turnInstruction` restates the state's criterion
   and makes `stop` the expected move when it holds (`call \`stop\` and nothing else — do not look
   ahead`); the `stop` tool description is the single line "call `stop` — and nothing else — when
   the current state's Done criteria are met"; the `move` description scopes `done` to the state
@@ -281,7 +281,8 @@ gone: the previous states' `finish` lines carry the record.
 - **Phase 22 (2026-10-16).** The **tape shape** changed (`src/ir/project.ts`): the request
   **leads** the tape (the second message, right after the base prompt) on **every** turn; a state
   renders `Start state <label>` (`ai`) + `Island.instruction` (`system`) + `what: <Island.what>`
-  (`user`); the doxa's `move.what`/`move.notes` are no longer shown. New per-island `instruction`
+  (`user`, only while open; `move.what` rides the per-turn tail); the doxa's `move.notes` is not
+  shown as a state block. New per-island `instruction`
   (`src/ir/islands.ts`) says how to act in the state — Orientation reads the project's docs;
   Localization compares the suspect code with its **siblings** (the other loops over the same
   structure) and does not chase an upstream reference. The `turnInstruction` criterion and the

@@ -54,9 +54,9 @@ afterEach(cleanupWorkspaces);
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
   // Strip the leading system prefix (base + one message per constraint) and the appended
-  // situation prompt: `request` a system turn, `transition` a `user` turn, `plan`/`working` the
-  // per-turn tail, `terminal` the End instruction. A state's entry (Start marker, brief,
-  // instruction, `what`) is on the tape and must stay.
+  // situation prompt: `request`/`transition` a system turn, `plan`/`working` the per-turn tail,
+  // `terminal` the End instruction. A state's entry (Start marker, brief, instruction) is on
+  // the tape and must stay.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
@@ -71,7 +71,7 @@ async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
             ? NODE_INSTRUCTIONS.terminal
             : undefined;
   if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
-  if (context.situation === "transition" && end > start && all[end - 1]?.role === "user") end -= 1;
+  if (context.situation === "transition" && end > start && all[end - 1]?.role === "system") end -= 1;
   return all.slice(start, end);
 }
 
@@ -467,15 +467,13 @@ describe("recall / search: they leave a node on the state's tape", () => {
 });
 
 describe("stop / decline: non-monotone cut and terminal turn", () => {
-  it("stop collapses the state's goal turns to its closure line", async () => {
+  it("stop collapses the state's plan turns to its closure line", async () => {
     const s = goalStep({ operator: "stop", why: "done" }, ws());
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
       REQ,
       { role: "system", content: "Start state Orientation" },
-      { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
       { role: "system", content: "Finish state Orientation — done" },
     ]);
   });

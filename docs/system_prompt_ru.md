@@ -84,7 +84,7 @@
 | Имя | Ситуация | Роль |
 |---|---|---|
 | `request` | свежий запрос | `system` |
-| `transition` | после строки `Finish state` | `user` |
+| `transition` | после строки `Finish state` | `system` |
 
 ### Лента состояния
 
@@ -95,16 +95,15 @@
 | `start` | `Start state <Label>` — маркер состояния | `system` |
 | `brief` | факты probe для острова (`stateBrief`) | `system` |
 | `instruction` | `instruction` острова — как действовать | `system` |
-| `what` | `what: <island.what>` — цель состояния | `user` |
+| `what` | `what: <island.what>` — цель состояния (только открытого) | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 Запрос **вверху** ленты (второе сообщение, сразу после базового промпта), на каждом ходу.
-`start`/`brief`/`instruction`/`what` показываются один раз при входе в состояние. На
-`plan`/`working` последним сообщением каждого хода идёт per-turn tail
+`start`/`brief`/`instruction`/`what` показываются один раз при входе в состояние и только пока
+оно открыто. На `plan`/`working` последним сообщением каждого хода идёт per-turn tail
 (`planInstruction`/`turnInstruction`): hint → `what:` → `done`-критерий → closure; он не
-хранится и на следующем ходу пересобирается. `brief` элидируется при закрытии; компактная
-запись — `start` + `instruction` + `what` + `finish`. Блока `Previous failed attempt` больше
-нет: запись несут строки `finish` предыдущих состояний.
+хранится и на следующем ходу пересобирается. При закрытии остаются только `start` + `finish`.
+Блока `Previous failed attempt` больше нет: запись несут строки `finish` предыдущих состояний.
 
 ### Базовые блоки
 
@@ -257,9 +256,10 @@
   Доки: `docs/prompt_state_machine_concept_ru.md` §4.2 (поверхность по состояниям),
   `docs/ir_semantics_ru.md` §2.5/§8.9.
 - **Фаза 20 (2026-10-15).** **Состояние — это решение, а не вызов инструмента**: `move`/`stop`
-  рендерятся маркерами `Start state <label>` / `Finish state <label> — <why>` с целью ходом
-  `user`, а запрос — временный `user`-ход, показываемый только на решении о состоянии
-  (`request` / `transition`); JSON-результат `move` убран. `turnInstruction` повторяет критерий
+  рендерятся маркерами `Start state <label>` / `Finish state <label> — <why>` (ход цели виден
+  только пока состояние открыто; `move.what` идёт в per-turn хвост), а запрос — временный
+  `user`-ход, показываемый только на решении о состоянии (`request` / `transition`);
+  JSON-результат `move` убран. `turnInstruction` повторяет критерий
   состояния и делает `stop` ожидаемым ходом, когда он выполнен (`call \`stop\` and nothing else —
   do not look ahead`); описание `stop` — одна строка «call `stop` — and nothing else — when the
   current state's Done criteria are met»; описание `move` ограничивает `done` состоянием (никогда
@@ -277,8 +277,9 @@
   Детали и прогон — `docs/benches/best_bench_ru.md` §«Последняя версия»; лента — `docs/projection_ru.md`.
 - **Фаза 22 (2026-10-16).** **Форма ленты** изменилась (`src/ir/project.ts`): запрос **вверху**
   ленты (второе сообщение, сразу после базового промпта) на **каждом** ходу; состояние рендерится
-  `Start state <label>` (`ai`) + `Island.instruction` (`system`) + `what: <Island.what>` (`user`);
-  `move.what`/`move.notes` доксы больше не показываются. Добавлено поле острова `instruction`
+  `Start state <label>` (`ai`) + `Island.instruction` (`system`) + `what: <Island.what>` (`user`,
+  только пока открыто; `move.what` идёт в per-turn хвост); `move.notes` доксы не показывается как
+  блок состояния. Добавлено поле острова `instruction`
   (`src/ir/islands.ts`) — «как действовать в состоянии»: Orientation читает доки проекта;
   Localization сверяет подозрительный код с **сиблингами** (другими обходами той же структуры) и
   не гонится за upstream-эталоном. Также тронуты критерий `turnInstruction` и описание `stop`.
