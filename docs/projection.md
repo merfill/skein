@@ -26,7 +26,7 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 | Turn | Messages |
 |---|---|
-| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, and — while the state is open — its goal as a `user` turn (`what: <island.what>`). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
+| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, and — while the state is open — its goal as a `user` turn (`Goal: <island.what>`), with the doxa's unverified note (`Your earlier guess (may be wrong): <move.what>`) when set. The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
 | `stop` | the state's closure, rendered as a `system` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
@@ -57,8 +57,9 @@ thousands of artifacts.
   `Start state` marker, brief, `instruction` (`system`), goal (`user`) and plan items; a state
   **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
   No brief, instruction, goal, plan turns or separate `stop` message remain;
-- the doxa's `move.what` rides the open state's per-turn tail; `move.notes` is **not** shown and
-  the request's presumptions are not carried as `notes`;
+- the doxa's `move.what` is an unverified guess shown on the open state's `Goal:` turn
+  (`Your earlier guess (may be wrong): …`); `move.notes` is **not** shown and the request's
+  presumptions are not carried as `notes`;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns leave the tape;
   only its triple remains. Only the view goes, not the data: the tree stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
@@ -101,7 +102,7 @@ The system part is assembled per situation, not as a monolith:
 - the **turn's tail** is appended last each turn (temporary, never stored):
   `request` (choose the first state, or `decline`; `what`/`done` — **from the request**), `plan`
   (`planInstruction`: "Call a tool…" + the per-turn tail), `working` (`turnInstruction`: the
-  per-turn tail — conduct → `what:` → done criterion → closure; rebuilt on the next turn),
+  per-turn tail — conduct → done criterion → closure; rebuilt on the next turn),
   `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the `Finish
   state <label>` line of the just-finished state; the `next` neighbours are listed; choose the
   next state or End), `terminal` ("This is End." + the hint);

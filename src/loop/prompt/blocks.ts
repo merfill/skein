@@ -69,6 +69,8 @@ Work only the state's goal: plan the step, make small changes, and debug from ev
 
 Work from the material in this workspace. The result must come from that material or from the request's specification. Do not invent values or fabricate results to fit a count, a form, or an expected answer. Acceptance is decided by the material or the specification, not by your own output.
 
+The workspace map and the environment are engine-recorded facts: they are already read — do not re-probe, re-list, or re-derive them. If a block is marked partial, only the unlisted facts are unknown.
+
 Never expose or commit secrets or keys. Report concisely; no preamble or summary unless asked.`,
   },
   {
@@ -103,7 +105,9 @@ function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
       return [
-        "Choose Localization when the task is to find a defect in an existing artifact — a file, a function, a record, an image, or a commit — and the next work is to name that artifact, its coordinates, and a suspected cause. Choose Research when the task is to establish a situation or a method: reconstruct hidden, encoded, or deleted data; build from a specification or a source behaviour; or determine how something works.",
+        "Move to Localization when the request is to find an error in existing code or files.",
+        "Move to Construction when the request fully specifies the new artifact — you can write it now.",
+        "Otherwise move to Research.",
       ];
     case "localization":
       return [
@@ -143,13 +147,24 @@ export function transitionInstruction(island?: IslandId): string {
     label !== undefined
       ? `Only these states are reachable from ${label} — choose one of them.`
       : `Only these states are reachable — choose one of them.`;
+  const tail = [
+    "Choose the next state only. Do not design, derive, or solve that state's work on this turn; its tools and instruction come after the move.",
+    `Call \`move\` alone. Set \`what\` to the object or situation the next state will work on — the artifact, record, or situation, not the task — in one short phrase, up to ~20 words. Do not restate the request, the finished state's result, or the plan. Leave \`done\` out: the state's own criterion applies.`,
+  ];
+  if (island === "orientation") {
+    return [
+      `${head} From it and the user's request, move to the next state: call \`move\` to enter it.`,
+      `Next states: ${candidates.map((id) => ISLANDS[id].label).join(", ")}.`,
+      ...transitionRule(island),
+      ...tail,
+    ].join("\n\n");
+  }
   return [
     `${head} From it and the user's request, choose the next state: call \`move\` to enter it.${canFinish ? " If the work is done, \`move\` to End." : ""}`,
     `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
     reachable,
     ...transitionRule(island),
-    "Choose the next state only. Do not design, derive, or solve that state's work on this turn; its tools and instruction come after the move.",
-    `Call \`move\` alone. Set \`what\` to the object or situation the next state will work on — the artifact, record, or situation, not the task — in one short phrase, up to ~20 words. Do not restate the request, the finished state's result, or the plan. Leave \`done\` out: the state's own criterion applies.`,
+    ...tail,
   ].join("\n\n");
 }
 
@@ -168,10 +183,10 @@ const MOVE_INSTRUCTION =
   "raw artifacts before any command that may checkpoint, delete, or rewrite them.";
 
 // The per-turn tail of an open state, appended last on `plan`/`working`: conduct (the state's
-// own hint), the concretized goal, the done criterion, then the closure. Ordered conduct → goal
-// → stop so the state's behavior sits at the top and the stop criterion stays last. Rendered
-// per turn (never stored), so the next turn's tape is rebuilt without it.
-function stateTail(island?: IslandId, done?: string, what?: string): string {
+// own hint), the done criterion, then the closure. The state's goal is the hand-written one on
+// the tape; the doxa's `what` is only a guess and never enters the tail. Blocks are separated by
+// blank lines. Rendered per turn (never stored), so the next turn's tape is rebuilt without it.
+function stateTail(island?: IslandId, done?: string): string {
   const criterion =
     done !== undefined && done !== ""
       ? done
@@ -180,32 +195,25 @@ function stateTail(island?: IslandId, done?: string, what?: string): string {
         : "";
   const lead =
     criterion !== ""
-      ? `This state's done criterion: "${criterion.replace(/\.\s*$/, "")}".`
-      : `This state is done when its goal holds.`;
+      ? `Done when: "${criterion.replace(/\.\s*$/, "")}".`
+      : `Done when its goal holds.`;
   const conduct = island !== undefined ? ISLANDS[island].hint : "";
-  const goal =
-    what !== undefined && what !== ""
-      ? what
-      : island !== undefined
-        ? ISLANDS[island].what
-        : "";
   return [
     conduct,
-    goal !== "" ? `what: ${goal}` : "",
     lead,
     "When it holds, `stop` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
   ]
     .filter((part) => part !== "")
-    .join(" ");
+    .join("\n\n");
 }
 
-export function turnInstruction(island?: IslandId, done?: string, what?: string): string {
-  return stateTail(island, done, what);
+export function turnInstruction(island?: IslandId, done?: string): string {
+  return stateTail(island, done);
 }
 
-export function planInstruction(island?: IslandId, done?: string, what?: string): string {
+export function planInstruction(island?: IslandId, done?: string): string {
   if (island === undefined) return MOVE_INSTRUCTION;
-  return `${MOVE_INSTRUCTION}\n\n${stateTail(island, done, what)}`;
+  return `${MOVE_INSTRUCTION}\n\n${stateTail(island, done)}`;
 }
 
 export const NODE_INSTRUCTIONS = {

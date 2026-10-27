@@ -39,7 +39,7 @@ describe("islands: the closed vocabulary", () => {
   it("routes the epistemic and productive states", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
-    expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research"]));
+    expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research", "construction"]));
     expect(targets("localization")).toEqual(["patch"]);
     expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction"]));
     expect(targets("patch")).toEqual(["verification"]);
@@ -128,7 +128,7 @@ describe("islands: the projection highlights the state", () => {
       context.history.some(
         (m) =>
           m.role === "user" &&
-          m.text === "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+          m.text === "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): recon",
       ),
     ).toBe(true);
     const messages = buildMessages(context);

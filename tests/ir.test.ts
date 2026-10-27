@@ -184,7 +184,7 @@ describe("projection (the message tape)", () => {
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
     expect(context.history[3]?.text).toBe(
-      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green",
     );
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);

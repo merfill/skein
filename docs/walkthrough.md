@@ -1,10 +1,11 @@
 # Skein — walkthrough: the tree and the context, step by step
 
-> **Current as of 2026-10-24.** A state (`move`) IS its goal: `move { state, what?, done?,
-> notes? }` declares the island of work; `what` is the doxa's articulation (optional), `done`
-> overrides the criterion (optional), and `notes` are recorded but never rendered. The state
-> block renders **`island.what`**, not `move.what`; the per-turn tail carries the doxa's
-> articulation (if any), the criterion and the closure. `Start state` / `Finish state` markers
+> **Current as of 2026-10-27.** A state (`move`) IS its goal: `move { state, what?, done?,
+> notes? }` declares the island of work; `what` is the doxa's unverified guess about the
+> concrete subject (optional), `done` overrides the criterion (optional), and `notes` are
+> recorded but never rendered. The state block renders **`island.what`** as `Goal:` and, when
+> set, the doxa's guess (`Your earlier guess (may be wrong): …`); the per-turn tail carries the
+> criterion and the closure. `Start state` / `Finish state` markers
 > are **`system`**, the transition instruction is a `system` turn, and the request leads the
 > tape on every turn. `recall`/`search` are offered only while a state is open; a failed Verification
 > defaults to **Patch** (Localization only when the object/coordinates are in doubt), and the
@@ -186,16 +187,16 @@ growth, the derived facts and what the doxa sees next.
 | Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection (what the doxa sees) |
 |---|---|---|---|---|---|
 | 0 | `[R]` | — *(the arbiter issues the request)* | `+ request R {text}` | `rootId=R` | `situation=request`; `applicable=[move, decline]` |
-| 1 | `[R] → [R,I0]` | `move I0 {state:"orientation"}` | `+ move I0`; `+ move R→I0` | `I0=open`; `situation=plan` | `Start state Orientation`; Workspace map; instruction; `what: name the workspace root… acceptance…` |
+| 1 | `[R] → [R,I0]` | `move I0 {state:"orientation"}` | `+ move I0`; `+ move R→I0` | `I0=open`; `situation=plan` | `Start state Orientation`; Workspace map; instruction; `Goal: name the workspace root… acceptance…` |
 | 2 | `[R,I0]` | `stop {why:"/app is the repo; acceptance is make test"}` | `+ stop s0`; `+ stop I0→s0` | `I0=stopped`; `situation=transition` | `Finish state Orientation — …`; `applicable=[move]` |
-| 3 | `[R,I0] → [R,I1]` | `move I1 {state:"localization"}` | `+ move I1`; `+ move R→I1` | `I1=open`; `situation=plan` | `Start state Localization`; map + Environment; `what: find the target…` |
+| 3 | `[R,I0] → [R,I1]` | `move I1 {state:"localization"}` | `+ move I1`; `+ move R→I1` | `I1=open`; `situation=plan` | `Start state Localization`; map + Environment; `Goal: find the target…` |
 | 4 | `[R,I1]` | `apply grep {pattern:"def parse"}` *(first item)* | `+ plan Q1`; `+ items Q1→a1`; `+ action a1`; `+ obs o1` | `a1=executed`; `situation=working` | `lastResult` — matches; `applicable=[apply, stop, recall, search]` |
 | 5 | `[R,I1]` | `apply read src/parse.py [40-90]` | `+ action a2`; `+ items Q1→a2`; `+ obs o2 {version:v1}` | `observed(file)=v1` | `lastResult` — the code window |
 | 6 | `[R,I1]` | `stop {why:"line 63 drops the last token — off-by-one in the loop"}` | `+ stop s1`; `+ stop I1→s1` | `I1=stopped`; `situation=transition` | `Finish state Localization — …`; `applicable=[move]` |
-| 7 | `[R,I1] → [R,I2]` | `move I2 {state:"patch"}` | `+ move I2`; `+ move R→I2` | `I2=open`; `situation=plan` | `Start state Patch`; map; `what: make the named change…`; tail with the criterion |
+| 7 | `[R,I1] → [R,I2]` | `move I2 {state:"patch"}` | `+ move I2`; `+ move R→I2` | `I2=open`; `situation=plan` | `Start state Patch`; map; `Goal: make the named change…`; tail with the criterion |
 | 8 | `[R,I2]` | `apply edit src/parse.py {old,new}` *(first item)* | `+ plan Q2`; `+ items Q2→a3`; `+ action a3`; `+ mutates a3→file`; `mutate v1→v2` | `currentVersion(file)=v2` | `lastResult` — the change is applied |
 | 9 | `[R,I2]` | `stop {why:"the change is in the workspace"}` | `+ stop s2`; `+ stop I2→s2` | `I2=stopped` | `Finish state Patch — …`; `applicable=[move]` |
-| 10 | `[R,I2] → [R,I3]` | `move I3 {state:"verification"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `Start state Verification`; Environment; `what: check the changed artifact…` |
+| 10 | `[R,I2] → [R,I3]` | `move I3 {state:"verification"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `Start state Verification`; Environment; `Goal: check the changed artifact…` |
 | 11 | `[R,I3]` | `apply bash {command:"make test"}` *(first item)* | `+ plan Q3`; `+ items Q3→a4`; `+ action a4`; `+ obs o4 {exitCode:1}` | `a4=executed` | `lastResult` — `make test` failed (literal) |
 | 12 | `[R,I3]` | `stop {why:"make test: exit 1 — <literal failure>"}` | `+ stop s3`; `+ stop I3→s3` | `I3=stopped`; `situation=transition` | `Finish state Verification — …`; `applicable=[move]` |
 | 13 | `[R,I3] → [R,I4]` | `move I4 {state:"patch"}` | `+ revert {files, v2→v1}`; `+ move I4`; `+ move R→I4` | `currentVersion(file)=v1`; `I4=open` | `Start state Patch`; above on the tape — `Finish state Verification — <literal why>`; the failed Verification's plan is elided; `applicable=[apply, stop, recall, search]` |
@@ -255,8 +256,8 @@ brief, instruction, goal and plan are elided. They remain available in an open s
 
 ### 4.2 What to notice
 
-- **A state IS its goal.** `move` declares the island; the state block renders `island.what`.
-  `move.what` is the doxa's articulation and goes to the per-turn tail, not the block.
+- **A state IS its goal.** `move` declares the island; the state block renders `island.what` as
+  `Goal:`. `move.what` is the doxa's unverified guess, shown on the `Goal:` turn, not the tail.
   `move.done` overrides the criterion in the tail; `notes` are recorded but not rendered.
 - **The first plan item is an ordinary tool call.** There is no separate concretization
   operator: the first `apply` after `move` seeds the plan and runs immediately (turns 4, 8, 11,
@@ -369,7 +370,7 @@ the knowledge is already there, take it by address.
 3. **Closing is exactly one `stop`, and only by the doxa.** The request ends on the terminal
    `end`'s `stop` (or `decline`).
 4. **A state IS its goal.** `move { state }` declares the island; the block renders
-   `island.what`; `move.what` is the articulation and `move.done` is the criterion override.
+   `island.what`; `move.what` is the unverified guess and `move.done` is the criterion override.
 5. **The model surface is the frontier.** Request — `move`/`decline`; open — applies + `stop` +
    `recall`/`search`; closed — only `move`; terminal — `stop`.
 6. **Nodes hold no truth.** There are `open`/`executed`/`stopped` and derived facts; a failure

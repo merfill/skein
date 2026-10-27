@@ -133,7 +133,7 @@ describe("the tape: request and state", () => {
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
     expect(context.history[3]?.text).toBe(
-      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green",
     );
     expect(context.history[4]?.text).toBe("[a1] make test");
     expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");

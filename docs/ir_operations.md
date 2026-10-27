@@ -13,8 +13,8 @@ every operator; §5 is the coverage matrix (to be refilled as the state protocol
 meaning does not change.
 
 > **State protocol** (`docs/plans/archive/state_protocol_plan.md`). The walk is a state machine over
-> islands: `move` declares the state AND its goal text (a `move` node, a flat child of the request; the state IS its goal), the first `apply`
-> concretizes that state's work (`what` + a plan seeded with the first action), `apply` works it,
+> islands: `move` declares the state — its goal is the island's own definition — and optionally a note (`what`) (a `move` node, a flat child of the request), the first `apply`
+> seeds a plan with the first action, `apply` works it,
 > and `stop` closes it and forces the transition. A goal carries `what` only — the `state`
 > lives on its `move`. Closure is dynamic: the doxa's `stop` closes a goal/state; there is no
 > criterion, no exit-code gate, no `done_when`/`step`/`revises`, and no `state` on a goal
@@ -100,9 +100,9 @@ node-event (`move`/`observation`/`stop`). A run's result is a plain `observation
 
 ### 2.1 `move` (`OP-MV`)
 
-Declares the state (the island of work) the doxa will work in AND the state's goal text
-(`what`) — the state **IS** its goal (docs/plans/archive/goal_into_move_plan.md); the plan hangs
-directly off the `move`. The states are the request's **flat children** (`move` relation): a new
+Declares the state (the island of work) the doxa will work in; `what` is an optional,
+unverified note about the concrete subject — the state **IS** its own goal
+(docs/plans/archive/goal_into_move_plan.md); the plan hangs directly off the `move`. The states are the request's **flat children** (`move` relation): a new
 `move` after a finished state is a new child of the request (a sibling of the previous state),
 never nested under it.
 

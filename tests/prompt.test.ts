@@ -51,7 +51,8 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
-    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation or a method/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation: not an error in code and not a fully specified new artifact/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request fully specifies the new artifact — it can be written now/);
     expect(BASE_PROMPT).toMatch(/End is terminal/);
   });
 
@@ -61,7 +62,7 @@ describe("system prompt: base + node assembly", () => {
     expect(REQUEST_INSTRUCTION).toContain("- Orientation —");
     expect(REQUEST_INSTRUCTION).not.toContain("- Localization —");
     expect(REQUEST_INSTRUCTION).not.toMatch(/previous message/i);
-    expect(transitionInstruction("orientation")).toMatch(/choose the next state/i);
+    expect(transitionInstruction("orientation")).toMatch(/move to the next state/i);
   });
 
   it("at a transition, points at the finished state's `Finish` line as the source of what/done", () => {
@@ -69,9 +70,10 @@ describe("system prompt: base + node assembly", () => {
     expect(fromOrientation).toContain("Localization"); // a reachable candidate
     expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
     expect(fromOrientation).not.toContain("Patch"); // only the focused state's `next` targets
-    expect(fromOrientation).toContain("Only these states are reachable from Orientation");
-    expect(fromOrientation).toContain("find a defect in an existing artifact");
-    expect(fromOrientation).toContain("establish a situation or a method");
+    expect(fromOrientation).toContain("find an error in existing code or files");
+    expect(fromOrientation).toContain("Otherwise move to Research");
+    expect(fromOrientation).toContain("Next states: Localization, Research, Construction.");
+    expect(fromOrientation).toContain("Construction");
     expect(fromOrientation).toMatch(/`what`.*`done`/i);
     expect(fromOrientation).toContain("Choose the next state only");
     expect(fromOrientation).toContain("Call `move` alone");
@@ -317,7 +319,7 @@ describe("context format: tape", () => {
     // A hand-built context without an island still gets the generic per-turn tail.
     expect(messages.at(-1)).toMatchObject({ role: "system" });
     expect(String((messages.at(-1) as { content: string }).content)).toContain(
-      "This state is done when its goal holds.",
+      "Done when its goal holds.",
     );
     expect(messages).toHaveLength(6);
   });
@@ -334,11 +336,9 @@ describe("context format: tape", () => {
       expect(String((messages.at(-1) as { content: string }).content)).toContain(
         ISLANDS.localization.hint,
       );
+      expect(String((messages.at(-1) as { content: string }).content)).not.toContain("what:");
       expect(String((messages.at(-1) as { content: string }).content)).toContain(
-        "what: find the target in the material",
-      );
-      expect(String((messages.at(-1) as { content: string }).content)).toContain(
-        "This state's done criterion:",
+        "Done when:",
       );
       expect(String((messages.at(-1) as { content: string }).content)).toContain(
         "When it holds, `stop` — and nothing else.",

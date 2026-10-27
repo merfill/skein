@@ -7,7 +7,7 @@ import {
   type State,
 } from "./graph";
 import type { EnvironmentFact } from "./environment";
-import { ISLANDS, isTerminalIsland, stateDescription, type IslandId } from "./islands";
+import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
 import { workspaceBrief } from "./material";
 import { SESSION_PROBE_ID, probeBrief, type SessionProbe } from "./session";
 import {
@@ -63,11 +63,8 @@ export interface Context {
   // The island of the focused state, when there is one (an authored label, §2.5).
   island?: IslandId;
   // The focused state's stop condition, concretized by the doxa on the `move` (falls back to
-  // the island's generic criterion in the renderer). Used by the per-turn nudge.
+  // the island's generic criterion in the renderer). Used by the per-turn tail.
   done?: string;
-  // The focused state's goal, concretized by the doxa on the `move` (falls back to the island's
-  // generic goal in the renderer). Used by the per-turn nudge.
-  what?: string;
   // The frontier: the moves admissible at the focus. The model surface is bound from it, so
   // the offered tools cannot include a move the engine would refuse (§2.6). Absent on a
   // hand-built context (tests), where the full surface is offered.
@@ -301,8 +298,16 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
 
   const payload = movePayload(state, moveId);
-  const what = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
-  if (what !== "") out.push({ role: "user", text: `what: ${what}` });
+  const goal = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
+  // The doxa's `what` is an unverified guess about the concrete subject, not the goal: it is
+  // shown as advice only, never as the state's own goal (docs/ir_semantics.md §7).
+  const guess = island !== undefined ? payload?.what : undefined;
+  const lines: string[] = [];
+  if (goal !== "") lines.push(`Goal: ${goal}`);
+  if (typeof guess === "string" && guess !== "") {
+    lines.push(`Your earlier guess (may be wrong): ${guess}`);
+  }
+  if (lines.length > 0) out.push({ role: "user", text: lines.join("\n\n") });
   renderPlan(state, moveId, out);
 }
 
@@ -471,7 +476,6 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const focusedMove = currentMove(state);
   const focusedPayload = focusedMove !== undefined ? movePayload(state, focusedMove) : undefined;
   const done = focusedPayload?.done;
-  const what = focusedPayload?.what;
   const situation = situationOf(state);
   const frontier = applicable(state, currentFocus(state));
   const nudge =
@@ -483,7 +487,6 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     situation,
     island,
     ...(done !== undefined && done !== "" ? { done } : {}),
-    ...(what !== undefined && what !== "" ? { what } : {}),
     applicable: frontier,
     constraints: constraintsOf(state),
     ...(nudge !== undefined ? { nudge } : {}),

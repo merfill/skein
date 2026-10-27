@@ -186,9 +186,9 @@ guessed by a shell); it tells a state whether a missing runtime can be installed
 system   — Start state <Label>
 system   — <focused brief: Workspace map / Orientation result / Probe>
 system   — <island instruction: how to act in this state>
-user     — what: <island.what>
+user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.what>" when set)
 …plan…
-system   — <per-turn tail: hint, what (doxa articulation), criterion, closure>  [not stored]
+system   — <per-turn tail: hint, criterion, closure>  [not stored]
 ```
 
 **Returning to Localization or Patch after a failure.** The current implementation renders **no**
@@ -218,15 +218,15 @@ system — Finish state <Label> — <why from stop>
 | situation | what is appended |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — pick the starting state (`move`) or `decline` |
-| `plan` | `planInstruction` — "Call a tool…" + the tail: hint → `what:` → done criterion → closure |
+| `plan` | `planInstruction` — "Call a tool…" + the tail: hint → done criterion → closure |
 | `working` | `turnInstruction` — the same tail (per turn, never stored) |
 | `transition` | `transitionInstruction` — read the `Finish state` line, pick the next state |
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — "This is End. …" |
 
 **What is erased (not shown):**
 - `notes` from `move` — not rendered;
-- `what` from `move` — not rendered in the block (it shows `island.what`); if the doxa set
-  `what`, it goes to the per-turn tail;
+- `what` from `move` — not the state's goal (the block shows `island.what` as `Goal:`); if the
+  doxa set `what`, it is shown as an unverified guess on that turn;
 - **a closed state's plan** — all `ai`/`tool` pairs are replaced by a single `Finish state` line.
 
 **What is added:**
@@ -264,8 +264,8 @@ system — Finish state <Label> — <why from stop>
   tree diff inside the container; `fetchTo` copies bytes via `docker cp`; rootless
   `grep/list/listFiles` honor `SKIP_DIRS`/dot entries/include-exclude like `fsWorkspace`.
 - **The tape's shape was reworked** (see §3): the request at the top, once; an open state entry —
-  `ai(Start)` + `system(instruction)` + `user(goal)`; no `notes`; `move.what` rides the open
-  state's per-turn tail.
+  `ai(Start)` + `system(instruction)` + `user(goal)`; no `notes`; `move.what` is an unverified
+  guess on the state's `Goal:` turn.
 - **A per-island `instruction` was added** (`src/ir/islands.ts`) — "how to act in the state",
   rendered as a `system` message on entry.
   - Orientation: "explore the repository with the search tools, read the project's docs (README,

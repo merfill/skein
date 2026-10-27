@@ -99,13 +99,13 @@ A state is rendered on the tape, in order:
 | `start` | `Start state <Label>` — the state marker | `system` |
 | `brief` | the probe facts for the island (`stateBrief`) | `system` |
 | `instruction` | the island `instruction` — how to act | `system` |
-| `what` | `what: <island.what>` — the state's goal (open state only) | `user` |
+| `goal` | `Goal: <island.what>` — the state's goal, with `Your earlier guess (may be wrong): <move.what>` when set (open state only) | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 The request **leads** the tape — the second message, right after the base prompt — on every
-turn. `start`/`brief`/`instruction`/`what` are shown once when the state is entered and only
+turn. `start`/`brief`/`instruction`/`goal` are shown once when the state is entered and only
 while it is open. On `plan`/`working` the last message of every turn is the per-turn tail
-(`planInstruction`/`turnInstruction`): hint → `what:` → done criterion → closure; it is never
+(`planInstruction`/`turnInstruction`): hint → done criterion → closure; it is never
 stored and is rebuilt on the next turn. When the state closes, only `start` + `finish` remain.
 The old `Previous failed attempt` block is gone: the previous states' `finish` lines carry the
 record.

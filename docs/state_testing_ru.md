@@ -186,9 +186,9 @@ system   — инструкция текущей ситуации (plan/working/
 system   — Start state <Label>
 system   — <brief: Workspace map / Orientation result / Probe>
 system   — <инструкция острова: как действовать в этом состоянии>
-user     — what: <island.what>
+user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.what>", если задана)
 …план…
-system   — <per-turn tail: hint, what (артикуляция доксы), критерий, closure>  [не хранится]
+system   — <per-turn tail: hint, критерий, closure>  [не хранится]
 ```
 
 **Возврат в Localization или Patch после провала.** Отдельного блока `Previous failed attempt`
@@ -219,15 +219,15 @@ system — Finish state <Label> — <why из stop>
 | ситуация | что добавляется |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — выбрать стартовое состояние (`move`) или `decline` |
-| `plan` | `planInstruction` — «Call a tool…» + tail: hint → `what:` → `done`-критерий → closure |
+| `plan` | `planInstruction` — «Call a tool…» + tail: hint → `done`-критерий → closure |
 | `working` | `turnInstruction` — тот же tail (per-turn, не хранится) |
 | `transition` | `transitionInstruction` — прочитать строку `Finish state`, выбрать следующее состояние |
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — «This is End. …» |
 
 **Что затирается (не показывается):**
 - `notes` из `move` — не рендерятся;
-- `what` из `move` — не рендерится в блоке (там `island.what`); если докса задала `what`, он
-  идёт в per-turn tail;
+- `what` из `move` — не цель состояния (в блоке `island.what` как `Goal:`); если докса задала
+  `what`, он показывается как непроверенная догадка на этом ходе;
 - **план закрытого состояния** — все пары `ai`/`tool` заменяются одной строкой `Finish state`.
 
 **Что добавляется:**
@@ -264,8 +264,8 @@ system — Finish state <Label> — <why из stop>
   внутри контейнера; `fetchTo` копирует байты через `docker cp`; `grep/list/listFiles` в
   rootless соблюдают `SKIP_DIRS`/dot-entries/include-exclude, как `fsWorkspace`.
 - **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход открытого состояния —
-  `ai(Start)` + `system(инструкция)` + `user(цель)`; `notes` нет; `move.what` идёт в per-turn
-  хвост открытого состояния.
+  `ai(Start)` + `system(инструкция)` + `user(цель)`; `notes` нет; `move.what` — непроверенная
+  догадка на ходе `Goal:` состояния.
 - **Добавлена per-island `instruction`** (`src/ir/islands.ts`) — «как действовать в
   состоянии», рендерится `system`-сообщением при входе.
   - Orientation: «исследуй репозиторий поиском, прочти документацию проекта (README, HACKING)…

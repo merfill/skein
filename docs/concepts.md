@@ -2,8 +2,8 @@
 
 > **Note (state protocol).** The tree/traversal/projection details here predate the
 > **state protocol** redesign (`docs/plans/archive/state_protocol_plan.md`): the walk is now a state
-> machine over islands — `move` declares the state AND its goal text (`what`), the first
-> `apply` seeds its plan, `stop` finishes it and forces the transition, and the terminal
+> machine over islands — `move` declares the state (its goal is the island's own) and an optional
+> note (`what`), the first `apply` seeds its plan, `stop` finishes it and forces the transition, and the terminal
 > state ends the request. The current shape is `docs/ir_semantics.md`; the as-built is
 > `docs/ir.md`. The conceptual frame (doxa/logos, the journal, the projection) still holds.
 > Any `done_when`/criterion language below is historical (there is **no** criterion gate — a
@@ -31,7 +31,8 @@ request ─(move)▶ state (its own goal) ─(plan)▶ plan (items; last is curr
 ```
 
 A request is walked as a sequence of states. Flat states hang off the request (a `move` each);
-a `move` carries the state's goal text (`what`), so a state IS its goal. A non-actionable request
+a `move` declares the state — a state IS its own goal — and may carry an unverified note (`what`).
+A non-actionable request
 is **declined** instead (`unactionable`). A state closes only by the doxa's `stop` (no criterion);
 `stop`ping a state forces the next `move` (or the terminal state and `stop`).
 
@@ -117,8 +118,8 @@ included). There is no
 new node-event (`move`/`observation`/`stop`).
 
 **Operators.** `move { state, what }` declares the state to work in (the first one, or the next
-after a `stop`) AND its goal text (a state IS its goal; the plan hangs directly off the `move`
-and the first `apply` seeds it). `apply { action }`
+after a `stop`); `what` is an optional unverified note (a state IS its own goal; the plan hangs
+directly off the `move` and the first `apply` seeds it). `apply { action }`
 runs/reads/edits the world. `decline { why? }` answers a non-actionable request
 (`unactionable`). `stop { why? }` is the sole closure: it closes the state's `move` (or, at the
 terminal state, the request); there is no criterion and no check; the request has no `stop`.

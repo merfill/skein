@@ -64,9 +64,9 @@ async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
     context.situation === "request"
       ? REQUEST_INSTRUCTION
       : context.situation === "plan"
-        ? planInstruction(context.island, context.done, context.what)
+        ? planInstruction(context.island, context.done)
         : context.situation === "working"
-          ? turnInstruction(context.island, context.done, context.what)
+          ? turnInstruction(context.island, context.done)
           : context.situation === "terminal"
             ? NODE_INSTRUCTIONS.terminal
             : undefined;
@@ -103,7 +103,7 @@ const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
   { role: "system", content: ISLANDS.orientation.instruction },
-  { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
+  { role: "user", content: "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it" },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -127,7 +127,7 @@ describe("move: before [request] -> delta -> after", () => {
       REQ,
       { role: "system", content: "Start state Orientation" },
       { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "user", content: "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares" },
+      { role: "user", content: "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green" },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",

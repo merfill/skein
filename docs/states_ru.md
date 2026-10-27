@@ -55,7 +55,7 @@
 Отсюда два эпистемических состояния:
 
 - **Localization** — найти артефакт (для дефекта кода — ещё и причину/нарушенный инвариант).
-- **Research** — описать ситуацию и установить метод и source-проверку.
+- **Research** — описать ситуацию и установить метод.
 
 И два «продуктивных» состояния для ситуаций:
 
@@ -112,10 +112,9 @@ declared form и **не** «кандидат буквально есть в ба
   замеченный по ходу, — в `notes`/итог, не задерживаясь. Не пересказывает, не интерпретирует
   и не решает задачу; запрос — только источник acceptance. Не создаёт и не меняет файлы.
 - **Переход:**
-  - → **Localization**, когда цель — найти артефакт (дефект кода, файл, запись, образ);
-  - → **Research**, когда цель — ситуация/метод (скрытые данные, legacy-поведение, спека,
-    синтез).
-  Новый артефакт — через **Research**; прямого ребра в Construction из Orientation нет.
+  - → **Localization**, когда запрос — найти ошибку в существующем коде или файлах;
+  - → **Construction**, когда запрос полностью задаёт новый артефакт — его можно писать сразу;
+  - иначе → **Research**.
 - **Пример (fix-ocaml-gc):** корень `ocaml/`; сборка `./configure && make`, приёмка
   `make -C testsuite one DIR=tests/basic`; VCS — из material map → контроля версий нет.
 - **Пример (password-recovery):** `/app` — tmpfs с `varsea`; VCS/сборки нет; успех — файл
@@ -151,25 +150,19 @@ declared form и **не** «кандидат буквально есть в ба
 
 - **Вход:** `Orientation result` + `Probe` (interpreters/tools).
 - **Предмет:** ситуация, у которой нет одного артефакта-цели.
-- **Цель:** объяснить ситуацию и установить метод и source-проверку.
+- **Цель:** объяснить ситуацию и установить метод.
 - **`what`:** `investigate the situation and establish the method`
 - **`done`:** `the situation is explained — what happened, what the source does, or what must be
-  built — and the method's steps and the check that will decide success are named: what to
-  search, decode, crack, or build, and which property decides a candidate — the source's own
-  (checksum, hash, container metadata, structural invariant, known records) when there is a
-  source, otherwise the specification's acceptance. Name the steps and the check; the
-  derivation, the search, and the build belong to the productive state`
+  built — and the method is named: the steps that will produce the result. The work itself
+  belongs to the productive state`
 - **Предположения запроса:** проявление, формат, инструменты — лиды; проверить по материалу.
 - **Границы:** не ищет дефект в коде (его может не быть), не применяет правку (Patch), не
   восстанавливает и не строит deliverable (Recovery/Construction). Может осматривать артефакты,
-  но результат — описание ситуации и метод, а не указатель. Присутствие кандидата в байтах или
-  соответствие declared form — **не** source-проверка. Метод — план, а не его исполнение:
-  парсер/крекер/deliverable не строятся здесь. Формат определяется по сигнатурам **по всему
-  источнику**, а не по голове/энтропии; источник открывается только на копии в `/tmp` (его же
-  инструмент может сделать checkpoint/truncate/delete). Probe — только для сигнатуры или
-  проверки, которую нельзя установить чтением, один раз.
-- **Probe (environment subset):** `interpreters`, `tools` (core/crypto/data/archive/net), `missing` — то,
-  чем можно писать probe и проверять кандидата. Карта материала (root/VCS/build) сюда не
+  но результат — описание ситуации и метод, а не указатель. Метод — план, а не его исполнение:
+  парсер/крекер/deliverable не строятся здесь. Источник определяется по содержанию, а не по
+  внешнему виду; открывается только на копии в `/tmp`, если инструмент может его изменить.
+- **Probe (environment subset):** `interpreters`, `tools` (core/crypto/data/archive/net/pkg),
+  `missing` — то, чем можно писать probe. Карта материала (root/VCS/build) сюда не
   дублируется: она уже в `Finish state`-строке Orientation.
 - **Переход:**
   - → **Recovery**, когда нужно восстановить скрытые/закодированные/удалённые данные;
@@ -288,7 +281,7 @@ declared form и **не** «кандидат буквально есть в ба
 |---|---|
 | **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `O → L → P → V → End` |
 | **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → Recovery → End` |
-| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → R → Construction → End` |
+| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → Construction → End` (spec-only) / `O → R → Construction → End` (когда источник надо понять) |
 | **History** (fix-git) | `O → L → P → V → End` |
 | **Hybrid** (git-leak-recovery) | `O → R → Recovery → P → V → End` |
 

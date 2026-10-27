@@ -95,13 +95,13 @@
 | `start` | `Start state <Label>` — маркер состояния | `system` |
 | `brief` | факты probe для острова (`stateBrief`) | `system` |
 | `instruction` | `instruction` острова — как действовать | `system` |
-| `what` | `what: <island.what>` — цель состояния (только открытого) | `user` |
+| `goal` | `Goal: <island.what>` — цель состояния, вместе с `Your earlier guess (may be wrong): <move.what>`, если задана (только открытого) | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 Запрос **вверху** ленты (второе сообщение, сразу после базового промпта), на каждом ходу.
-`start`/`brief`/`instruction`/`what` показываются один раз при входе в состояние и только пока
+`start`/`brief`/`instruction`/`goal` показываются один раз при входе в состояние и только пока
 оно открыто. На `plan`/`working` последним сообщением каждого хода идёт per-turn tail
-(`planInstruction`/`turnInstruction`): hint → `what:` → `done`-критерий → closure; он не
+(`planInstruction`/`turnInstruction`): hint → `done`-критерий → closure; он не
 хранится и на следующем ходу пересобирается. При закрытии остаются только `start` + `finish`.
 Блока `Previous failed attempt` больше нет: запись несут строки `finish` предыдущих состояний.
 

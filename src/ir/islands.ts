@@ -82,11 +82,15 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "localization",
-        when: "the request requires finding an artifact — a code defect, a file, a record, an image, or a commit",
+        when: "the request is to find an error in existing code or files",
       },
       {
         to: "research",
-        when: "the request is a situation or a method and no artifact is the target — hidden data, legacy behaviour, a specification, or a synthesis",
+        when: "the request is a situation: not an error in code and not a fully specified new artifact",
+      },
+      {
+        to: "construction",
+        when: "the request fully specifies the new artifact — it can be written now",
       },
     ],
   },
@@ -127,35 +131,22 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "investigate the situation and establish the method",
     criterion:
       "the situation is explained — what happened, what the source does, or what must be built — " +
-      "and the method's steps and the check that will decide success are named: what to search, " +
-      "decode, crack, or build, and which property decides a candidate — the source's own " +
-      "(checksum, hash, container metadata, structural invariant, known records) when there is a " +
-      "source, otherwise the specification's acceptance. Name the steps and the check; the " +
-      "derivation, the search, and the build belong to the productive state.",
+      "and the method is named: the steps that will produce the result. The work itself belongs " +
+      "to the productive state.",
     instruction:
-      "Inspect the material with the search tools and read the source the request names. Explain " +
-      "the situation: what happened, what the source does, or what must be built. Then name the " +
-      "method and the check the source itself provides — what to search, decode, crack, or " +
-      "implement, and which source-internal property decides a candidate. The method is a plan, " +
-      "not its execution: do not build the parser, the cracker, or the deliverable here. Identify " +
-      "the format from the source's own signatures, not from its head or its entropy: structures " +
-      "can sit at any offset. Work on a copy in /tmp: opening a source with its own tool (a " +
-      "database, an archive, an index) can rewrite it — checkpoint, truncate, or delete a " +
-      "companion file — so never open the original. A probe is only for a signature scan or a " +
-      "check you cannot establish by reading; write it once under /tmp. Do not change the " +
-      "material and do not compare with an external reference.",
+      "Explain the situation: what happened, what the source does, or what must be built. Name " +
+      "the method for this work — the steps that will produce the result — but do not carry it " +
+      "out here; the productive state does that. The workspace map and the environment are " +
+      "recorded facts: they are already read — do not re-probe or re-list them. Leave the " +
+      "material as you found it.",
     hint:
-      "Name the situation, the method's steps, and the check; do not derive, crack, decode, or " +
-      "build anything here — the productive state does that. A candidate merely present in the " +
-      "bytes, or merely matching the declared form, is not a check. Say what the source IS: its " +
-      "format or container, from its own signatures — an unidentified source is an open " +
-      "situation, not a method. A binary source can hide its structures at any offset: scan the " +
-      "whole source for known signatures instead of judging it by its head or its entropy. The " +
-      "tape already holds what you observed: do not re-read or re-derive it. If the request fully " +
-      "specifies the artifact and nothing is unknown, do not design the artifact on the way out — " +
-      "thinking it through here is doing the next state's work. Mark coordinates approximate " +
-      "unless the bytes confirmed them. The workspace map and the `Finish state Orientation` line " +
-      "are the map; do not re-map.",
+      "Explain the situation and name the method; do not do the work here — the productive state " +
+      "does that. Identify the source from its content, not from its appearance. Do not change " +
+      "the material; if a tool might change it, work on a copy.\n\n" +
+      "The tape already holds what you observed; the workspace map and the environment are " +
+      "recorded facts. Do not re-read, re-probe, or re-list them.\n\n" +
+      "If the request fully specifies the result and nothing is unknown, do not design it here — " +
+      "that is the next state's work.",
     applies: INSPECT,
     next: [
       {

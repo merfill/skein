@@ -184,7 +184,6 @@ async function main(): Promise<void> {
         chars: promptText(context).length,
         situation: context.situation,
         island: context.island,
-        what: context.what,
         done: context.done,
         history: context.history,
       })}\n`,

@@ -1,10 +1,11 @@
 # Skein — сквозной пример: дерево и контекст шаг за шагом
 
-> **Актуально на 2026-10-24.** Состояние (`move`) И ЕСТЬ его цель: `move { state, what?,
-> done?, notes? }` объявляет остров работы; `what` — артикуляция доксы (необязательна), `done`
-> — переопределение критерия (необязательно), `notes` записываются, но на ленту не попадают.
-> В блоке состояния рендерится **`island.what`**, а не `move.what`; per-turn хвост несёт
-> артикуляцию доксы (если есть), критерий и closure. Маркеры `Start state` / `Finish state` —
+> **Актуально на 2026-10-27.** Состояние (`move`) И ЕСТЬ его цель: `move { state, what?,
+> done?, notes? }` объявляет остров работы; `what` — непроверенная догадка доксы о конкретном
+> предмете (необязательна), `done` — переопределение критерия (необязательно), `notes`
+> записываются, но на ленту не попадают. В блоке состояния рендерится **`island.what`** как
+> `Goal:` и, если задана, догадка доксы (`Your earlier guess (may be wrong): …`); per-turn
+> хвост несёт критерий и closure. Маркеры `Start state` / `Finish state` —
 > **`system`**, transition-инструкция — `system`, запрос — второе сообщение ленты на каждом ходу.
 > `recall`/`search` доступны только пока состояние открыто; провал Verification по умолчанию
 > ведёт в **Patch** (Localization — только если объект/координаты под сомнением), и движок
@@ -188,16 +189,16 @@ Verification проваливается: движок откатывает Patch
 | Ход | Стек | Предложение доксы | Журнал / изменение дерева | Производные факты | Проекция (что видит докса) |
 |---|---|---|---|---|---|
 | 0 | `[R]` | — *(запрос задаёт арбитр)* | `+ request R {text}` | `rootId=R` | `situation=request`; `applicable=[move, decline]` |
-| 1 | `[R] → [R,I0]` | `move I0 {state:"orientation"}` | `+ move I0`; `+ move R→I0` | `I0=open`; `situation=plan` | `Start state Orientation`; Workspace map; инструкция; `what: name the workspace root… acceptance…` |
+| 1 | `[R] → [R,I0]` | `move I0 {state:"orientation"}` | `+ move I0`; `+ move R→I0` | `I0=open`; `situation=plan` | `Start state Orientation`; Workspace map; инструкция; `Goal: name the workspace root… acceptance…` |
 | 2 | `[R,I0]` | `stop {why:"/app is the repo; acceptance is make test"}` | `+ stop s0`; `+ stop I0→s0` | `I0=stopped`; `situation=transition` | `Finish state Orientation — …`; `applicable=[move]` |
-| 3 | `[R,I0] → [R,I1]` | `move I1 {state:"localization"}` | `+ move I1`; `+ move R→I1` | `I1=open`; `situation=plan` | `Start state Localization`; карта + Environment; `what: find the target…` |
+| 3 | `[R,I0] → [R,I1]` | `move I1 {state:"localization"}` | `+ move I1`; `+ move R→I1` | `I1=open`; `situation=plan` | `Start state Localization`; карта + Environment; `Goal: find the target…` |
 | 4 | `[R,I1]` | `apply grep {pattern:"def parse"}` *(первый пункт)* | `+ plan Q1`; `+ items Q1→a1`; `+ action a1`; `+ obs o1` | `a1=executed`; `situation=working` | `lastResult` — совпадения; `applicable=[apply, stop, recall, search]` |
 | 5 | `[R,I1]` | `apply read src/parse.py [40-90]` | `+ action a2`; `+ items Q1→a2`; `+ obs o2 {version:v1}` | `observed(file)=v1` | `lastResult` — окно кода |
 | 6 | `[R,I1]` | `stop {why:"line 63 drops the last token — off-by-one in the loop"}` | `+ stop s1`; `+ stop I1→s1` | `I1=stopped`; `situation=transition` | `Finish state Localization — …`; `applicable=[move]` |
-| 7 | `[R,I1] → [R,I2]` | `move I2 {state:"patch"}` | `+ move I2`; `+ move R→I2` | `I2=open`; `situation=plan` | `Start state Patch`; карта; `what: make the named change…`; tail с критерием |
+| 7 | `[R,I1] → [R,I2]` | `move I2 {state:"patch"}` | `+ move I2`; `+ move R→I2` | `I2=open`; `situation=plan` | `Start state Patch`; карта; `Goal: make the named change…`; tail с критерием |
 | 8 | `[R,I2]` | `apply edit src/parse.py {old,new}` *(первый пункт)* | `+ plan Q2`; `+ items Q2→a3`; `+ action a3`; `+ mutates a3→file`; `mutate v1→v2` | `currentVersion(file)=v2` | `lastResult` — правка применена |
 | 9 | `[R,I2]` | `stop {why:"the change is in the workspace"}` | `+ stop s2`; `+ stop I2→s2` | `I2=stopped` | `Finish state Patch — …`; `applicable=[move]` |
-| 10 | `[R,I2] → [R,I3]` | `move I3 {state:"verification"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `Start state Verification`; Environment; `what: check the changed artifact…` |
+| 10 | `[R,I2] → [R,I3]` | `move I3 {state:"verification"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `Start state Verification`; Environment; `Goal: check the changed artifact…` |
 | 11 | `[R,I3]` | `apply bash {command:"make test"}` *(первый пункт)* | `+ plan Q3`; `+ items Q3→a4`; `+ action a4`; `+ obs o4 {exitCode:1}` | `a4=executed` | `lastResult` — `make test` упал (literal) |
 | 12 | `[R,I3]` | `stop {why:"make test: exit 1 — <literal failure>"}` | `+ stop s3`; `+ stop I3→s3` | `I3=stopped`; `situation=transition` | `Finish state Verification — …`; `applicable=[move]` |
 | 13 | `[R,I3] → [R,I4]` | `move I4 {state:"patch"}` | `+ revert {files, v2→v1}`; `+ move I4`; `+ move R→I4` | `currentVersion(file)=v1`; `I4=open` | `Start state Patch`; выше в ленте — `Finish state Verification — <literal why>`; план провалившейся Verification элидирован; `applicable=[apply, stop, recall, search]` |
@@ -258,8 +259,8 @@ R  request "I broke the build; make test must pass"        (корень: без
 ### 4.2 На что обратить внимание
 
 - **Состояние И ЕСТЬ его цель.** `move` объявляет остров; в блоке состояния рендерится
-  `island.what`. `move.what` — артикуляция доксы и попадает в per-turn tail, а не в блок.
-  `move.done` переопределяет критерий в tail; `notes` записываются, но не рендерятся.
+  `island.what` как `Goal:`. `move.what` — непроверенная догадка доксы на ходе `Goal:`, а не в
+  tail. `move.done` переопределяет критерий в tail; `notes` записываются, но не рендерятся.
 - **Первый пункт плана — обычный вызов инструмента.** Отдельного оператора конкретизации
   нет: первый `apply` после `move` засевает план и исполняется сразу (ходы 4, 8, 11, 14, 17).
 - **Батч разрешён.** За ход можно предложить несколько независимых вызовов; движок исполнит
@@ -372,7 +373,7 @@ R  request "I broke the build; make test must pass"        (корень: без
 3. **Закрытие ровно одно — `stop`, и только доксы.** Запрос завершается на `stop`
    терминального `end` (или `decline`).
 4. **Состояние И ЕСТЬ его цель.** `move { state }` объявляет остров; блок рендерит
-   `island.what`; `move.what` — артикуляция, `move.done` — переопределение критерия.
+   `island.what`; `move.what` — непроверенная догадка, `move.done` — переопределение критерия.
 5. **Поверхность модели — это фронтир.** Запрос — `move`/`decline`; открытое — applies +
    `stop` + `recall`/`search`; закрытое — только `move`; терминальное — `stop`.
 6. **На узлах нет истины.** Есть `open`/`executed`/`stopped` и производные факты; провал —

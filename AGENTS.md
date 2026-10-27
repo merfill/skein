@@ -13,7 +13,8 @@ prompt is **not** a transcript: `project(state)` rebuilds `Context` every turn, 
 content can disappear from the view as the focus moves.
 
 - message 0 is always `BASE_PROMPT`; the request is always the leading `user` turn;
-- an **open** state renders `Start state` + brief + instruction + its goal (`user`) + plan;
+- an **open** state renders `Start state` + brief + instruction + its goal (`user`, `Goal:`) with
+  the doxa's unverified note (`Your earlier guess (may be wrong):`) when set, then the plan;
   a **closed** state renders only `Start state` + `Finish state` — no brief, instruction, goal,
   or plan turns;
 - the situation tail (`request`/`plan`/`working`/`transition`/`terminal`) is appended per turn,

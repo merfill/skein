@@ -51,6 +51,7 @@ const RESEARCH_GROUPS: readonly EnvironmentGroup[] = [
   "data",
   "archive",
   "net",
+  "pkg",
 ];
 // Recovery writes the output and scratch copies, so it uses the same tool surface as Research
 // and also needs the workspace root.

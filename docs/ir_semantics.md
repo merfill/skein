@@ -24,11 +24,12 @@ that pins the invariant the change preserves. Without step 1, step 2 is not done
 
 **Status.** The doxa has **four operators** (`move`, `apply`, `stop`, `decline`);
 `recall`/`search` are read-only addresses, not moves. A request is walked as a
-**state machine over islands**: the doxa `move`s to a state (an island of work), declaring both
-the island (`state`) and the state's goal text (`what`) — a state **is** its own goal — then
-works it with `apply` (the first `apply` seeds the plan), and `stop`s it — which forces the next
-transition decision. The states are the request's **flat children** (the `move` relation), each
-carrying its own `what`; the plan hangs directly off the `move`. A state closes **only** through
+**state machine over islands**: the doxa `move`s to a state (an island of work), declaring the
+island (`state`) — a state **is** its own goal — and, optionally, a note about the concrete
+subject (`what`, a guess that may be wrong); then it works the state with `apply` (the first
+`apply` seeds the plan), and `stop`s it — which forces the next transition decision. The states
+are the request's **flat children** (the `move` relation), each carrying its own `what` note;
+the plan hangs directly off the `move`. A state closes **only** through
 `stop`. A plan holds **items**; an item holds **actions** (alternatives), never goals. The
 context is a **message tape** rebuilt from the tree. The doxa proposes; the logos executes and
 records. (docs/plans/archive/goal_into_move_plan.md.)
@@ -89,7 +90,7 @@ Nodes fall into two spaces.
 | kind | meaning |
 |---|---|
 | `request` | the arbiter's request: raw motivation (the root); walked as a sequence of states |
-| `move` | the doxa's declaration of the state it will work in AND the state's goal text `what`; carries `state` (the island) and `what` (the state's goal); a child of the request; owns the plan |
+| `move` | the doxa's declaration of the state it will work in; carries `state` (the island) and an optional `what` note (the doxa's guess about the concrete subject, not the state's goal); a child of the request; owns the plan |
 | `plan` | a state's plan: an ordered list of items (≥1) |
 | `item` | a plan item: an ordered list of alternatives (≥1) |
 | `action` | a command; an alternative of an item (never a state) |
@@ -140,9 +141,10 @@ Rules that follow:
   branching the element is exactly one and it is a command (`action`);
 - a state appears in only one way: the work hangs off the `move` (`move.plan`). A state is
   never an item's alternative, and the request has no goal of its own;
-- **`what`.** A `move` carries `what` (the state's goal text). The **state** and its goal live
-  together on the `move`. The plan is a separate `plan` node, seeded by the first `apply` with
-  one item whose sole alternative is that first action.
+- **`what`.** A `move` carries `what` — the doxa's note about the concrete subject, a guess
+  that may be wrong. The state's goal is the island's own definition; the move records which
+  state was entered. The plan is a separate `plan` node, seeded by the first `apply` with one
+  item whose sole alternative is that first action.
 
 ### 2.4 The current node
 
@@ -178,7 +180,7 @@ A run by itself settles nothing: a state is closed only by the doxa's `stop`. Th
 
 A `move`'s `state` and `what` are different in kind: they are **authored** by
 the doxa at `move` and never change. They record which island of work the state is entered in
-and its goal text. They are not a derived status: the island never closes a state (closure stays
+and the doxa's note about the subject. They are not a derived status: the island never closes a state (closure stays
 with `stop`, §8) and never gates a `move`. It does delimit the **action surface** of the open
 state — the apply-tools the island admits (`Island.applies`, §2.6) — so a tool outside the
 state's work is refused (`not_in_state`); the island is a self-declared mode, held by the engine,
@@ -289,12 +291,12 @@ applies to → input → action → focus → refusal.
 Declares the state (the island of work) the doxa will work in — the automaton's transition.
 
 **Input.** `{ state, what }`: `state` — one of the island names the base prompt lists (the
-**first** move picks the opening state; later moves the next one); `what` — the concrete goal of
-**this state** (required except for the terminal `end`, which has no plan).
+**first** move picks the opening state; later moves the next one); `what` — optional: the doxa's
+note about the concrete subject (a guess that may be wrong, not the state's goal).
 
 **Action.** Create a `move` node `M` with payload `{ state, what }`; link it as the
 request's newest `move` child (`R.move += M`); emit `descend` `R → M`. Focus moves to `M`. The
-move declares the state AND its goal: the plan hangs directly off `M`. The move is legal at a
+move declares the state; the plan hangs directly off `M`. The move is legal at a
 **fresh request** (no `move` yet) or at a **finished state** (a `move` with a `stop`). It is
 refused while a state is still open (`state_open`) or with a bad state name (`empty_state`).
 
@@ -426,8 +428,9 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
   `Start state <label>` marker (a `system` turn), then the state's `instruction` (a `system`
-  turn), then — while open — its goal as a `user` turn (`what: <island.what>`). `move.notes` is
-  not shown; `move.what` — the doxa's articulation — goes to the per-turn tail (when set). The
+  turn), then — while open — its goal as a `user` turn (`Goal: <island.what>`) together with,
+  when set, the doxa's guess (`Your earlier guess (may be wrong): <move.what>`). `move.notes` is
+  not shown. The
   request is the second message of the tape (right after the base prompt), on **every** turn —
   never dropped;
 - **returning to Localization or Patch.** The failure stays on the tape in the closed `patch`
@@ -480,7 +483,7 @@ what is true on any turn (the role, the principles, the contract, the state set 
 transitions); appended last each turn (temporary, never stored) is the current situation's
 instruction per situation: `request` (choose the first state, or `decline`; `what`/`done` — from the
 request), `plan` (`planInstruction`: "Call a tool…" + the per-turn tail), `working`
-(`turnInstruction`: the per-turn tail — conduct → `what:` → done criterion → closure; never
+(`turnInstruction`: the per-turn tail — conduct → done criterion → closure; never
 stored, rebuilt on the next turn), `transition` (`transitionInstruction(island)`: the source of
 `what`/`done` is the `Finish state <label>` line of the just-finished state; the `next`
 neighbours are listed; choose the next state), `terminal` ("This is End." + the terminal
@@ -500,8 +503,8 @@ as `allowedTools`).
 3. A state is closed only through `stop` (the terminal state included).
 4. The doxa only proposes; the logos decides.
 5. A command's exit code is ordinary output, not a closure verdict.
-6. Every `move` is a child of the request and carries its own goal (`what`); the plan hangs off
-   the `move`; every action is an alternative of exactly one item. A state is never an item's
+6. Every `move` is a child of the request and carries its own note (`what`); the state's goal
+   is the island's; the plan hangs off the `move`; every action is an alternative of exactly one item. A state is never an item's
    alternative, and the request has no goal of its own.
 7. `stop` is a relation on the `move`, never a plan item.
 8. A closed state's turns leave the tape: only `Start state <label>` / `Finish state <label> —

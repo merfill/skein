@@ -71,7 +71,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
     expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
     expect(ctx.history[3]?.text).toBe(
-      "what: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it",
     );
   });
 
@@ -202,6 +202,6 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
-    expect(String(msgs[3]?.content)).toContain("This state is done when its goal holds.");
+    expect(String(msgs[3]?.content)).toContain("Done when its goal holds.");
   });
 });
