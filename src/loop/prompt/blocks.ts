@@ -112,6 +112,11 @@ function transitionRule(island?: IslandId): string[] {
     case "localization":
       return [
         "Choose Patch when the target is named and a cause is suspected.",
+        "Choose Research only when the work is a situation, not a code defect to locate.",
+      ];
+    case "research":
+      return [
+        "Choose Localization when the work is a code defect to locate.",
       ];
     case "recovery":
       return [

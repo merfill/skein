@@ -58,8 +58,8 @@ thousands of artifacts.
   **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
   No brief, instruction, goal, plan turns or separate `stop` message remain;
 - the doxa's `move.what` is an unverified guess shown on the open state's `Goal:` turn
-  (`Your earlier guess (may be wrong): …`); `move.notes` is **not** shown and the request's
-  presumptions are not carried as `notes`;
+  (`Your earlier guess (may be wrong): …`); the request's presumptions are not carried into the
+  state as facts;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns leave the tape;
   only its triple remains. Only the view goes, not the data: the tree stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
@@ -116,3 +116,37 @@ prompt).
 `project` is pure: the same events give the same tape. The only transient input is a refused
 structural move's reason (§5); because it is derived from the same move, the projection stays
 deterministic.
+
+## 8. The cost of the projection
+
+A focus change rewrites the tape, so the projection is not free. The cost splits into three
+parts, and only the first two are structural:
+
+- **prefix cache-miss.** The base prompt is a stable prefix, but a move changes the tape from
+  the focus point on, so the tail is prefilled again. This is latency and money, not extra
+  output;
+- **one turn per transition.** Entering a state is a turn (a model call); a walk with more
+  states costs more turns than a single pass. This is the price of explicit decision points and
+  of the projection dropping stale content instead of carrying it;
+- **re-orientation reasoning.** The model has to reconcile "what was → why here → what to do".
+  This one is **not** inevitable: it is a property of the state's spec, not of transitions as
+  such. A crisp `Goal`, brief, instruction, criterion and a `Finish state` line cost little; a
+  thin state (a spec-only Construction after `O→C`) invites the model to go exploring. Measure
+  it as reasoning on the first turn after a transition against the second; a persistently
+  expensive first turn is a state-definition bug, not provider noise.
+
+Two consequences:
+
+- the first two costs are accepted deliberately: they buy a deterministic projection and
+  addressable closed states. A plain transcript pays elsewhere — with growing context and
+  stale content;
+- price the **result** (rubles per solved task, turns per task), not the transition: one extra
+  short turn can be cheaper than one long, lost turn inside the old tape.
+
+Provider noise is separate. Behind the meta-provider, different subcontractors may return a
+move with no reasoning at all; the same input then yields a different route. This is a
+statistical fluctuation, not something the prompt or effort can fix; the route metric is read
+on the samples that do reason. The completion-cap retry is not a counterexample: it does not
+reuse a cached "train of thought" — it rebuilds the model with reasoning disabled
+(`reasoningOff`) and appends a brevity note (`src/llm/structured.ts:490`), so the request
+itself changes. A prefix cache hit skips prefill and does not alter the sampling distribution.

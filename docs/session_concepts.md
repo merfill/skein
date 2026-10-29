@@ -187,9 +187,8 @@ Rules:
   `abandoned at <state>`. This is a fact, not an evaluation.
 - **L2 is not linear.** An item may have several alternatives (attempts). The outline shows the
   current one and the number of earlier ones; L3 discloses them all.
-- **The history shows the authored `what`/`notes`.** The current projection hides them because
-  the goal comes from the island; in a historical outline, without them one loses what was
-  actually done.
+- **The history shows the authored `what`.** The current projection hides it because the goal
+  comes from the island; in a historical outline, without it one loses what was actually done.
 - **Truncation is explicit.** Every level has a limit; instead of a silent cut — `k more` and a
   cursor (the id of the last shown node).
 

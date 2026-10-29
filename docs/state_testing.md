@@ -224,7 +224,6 @@ system — Finish state <Label> — <why from stop>
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — "This is End. …" |
 
 **What is erased (not shown):**
-- `notes` from `move` — not rendered;
 - `what` from `move` — not the state's goal (the block shows `island.what` as `Goal:`); if the
   doxa set `what`, it is shown as an unverified guess on that turn;
 - **a closed state's plan** — all `ai`/`tool` pairs are replaced by a single `Finish state` line.
@@ -264,8 +263,8 @@ system — Finish state <Label> — <why from stop>
   tree diff inside the container; `fetchTo` copies bytes via `docker cp`; rootless
   `grep/list/listFiles` honor `SKIP_DIRS`/dot entries/include-exclude like `fsWorkspace`.
 - **The tape's shape was reworked** (see §3): the request at the top, once; an open state entry —
-  `ai(Start)` + `system(instruction)` + `user(goal)`; no `notes`; `move.what` is an unverified
-  guess on the state's `Goal:` turn.
+  `ai(Start)` + `system(instruction)` + `user(goal)`; `move.what` is an unverified guess on the
+  state's `Goal:` turn.
 - **A per-island `instruction` was added** (`src/ir/islands.ts`) — "how to act in the state",
   rendered as a `system` message on entry.
   - Orientation: "explore the repository with the search tools, read the project's docs (README,
@@ -332,12 +331,21 @@ system — Finish state <Label> — <why from stop>
     run5 used `Verification → Patch` directly (one revert), the others were direct. Tokens —
     `docs/benches/best_bench.md`.
 
-- **Localization → Patch only (2026-10-20).** The late `Localization → Research` edge was
+- **Localization → Patch only (2026-10-20).** *(Superseded 2026-10-29 — see the corrective L↔R
+  entry below.)* The late `Localization → Research` edge was
   removed (`83243ae`): Localization again has a single transition — Patch. A dry rebuild of the
   transition from the 34-turn run shows no Research; live K=3 on the same turn — 3/3 `move patch`
   (reasoning 0–166). Full `fix-ocaml-gc` K=1: reward=1, `request_addressed`, 34 turns, 5.23₽ —
   no Research, but Patch took 15 turns: re-deriving the cause (~10k reasoning over t13–t20) and
   2 turns on `.skein/checkpoints`; cache hit 81%.
+- **Corrective L↔R (2026-10-29).** `Localization → Research` is back, not as a routine exit but as
+  a correction of a wrong start classification; `Research → Localization` is added symmetrically.
+  The states' `instruction`/`hint`/`criterion`/`what`/`applies` are unchanged — only `next` and
+  the transition rule. Synthetic coverage: `tests/routing.test.ts` (the transition renders,
+  `classify` accepts it, an open state refuses it). Live 3 tasks × K=3 (`fix-code`, `db-wal`,
+  `log-summary`, `--turns 34/32/21`): **9/9 reward=1**, the edges were never taken, normal routes
+  did not move. db-wal: 2/3 solve via `O → L → P → V` (Patch writes the deliverable), 1/3 via
+  `O → R → Recovery`. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 - **Patch gets the material map (2026-10-20).** Patch no longer gets the Probe with
   compilers/interpreters; instead it gets `Workspace` (`root`, `repo`, `entries`, `files`), as
   Orientation does. On the recorded tape at t9 (Patch plan) a dry projection shows `repo: none`

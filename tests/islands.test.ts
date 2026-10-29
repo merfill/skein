@@ -40,8 +40,8 @@ describe("islands: the closed vocabulary", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
     expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research", "construction"]));
-    expect(targets("localization")).toEqual(["patch"]);
-    expect(targets("research")).toEqual(expect.arrayContaining(["recovery", "construction"]));
+    expect(targets("localization")).toEqual(["patch", "research"]);
+    expect(targets("research")).toEqual(["recovery", "construction", "localization"]);
     expect(targets("patch")).toEqual(["verification"]);
     expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
     expect(targets("construction")).toEqual(expect.arrayContaining(["end", "research"]));

@@ -143,6 +143,9 @@ content. The model asks for 120 lines — it sees ~8.
 
 ## 4. Proposed changes
 
+> **Historical block names.** §4.1–4.3 predate the tape: `lastResult`/`shown` there are the old
+> blocks. The current projection is a message tape — see §4.4 and `docs/projection.md`.
+
 ### 4.1 `read`: a window with a declared maximum (decided)
 
 - `read { path, start?, end? }`:

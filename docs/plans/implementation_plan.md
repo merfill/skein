@@ -9,9 +9,9 @@ decisions, roadmap, and status.
 
 Skein is a coding agent whose context is a **projection of the IR**, not a message
 tape. The LLM is doxa: it only proposes (a goal enters `open`). The deterministic
-engine (logos) decides; the arbiter is a boundary authority (the first request, the
-final acceptance of the request), not a per-goal actor. The event journal and the
-projection function are the protocol.
+engine (logos) decides. The user or the harness issues the first request and accepts
+the final result from outside; there is no separate arbiter role in the loop. The
+event journal and the projection function are the protocol.
 
 ## 2. Fixed decisions
 
@@ -235,11 +235,18 @@ Beyond Tier 0, the current line adds:
   Verification 8/0.79, End 1/0.10. The remaining gap to 29/1.684₽ is the extra Research: for a
   code defect the transition should be L→P; Research is for situations/new artifacts. Tests —
   `364 passed`, typecheck clean.
-- **Localization → Patch (2026-10-20).** The late `L → R` edge is removed (`83243ae`):
+- **Localization → Patch (2026-10-20).** *(Superseded 2026-10-29 — see the corrective L↔R entry
+  below.)* The late `L → R` edge is removed (`83243ae`):
   Localization again has a single transition — Patch. A dry rebuild of the transition from the
   34-turn run shows no Research; live K=3 — 3/3 `move patch`. Full `fix-ocaml-gc` K=1: reward=1,
   `request_addressed`, 34 turns, 5.23₽ — no Research; the remainder is Patch at 15 turns
   (re-deriving the cause, ~10k reasoning) and 2 turns on `.skein/checkpoints`; cache hit 81%.
+- **Corrective L↔R edges (2026-10-29).** `Localization → Research` is back as a corrective edge
+  (a wrong start classification, not a routine exit), with the symmetric `Research → Localization`;
+  the in-state prompts are untouched (`next` and the transition rule only). Synthetic
+  `tests/routing.test.ts`; live 3 tasks × K=3 (`fix-code`, `db-wal`, `log-summary`,
+  `--turns 34/32/21`): 9/9 `reward=1`, the edges were never taken and the normal routes did not
+  move. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit

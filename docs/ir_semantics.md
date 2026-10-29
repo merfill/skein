@@ -89,7 +89,7 @@ Nodes fall into two spaces.
 
 | kind | meaning |
 |---|---|
-| `request` | the arbiter's request: raw motivation (the root); walked as a sequence of states |
+| `request` | the user's request: raw motivation (the root); walked as a sequence of states |
 | `move` | the doxa's declaration of the state it will work in; carries `state` (the island) and an optional `what` note (the doxa's guess about the concrete subject, not the state's goal); a child of the request; owns the plan |
 | `plan` | a state's plan: an ordered list of items (≥1) |
 | `item` | a plan item: an ordered list of alternatives (≥1) |
@@ -429,8 +429,7 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
   `Start state <label>` marker (a `system` turn), then the state's `instruction` (a `system`
   turn), then — while open — its goal as a `user` turn (`Goal: <island.what>`) together with,
-  when set, the doxa's guess (`Your earlier guess (may be wrong): <move.what>`). `move.notes` is
-  not shown. The
+  when set, the doxa's guess (`Your earlier guess (may be wrong): <move.what>`). The
   request is the second message of the tape (right after the base prompt), on **every** turn —
   never dropped;
 - **returning to Localization or Patch.** The failure stays on the tape in the closed `patch`

@@ -18,9 +18,9 @@
 > described below (a per-goal arbiter acceptance via `record_check`) has since been
 > **removed**. A frame closes **only** by the doxa's `stop`; every goal carries a command
 > criterion, and a criterion run is an ordinary `observation` whose `exitCode` is the only
-> pass/fail fact. The `Arbiter` remains only as a boundary authority (the first request,
-> the final acceptance of the request), not a per-goal actor. Current model —
-> `docs/ir_semantics.md`; example — `docs/walkthrough.md`.
+> pass/fail fact. There is no separate arbiter role in the current model: the user or the
+> harness issues the request, and an external verifier performs the final acceptance.
+> Current model — `docs/ir_semantics.md`; example — `docs/walkthrough.md`.
 
 We are building a coding agent whose computation is reliable and checkable, and whose
 model context contains only what is necessary. To design such a device rather than

@@ -75,7 +75,6 @@ export const actionSchema = z.discriminatedUnion("operator", [
     state: z.enum(ISLAND_IDS),
     what: z.string(),
     done: z.string().optional(),
-    notes: z.string().optional(),
   }),
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),
@@ -170,7 +169,6 @@ export function modelCall(action: Action): ModelCall {
           state: action.state,
           what: action.what,
           ...(action.done !== undefined ? { done: action.done } : {}),
-          ...(action.notes !== undefined ? { notes: action.notes } : {}),
         },
       };
     case "apply":

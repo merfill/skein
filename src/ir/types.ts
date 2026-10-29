@@ -65,9 +65,6 @@ export interface MovePayload {
   // The state's stop condition, concretized by the doxa in the request's terms (a state
   // attribute like `what`); the island's generic criterion is the fallback.
   done?: string;
-  // Presumptions carried into the state from the request (the area/subsystem/files it points
-  // to), to be verified against the tree — never a goal or a criterion.
-  notes?: string;
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):

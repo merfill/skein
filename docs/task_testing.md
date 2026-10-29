@@ -223,6 +223,12 @@ Flags:
 calls the current `buildMessages`. `--patch` edits the recorded messages without rebuilding;
 it cannot be combined with `--rebuild`. `--append-system` works in both modes.
 
+`--rebuild` reuses the recorded `history` as-is. On an old trace a closed state may still carry
+the instruction/workspace blocks of the former projection, which invites a spurious second look:
+a single `L → P` transition probe on such a history chose `Research` in 3/10 samples, while a
+fresh tape (a closed state is only `Start`/`Finish`) chose `Patch` 10/10. For transition probes,
+build a fresh tape or a minimal synthetic `history`, not an old `--rebuild` trace.
+
 Example patch file:
 
 ```json

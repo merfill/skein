@@ -1,381 +1,483 @@
-# Skein — walkthrough: the tree and the context, step by step
+# Skein — walkthrough: states and the dynamic tape
 
-> **Current as of 2026-10-27.** A state (`move`) IS its goal: `move { state, what?, done?,
-> notes? }` declares the island of work; `what` is the doxa's unverified guess about the
-> concrete subject (optional), `done` overrides the criterion (optional), and `notes` are
-> recorded but never rendered. The state block renders **`island.what`** as `Goal:` and, when
-> set, the doxa's guess (`Your earlier guess (may be wrong): …`); the per-turn tail carries the
-> criterion and the closure. `Start state` / `Finish state` markers
-> are **`system`**, the transition instruction is a `system` turn, and the request leads the
-> tape on every turn. `recall`/`search` are offered only while a state is open; a failed Verification
-> defaults to **Patch** (Localization only when the object/coordinates are in doubt), and the
-> engine reverts the last Patch.
+> **Current as of 2026-10-29.** A state is the unit of work. The context is a deterministic
+> projection of the IR; the engine rebuilds it on every turn. The journal only grows, while the
+> tape changes: a closed state disappears from it but stays in the journal and remains
+> addressable by `id`.
 >
-> The source of truth is `docs/ir_semantics.md`; the operator reference is
-> `docs/ir_operations.md`; the projection is `docs/projection.md`; the as-built is `docs/ir.md`.
-> Russian mirror — `docs/walkthrough_ru.md`.
+> Source of truth — `docs/ir_semantics.md`; the projection — `docs/projection.md`; the
+> states — `docs/states_ru.md`; as-built — `docs/ir.md`. Russian mirror — `docs/walkthrough_ru.md`.
 
 ## Preamble
 
-**What Skein is.** Skein is a coding agent that keeps knowledge not in the chat with the model
-but in a **journal of facts**, and on every turn builds a **projection** — a strictly defined
-slice of the current state. The model's context is a fresh projection each turn, assembled from
-the tree anew.
+**How an ordinary agent works.** Almost every LLM agent is built the same way: the model has a
+message tape (system, user, assistant, tool), and that tape is its memory. The agent appends a
+new turn, the next model call reads the whole tape, and so on. Everything the agent "knows" lives
+in that transcript: files it read, command output, past reasoning, errors. When the tape grows too
+long, it is truncated or summarized — and some knowledge is then lost or distorted. The model sees
+the whole history but cannot choose what it needs right now: the old and already wrong stays next
+to the new.
 
-**Doxa and logos.** The idea comes from the *doxa*/*logos* opposition:
+**How Skein works.** Skein keeps knowledge differently. The source of truth is a journal (the IR):
+an immutable list of events saying what happened (the request, states, calls, results, edits). The
+message tape is not memory but a projection of the journal: it is rebuilt on every turn and shows
+the model only what belongs to the current state. The same events therefore always give the same
+tape, and a focus change changes the view without rewriting history. Whatever leaves the tape stays
+in the journal and is fetched by `id`.
 
-- **doxa** is the language model. It proposes well but does not own the truth of what it
-  proposes, so it only *proposes* one or several moves per turn (a batch);
-- **logos** is the deterministic engine with the tools and the environment. It runs commands,
-  records results in the journal, recomputes derived facts and builds the projection. Logos
-  invents no content — it decides whether a move is allowed and what follows from it.
+**What a state is.** The agent's work is split into states. A state is not a step or a command
+but a state of knowledge: for example, "find the target in the material" or "check the change
+against the acceptance". Every state has a goal (what should be known), a criterion (the
+observable sign that the goal is reached) and a way to act (which tools are available and how to
+behave). The model enters a state with a `move`, works in it and closes it with a `stop` when the
+criterion holds. The set of states is fixed: Orientation, Localization, Research, Patch, Recovery,
+Construction, Verification, End. The current state determines what the tape shows: its goal, its
+material information, its instruction and its plan. Once a state is closed, the tape keeps only
+`Start`/`Finish` from it, and the focus moves to the next state.
 
-Hence the rule: **the doxa proposes — logos decides.** The model never declares work done:
-a state is closed by its `stop`, and a failure is an instrument fact, not a status.
+**Principles.** Three things follow, and the rest of this document builds on them:
 
-**Arbiter.** Above doxa and logos sits the **arbiter** — an external instance (the user or the
-harness). It issues the first request and accepts the result from outside; it takes no part in
-closing individual states.
+1. The model proposes moves; the engine decides and records the result (doxa/logos).
+2. A state is the unit of work: it has a goal, a criterion and a way to act.
+3. The tape is dynamic: it shows the current state, not the whole path; a closed state leaves only
+   a trace in it.
 
-**What closes work.** The only closable frame is a **state**. It closes **only by an explicit
-`stop`**; there is no criterion gate. The request has no `stop` of its own: it is interpreted
-exactly once (`move` or `decline`), and the run ends when its terminal `end` state is stopped
-(or the request is declined).
+## 1. Journal, IR, state and tape
 
-**Why this document.** The formal documents describe the model piece by piece. Here the point is
-section 4: one task is traced end to end, with the journal, the tree, the derived facts and the
-projection. Section 5 adds special cases (decline, the Verification correction cycle, timeout,
-versions/addressing).
+Skein rests on four concepts:
 
-**How to read.** This is an illustration, not a second formalism. If text and code disagree,
-the code and `docs/ir_semantics.md` win.
-
----
-
-## 1. Concepts
-
-### 1.1 Roles
-
-| Term | Meaning |
+| Concept | What it is |
 |---|---|
-| **doxa** | the language model; proposes one or more moves per turn (a batch) |
-| **logos** | the deterministic engine: runs commands, keeps the journal, recomputes facts, builds the projection |
-| **arbiter** | the external instance: issues the first request and accepts the final result from outside |
+| **journal** | a list of events; it only grows; the only source of truth |
+| **IR** | the graph of states and transitions, built from the journal |
+| **state** | a `move` with a goal, a criterion and a plan |
+| **tape** | what the model sees: the request, the current state in full, and the traces of closed states |
 
-### 1.2 Data layers
+In the IR a state is a `move`: the island name, the goal and the criterion. States are not nested:
+they are a sequence of steps in the request, one after another. Inside a state there is a plan:
+items and alternatives on the items. An alternative is a concrete tool call; the reasoning is
+recorded next to the call, and the execution result appears on the tape. A separate `stop` closes
+the state.
 
-| Term | Meaning |
-|---|---|
-| **journal** | an immutable event list — the only source of truth; append-only |
-| **state** | the fold of the journal (`fold`): nodes, edges, container order, the walk stack, file versions |
-| **projection**, also **context** | the strictly defined slice of the state the doxa sees this turn |
-| **node** | a tree object: `request`, `move`, `plan`, `item`, `action`, `observation`, `stop`, `constraint`, `file`, `unactionable` |
-| **edge** | a link between nodes: `move`, `plan`, `items`, `alts`, `result`, `mutates`, `stop`, `unactionable` |
-| **world events** | `mutate` (a file changed), `revert` (the last Patch was rolled back) |
+The tape is built from the state graph on every turn. The same events give the same tape. The IR
+(nodes, edges, operators) is described in `docs/ir_semantics.md`, `docs/ir.md` and
+`docs/ir_operations.md`.
 
-### 1.3 Work
+### 1.1 How the tape is built
 
-| Term | Meaning |
-|---|---|
-| **request** | the user's unstructured motivation; the tree root; interpreted **exactly once** as a state (`move`) or declined (`unactionable`); it has no plan and no `stop`; the run ends when its terminal state is stopped |
-| **state** (`move`) | an island of work: `state` (the island name) + optional `what` (the doxa's articulation), `done` (criterion override), `notes` (recorded, not rendered); a state IS its goal |
-| **plan** | a container of items; a plan item is always an **action**; the list gives the order and the **last** item is current |
-| **action** | one tool call (`read`/`grep`/`list`/`edit`/`write`/`bash`/`webfetch`/`apply_patch`); a turn may carry several — the engine runs them in order |
-| **observation** | the recorded result: a read window, run output, exit code |
-| **alternatives** | a container of variants: a revision of a plan item (a retry becomes the item's newest variant) |
-| **`stop`** | the terminal move: closes the current state (or, in the terminal state, ends the request) |
-| **`decline`** | the move that marks the request unactionable and ends the run |
-| **`revert`** | an engine event: on a failed Verification transition it rolls the last Patch back and updates file versions |
+The tape starts with two messages:
 
-### 1.4 A run and its output
+1. `system` — the base prompt: general rules and the description of states and transitions.
+2. `user` — the user's request.
 
-| Term | Meaning |
-|---|---|
-| **action** | one tool call; the **first** call of a state seeds the plan and runs immediately |
-| **`exitCode`** | the return code: `0` — success, non-zero — failure, absent — no verdict (timeout); ordinary output, not a gate |
+If the request has constraints, they arrive as separate `system` messages between the prompt and
+the request.
 
-A run is an ordinary `observation`; the exit code closes nothing — the doxa decides the state
-is ready and calls `stop`.
-
-### 1.5 Facts derived from the journal
-
-| Fact | Meaning |
-|---|---|
-| **`actionExecuted`** | the action has a `result` or `mutates` edge |
-| **`hasStopped`** | the state's `move` has a `stop` edge to a `stop` node (it is closed) |
-| **file version** | raised by `mutate`; `revert` restores the pre-patch version |
-
-The request has no "settled" fact of its own: its completion is read from the terminal state —
-the run ends when the terminal `move` is stopped.
-
-### 1.6 Node status
-
-There is no stored node status; facts are derived:
-
-- an action is `executed` once it produced a result;
-- a state is closed once its `move` has a `stop` edge.
-
-There are no "achieved"/"refuted" node statuses and no criterion gate.
-
-### 1.7 Walk and applicable moves
-
-- **stack** (or **path**) — the request plus the current state; the top is the **focus**;
-- **cursor** — the index of the first unexecuted plan item;
-- **sibling row** — ordered variants at one level; the **last** child is current;
-- **applicable** — the moves allowed in the current focus; the tool surface is built from it:
-  - request — `move` / `decline`;
-  - open state — the state's `apply` vocabulary + `stop` + `recall` / `search`;
-  - closed (awaiting transition) — only `move`;
-  - terminal — `stop`;
-- **`descend` / `return`** — moving the focus down the tree and back up.
-
-### 1.8 Refusals, world and addressing
-
-- **refusal** (`record_rejection`) — a record that a proposal was refused, with a reason;
-- **`mutate`** — a file-change event; raises the **version**;
-- **`revert`** — rolls the last Patch back on a failed `Verification → Patch/Localization`:
-  files return to pre-patch, versions in the IR are updated;
-- **`recall` / `search`** — addressed reading: a past result's body by `id` (window) or by
-  pattern, without re-running the command; available only while a state is open.
-
----
-
-## 2. Four levels in one picture
+Then come the states. An open state looks like this:
 
 ```
-                    append-only        pure           pure
-  doxa proposal ─▶ journal (Event[]) ──fold──▶ State ──project──▶ Context ──▶ doxa
-       ▲                                                                  │
-       └────────── one or more operators per turn, chosen from applicable moves ──┘
+system   Start state <label>
+system   <workspace map or environment facts>
+system   <instruction: how to act in this state>
+user     Goal: <state goal>
+         Your earlier guess (may be wrong): <guess>   ← when the model set it
+assistant [id] <tool call> + reasoning
+tool      [id] <result>
+assistant [id] <next call> + reasoning
+tool      [id] <result>
+system   <turn hint: hint → Done when → stop requirement>
 ```
 
-- **Journal** — `Event[]`, the only truth (`add_node`, `add_edge`, `descend`, `return`,
-  `mutate`, `revert`, `record_rejection`).
-- **State** — `fold(journal)`: nodes, edges, container order, the walk stack, file versions.
-- **Context** — `project(state)`: the message tape, the situation, constraints, the frontier,
-  the situation instruction.
-- **Doxa** — reads `Context` and proposes operators (`move` / `apply` / `stop` / `decline`;
-  `recall`/`search` are read-only addressing, while a state is open).
+Calls and results accumulate: they are what the model has already done in this state. The turn
+hint is not stored: on the next turn it is gone, and a new one is appended.
 
-Nothing the doxa "thinks" is stored. The plan is its note; the trace of work is the tree.
+An example of an open Localization after two calls:
 
-## 3. Notation
+```
+system   Start state Localization
+system   Orientation result: root /app, entries ...
+system   Find the target in the material ...
+user     Goal: find the target in the material
+assistant [a1] grep "def parse" + reasoning
+tool      [o1] src/parse.py:63 ...
+assistant [a2] read src/parse.py 40-90 + reasoning
+tool      [o2] ... window 40-90 ...
+system   Start from the workspace map ... Done when: "the target is named ..."
+         When it holds, `stop` — and nothing else.
+```
 
-| symbol | meaning |
-|---|---|
-| `R` | the root `request` |
-| `I`, `I0`, `I1`, `H` | states (`move`): the island focus and the terminal `end` |
-| `a1`, `a2` | plan items (`action`) |
-| `obs` | `observation` (read window, run output with the exit code) |
-| `→` | the focus moves; `+` a node or edge is created; `⟂` a refusal |
-| `open` / `executed` / `stopped` | the three displayed states (`stateOf`) |
+When a state is closed, two `system` messages remain — its trace:
 
----
+```
+system   Start state Localization
+system   Finish state Localization — line 63 drops the last token ...
+```
 
-## 4. End-to-end example: one task from start to finish
+The instruction, map, goal, calls and results of a closed state leave the tape. The data stays in
+the IR and is fetched with `recall`/`search` while some state is open.
 
-The task:
+### 1.2 The transition
+
+After `stop` only `move` is available; there are no other tools. A temporary `system` instruction
+is appended:
+
+```
+system   Your result is the line `Finish state Localization — …` above — read it.
+         Next states from Localization:
+         - Patch — ...
+         - Research — ...
+         Choose Patch when ...
+         Choose Research only when ...
+         Call `move` alone. ...
+```
+
+After the `move` this instruction is erased. The next state opens with its own `Start state`, its
+own instruction, its own material information and its own goal; the previous state's plan is not
+carried.
+The corrective `L↔R` edges are described only here, in the transition rule; they do not affect
+behavior inside a state.
+
+## 2. A state is the unit of work
+
+A state is not a step or a command but a state of knowledge. It has a **goal**, a **criterion**
+and **a way to act**. The model declares a state with a `move`:
+
+```
+move { state, what?, done? }
+```
+
+- `state` — an island from the closed vocabulary. A state is its goal.
+- `what` — the doxa's optional guess about the concrete subject; it is not the goal.
+- `done` — an optional criterion override for the island.
+
+The tape shows the state's goal as `Goal: <island.what>`. When the model sets `what`, the guess
+appears next to it: `Your earlier guess (may be wrong): …`.
+
+A state is closed **only** by an explicit `stop`; the engine does not check the criterion.
+`stop` records the line `Finish state <label> — <why>`: the state's trace and its handoff to the
+next state.
+
+### 2.1 Islands are states
+
+An island is a kind of work; `state` in a `move` names the island, and the `move` itself is a
+concrete state in the journal. In this text, "state" is a concrete step; "island" is a kind of
+work.
+
+| Island | Goal (`island.what`) | Criterion (briefly) | Material information | `next` |
+|---|---|---|---|---|
+| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace` | L, R, C |
+| **Localization** | find the target in the material | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Orientation result` | P, R¹ |
+| **Research** | explain the situation and establish the method | situation explained; method named | `Orientation result` + `Probe` | Recovery, C, L¹ |
+| **Patch** | make the named change to the artifact | change applied; result form checked | `Workspace` | V |
+| **Recovery** | recover the required result from the source | output exists, derived from the source, the source check passes | `Probe` | End, R |
+| **Construction** | build the new artifact from the spec or the source behaviour | artifact exists; acceptance check passes | `Probe` | End, R |
+| **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | `Probe` | End, P, L |
+| **End** | complete the request | — | — | — |
+
+¹ Corrective edges. `Localization → Research` is chosen when the work turns out to be a
+situation, not a code defect; `Research → Localization` when the situation turns out to be a code
+defect. This corrects a wrong start classification; these edges are not a routine exit.
+
+Besides the goal and the criterion, an island defines `instruction` (how to act; shown once at
+entry), `hint` (how to behave on every turn) and `applies` (which apply-tools are available).
+Neither the instruction nor the hint replaces the goal: the goal is `island.what`.
+
+### 2.2 Routes
+
+- **Repair:** `O → L → P → V → End`.
+- **Recovery:** `O → R → Recovery → End`.
+- **Construction:** `O → C → End` (full spec) or `O → R → C → End` (the source must be understood).
+- **Corrective:** `V → P/L` on failure; `L ↔ R` on a wrong start classification; `R/C → R` on a
+  method failure.
+
+The request has no `stop` of its own. It is interpreted once (`move` or `decline`), and the run
+ends when the terminal `End` state is closed.
+
+## 3. Tape details
+
+### 3.1 Material information
+
+The material information depends on the island: `Workspace` (Orientation, Patch), `Orientation result`
+(Localization, Research; Research also gets `Probe`), `Probe` (Recovery, Construction,
+Verification). These are already recorded facts; there is no need to re-probe them.
+
+### 3.2 Reasoning
+
+The doxa's past reasoning is visible on its assistant turns (`payload.reasoning`). The raw
+`thought` is not stored: its meaning stays in `why`. Toggle — `SKEIN_REASONING_TAPE=false`.
+
+### 3.3 What is not shown, and how to fetch it
+
+- `move.what` is a guess on the `Goal:` turn, not the goal;
+- the plans, material information and instructions of closed states are not shown;
+- the request's presumptions are not carried into the state as facts.
+
+Addressability: every node is either shown or one `recall`/`search` by `id` away, while a state
+is open. Erasure changes the view; it does not destroy knowledge.
+
+## 4. End-to-end example
+
+### 4.1 The task
+
+`/app` holds a small Python project: `src/parse.py`, `Makefile`, `tests/`. Someone broke string
+parsing in `src/parse.py`, so `make test` fails. The user asks:
 
 > "I broke the build; make `make test` pass."
 
-One constraint `k1` — do not touch the tests. Route:
-`O → L → P → V (fail) → P → V (pass) → End`. The run lasts 21 turns (0–20). The first
-Verification fails: the engine reverts the Patch and moves the work into a new Patch; the
-second Verification passes. Each row shows the doxa's proposal, the journal event, the tree
-growth, the derived facts and what the doxa sees next.
+One constraint applies, `k1` — do not touch the tests. The acceptance is `make test`.
 
-| Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection (what the doxa sees) |
-|---|---|---|---|---|---|
-| 0 | `[R]` | — *(the arbiter issues the request)* | `+ request R {text}` | `rootId=R` | `situation=request`; `applicable=[move, decline]` |
-| 1 | `[R] → [R,I0]` | `move I0 {state:"orientation"}` | `+ move I0`; `+ move R→I0` | `I0=open`; `situation=plan` | `Start state Orientation`; Workspace map; instruction; `Goal: name the workspace root… acceptance…` |
-| 2 | `[R,I0]` | `stop {why:"/app is the repo; acceptance is make test"}` | `+ stop s0`; `+ stop I0→s0` | `I0=stopped`; `situation=transition` | `Finish state Orientation — …`; `applicable=[move]` |
-| 3 | `[R,I0] → [R,I1]` | `move I1 {state:"localization"}` | `+ move I1`; `+ move R→I1` | `I1=open`; `situation=plan` | `Start state Localization`; map + Environment; `Goal: find the target…` |
-| 4 | `[R,I1]` | `apply grep {pattern:"def parse"}` *(first item)* | `+ plan Q1`; `+ items Q1→a1`; `+ action a1`; `+ obs o1` | `a1=executed`; `situation=working` | `lastResult` — matches; `applicable=[apply, stop, recall, search]` |
-| 5 | `[R,I1]` | `apply read src/parse.py [40-90]` | `+ action a2`; `+ items Q1→a2`; `+ obs o2 {version:v1}` | `observed(file)=v1` | `lastResult` — the code window |
-| 6 | `[R,I1]` | `stop {why:"line 63 drops the last token — off-by-one in the loop"}` | `+ stop s1`; `+ stop I1→s1` | `I1=stopped`; `situation=transition` | `Finish state Localization — …`; `applicable=[move]` |
-| 7 | `[R,I1] → [R,I2]` | `move I2 {state:"patch"}` | `+ move I2`; `+ move R→I2` | `I2=open`; `situation=plan` | `Start state Patch`; map; `Goal: make the named change…`; tail with the criterion |
-| 8 | `[R,I2]` | `apply edit src/parse.py {old,new}` *(first item)* | `+ plan Q2`; `+ items Q2→a3`; `+ action a3`; `+ mutates a3→file`; `mutate v1→v2` | `currentVersion(file)=v2` | `lastResult` — the change is applied |
-| 9 | `[R,I2]` | `stop {why:"the change is in the workspace"}` | `+ stop s2`; `+ stop I2→s2` | `I2=stopped` | `Finish state Patch — …`; `applicable=[move]` |
-| 10 | `[R,I2] → [R,I3]` | `move I3 {state:"verification"}` | `+ move I3`; `+ move R→I3` | `I3=open`; `situation=plan` | `Start state Verification`; Environment; `Goal: check the changed artifact…` |
-| 11 | `[R,I3]` | `apply bash {command:"make test"}` *(first item)* | `+ plan Q3`; `+ items Q3→a4`; `+ action a4`; `+ obs o4 {exitCode:1}` | `a4=executed` | `lastResult` — `make test` failed (literal) |
-| 12 | `[R,I3]` | `stop {why:"make test: exit 1 — <literal failure>"}` | `+ stop s3`; `+ stop I3→s3` | `I3=stopped`; `situation=transition` | `Finish state Verification — …`; `applicable=[move]` |
-| 13 | `[R,I3] → [R,I4]` | `move I4 {state:"patch"}` | `+ revert {files, v2→v1}`; `+ move I4`; `+ move R→I4` | `currentVersion(file)=v1`; `I4=open` | `Start state Patch`; above on the tape — `Finish state Verification — <literal why>`; the failed Verification's plan is elided; `applicable=[apply, stop, recall, search]` |
-| 14 | `[R,I4]` | `apply edit src/parse.py {old2,new2}` *(a different diff)* | `+ plan Q4`; `+ items Q4→a5`; `+ action a5`; `+ mutates`; `mutate v1→v3` | `currentVersion(file)=v3` | `lastResult` — the change is applied |
-| 15 | `[R,I4]` | `stop {why:"a different change is in the workspace"}` | `+ stop s4`; `+ stop I4→s4` | `I4=stopped` | `Finish state Patch — …` |
-| 16 | `[R,I4] → [R,I5]` | `move I5 {state:"verification"}` | `+ move I5`; `+ move R→I5` | `I5=open`; `situation=plan` | `Start state Verification`; Environment |
-| 17 | `[R,I5]` | `apply bash {command:"make test"}` | `+ plan Q5`; `+ items Q5→a6`; `+ action a6`; `+ obs o6 {exitCode:0}` | `a6=executed` | `lastResult` — `make test` passed |
-| 18 | `[R,I5]` | `stop {why:"the acceptance command passes"}` | `+ stop s5`; `+ stop I5→s5` | `I5=stopped`; `situation=transition` | `Finish state Verification — …`; `applicable=[move]` |
-| 19 | `[R,I5] → [R,H]` | `move H {state:"end"}` | `+ move H`; `+ move R→H` | `H=open`; `situation=terminal` | `Start state End`; `applicable=[stop]` |
-| 20 | `[R,H]` | `stop {why:"request complete"}` | `+ stop s6`; `+ stop H→s6`; the run ends | `H=stopped`; `hasStopped(H)=true` | the session ends with `request_addressed` |
+### 4.2 The start: the opening block
 
-On turn 13 the engine writes `revert` **before** entering the new Patch: the last Patch is
-rolled back, the tree returns to pre-patch. The failure stays on the tape in the closed
-`Patch`/`Verification` `Finish` lines (the literal `stop.why`); closed states' plans are
-elided, and the current implementation renders no separate `Previous failed attempt` block.
-
-### 4.1 The final tree
-
-The request's states hang as **flat children** by the `move` edge, in walk order. Plans hang on
-`move`; failed states stay closed in the tree ("what did not work"), and `revert` deletes no
-events — it only restores files and versions.
+The first turn has not chosen a state yet. The tape holds the base prompt and the request. The
+prompt, schematically (full text — `src/loop/prompt/blocks.ts`):
 
 ```
-R  request "I broke the build; make test must pass"         (root: no plan, no stop)
-│  move
-├─▶ I0  move orientation                                  stopped ✔
-│      └─ stop ─▶ s0
-├─▶ I1  move localization                                 stopped ✔
-│      │  plan
-│      │   ├─ items ─▶ a1 grep        executed → obs o1
-│      │   └─ items ─▶ a2 read        executed → obs o2 (v1)
-│      └─ stop ─▶ s1
-├─▶ I2  move patch                                        stopped ✔
-│      │  plan
-│      │   └─ items ─▶ a3 edit        executed → mutates (v1→v2)
-│      └─ stop ─▶ s2
-├─▶ I3  move verification                                 stopped ✔ (failed)
-│      │  plan
-│      │   └─ items ─▶ a4 bash "make test"  executed → obs o4 (exit 1)
-│      └─ stop ─▶ s3
-│      ┆  revert: v2→v1 (on the I3→I4 transition)
-├─▶ I4  move patch                                        stopped ✔
-│      │  plan
-│      │   └─ items ─▶ a5 edit        executed → mutates (v1→v3)
-│      └─ stop ─▶ s4
-├─▶ I5  move verification                                 stopped ✔
-│      │  plan
-│      │   └─ items ─▶ a6 bash "make test"  executed → obs o6 (exit 0)
-│      └─ stop ─▶ s5
-└─▶ H   move end                                          stopped ✔
-       └─ stop ─▶ s6
+system   # Role ... ## States ... ## Transitions ...
+user     "I broke the build; make `make test` pass."
+system   Choose the state to start in ... (request instruction)
 ```
 
-On the tape a closed state is only `Start state <label>` / `Finish state <label> — <why>`: its
-brief, instruction, goal and plan are elided. They remain available in an open state (or via
-`recall`).
+Only `move` and `decline` are available. For this task the first step is Orientation: the project
+and the acceptance must be known.
 
-### 4.2 What to notice
+### 4.3 Orientation
 
-- **A state IS its goal.** `move` declares the island; the state block renders `island.what` as
-  `Goal:`. `move.what` is the doxa's unverified guess, shown on the `Goal:` turn, not the tail.
-  `move.done` overrides the criterion in the tail; `notes` are recorded but not rendered.
-- **The first plan item is an ordinary tool call.** There is no separate concretization
-  operator: the first `apply` after `move` seeds the plan and runs immediately (turns 4, 8, 11,
-  14, 17).
-- **Batching is allowed.** A turn may propose several independent calls; the engine runs them
-  in order and returns N results. `move` and `stop` are never batched.
-- **`stop` closes the state.** After `stop` the only applicable move is `move` (turns 2, 6, 9,
-  12, 15, 18). The terminal `stop` on `end` ends the request (turn 20).
-- **There is no criterion gate.** `stop` is accepted on an open state; the doxa decides when
-  the criterion holds (the tail repeats it after every result). A failure is a fact, not a
+The doxa calls `move {state:"orientation"}`. The Orientation entry appears on the tape:
+
+```
+system   Start state Orientation
+system   Workspace map: root /app; entries src/, Makefile, tests/ ...
+system   Read the workspace map ... (state instruction)
+user     Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares
+system   ... Done when: "..." ... When it holds, `stop` — and nothing else.
+```
+
+The map and the request already give the goal and the acceptance, so the move is
+`stop {why:"root /app; entries src/, Makefile, tests/; acceptance: make test"}`.
+
+Orientation leaves a trace:
+
+```
+system   Start state Orientation
+system   Finish state Orientation — root /app; entries ...; acceptance: make test
+```
+
+### 4.4 The transition to Localization
+
+The tape now holds the request, the Orientation trace and a temporary transition instruction:
+
+```
+system   Your result is the line `Finish state Orientation — …` above — read it.
+         Next states: Localization, Research, Construction.
+         Move to Localization when the request is to find an error in existing code or files.
+         ...
+```
+
+Only `move` is available. The request is to find an error in existing code, so Localization is
+chosen. (A situation would go to Research; a fully specified artifact to Construction.) The doxa
+calls:
+
+```
+move {state:"localization", what:"the parse loop that breaks on the last token"}
+```
+
+### 4.5 Localization
+
+After the `move` the transition instruction is erased; the tape holds the request, the Orientation
+trace and the open Localization:
+
+```
+system   Start state Localization
+system   Orientation result: root /app; entries ...; acceptance: make test
+system   Find the target ... (state instruction)
+user     Goal: find the target in the material
+         Your earlier guess (may be wrong): the parse loop that breaks on the last token
+assistant [a1] grep "def parse" + reasoning
+tool      [o1] src/parse.py:63 ...
+assistant [a2] read src/parse.py 40-90 + reasoning
+tool      [o2] ... (window 40-90) ...
+system   ... Done when: "the target is named ..." ... `stop` — and nothing else.
+```
+
+The target and the cause are found; the move is
+`stop {why:"line 63 drops the last token — off-by-one in the loop"}`.
+
+The trace:
+
+```
+system   Start state Localization
+system   Finish state Localization — line 63 drops the last token ...
+```
+
+### 4.6 Patch and Verification
+
+Next come the change and the acceptance. The first Patch applies a change:
+
+```
+... Finish state Localization ...
+system   Start state Patch
+system   Workspace map ...
+user     Goal: make the named change to the artifact
+assistant [a3] edit {path:"src/parse.py", ...}
+tool      [m] mutated src/parse.py
+... (stop → Finish state Patch — ...)
+system   Start state Verification
+system   Probe ...
+user     Goal: check the changed artifact against the goal's acceptance
+assistant [a4] bash {command:"make test"}
+tool      [o4] exit 1 — IndexError: list index out of range
+... (stop → Finish state Verification — make test: exit 1 — IndexError: list index out of range)
+```
+
+What happened: the change moved the loop boundary, and now on the last iteration the code reads
+`tokens[i + 1]` past the end of the list. The test fails with `IndexError`. The object itself — the
+parse loop — was found correctly; the change is what is wrong. So by the transition rule
+`V → Patch` (the failure is in the change or the result, the object is the same) we return to
+Patch instead of finishing the request.
+
+Before the return the engine writes `revert`: files go back to the state before the first change.
+The failure stays on the tape only in Verification's `Finish` line; the failed Verification's plan
+is not shown.
+
+The second Patch applies a different diff — with a boundary check — and Verification passes:
+
+```
+system   Finish state Verification — make test: exit 1 — IndexError: list index out of range
+system   Start state Patch
+system   Workspace map ...
+user     Goal: make the named change to the artifact
+assistant [a5] edit {path:"src/parse.py", ...}   ← another diff
+tool      [m] mutated src/parse.py
+... (stop → Finish state Patch — ...)
+system   Start state Verification
+system   Probe ...
+user     Goal: check the changed artifact against the goal's acceptance
+assistant [a6] bash {command:"make test"}
+tool      [o6] exit 0
+... (stop → Finish state Verification — ...)
+```
+
+### 4.7 End
+
+When the acceptance passes, only the request remains:
+
+```
+system   Start state End
+system   This is End. Call `stop` when the request is complete.
+```
+
+The doxa calls `stop {why:"request complete"}`. The run is complete (`request_addressed`). The IR keeps every state, including the failed
+Verification; the tape keeps only their traces.
+
+### 4.8 What remains in the IR
+
+States are separate steps of the request. Each is linked to the request by a `move` edge, and a
+plan hangs on the state itself. The tape removed them from view, but the IR kept everything:
+
+```
+R  request
+├─ I0 orientation   stopped   (on the tape only Start/Finish)
+├─ I1 localization  stopped   plan: a1 grep, a2 read
+├─ I2 patch         stopped   plan: a3 edit (v1→v2)
+├─ I3 verification  stopped   plan: a4 bash (exit 1)     ← failed
+│  ┆ revert v2→v1 (on the I3→I4 transition)
+├─ I4 patch         stopped   plan: a5 edit (v1→v3)
+├─ I5 verification  stopped   plan: a6 bash (exit 0)
+└─ H  end           stopped
+```
+
+This is why `recall`/`search` matter: a closed state is not visible on the tape, but its results
+are available by `id`.
+
+### 4.9 What to notice
+
+- **A state is the unit of work.** The goal is `island.what`; `move.what` is a guess; `move.done`
+  overrides the criterion.
+- **Erasure after `stop`.** On the tape a closed state keeps only `Start`/`Finish`; the plan and
+  the material information leave, but stay in the IR.
+- **`Finish` is the trace and the handoff.** The next state does not inherit the plan. It gets its
+  own material information and reads the `Finish` line as the result.
+- **The tail holds the goal.** `hint`, `Done when` and the closure requirement are rebuilt every
+  turn. This is not memory; it is a reminder at the end of the tape.
+- **Reasoning on the tape.** The doxa sees its past reasoning on assistant turns; the raw
+  `thought` is not stored, its meaning stays in `why`.
+- **No criterion check.** `stop` is accepted by the doxa; an instrument failure is a fact, not a
   closure.
-- **A failed Verification defaults to Patch.** The engine reverts the last Patch (`revert`) and
-  the new Patch starts from the pre-patch tree. The failure stays on the tape in the closed
-  `Patch`/`Verification` `Finish` lines (the literal `why`); the current implementation renders
-  no separate `Previous failed attempt` block. Localization is chosen only when the failure
-  points at a different object/coordinates.
-- **The model surface is the frontier.** Request — `move`/`decline`; open state — applies +
-  `stop` + `recall`/`search`; closed — only `move`; terminal — `stop`.
-- **Nothing decides by itself.** The engine does not run the plan or close states on an exit
-  code; its only intervention is the deterministic `revert` on a failed Verification.
-
-### 4.3 Plan, alternatives and `stop`
-
-**Plan.** A state has exactly one plan: a `plan` edge from `move` to the `plan` node; items are
-linked by `items` edges. The order is the **list** of the plan's children; the current item is
-the **last** child. A plan item is always an action.
-
-**Alternatives.** The `alternatives` container hangs on a plan item (the revision history of a
-step that did not work). The current variant is the last child; the rest stay in the tree as
-"what did not work".
-
-```
-state (move)
-│  plan
-└─▶ Q  plan   [ item list: s, … ]
-       │
-       └─ items ─▶ s  action "cat HACKING.adoc"          (did not work)
-                  │  alts
-                  └─▶ a'  action "make test"  (newest = current; runs)
-```
-
-**`stop`.** It acts on the state: a `stop` node + a `stop` edge from the `move`. `stop` is not
-a plan item; there is no gate. On a working state it forces a transition (only `move`); on
-`end` it ends the request. The request has no `stop`.
-
----
+- **The surface is the frontier.** On the request, `move`/`decline`; in an open state, the
+  apply-tools, `stop`, `recall`/`search`; in a closed state, only `move`; in the terminal state,
+  `stop`.
+- **A failed Verification goes to Patch by default.** `revert` rolls the last Patch back;
+  Localization is chosen only when the failure points at a different object.
 
 ## 5. Special cases
 
 ### 5.1 Unactionable request (`decline`)
 
-A request like "hello there" has no actionable task. The doxa invents no state; it declines.
+| Turn | State | Move | Tape | Journal |
+|---|---|---|---|---|
+| 0 | request | — | base + request + request instruction | `+ request R` |
+| 1 | request | `decline {why:"there is no actionable task"}` | the session ends | `+ unactionable U`; `R→U` |
 
-| Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection |
-|---|---|---|---|---|---|
-| 0 | `[R]` | — *(the arbiter issues the request)* | `+ request R {text}` | `rootId=R` | `applicable=[move, decline]` |
-| 1 | `[R]` | `decline {why:"there is no actionable task"}` | `+ unactionable U {why}`; `+ unactionable R→U`; the run ends | the request has no state; `unactionableOf(R)=U` | the session ends; the request keeps the mark |
+`decline` is accepted only on a fresh request. A failed command is not a `stop`: the doxa keeps
+working in the same state, adds items and checks again.
 
-`decline` is accepted only on a **fresh** request. A failed command is **not** a `stop`: the
-doxa keeps working in the same state (adds items and checks again).
+### 5.2 Failed Verification: `revert` and return
 
-### 5.2 Failed Verification: Patch by default and revert
+A failed acceptance does not close Verification by itself — the doxa's `stop` does. On the
+`Verification → Patch/Localization` transition the engine:
 
-A failed acceptance does not close Verification "by itself" — the doxa's `stop` does (turn 12).
-On the `Verification → Patch/Localization` transition the engine:
+1. records `revert` for the last Patch (files return to the state before the change, versions are
+   updated);
+2. adds the new state to the request as another step;
+3. leaves the failure in the closed `Patch`/`Verification` `Finish` lines (the literal `stop.why`).
 
-1. writes a `revert` event for the last Patch (files to pre-patch, versions updated);
-2. makes the new `move` a flat child of the request;
-3. leaves the failure on the tape in the closed `Patch` and `Verification` `Finish` lines (the
-   literal `stop.why`). Closed states' plans are elided, and the current implementation renders
-   **no** separate `Previous failed attempt` block.
+The failed state's plan is removed from the tape; there is no separate `Previous failed attempt`
+block. If the revert is impossible (`write`/`apply_patch` without a preimage), the change stays
+in the files — a known gap.
 
-**Localization** is chosen only when the failure points at a different object/coordinates;
-otherwise Patch. If the revert is impossible (`write`/`apply_patch` without a preimage), the
-engine leaves the change in the tree and prints no separate warning; the failure is still
-visible in the `Finish` lines. This is a known gap — see the handoff.
+### 5.3 Timeout
 
-### 5.3 Non-deciding run (timeout)
+| Turn | State | Move | Tape | Fact |
+|---|---|---|---|---|
+| 1 | V working | `bash {command:"make test", timeout:60000}` | `tool` with `{command, error:"… timed out…"}` | no `exitCode`; no verdict |
+| 2 | V working | the same command again | a new `tool` | the timeout brought no knowledge |
 
-| Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection |
-|---|---|---|---|---|---|
-| 1 | `[R,I3]` | `apply bash {command:"make test", timeout:60000}` | `+ obs {**no exitCode**}` | no verdict: `I3` stays `open` | `lastResult={command, error:"…timed out…"}`; may retry |
-| 2 | `[R,I3]` | `apply bash {command:"make test"}` (retry) | a new observation | — | a timeout brought no knowledge |
-
-`exitCode` is the main "passed/failed" signal. Its absence means "no verdict": the state stays
-open and a retry is allowed. A run never closes a state.
+`exitCode` is the "passed/failed" signal, not a gate. Without it, the state stays open and the
+command may be repeated. A run never closes a state.
 
 ### 5.4 World, versions and addressing
 
-| Turn | Stack | Doxa proposal | Journal / tree change | Derived facts | Projection |
-|---|---|---|---|---|---|
-| r | `[R,I]` | `apply read src/parse.py [10-80]` | `+ action`; `+ obs{ref, version:v1}`; `result` | `observed(file)=v1` | the window enters the tape as a `tool` result |
-| e | `[R,I]` | `apply edit src/parse.py` | `+ action`; `+ mutates`; `mutate v1→v2` | `currentVersion=v2`; the `v1` read is stale | stale content is **not** shown as active |
-| v | `[R,I]` | `stop` → `move` after a failed Verification | `+ revert`; versions back | `currentVersion=v1` | the failure in the `Finish` lines; no separate block |
-| q | `[R,I]` | `recall {id:"obs:…"}` | no node; the body returns | — | the body enters as a transient `tool` result |
+| Turn | Move | Tape | Fact |
+|---|---|---|---|
+| r | `read src/parse.py [10-80]` | `tool` with the window | `observed(file)=v1` |
+| e | `edit src/parse.py` | `tool mutated <path>` | `currentVersion=v2`; the `v1` read is stale |
+| v | `stop` → `move` after a failure | the failure in the `Finish` lines | `revert` restored the versions |
+| q | `recall {id:"obs:…"}` | the body arrives as a transient `tool` | no node is created |
 
-A file change emits `mutate`; freshness is **computed**, not stored as a flag. `revert`
-restores files and versions without deleting events. `recall`/`search` are available only while
-a state is open; a repeated command with the same inputs and an unchanged world is refused —
-the knowledge is already there, take it by address.
+Freshness is computed from the version, not stored as a flag. A stale read is not shown as
+active. `recall`/`search` are available only while a state is open.
 
----
+## 6. Why this design, and what it costs
 
-## 6. What this walkthrough illustrates
+- **States are isolated.** The model works with the current state's goal and material, not the
+  whole past path; a closed state does not distract it.
+- **The tail holds the goal.** `hint`, `Done when` and the closure requirement remind it of the
+  criterion at the end of the tape and leave no debris in the journal.
+- **The focus is non-monotone.** The tape is a view, not a transcript. A focus change removes the
+  irrelevant, but knowledge stays available by `id`.
+- **Transitions cost money.** A prefix cache miss (prefill), an extra turn per transition, and
+  re-orientation reasoning. The last part is variable and reflects the quality of the state's
+  spec. See `docs/projection.md` §8. Price the result (rubles per task, turns per task), not the
+  transition. Provider noise (different subcontractors, turns without reasoning) is a statistical
+  fluctuation, not a design property.
 
-1. **Context is a projection, not the model's own word tape.** Every turn builds a fresh tape
-   from the tree.
-2. **The doxa proposes — logos decides.** A move is chosen from the applicable set; rules and
-   facts decide whether it happens.
-3. **Closing is exactly one `stop`, and only by the doxa.** The request ends on the terminal
-   `end`'s `stop` (or `decline`).
-4. **A state IS its goal.** `move { state }` declares the island; the block renders
-   `island.what`; `move.what` is the unverified guess and `move.done` is the criterion override.
-5. **The model surface is the frontier.** Request — `move`/`decline`; open — applies + `stop` +
-   `recall`/`search`; closed — only `move`; terminal — `stop`.
-6. **Nodes hold no truth.** There are `open`/`executed`/`stopped` and derived facts; a failure
-   is a fact, not a status.
-7. **The trace is monotone.** Nothing is rewritten; a failed step stays visible, and `revert`
-   is a deterministic engine event, not history deletion.
-8. **Everything is addressable.** Result bodies live in the journal and are recalled by `id`;
-   the context stays a bounded slice.
+What the example shows:
+
+1. Context is a projection, not a transcript. The tape is rebuilt every turn.
+2. A state is the unit of work: goal, criterion, behavior and tool set.
+3. Only the doxa's `stop` closes a state; there is no criterion check.
+4. After closing, the tape keeps only `Start`/`Finish`, while the data stays in the IR.
+5. The `Finish` line is the state's trace and its handoff to the next state.
+6. The tail holds the goal rather than storing it.
+7. The doxa's reasoning returns to the tape, but the raw `thought` is not stored.
+8. Everything is addressable: the closed state is not visible but is fetched by `id`.

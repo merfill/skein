@@ -210,9 +210,9 @@ background-job machinery.
   of a `cd … &&` prefix); `timeout` caps this single command in milliseconds. Both are part
   of the repeat signature, so the same text under a different directory or cap is a new
   action.
-- **Projection** (`PRJ-AP`): the result node is `lastResult`; stdout (`output`) and
-  stderr (`error`) are separate; a crash adds `signal`/`core`/`backtrace`; the `calls`
-  entry carries the `id` for a later `recall`/`search`.
+- **Projection** (`PRJ-AP`): the result is a `tool` turn on the tape under the state's plan;
+  stdout (`output`) and stderr (`error`) are separate; a crash adds `signal`/`core`/`backtrace`;
+  the node id prefixes the `tool` message for a later `recall`/`search`.
 
 #### 2.3.6 `write` (`OP-AP-WRITE`)
 

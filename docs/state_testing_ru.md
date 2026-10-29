@@ -225,7 +225,6 @@ system — Finish state <Label> — <why из stop>
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — «This is End. …» |
 
 **Что затирается (не показывается):**
-- `notes` из `move` — не рендерятся;
 - `what` из `move` — не цель состояния (в блоке `island.what` как `Goal:`); если докса задала
   `what`, он показывается как непроверенная догадка на этом ходе;
 - **план закрытого состояния** — все пары `ai`/`tool` заменяются одной строкой `Finish state`.
@@ -264,8 +263,8 @@ system — Finish state <Label> — <why из stop>
   внутри контейнера; `fetchTo` копирует байты через `docker cp`; `grep/list/listFiles` в
   rootless соблюдают `SKIP_DIRS`/dot-entries/include-exclude, как `fsWorkspace`.
 - **Форма ленты переработана** (см. §3): запрос — вверху, один раз; вход открытого состояния —
-  `ai(Start)` + `system(инструкция)` + `user(цель)`; `notes` нет; `move.what` — непроверенная
-  догадка на ходе `Goal:` состояния.
+  `ai(Start)` + `system(инструкция)` + `user(цель)`; `move.what` — непроверенная догадка на
+  ходе `Goal:` состояния.
 - **Добавлена per-island `instruction`** (`src/ir/islands.ts`) — «как действовать в
   состоянии», рендерится `system`-сообщением при входе.
   - Orientation: «исследуй репозиторий поиском, прочти документацию проекта (README, HACKING)…
@@ -345,12 +344,22 @@ system — Finish state <Label> — <why из stop>
     7.315₽; run5 использовал `Verification → Patch` напрямую (один revert), остальные — прямой
     путь. Токены — `docs/benches/best_bench_ru.md`.
 
-- **Localization → Patch only (2026-10-20).** Убрано позднее ребро `Localization → Research`
+- **Localization → Patch only (2026-10-20).** *(Устарело 2026-10-29 — см. запись о
+  коррекционных L↔R ниже.)* Убрано позднее ребро `Localization → Research`
   (`83243ae`): у Localization снова единственный переход — Patch. Dry-rebuild перехода из
   34-ходового прогона Research не показывает; live K=3 на том же ходу — 3/3 `move patch`
   (reasoning 0–166). Полный `fix-ocaml-gc` K=1: reward=1, `request_addressed`, 34 хода, 5.23₽ —
   Research нет, но Patch 15 ходов: пере-вывод причины (~10k reasoning на t13–t20) и 2 хода на
   `.skein/checkpoints`; cache hit 81%.
+- **Коррекционные L↔R (2026-10-29).** `Localization → Research` возвращено не как обычный
+  выход, а как коррекция неверной стартовой классификации; симметрично добавлено
+  `Research → Localization`. `instruction`/`hint`/`criterion`/`what`/`applies` состояний не
+  менялись — только `next` и правило перехода. Синтетика — `tests/routing.test.ts`: переход
+  рендерится, `classify` его принимает, открытое состояние — отклоняет. Живой прогон
+  3 задач × K=3 (`fix-code`, `db-wal`, `log-summary`, `--turns 34/32/21`): **9/9 reward=1**,
+  рёбра не выбраны ни разу, нормальные пути не сдвинулись. db-wal: 2/3 решают через
+  `O → L → P → V` (Patch пишет deliverable), 1/3 — через `O → R → Recovery`. Трасса:
+  `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 - **Patch получает карту материала (2026-10-20).** Patch больше не получает Probe с
   compilers/interpreters; вместо него — `Workspace` (`root`, `repo`, `entries`, `files`), как у
   Orientation. На записанной ленте t9 (Patch plan) dry-проекция даёт `repo: none` и

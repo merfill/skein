@@ -260,7 +260,9 @@ record.
   `docs/ir_semantics.md` §2.5/§8.9.
 - **Phase 20 (2026-10-15).** A **state is a decision, not a tool call**: `move`/`stop` render as
   `Start state <label>` / `Finish state <label> — <why>` markers (the goal turn is shown only
-  while the state is open; `move.what` rides the per-turn tail), and the request is a temporary
+  while the state is open; `move.what` rides the per-turn tail — *superseded 2026-10-27: the tail
+  no longer carries `what`; the goal is `island.what` and `move.what` is the guess*), and the
+  request is a temporary
   `user` turn shown only at a state decision (`request` / `transition`); the `move` JSON result is gone. `turnInstruction` restates the state's criterion
   and makes `stop` the expected move when it holds (`call \`stop\` and nothing else — do not look
   ahead`); the `stop` tool description is the single line "call `stop` — and nothing else — when
@@ -281,8 +283,9 @@ record.
 - **Phase 22 (2026-10-16).** The **tape shape** changed (`src/ir/project.ts`): the request
   **leads** the tape (the second message, right after the base prompt) on **every** turn; a state
   renders `Start state <label>` (`ai`) + `Island.instruction` (`system`) + `what: <Island.what>`
-  (`user`, only while open; `move.what` rides the per-turn tail); the doxa's `move.notes` is not
-  shown as a state block. New per-island `instruction`
+  (`user`, only while open; `move.what` rides the per-turn tail — *superseded 2026-10-27: the tail
+  no longer carries `what`; the goal is `island.what` and `move.what` is the guess*). New per-island
+  `instruction`
   (`src/ir/islands.ts`) says how to act in the state — Orientation reads the project's docs;
   Localization compares the suspect code with its **siblings** (the other loops over the same
   structure) and does not chase an upstream reference. The `turnInstruction` criterion and the

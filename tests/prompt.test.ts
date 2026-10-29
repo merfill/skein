@@ -51,6 +51,8 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
     expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
+    expect(BASE_PROMPT).toMatch(/- Localization → Research — the work is a situation, not a code defect to locate/);
+    expect(BASE_PROMPT).toMatch(/- Research → Localization — the work is a code defect to locate/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation: not an error in code and not a fully specified new artifact/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request fully specifies the new artifact — it can be written now/);
     expect(BASE_PROMPT).toMatch(/End is terminal/);
@@ -85,7 +87,14 @@ describe("system prompt: base + node assembly", () => {
     const fromLocalization = transitionInstruction("localization");
     expect(fromLocalization).toContain("Finish state Localization");
     expect(fromLocalization).toMatch(/target is named and a cause is suspected/);
-    expect(fromLocalization).not.toContain("Research");
+    // The corrective edge: Research is offered only for a situation, not as a routine exit.
+    expect(fromLocalization).toContain("Research");
+    expect(fromLocalization).toMatch(
+      /Choose Research only when the work is a situation, not a code defect to locate/,
+    );
+    const fromResearch = transitionInstruction("research");
+    expect(fromResearch).toContain("Finish state Research");
+    expect(fromResearch).toMatch(/Choose Localization when the work is a code defect to locate/);
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
     expect(fromRecovery).toMatch(/integrity\/consistency/);

@@ -85,7 +85,7 @@ shared `afterEach` cleanup (it would race the still-running scenarios). The whol
 ~3 minutes.
 
 The scenario harness drives `runAgent` alone (mirrors `bench/run.ts`): there is no
-program arbiter. A request ends at the doxa's own `stop` — the terminal move's `stop`
+separate acceptance program. A request ends at the doxa's own `stop` — the terminal move's `stop`
 ends the request, with no criterion gate — so a request that names no literal command
 still closes once the model moves to Hand-off and stops.
 

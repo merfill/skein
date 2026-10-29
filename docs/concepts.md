@@ -183,13 +183,14 @@ Code knowledge is non-monotonic, but the journal stays monotonic. The bridge is
 The witness is a snapshot of the whole workspace — sound but coarse; precision is
 deferred.
 
-## The arbiter
+## Acceptance
 
-The Arbiter is a **boundary authority**, not a per-state actor:
+Acceptance is external; there is no separate actor inside the loop:
 
 - the **toolchain** (tests, type checker, repro scripts) produces the criterion's exit
-  code when the goal's `done_when` runs;
-- the **user** owns the first request and the final acceptance of the request.
+  code when the goal's acceptance command runs;
+- the **user** or the harness issues the first request and accepts the final result from
+  outside.
 
 There is no `record_check` and no per-state acceptance. A state is closed only by the
 doxa's `stop` — there is no criterion gate. The LLM never produces the closure.

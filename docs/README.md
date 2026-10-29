@@ -23,9 +23,9 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [ir.md](ir.md) · [RU](ir_ru.md) — the IR as built: operations, state, control.
 - [ir_semantics.md](ir_semantics.md) · [RU](ir_semantics_ru.md) — the source of truth for the
   shape, the doxa's operators and the context (folded from the revision).
-- [walkthrough.md](walkthrough.md) · [RU](walkthrough_ru.md) — the end-to-end example: the
-  tree and the context across execution contexts (a fix, a revision, a give-up, a
-  decomposed step, a non-decisive run, the world).
+- [walkthrough.md](walkthrough.md) · [RU](walkthrough_ru.md) — the end-to-end example: states
+  and the dynamic tape across execution contexts (a fix, a revision, a give-up, a decomposed
+  step, a non-decisive run, the world).
 - [ir_operations.md](ir_operations.md) · [RU](ir_operations_ru.md) — the operator registry
   (`OP-MV`, `OP-CG`, `OP-AP`, `TR`, `DER`, `REF`, ...). The coverage gate reads this file; keep
   the ids in sync with the tests.

@@ -123,6 +123,10 @@ export const ISLANDS: Record<IslandId, Island> = {
         to: "patch",
         when: "the target is named and a cause is suspected",
       },
+      {
+        to: "research",
+        when: "the work is a situation, not a code defect to locate",
+      },
     ],
   },
   research: {
@@ -156,6 +160,10 @@ export const ISLANDS: Record<IslandId, Island> = {
       {
         to: "construction",
         when: "a new artifact or program must be built from the specification or the source's behaviour",
+      },
+      {
+        to: "localization",
+        when: "the work is a code defect to locate",
       },
     ],
   },
