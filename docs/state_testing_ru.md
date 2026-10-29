@@ -360,6 +360,16 @@ system — Finish state <Label> — <why из stop>
   рёбра не выбраны ни разу, нормальные пути не сдвинулись. db-wal: 2/3 решают через
   `O → L → P → V` (Patch пишет deliverable), 1/3 — через `O → R → Recovery`. Трасса:
   `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
+- **Patch: полное изменение (2026-10-29).** `Patch` больше не ограничивается найденным
+  артефактом: `criterion` требует `the change is complete — the located artifact and every other
+  file the task needs are created or updated`, `hint` — не откладывать обязательный файл до
+  Verification; End получил «the finished state's check is the verification — do not re-verify».
+  Live: `fix-code` K=3 — 3/3 `O → L → P → V → End`, 22–24 хода против 32, без `P → V → P` и
+  `revert`; db-wal Patch-пакет — 20 ходов (15–20), `V → P` нет. Recovery-формулировки (consumer
+  и утвердительная `matches what the material contains`) дали 22 хода медианы; в худшем прогоне
+  остаётся пере-проверка WAL (6,8k reasoning) — словами это не лечится. Трассы:
+  `bench/runs/matrix/2026-10-29-patchall-fix-code/`,
+  `2026-10-29-patchall-db-wal/`, `2026-10-29-recovery-{consumer,affirmative}-db-wal/`.
 - **Patch получает карту материала (2026-10-20).** Patch больше не получает Probe с
   compilers/interpreters; вместо него — `Workspace` (`root`, `repo`, `entries`, `files`), как у
   Orientation. На записанной ленте t9 (Patch plan) dry-проекция даёт `repo: none` и

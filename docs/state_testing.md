@@ -346,6 +346,16 @@ system — Finish state <Label> — <why from stop>
   `log-summary`, `--turns 34/32/21`): **9/9 reward=1**, the edges were never taken, normal routes
   did not move. db-wal: 2/3 solve via `O → L → P → V` (Patch writes the deliverable), 1/3 via
   `O → R → Recovery`. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
+- **Patch: the whole change (2026-10-29).** `Patch` is no longer limited to the located
+  artifact: its `criterion` requires `the change is complete — the located artifact and every
+  other file the task needs are created or updated`, its `hint` forbids deferring a required
+  file to Verification; End now says `the finished state's check is the verification — do not
+  re-verify`. Live: `fix-code` K=3 — 3/3 `O → L → P → V → End`, 22–24 turns against 32, with no
+  `P → V → P` and no `revert`; the db-wal Patch batch — 20 turns (15–20), no `V → P`. The Recovery
+  wordings (consumer and the affirmative `matches what the material contains`) gave a median of
+  22 turns; the worst run still over-checks the WAL (6.8k reasoning) — wording does not fix it.
+  Traces: `bench/runs/matrix/2026-10-29-patchall-fix-code/`,
+  `2026-10-29-patchall-db-wal/`, `2026-10-29-recovery-{consumer,affirmative}-db-wal/`.
 - **Patch gets the material map (2026-10-20).** Patch no longer gets the Probe with
   compilers/interpreters; instead it gets `Workspace` (`root`, `repo`, `entries`, `files`), as
   Orientation does. On the recorded tape at t9 (Patch plan) a dry projection shows `repo: none`

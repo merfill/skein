@@ -171,23 +171,29 @@ export const ISLANDS: Record<IslandId, Island> = {
     id: "patch",
     label: "Patch",
     what: "make the named change to the artifact",
-    criterion: "the change is applied to the located artifact from the located material, and its result has the declared form",
+    criterion:
+      "the change is complete — the located artifact and every other file the task needs are " +
+      "created or updated — and the result has the declared form",
     instruction:
-      "Apply the change the located material names. If the result has a declared form (path, " +
-      "length, format), produce it and check that form in the same step. Do not relocate the " +
-      "artifact or re-derive the cause.",
+      "Apply the change the located material names. The change includes every other file the " +
+      "task needs, created or updated. If the result has a declared form (path, length, format), " +
+      "produce it and check that form in the same step. Do not relocate the artifact or " +
+      "re-derive the cause. Do not defer a required file to another state.",
     hint:
       "The cause is the one the previous state's `Finish` line names — apply the change it " +
-      "implies. Do not re-derive the cause or choose a different one. Read the definition of " +
-      "every symbol the change uses — the file that defines it, not a usage — and the sibling " +
-      "the line cites; use them only to confirm the change. If the result has a declared form, " +
-      "print it and check it in the same step; do not synthesize values or artifacts to satisfy " +
-      "the form.",
+      "implies. The change includes every other file the task needs; do not defer a required " +
+      "file to another state. Do not re-derive the cause or choose a different one. Read the " +
+      "definition of every symbol the change uses — the file that defines it, not a usage — and " +
+      "the sibling the line cites; use them only to confirm the change. If the result has a " +
+      "declared form, print it and check it in the same step; derive its values from the " +
+      "material — do not fabricate them.",
     applies: PATCH_TOOLS,
     next: [
       {
         to: "verification",
-        when: "the change is applied to the located artifact from the located material and its result has the declared form",
+        when:
+          "the change is complete — the located artifact and every other file the task needs " +
+          "are created or updated — and the result has the declared form",
       },
     ],
   },
@@ -196,9 +202,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "Recovery",
     what: "recover the required result from the source",
     criterion:
-      "the required output exists, is derived from the source, and the source's own " +
-      "integrity/consistency check passes — a match to the declared form or mere presence in the " +
-      "source is not enough",
+      "the required output exists in its declared form, is derived from the material, and " +
+      "matches what the material contains",
     instruction:
       "Reconstruct the hidden data from the source. You may create and modify files: the " +
       "required output and scratch copies. Keep the source itself read-only — work on copies or " +
@@ -212,11 +217,11 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "end",
-        when: "the required output exists, is derived from the source, and the source's own integrity/consistency check passes",
+        when: "the required output exists in its declared form, is derived from the material, and matches what the material contains",
       },
       {
         to: "research",
-        when: "the method or the source check failed — no candidate was accepted, or the check cannot decide",
+        when: "the method failed, or the output does not match what the material contains — no candidate was accepted, or the check cannot decide",
       },
     ],
   },
@@ -279,7 +284,9 @@ export const ISLANDS: Record<IslandId, Island> = {
     what: "complete the request",
     criterion: "",
     instruction: "The work is done; complete the request.",
-    hint: "Call `stop` when the request is complete.",
+    hint:
+      "Call `stop` when the request is complete; the finished state's check is the verification — " +
+      "do not re-verify here.",
     applies: [],
     next: [],
   },

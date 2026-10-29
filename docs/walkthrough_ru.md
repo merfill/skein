@@ -165,11 +165,11 @@ move { state, what?, done? }
 | **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace` | L, R, C |
 | **Localization** | найти цель в материале | цель и координаты; сиблинги исключены; предполагаемая причина (unverified) | `Orientation result` | P, R¹ |
 | **Research** | объяснить ситуацию и установить метод | ситуация объяснена; метод назван | `Orientation result` + `Probe` | Recovery, C, L¹ |
-| **Patch** | внести названное изменение в артефакт | изменение применено; форма результата проверена | `Workspace` | V |
-| **Recovery** | восстановить требуемый результат из источника | output есть, выведен из источника, source-проверка прошла | `Probe` | End, R |
+| **Patch** | внести названное изменение в артефакт | полное изменение (найденный артефакт + остальные нужные файлы); форма результата проверена | `Workspace` | V |
+| **Recovery** | восстановить требуемый результат из источника | output есть в объявленной форме, выведен из материала, совпадает с его содержанием | `Probe` | End, R |
 | **Construction** | построить новый артефакт из спеки или поведения source | артефакт есть; acceptance-проверка прошла | `Probe` | End, R |
 | **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | `Probe` | End, P, L |
-| **End** | завершить запрос | — | — | — |
+| **End** | завершить запрос | проверка сделана в закрытом состоянии; не перепроверять | — | — |
 
 ¹ Коррекционные рёбра. `Localization → Research` выбирают, если работа оказалась ситуацией, а
 не дефектом кода; `Research → Localization` — если ситуация оказалась дефектом кода. Так
@@ -308,7 +308,8 @@ system   Finish state Localization — line 63 drops the last token ...
 
 ### 4.6 Patch и Verification
 
-Дальше — правка и приёмка. Первый Patch применяет изменение:
+Дальше — правка и приёмка. Первый Patch делает изменение целиком: не только найденный артефакт,
+но и остальные файлы, которые нужны задаче. Обязательный файл не откладывается до Verification.
 
 ```
 ... Finish state Localization ...
@@ -359,7 +360,7 @@ tool      [o6] exit 0
 
 ```
 system   Start state End
-system   This is End. Call `stop` when the request is complete.
+system   This is End. Call `stop` when the request is complete; the finished state's check is the verification — do not re-verify here.
 ```
 
 Докса вызывает `stop {why:"request complete"}`. Прогон завершён

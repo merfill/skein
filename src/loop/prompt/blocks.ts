@@ -120,7 +120,7 @@ function transitionRule(island?: IslandId): string[] {
       ];
     case "recovery":
       return [
-        "Choose End only when the output is derived from the source and the source's own integrity/consistency check passes. Otherwise choose Research — no candidate was accepted, the check cannot decide, or the source is not the right one.",
+        "Choose End only when the output exists in its declared form, is derived from the material, and matches what the material contains. Otherwise choose Research — no candidate was accepted, the check cannot decide, or the material is not the right one.",
       ];
     case "construction":
       return [

@@ -97,7 +97,7 @@ describe("system prompt: base + node assembly", () => {
     expect(fromResearch).toMatch(/Choose Localization when the work is a code defect to locate/);
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
-    expect(fromRecovery).toMatch(/integrity\/consistency/);
+    expect(fromRecovery).toMatch(/matches what the material contains/);
     expect(fromRecovery).toContain("Research");
     const fromConstruction = transitionInstruction("construction");
     expect(fromConstruction).toContain("Finish state Construction");
@@ -156,7 +156,7 @@ describe("system prompt: tool contract", () => {
     expect(text).not.toMatch(/source check|accept a candidate|negative control|script|container|Research/i);
     expect(text).toMatch(/do not fabricate/i);
     expect(text).toMatch(/keep the source read-only/i);
-    expect(ISLANDS.recovery.criterion).toMatch(/integrity\/consistency check/i);
+    expect(ISLANDS.recovery.criterion).toMatch(/matches what the material contains/i);
     expect(toolDescriptionsFor("recovery").bash ?? "").not.toMatch(/script/i);
     expect(toolDescriptionsFor("recovery").write ?? "").not.toMatch(/script/i);
   });

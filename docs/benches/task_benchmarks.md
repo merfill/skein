@@ -425,6 +425,12 @@ All 12 cells returned `reward = 1`. The table shows medians, with the range in p
 | opencode | off | 2 | 4 | 3 | 52 260 | 7 716 | 44 544 | 85% | 1 031 (748 + 283) | — | 0.222 | 1 | 42 s |
 | opencode | off | 3 | 4 | 3 | 52 358 | 7 686 | 44 672 | 85% | 702 (583 + 119) | — | 0.199 | 1 | 41 s |
 
+#### 2026-10-29 — current projection, Skein `net on`, K=3
+
+| run | turns | total in | fresh | out (visible + reasoning) | ₽ |
+|---|---:|---:|---:|---:|---:|
+| Skein, edges | 15 (12–15) | 58 120 | 22 549 | 3 834 (2 955 + 879) | 0.683 |
+
 ### 7.4 Comments
 
 Skein takes 13–15 turns against opencode's 4–5 steps and costs 0.65–0.70 ₽ against
@@ -437,6 +443,9 @@ As with modernize, the cause is the protocol, not the amount of work: the task i
 has one cost outlier in `off` (0.45 ₽ in the first repeat), but the median is 0.22 ₽.
 
 Same-day comparison: both agents were measured on 2026-10-24, K=3, in both network modes.
+
+2026-10-29 (current projection): 15 turns, 58.1k input, 22.5k fresh, 3.8k output — the same
+picture; Patch does not participate in this task.
 
 ### 7.5 Traces
 
@@ -562,6 +571,16 @@ All 12 cells returned `reward = 1`. The table shows medians, with the range in p
 | opencode | off | 2 | 14 | 16 | 224 194 | 13 506 | 210 688 | 94% | 2 968 (1 365 + 1 603) | — | 0.516 | 1 | 66 s |
 | opencode | off | 3 | 8 | 12 | 101 976 | 8 408 | 93 568 | 92% | 1 202 (938 + 264) | — | 0.269 | 1 | 50 s |
 
+#### 2026-10-29 — current projection, Skein `net on`, K=3
+
+| run | turns | total in | fresh | out (visible + reasoning) | ₽ |
+|---|---:|---:|---:|---:|---:|
+| Skein, edges | 32 (20–34) | 161 825 | 41 761 | 4 412 (3 361 + 1 051) | 1.110 |
+| Skein, Patch batch | 23 (22–24) | 111 723 | 30 699 | 3 316 (2 393 + 923) | 1.581* |
+
+`*` On 2026-10-29 the provider rates doubled exactly (17.35/0.347/69.38 → 34.69/0.694/138.77
+₽/1M); do not compare ₽ across the 10-29 blocks. All runs: 3/3 `reward=1`.
+
 ### 9.4 Comments
 
 Skein takes 22–29 turns against opencode's 9 steps and costs 0.75–1.07 ₽ against
@@ -576,6 +595,9 @@ from the cache.
 model variance, not a network effect: Skein's `net on` and `net off` differ by 29 versus 22
 turns, but with this spread no conclusion about the network can be drawn. For the article this
 task needs a larger K, or an explicit caveat that a K=3 median is unstable.
+
+2026-10-29 (current projection): the edges run takes 32 turns, with `P→V→P` in 2/3; the Patch
+batch (every required file in one Patch) takes 23, with 3/3 `O→L→P→V→End` and no `revert`.
 
 ### 9.5 Traces
 
@@ -837,10 +859,27 @@ K=1, `net off`.
 | Skein | off | 1 | 1/1 | **17** | **1.035** | 2 694 | 87 445 | 29 333 | 67% |
 | opencode | off | 1 | 1/1 | **8** | **0.242** | 380 | 87 409 | 7 153 | 92% |
 
+#### 2026-10-29 — current projection, Skein `net on`, K=3
+
+| run | turns | total in | fresh | out (visible + reasoning) | ₽ |
+|---|---:|---:|---:|---:|---:|
+| Skein, edges | 28 (13–32) | 108 898 | 38 242 | 5 659 (3 497 + 2 162) | 1.080 |
+| Skein, Patch batch | 20 (15–20) | 81 383 | 29 201 | 4 834 (2 493 + 2 341) | 1.780* |
+| Skein, Recovery consumer | 22 (14–24) | 129 268 | 41 588 | 6 989 (4 508 + 2 481) | 1.237* |
+| Skein, Recovery affirmative | 22 (14–23) | 93 604 | 32 292 | 4 699 (1 635 + 3 064) | 0.862* |
+
+`*` On 2026-10-29 the provider rates doubled exactly (17.35/0.347/69.38 → 34.69/0.694/138.77
+₽/1M); do not compare ₽ across the 10-29 blocks. All runs: 3/3 `reward=1`.
+
 ### 14.4 Comments
 
 opencode takes 8 steps against 17 and costs 0.24 ₽ against 1.03 ₽ — 4.3× cheaper. Skein
 re-reads 29.3k tokens against 7.2k and spends 2.7k reasoning tokens against 0.38k. K=1.
+
+2026-10-29: the edges run takes 28 turns; the Patch batch takes 20; both Recovery variants take
+22, but with a wide spread (reasoning 2.5–3.1k, one run 6.8k). The Recovery wording did not
+remove the over-check in the worst runs; the End hint removed the End meta (0–11 reasoning
+tokens).
 
 ### 14.5 Traces
 

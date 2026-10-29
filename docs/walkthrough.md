@@ -168,11 +168,11 @@ work.
 | **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace` | L, R, C |
 | **Localization** | find the target in the material | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Orientation result` | P, R¹ |
 | **Research** | explain the situation and establish the method | situation explained; method named | `Orientation result` + `Probe` | Recovery, C, L¹ |
-| **Patch** | make the named change to the artifact | change applied; result form checked | `Workspace` | V |
-| **Recovery** | recover the required result from the source | output exists, derived from the source, the source check passes | `Probe` | End, R |
+| **Patch** | make the named change to the artifact | complete change (located artifact + every other file the task needs); result form checked | `Workspace` | V |
+| **Recovery** | recover the required result from the source | output exists in its declared form, derived from the material, matches what it contains | `Probe` | End, R |
 | **Construction** | build the new artifact from the spec or the source behaviour | artifact exists; acceptance check passes | `Probe` | End, R |
 | **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | `Probe` | End, P, L |
-| **End** | complete the request | — | — | — |
+| **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
 
 ¹ Corrective edges. `Localization → Research` is chosen when the work turns out to be a
 situation, not a code defect; `Research → Localization` when the situation turns out to be a code
@@ -311,7 +311,9 @@ system   Finish state Localization — line 63 drops the last token ...
 
 ### 4.6 Patch and Verification
 
-Next come the change and the acceptance. The first Patch applies a change:
+Next come the change and the acceptance. The first Patch makes the whole change: not only the
+located artifact, but every other file the task needs. A required file is not deferred to
+Verification.
 
 ```
 ... Finish state Localization ...
@@ -363,7 +365,7 @@ When the acceptance passes, only the request remains:
 
 ```
 system   Start state End
-system   This is End. Call `stop` when the request is complete.
+system   This is End. Call `stop` when the request is complete; the finished state's check is the verification — do not re-verify here.
 ```
 
 The doxa calls `stop {why:"request complete"}`. The run is complete (`request_addressed`). The IR keeps every state, including the failed
