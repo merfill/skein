@@ -12,11 +12,14 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [logos_ir.md](logos_ir.md) · [RU](logos_ir_ru.md) — the doxa/logos frame in depth.
 - [design_review.md](design_review.md) · [RU](design_review_ru.md) — design review notes.
 
-## Sessions (proposed)
+## Sessions and controllability (proposed)
 
 - [session_concepts.md](session_concepts.md) · [RU](session_concepts_ru.md) — sessions: why
   continuity is needed, the container of units, the session agent, the hierarchical outline
-  (draft; no implementation).
+  (draft; no implementation). Tier 4, first.
+- [controllability.md](controllability.md) · [RU](controllability_ru.md) — triggers emitted by
+  the engine and the tape/IR agent that decides what to do; the trigger and tool inventory is
+  open (discussion draft; no implementation). Tier 4, second.
 
 ## The IR (the engine's source of truth)
 

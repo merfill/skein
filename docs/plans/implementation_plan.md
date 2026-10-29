@@ -25,6 +25,7 @@ event journal and the projection function are the protocol.
 | LLM | as in Ankyra: OpenAI-compatible endpoint; model layer — the Vercel AI SDK (`@ai-sdk/openai-compatible`); reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
 | Criterion | a goal's `done_when` is a literal command; its `exitCode` (0 = pass) is the only pass/fail fact |
 | Closure | a frame closes only by the doxa's `stop` (for now accepted only once the criterion passed); a request ends when its goal is stopped |
+| Architecture criterion | **controllability**: a state and its boundaries are observable, so deterministic algorithms apply to the structure; the turn cost is an accepted price, not a reason to change the projection |
 
 ## 3. Roadmap
 
@@ -71,6 +72,37 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
    opencode sandbox backend is the prerequisite (opencode runs only through Harbor today).
    The premature `stop` on `fix-ocaml-gc`/`custom-memory-heap-crash` was fixed by the
    stop-closure refactor (§4); re-check their accuracy numbers after the next run.
+
+**Tier 4 — controllability and sessions (strategic direction; order — 4b first, then 4a).**
+
+The value of the projection is not the turn count but **observability**: the engine knows a
+state and its boundaries, so algorithms that a monotone tape cannot cheaply support apply to
+the structure. Both directions share one mechanism — the **meta-unit**: the same IR, its own
+state vocabulary, read-only outline tools, and operations that logos checks and applies. The
+mechanism is built once and instantiated twice: the session agent and the tape/IR agent.
+
+- **4b — session and session agent (first).** Develops `docs/session_concepts.md`: a container
+  of units (the session journal, `focus`, `pending`), two independent statuses (unit
+  open/closed vs `active`/`suspended`/`abandoned`/`completed`), a meta-unit with the
+  `respond`/`resume`/`revise`/`redirect`/`cancel`/`query` operations, and a deterministic
+  hierarchical outline L0–L4. The difference from a monotone tape: a request is a first-class
+  addressable unit, and the session agent enumerates/locates past requests **structurally**
+  (outline, `recall` by id), without similarity/RAG. The session agent does not edit task
+  trees — it only proposes operations; logos checks the preconditions. Invariants: nothing is
+  deleted or compressed into a summary-truth; no verdicts or stored statuses. Minimal slice —
+  `docs/session_concepts.md` §10.
+- **4a — triggers and the tape/IR agent (second).** The engine deterministically notices an
+  event in the structure (a repeated `action→observation` over unchanged material, a repeated
+  state chain through `move` edges, stagnation, a premature `stop`, budget burn, etc.) and
+  emits a **trigger**; the tape/IR agent with read-only outline tools decides what to do and
+  proposes an action; logos checks and applies. A trigger is an observation, not a verdict.
+  The list of triggers, the agent's tools and the reactions are open; they get a dedicated
+  document, `docs/controllability.md` (RU: `docs/controllability_ru.md`). This lifts the deferred cycle/premature-stop
+  detection without turning it into a hard gate.
+
+**Why this order.** 4b gives something to touch by hand (dialogue continuity, addressable past
+requests) and builds the meta-unit; 4a reuses the same mechanism and adds triggers/tools. The
+semantics of triggers is discussed separately, in its own document.
 
 ## 4. Current status
 
@@ -306,10 +338,14 @@ go-ahead.
 ## 5. Boundaries
 
 Deliberately out of scope for the current stages: AST/symbol table, embeddings,
-CSP/arithmetic, UI, multilinguality, multiple LLM providers.
+CSP/arithmetic, UI, multilinguality, multiple LLM providers. The meta-unit (Tier 4) is the
+same IR, not a subagent; similarity/RAG stays out of scope.
 
 ## 6. Open questions
 
+- **Tier 4 (sessions and controllability).** Order — 4b → 4a. Session open questions —
+  `docs/session_concepts.md` §8; triggers, the tape/IR agent's tools and the reactions —
+  `docs/controllability.md`.
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`).
 - Stopping: whether the engine may run `done_when.command` itself once a plan is

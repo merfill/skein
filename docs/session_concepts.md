@@ -9,56 +9,84 @@
 > Builds on: `concepts.md` (doxa/logos, projection), `ir_semantics.md` (the IR, operators,
 > invariants), `projection.md` (the tape).
 
-## 1. Why this is needed
+## 1. The task and the idea
 
 ### 1.1. How it works now
 
 One Skein run is one **request**. The request is the root of the tree; the engine walks it as a
-sequence of states and ends when the terminal state is closed (or when the request is declined).
-The next user message is a new run from scratch: the previous tree is not read.
+sequence of states and ends when the terminal state is closed or when the request is declined.
+The next user message starts a new run from scratch: the previous tree is not read.
 
-Inside one request, memory works like this:
+Memory inside one request works like this:
 
-- the request text is shown to the model on every turn — it leads the tape;
+- the request text is shown to the model on every turn and leads the tape;
 - the actions and results of an open state are visible while it is open;
-- when a state is closed through `stop`, its turns leave the tape: only
-  `Start state` / `Finish state` remains;
+- when a state is closed through `stop`, its turns leave the tape; only `Start state` and
+  `Finish state` remain;
 - the facts themselves do not disappear: they live in the tree and are addressable by id via
   `recall`/`search`.
 
 ### 1.2. What breaks in a dialogue
 
 - **"Read this file, we will need it."** Reading is an ordinary action, but after `stop` the
-  file body leaves the tape. The next state (or the next request) does not "see" it: the fact is
-  in the tree, but nothing points to it.
-- **A pure read request.** The startable state is `orientation`; from there the path depends on
-  the result (an artifact or a situation). A request "read README" is either declined or forced
-  into a foreign goal.
+  file body leaves the tape. The next state or the next request does not see it: the fact is in
+  the tree, but nothing points to it.
+- **Reading as a standalone request.** The startable state is `orientation`; the further path
+  depends on the result (an artifact or a situation). A request "read README" is either declined
+  or forced into a foreign goal.
 - **"I changed my mind" / "the defect is not there".** Logos does not understand language: it
   cannot classify a free-form utterance and does not know what to do with it.
-- **"Cancel everything."** There is no session-level operation: stop execution and leave the
+- **"Cancel everything."** There is no session-level operation: cancel execution and leave the
   tree as it is.
 - **Several files.** The plan can handle it (several items), but retaining the result is the
   same problem.
 
-### 1.3. Requirements
+### 1.3. Idea: the request as an addressable unit
+
+In a monotone tape the processing of a request is indistinguishable from the session: the tape
+grows, and user utterances are merely interspersed in it. The idea is to make the request a
+full-fledged (first-class) unit with its own journal and its own root. The session is then not
+text but a container over units, and the past can be addressed rather than retold.
+
+### 1.4. Idea: continuity without retelling
+
+The past is not deleted and is not compressed into a summary-truth. It remains addressable:
+knowledge of it is built as a deterministic structural outline of the IR edges, not as a
+similarity search. This lets the agent learn what was done without retelling the whole history
+and without inflating the tape.
+
+### 1.5. Idea: two independent statuses
+
+Whether a unit is open and where the session's attention lies are different things. The first is
+a fact of the unit journal (closed if and only if its `move` has a `stop`). The second is a fact
+of the session journal (`active`/`suspended`/`abandoned`/`completed`) and expresses attention,
+not truth. The separation allows one to "leave" work without closing it, and does not contradict
+the invariant "nothing is deleted".
+
+### 1.6. Idea: the semantics of an utterance belongs to the doxa
+
+Free text is unstructured, and the mapping "utterance → what to do with the session" is a
+semantic judgment. The doxa therefore performs it, not logos: the meta-agent reads the utterance
+and the outline and proposes an operation. Logos, as everywhere, checks the preconditions and
+applies it.
+
+### 1.7. Requirements
 
 - **R1. Continuity.** Work is not deleted; previous trees remain available.
-- **R2. Interpretation of utterances.** Free text must become a structured decision; that is a
+- **R2. Interpretation of utterances.** Free text becomes a structured decision; this is a
   semantic act, hence doxa, not logos.
-- **R3. Knowledge of the past.** The agent must be able to learn what was done, without
-  retelling the whole history and without similarity search.
+- **R3. Knowledge of the past.** The agent learns what was done without retelling the whole
+  history and without similarity search.
 - **R4. Bounded context.** The bulk is not on the tape; the tape carries a brief outline and
   addresses.
-- **R5. Invariants.** The journal only grows; the projection is deterministic; a state is
-  closed only through `stop`; no verdicts or statuses.
+- **R5. Invariants.** The journal only grows; the projection is deterministic; a state is closed
+  only through `stop`; no verdicts or statuses.
 
 ## 2. Concepts
 
-**Unit.** One IR with its own root and its own journal. A unit has a type:
-`task` — an ordinary task (`request → move → plan → …`); `meta` — a meta-task (reading the
-user's utterance and deciding about the session). Types are a closed registry that can be
-extended.
+**Unit.** One IR with its own root and its own journal. A unit has a type: `task` — an ordinary
+task (`request → move → plan → …`); `meta` — a meta-task (reading the user's utterance and
+deciding about the session). Types form a closed registry that can be extended.
 
 **Session.** A container over units. Formally:
 `Session = (J_s, U, focus, pending)`, where `J_s` is the session journal, `U` is the set of
@@ -79,8 +107,8 @@ resume, leave, pin a fact, apply a meta-agent decision. It does not change unit 
 fact. `completed` is derived: the unit is closed through `stop` and is not `abandoned`. So
 "nothing is deleted" and "closure only through `stop`" do not contradict each other.
 
-**Focus.** At most one unit is active at a time. Losing focus is `suspended` or `abandoned`,
-not `stop`.
+**Focus.** At most one unit is active at a time. Losing focus is `suspended` or `abandoned`, not
+`stop`.
 
 **Pending.** A slot for one utterance. A new utterance replaces the old one if it has not been
 processed yet: this is not a stack, so meta-interpretation cannot recursively nest into itself.
@@ -89,10 +117,10 @@ processed yet: this is not a stack, so meta-interpretation cannot recursively ne
 proposed and logos checked and applied. A model reply that has not passed the check is
 **proposed**; it is not in the IR. This is needed in §3.
 
-**Pin.** A reference to a fact that holds for the scope of a request (or a session): the
+**Pin.** A reference to a fact that holds for the scope of a request or a session: the
 observation id, the path, the version, a short gist. A pin **does not copy the body**: the body
 is fetched with `recall` by id. A pin answers "keep it in mind" without inflating the tape and
-without losing actualness.
+without losing actuality.
 
 **Session operation.** A structured action of the meta-agent on the session: respond, resume,
 revise, redirect, cancel, query. Logos checks admissibility and applies it.
@@ -116,8 +144,8 @@ session
 
 The user can interrupt execution. Formally this is not an IR operation.
 
-- If a model reply has not passed the check yet (proposed), an interrupt simply **discards**
-  it. Nothing appears in the journal: no node, no `stop`, no change of the task's status.
+- If a model reply has not passed the check yet (proposed), an interrupt simply **discards** it.
+  Nothing appears in the journal: no node, no `stop`, no change of the task's status.
 - If a tool is interrupted, what actually happened is recorded honestly: the result, the error,
   or `killed by <SIG>`; a partial file change is a `mutate`, a fact of the world.
 - Suspension is a **session** status (`suspended`), not an event of the task tree.
@@ -129,9 +157,9 @@ So `stop` remains the only way to close a state: an interrupt closes nothing.
 
 ### 4.1. Why a separate agent
 
-Logos is a deterministic function over structured events. Free text is unstructured. The mapping
-"utterance → what to do with the session" is a semantic judgment, so the doxa makes it. The
-meta-unit is the same IR as a task, except:
+Logos is a deterministic function over structured events, while free text is unstructured. The
+mapping "utterance → what to do with the session" is a semantic judgment, so the doxa makes it.
+The meta-unit is the same IR as a task, but:
 
 - its root is the user's utterance;
 - it has its own vocabulary of states (e.g. `survey` — look at the outline, `interpret` —
