@@ -101,7 +101,7 @@ describe("system prompt: base + node assembly", () => {
     expect(fromRecovery).toContain("Research");
     const fromConstruction = transitionInstruction("construction");
     expect(fromConstruction).toContain("Finish state Construction");
-    expect(fromConstruction).toMatch(/specification or the source's behaviour/);
+    expect(fromConstruction).toMatch(/specification or the material's behaviour/);
     expect(fromConstruction).toContain("Research");
   });
 });
@@ -137,13 +137,13 @@ describe("system prompt: tool contract", () => {
 
     const recovery = toolDescriptionsFor("recovery");
     expect(recovery.bash).toMatch(/you may create and modify files/i);
-    expect(recovery.bash).toMatch(/keep the source read-only/i);
-    expect(recovery.write).toMatch(/do not overwrite the source/i);
+    expect(recovery.bash).toMatch(/keep the material read-only/i);
+    expect(recovery.write).toMatch(/do not overwrite the material/i);
     expect(recovery.edit).toBeUndefined();
 
     const construction = toolDescriptionsFor("construction");
     expect(construction.bash).toMatch(/builds a new artifact/i);
-    expect(construction.write).toMatch(/do not overwrite the source/i);
+    expect(construction.write).toMatch(/do not overwrite the material/i);
     expect(construction.webfetch).toMatch(/declared input or reference/i);
 
     const verification = toolDescriptionsFor("verification");
@@ -155,7 +155,7 @@ describe("system prompt: tool contract", () => {
     const text = `${ISLANDS.recovery.instruction} ${ISLANDS.recovery.hint}`;
     expect(text).not.toMatch(/source check|accept a candidate|negative control|script|container|Research/i);
     expect(text).toMatch(/do not fabricate/i);
-    expect(text).toMatch(/keep the source read-only/i);
+    expect(text).toMatch(/keep the material read-only/i);
     expect(ISLANDS.recovery.criterion).toMatch(/matches what the material contains/i);
     expect(toolDescriptionsFor("recovery").bash ?? "").not.toMatch(/script/i);
     expect(toolDescriptionsFor("recovery").write ?? "").not.toMatch(/script/i);

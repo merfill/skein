@@ -120,11 +120,11 @@ function transitionRule(island?: IslandId): string[] {
       ];
     case "recovery":
       return [
-        "Choose End only when the output exists in its declared form, is derived from the material, and matches what the material contains. Otherwise choose Research — no candidate was accepted, the check cannot decide, or the material is not the right one.",
+        "Choose End only when the output exists in its declared form, is derived from the material, and matches what the material contains. Otherwise choose Research — the method failed or the output does not match the material.",
       ];
     case "construction":
       return [
-        "Choose End only when the artifact is derived from the specification or the source's behaviour and the acceptance check passes. If the check failed because the method or specification did not hold, choose Research.",
+        "Choose End only when the artifact is derived from the specification or the material's behaviour and the acceptance check passes. If the check failed because the method or specification did not hold, choose Research.",
       ];
     case "verification":
       return [

@@ -206,8 +206,8 @@ records. Это **не** declared form и **не** «кандидат буква
 ### 2.5 Recovery
 
 - **Предмет:** ситуация со скрытыми/закодированными/удалёнными данными.
-- **Цель:** восстановить данные из источника и записать требуемый output.
-- **`what`:** `recover the required result from the source`
+- **Цель:** восстановить данные из материала и записать требуемый output.
+- **`what`:** `recover the required output from the material`
 - **`done`:** `the required output exists in its declared form, is derived from the material, and
   matches what the material contains`
 - **Метод:** **source-проверка** — сверка с тем, что содержит материал: checksum/hash,
@@ -220,7 +220,7 @@ records. Это **не** declared form и **не** «кандидат буква
   доказывает, что поставить его нельзя.
 - **Probe (environment subset):** `root`, `interpreters`, `tools`, `missing` — язык поиска и
   инструменты проверки. Карта материала не дублируется.
-- **Границы:** источник — свидетельство, а не объект правки; не синтезировать значения; если
+- **Границы:** материал — свидетельство, а не объект правки; не синтезировать значения; если
   deliverable — изменённый артефакт, это Patch. Поиск держится вне ленты: модель видит компактный
   результат, а не тысячи кандидатов. Кандидат, проходящий форму, но не совпадающий с материалом,
   отвергается.
@@ -239,14 +239,14 @@ records. Это **не** declared form и **не** «кандидат буква
 ### 2.6 Construction
 
 - **Предмет:** новый артефакт/программа.
-- **Цель:** создать артефакт из спецификации или поведения source.
-- **`what`:** `build the new artifact from the specification or source behaviour`
-- **`done`:** `the artifact exists, is derived from the spec/source, and the acceptance check
-  (declared form, or source behaviour on representative inputs) passes`
+- **Цель:** создать артефакт из спецификации или поведения материала.
+- **`what`:** `build the new artifact from the specification or the material's behaviour`
+- **`done`:** `the artifact exists, is derived from the specification or the material's behaviour,
+  and the acceptance check passes`
 - **Метод:** написать артефакт и приёмочную проверку (тест-харнесс, дифференциальный прогон,
   `openssl verify`), прогнать, при провале — исправить или вернуться в Research.
-- **Границы:** не правит исходный артефакт (Patch); source — спецификация поведения, а не объект
-  изменения; не подменяет проверку «файл создан».
+- **Границы:** не правит исходный артефакт (Patch); материал — спецификация поведения, а не
+  объект изменения; не подменяет проверку «файл создан».
 - **Переход:**
   - → **End**, когда артефакт создан и проверка прошла;
   - → **Research**, когда метод/спека не сходятся;

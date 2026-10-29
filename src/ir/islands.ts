@@ -155,11 +155,11 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "recovery",
-        when: "the hidden, encoded, or deleted data must be reconstructed from the source",
+        when: "the hidden, encoded, or deleted data must be reconstructed from the material",
       },
       {
         to: "construction",
-        when: "a new artifact or program must be built from the specification or the source's behaviour",
+        when: "a new artifact or program must be built from the specification or the material's behaviour",
       },
       {
         to: "localization",
@@ -200,19 +200,16 @@ export const ISLANDS: Record<IslandId, Island> = {
   recovery: {
     id: "recovery",
     label: "Recovery",
-    what: "recover the required result from the source",
+    what: "recover the required output from the material",
     criterion:
       "the required output exists in its declared form, is derived from the material, and " +
       "matches what the material contains",
     instruction:
-      "Reconstruct the hidden data from the source. You may create and modify files: the " +
-      "required output and scratch copies. Keep the source itself read-only — work on copies or " +
-      "decoded copies; do not edit the source.",
+      "Reconstruct the required output from the material. Create the output and any working " +
+      "copies; keep the material read-only.",
     hint:
-      "Keep the source read-only; write the required output and scratch copies. Do not " +
-      "fabricate. If a needed tool is not on PATH, fix the environment — try the package manager " +
-      "or network — before writing a replacement; a missing tool is not evidence that it cannot " +
-      "be installed.",
+      "Keep the material read-only; write the required output and working copies. Do not " +
+      "fabricate. If a tool is missing, fix the environment before replacing it.",
     applies: RECOVER_TOOLS,
     next: [
       {
@@ -221,32 +218,29 @@ export const ISLANDS: Record<IslandId, Island> = {
       },
       {
         to: "research",
-        when: "the method failed, or the output does not match what the material contains — no candidate was accepted, or the check cannot decide",
+        when: "the method failed, or the output does not match the material",
       },
     ],
   },
   construction: {
     id: "construction",
     label: "Construction",
-    what: "build the new artifact from the specification or source behaviour",
+    what: "build the new artifact from the specification or the material's behaviour",
     criterion:
-      "the artifact exists, is derived from the specification or the source's behaviour, and the " +
-      "acceptance check — the declared form, or the source behaviour on representative inputs — " +
-      "passes",
+      "the artifact exists, is derived from the specification or the material's behaviour, and " +
+      "the acceptance check passes",
     instruction:
-      "Build the artifact from the request's specification. When the request names a source " +
-      "program or artifact to modernize or translate, its behaviour is the specification. Write " +
-      "an acceptance check — a test harness, a differential run, or the declared form — run it, " +
-      "and fix the artifact until it passes. Do not modify the source.",
+      "Build the artifact from the specification. When the request names a program or artifact " +
+      "whose behaviour is the specification, use that behaviour. Write and run an acceptance " +
+      "check; fix the artifact until it passes. Leave the material unchanged.",
     hint:
-      "Do not repair the source. Check the artifact against the specification or the source's " +
-      "behaviour on representative inputs; a file that merely exists is not done. If the check " +
-      "fails, fix the artifact.",
+      "Check the artifact against the specification or the material's behaviour on representative " +
+      "inputs. The artifact must pass the check; if it fails, fix the artifact.",
     applies: CONSTRUCT_TOOLS,
     next: [
       {
         to: "end",
-        when: "the artifact exists, is derived from the specification or source behaviour, and the acceptance check passes",
+        when: "the artifact exists, is derived from the specification or the material's behaviour, and the acceptance check passes",
       },
       {
         to: "research",

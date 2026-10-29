@@ -169,8 +169,8 @@ work.
 | **Localization** | find the target in the material | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Orientation result` | P, R¹ |
 | **Research** | explain the situation and establish the method | situation explained; method named | `Orientation result` + `Probe` | Recovery, C, L¹ |
 | **Patch** | make the named change to the artifact | complete change (located artifact + every other file the task needs); result form checked | `Workspace` | V |
-| **Recovery** | recover the required result from the source | output exists in its declared form, derived from the material, matches what it contains | `Probe` | End, R |
-| **Construction** | build the new artifact from the spec or the source behaviour | artifact exists; acceptance check passes | `Probe` | End, R |
+| **Recovery** | recover the required output from the material | output exists in its declared form, derived from the material, matches what it contains | `Probe` | End, R |
+| **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | `Probe` | End, R |
 | **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | `Probe` | End, P, L |
 | **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
 
