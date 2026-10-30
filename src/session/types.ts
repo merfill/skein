@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "observer" | "session";
+export type UnitType = "task" | "observer" | "session" | "reading";
 
 export interface Unit {
   id: string;
@@ -35,16 +35,49 @@ export type Reaction =
   | { kind: "memo"; text: string; evidence: string[] }
   | { kind: "halt"; reason: string };
 
+// A structured action of the SessionAgent on the session (docs/session_concepts.md §4.3).
+// The doxa proposes it; logos checks and applies it as a session event. The vocabulary is
+// deliberately minimal: answer, or start a task from a reformulated request. Resume/cancel
+// strategies and `revise` are deferred.
+export type SessionOperation =
+  | { kind: "respond"; text: string }
+  | { kind: "start"; text: string };
+
+// The session's attention for a unit. Derived from the journals, never stored as a field:
+// `completed` is a terminal marker of the unit journal, `abandoned` is a session fact, and
+// neither closes a state (docs/session_concepts.md §2).
+export type Attention = "active" | "suspended" | "abandoned" | "completed";
+
 export type SessionEvent =
   | { type: "open_unit"; unitId: string; unitType: UnitType; turn: number }
   | { type: "push"; unitId: string; turn: number }
   | { type: "pop"; unitId: string }
   | { type: "trigger"; unitId: string; turn: number; trigger: Trigger }
-  | { type: "reaction"; unitId: string; reaction: Reaction };
+  | { type: "reaction"; unitId: string; reaction: Reaction }
+  | { type: "suspend"; unitId: string; turn: number }
+  | { type: "resume"; unitId: string; turn: number }
+  | { type: "abandon"; unitId: string; turn: number }
+  | {
+      type: "operation";
+      unitId: string;
+      turn: number;
+      operation: SessionOperation;
+      reasoning?: string;
+    }
+  | {
+      type: "refusal";
+      unitId: string;
+      turn: number;
+      operation: SessionOperation;
+      reason: string;
+      reasoning?: string;
+    };
 
 export interface SessionState {
   journal: SessionEvent[];
   units: Map<string, Unit>;
   stack: UnitRef[];
   pending?: PendingUtterance;
+  // The ordinal of the next user utterance. It is a dialogue clock, not a task turn.
+  utteranceSeq: number;
 }

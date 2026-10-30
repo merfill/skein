@@ -93,6 +93,9 @@ export interface AgentInput {
   // The turn number the resumed journal stopped at; `maxTurns` remains absolute.
   startTurn?: number;
   session?: SessionState;
+  // Open and push the request unit even when a session is supplied (the session driver uses
+  // this to start a new task). Defaults to `session === undefined`.
+  open?: boolean;
 }
 
 export interface AgentResult {
@@ -392,7 +395,8 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   }
 
   const session = input.session ?? createSession();
-  if (input.session === undefined) {
+  const opens = input.open ?? input.session === undefined;
+  if (opens) {
     openUnit(session, input.request.id, "task", seed, input.startTurn ?? 0);
     pushUnit(session, input.request.id, input.startTurn ?? 0);
   }

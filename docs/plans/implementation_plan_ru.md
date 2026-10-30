@@ -97,13 +97,17 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **4b — сессия и SessionAgent (второе).** Развитие `docs/session_concepts_ru.md` на
   контейнере из 4a: unit'ы, журнал сессии, стек (вершина — `focus`), `pending`, два
   независимых статуса (unit открыт/закрыт vs `active`/`suspended`/`abandoned`/`completed`),
-  agent-unit с операциями `respond`/`resume`/`revise`/`redirect`/`cancel`/`query`,
+  agent-unit с операциями сессии (первый срез даёт `respond`/`start`; остальные отложены),
   детерминированный иерархический обзор L0–L4. Отличие от монотонной ленты: запрос —
   first-class адресуемый unit, и SessionAgent перечисляет/находит прошлые запросы
   **структурно** (обзор, `recall` по id), без similarity/RAG. SessionAgent не правит деревья
   задач — только предлагает операции; логос проверяет предусловия. Инварианты: ничего не
   удаляем и не сжимаем в резюме-истину; без вердиктов и хранимых статусов. Минимальный
-  срез — `docs/session_concepts_ru.md` §10.
+  срез — `docs/session_concepts_ru.md` §10. **Реализовано и проверено live** — статусы
+  внимания, L0/L1, session-unit и `SessionAgent`, инструменты памяти (`read`/`unit`/`state`/
+  `turns`/`body`/`search`), `respond`/`start`, `runSessionTurn`, REPL и CLI
+  (`session_agent_plan`, `session_driver_plan`); сохранение, Ctrl-C, стратегии возобновления,
+  `revise`, пины, `attempt` и reading island остаются.
 
 **Почему такой порядок.** 4a бьёт прямо в главный критерий — управляемость: движок уже
 знает структуру и может детерминированно заметить событие, а agent-unit с read-only-обзором

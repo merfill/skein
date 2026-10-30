@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "cli": "tsx src/cli.ts",
     "bench": "tsx bench/run.ts",
     "bench:gate": "tsx bench/gate.ts",
     "bench:compare": "tsx bench/agents_compare.ts",

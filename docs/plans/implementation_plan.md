@@ -96,14 +96,18 @@ mechanism is built once and instantiated twice: the RequestObserver and the Sess
 - **4b — session and SessionAgent (second).** Develops `docs/session_concepts.md` on the
   container from 4a: units, the session journal, the stack (its top is `focus`), `pending`,
   two independent statuses (unit open/closed vs
-  `active`/`suspended`/`abandoned`/`completed`), a agent unit with the
-  `respond`/`resume`/`revise`/`redirect`/`cancel`/`query` operations, and a deterministic
+  `active`/`suspended`/`abandoned`/`completed`), a session agent with session operations
+  (the first slice exposes `respond`/`start`; the rest are deferred), and a deterministic
   hierarchical outline L0–L4. The difference from a monotone tape: a request is a first-class
   addressable unit, and the SessionAgent enumerates/locates past requests **structurally**
   (outline, `recall` by id), without similarity/RAG. The SessionAgent does not edit task
   trees — it only proposes operations; logos checks the preconditions. Invariants: nothing is
   deleted or compressed into a summary-truth; no verdicts or stored statuses. Minimal slice —
-  `docs/session_concepts.md` §10.
+  `docs/session_concepts.md` §10. **Implemented and verified live** — attention statuses,
+  L0/L1, the session unit and `SessionAgent`, memory tools (`read`/`unit`/`state`/`turns`/
+  `body`/`search`), `respond`/`start`, `runSessionTurn`, the REPL and CLI
+  (`session_agent_plan`, `session_driver_plan`); persistence, Ctrl-C, resume strategies,
+  `revise`, pins, `attempt` and the reading island remain.
 
 **Why this order.** 4a strikes at the main criterion — controllability: the engine already
 knows the structure and can deterministically notice an event, and the agent unit with a

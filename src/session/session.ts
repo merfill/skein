@@ -1,8 +1,13 @@
 import type { Event } from "../ir/events";
+import { fold, unactionableOf } from "../ir/graph";
+import { isTerminalIsland } from "../ir/islands";
+import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import type {
+  Attention,
   PendingUtterance,
   Reaction,
   SessionEvent,
+  SessionOperation,
   SessionState,
   Trigger,
   Unit,
@@ -11,7 +16,7 @@ import type {
 } from "./types";
 
 export function createSession(): SessionState {
-  return { journal: [], units: new Map(), stack: [] };
+  return { journal: [], units: new Map(), stack: [], utteranceSeq: 0 };
 }
 
 export function openUnit(
@@ -107,6 +112,117 @@ export function triggerSamples(
 export function recordReaction(session: SessionState, unitId: string, reaction: Reaction): void {
   unitOf(session, unitId);
   append(session, { type: "reaction", unitId, reaction });
+}
+
+export function suspendUnit(session: SessionState, unitId: string, turn: number): void {
+  unitOf(session, unitId);
+  append(session, { type: "suspend", unitId, turn });
+}
+
+export function abandonUnit(session: SessionState, unitId: string, turn: number): void {
+  unitOf(session, unitId);
+  append(session, { type: "abandon", unitId, turn });
+}
+
+export function recordOperation(
+  session: SessionState,
+  unitId: string,
+  turn: number,
+  operation: SessionOperation,
+  reasoning?: string,
+): void {
+  unitOf(session, unitId);
+  append(session, {
+    type: "operation",
+    unitId,
+    turn,
+    operation,
+    ...(reasoning !== undefined ? { reasoning } : {}),
+  });
+}
+
+export function recordRefusal(
+  session: SessionState,
+  unitId: string,
+  turn: number,
+  operation: SessionOperation,
+  reason: string,
+  reasoning?: string,
+): void {
+  unitOf(session, unitId);
+  append(session, {
+    type: "refusal",
+    unitId,
+    turn,
+    operation,
+    reason,
+    ...(reasoning !== undefined ? { reasoning } : {}),
+  });
+}
+
+// Units in the order they were opened (the session journal order); the caller filters the
+// transient observer units it does not want to show.
+export function unitsInOrder(session: SessionState): Unit[] {
+  const seen = new Set<string>();
+  const units: Unit[] = [];
+  for (const event of session.journal) {
+    if (event.type !== "open_unit" || seen.has(event.unitId)) continue;
+    seen.add(event.unitId);
+    const unit = session.units.get(event.unitId);
+    if (unit !== undefined) units.push(unit);
+  }
+  return units;
+}
+
+// The request ended when its terminal state is stopped or the interpretation declined it
+// (`unactionable`). This mirrors the loop's `progress` check without any run state.
+function taskEnded(journal: readonly Event[]): boolean {
+  const state = fold(journal);
+  if (state.rootId === undefined) return false;
+  if (unactionableOf(state, state.rootId) !== undefined) return true;
+  const move = currentMove(state);
+  if (move === undefined) return false;
+  const island = moveIsland(state, move);
+  return island !== undefined && isTerminalIsland(island) && isMoveFinished(state, move);
+}
+
+function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent | undefined {
+  let last: SessionEvent | undefined;
+  for (const event of session.journal) {
+    if (event.type !== "suspend" && event.type !== "resume" && event.type !== "abandon") continue;
+    if (event.unitId === unitId) last = event;
+  }
+  return last;
+}
+
+function unitCompleted(session: SessionState, unit: Unit): boolean {
+  if (unit.type === "task") return taskEnded(unit.journal);
+  // A session unit is completed once its operation is committed or refused.
+  if (unit.type === "session") {
+    return session.journal.some(
+      (event) =>
+        (event.type === "operation" || event.type === "refusal") && event.unitId === unit.id,
+    );
+  }
+  // A reading unit is complete once its observation is written.
+  if (unit.type === "reading") {
+    return unit.journal.some(
+      (event) => event.type === "add_node" && event.node.kind === "observation",
+    );
+  }
+  return false;
+}
+
+// The attention status is a deterministic read of the journals (docs/session_concepts.md §2):
+// `abandoned` beats a closure, `completed` is the unit's own terminal fact, `active` is the
+// focus. Nothing is stored.
+export function attentionOf(session: SessionState, unitId: string): Attention {
+  const unit = unitOf(session, unitId);
+  const last = lastAttentionEvent(session, unitId);
+  if (last?.type === "abandon") return "abandoned";
+  if (unitCompleted(session, unit)) return "completed";
+  if (sessionFocus(session)?.unitId === unitId) return "active";
+  return "suspended";
 }
 
 function append(session: SessionState, event: SessionEvent): void {

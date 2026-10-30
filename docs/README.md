@@ -12,14 +12,15 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [logos_ir.md](logos_ir.md) · [RU](logos_ir_ru.md) — the doxa/logos frame in depth.
 - [design_review.md](design_review.md) · [RU](design_review_ru.md) — design review notes.
 
-## Sessions and controllability (proposed)
+## Sessions and controllability
 
 - [controllability.md](controllability.md) · [RU](controllability_ru.md) — triggers emitted by
   the engine and the RequestObserver that decides what to do; the trigger and tool inventory is
   open (4a core implemented; see `plans/request_observer_plan`). Tier 4, first.
 - [session_concepts.md](session_concepts.md) · [RU](session_concepts_ru.md) — sessions: why
-  continuity is needed, the container of units, the SessionAgent, the hierarchical outline
-  (draft; no implementation). Tier 4, second.
+  continuity is needed, the container of units, the session agent, its memory tools, the
+  hierarchical outline, and task isolation (implemented; verified offline and live; see `plans/session_agent_plan`
+  and `plans/session_driver_plan`). Tier 4, second.
 
 ## The IR (the engine's source of truth)
 
@@ -69,6 +70,14 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [plans/request_observer_plan.md](plans/request_observer_plan.md) ·
   [RU](plans/request_observer_plan_ru.md) — Tier 4a: triggers, the observer unit, `hint`/`memo`/`halt`,
   and the minimal session shell (draft for approval).
+- [plans/session_agent_plan.md](plans/session_agent_plan.md) ·
+  [RU](plans/session_agent_plan_ru.md) — Tier 4b (first slice): attention statuses, the L0/L1
+  outline, the session unit and `SessionAgent`, and the operations `respond`/`start`
+  (implemented; other operations deferred).
+- [plans/session_driver_plan.md](plans/session_driver_plan.md) ·
+  [RU](plans/session_driver_plan_ru.md) — Tier 4b: the terminal REPL, its driver,
+  `respond`/`start`, task isolation, request reformulation and the utterance ordinal
+  (implemented; verified offline and with the live synthetic session).
 - [plans/ai_sdk_migration_plan.md](plans/ai_sdk_migration_plan.md) ·
   [RU](plans/ai_sdk_migration_plan_ru.md) — migrate the model layer to the Vercel AI SDK,
   keeping LangGraph and the IR (proposed).
