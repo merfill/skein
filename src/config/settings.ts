@@ -27,11 +27,27 @@ export interface Settings {
   // non-streaming fallback / A/B arm.
   streaming: boolean;
   maxTurns: number;
+  // The request observer's state thresholds: third entry into one island, and the turn
+  // limit inside one state.
+  stateCycleEntries: number;
+  stateLongTurns: number;
+  // The budget trigger fires when this many turns remain; the grace window is added once
+  // when a near-end state reaches max_turns.
+  budgetTurns: number;
+  graceTurns: number;
+  // Whether the request observer is wired into live/bench runs. On by default; set
+  // SKEIN_OBSERVER=false to run the task loop without it.
+  observer: boolean;
   // Cap on a foreground `run`; a long verifier build may need more than the default
   // (background jobs are uncapped and polled instead, docs/tools.md §4.7).
   runTimeoutMs: number;
   live: boolean;
 }
+
+export const DEFAULT_STATE_CYCLE_ENTRIES = 3;
+export const DEFAULT_STATE_LONG_TURNS = 20;
+export const DEFAULT_BUDGET_TURNS = 3;
+export const DEFAULT_GRACE_TURNS = 5;
 
 function num(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
@@ -56,6 +72,11 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     reasoningTape: (env.SKEIN_REASONING_TAPE ?? "true").toLowerCase() !== "false",
     streaming: (env.SKEIN_STREAMING ?? "true").toLowerCase() !== "false",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
+    stateCycleEntries: num(env.SKEIN_STATE_CYCLE_ENTRIES, DEFAULT_STATE_CYCLE_ENTRIES),
+    stateLongTurns: num(env.SKEIN_STATE_LONG_TURNS, DEFAULT_STATE_LONG_TURNS),
+    budgetTurns: num(env.SKEIN_BUDGET_TURNS, DEFAULT_BUDGET_TURNS),
+    graceTurns: num(env.SKEIN_GRACE_TURNS, DEFAULT_GRACE_TURNS),
+    observer: (env.SKEIN_OBSERVER ?? "true").toLowerCase() !== "false",
     runTimeoutMs: num(env.SKEIN_RUN_TIMEOUT_MS, 120_000),
     live: (env.SKEIN_LIVE ?? "false").toLowerCase() === "true",
   };

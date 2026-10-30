@@ -787,7 +787,7 @@ export function executeAction(
   ): string => {
     const moveSeq = next();
     const id = `w:move:${moveSeq}`;
-    const payload: Record<string, unknown> = { state: spec.state, what: spec.what, ...(extra ?? {}) };
+    const payload: Record<string, unknown> = { state: spec.state, what: spec.what, turn, ...(extra ?? {}) };
     if (spec.done !== undefined && spec.done !== "") payload.done = spec.done;
     if (spec.call !== undefined) payload.call = spec.call;
     events.push({

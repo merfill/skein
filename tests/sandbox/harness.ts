@@ -307,6 +307,7 @@ export async function runTask(
       workspace,
       maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
       probe: (workspace) => probeSession(workspace, { network: network.requested }),
+      ...(options.observer !== undefined ? { observer: options.observer } : {}),
     },
     {
       request: { id: "r1", text: request },

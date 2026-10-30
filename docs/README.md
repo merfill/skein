@@ -14,12 +14,12 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 
 ## Sessions and controllability (proposed)
 
-- [session_concepts.md](session_concepts.md) · [RU](session_concepts_ru.md) — sessions: why
-  continuity is needed, the container of units, the session agent, the hierarchical outline
-  (draft; no implementation). Tier 4, first.
 - [controllability.md](controllability.md) · [RU](controllability_ru.md) — triggers emitted by
-  the engine and the tape/IR agent that decides what to do; the trigger and tool inventory is
-  open (discussion draft; no implementation). Tier 4, second.
+  the engine and the RequestObserver that decides what to do; the trigger and tool inventory is
+  open (4a core implemented; see `plans/request_observer_plan`). Tier 4, first.
+- [session_concepts.md](session_concepts.md) · [RU](session_concepts_ru.md) — sessions: why
+  continuity is needed, the container of units, the SessionAgent, the hierarchical outline
+  (draft; no implementation). Tier 4, second.
 
 ## The IR (the engine's source of truth)
 
@@ -66,6 +66,9 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 ## Plans
 
 - `plans/` — active plans (`implementation_plan`).
+- [plans/request_observer_plan.md](plans/request_observer_plan.md) ·
+  [RU](plans/request_observer_plan_ru.md) — Tier 4a: triggers, the observer unit, `hint`/`memo`/`halt`,
+  and the minimal session shell (draft for approval).
 - [plans/ai_sdk_migration_plan.md](plans/ai_sdk_migration_plan.md) ·
   [RU](plans/ai_sdk_migration_plan_ru.md) — migrate the model layer to the Vercel AI SDK,
   keeping LangGraph and the IR (proposed).

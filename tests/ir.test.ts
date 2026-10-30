@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { eventSchema, type Event } from "../src/ir/events";
 import { actionExecuted, childrenOf, emptyState, fold, hasStopped } from "../src/ir/graph";
-import { knowledgeKey } from "../src/ir/progress";
 import { project } from "../src/ir/project";
 import { applicable, focusEvents } from "../src/ir/traversal";
 import type {
@@ -295,64 +294,6 @@ describe("record_rejection", () => {
       },
     ]);
     expect(state.rejections).toHaveLength(3);
-  });
-});
-
-describe("progress key", () => {
-  it("changes when a state is added and when it is stopped", () => {
-    const base = fold([request("r1", "do it", 0), move("m1", "orientation", "green", 1)]);
-    const withState = fold([
-      request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
-      move("m2", "localization", "locate", 2),
-    ]);
-    expect(knowledgeKey(withState)).not.toBe(knowledgeKey(base));
-
-    const stopped = fold([
-      request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
-      { type: "add_node", node: workNode("s1", "stop", "done", 2) },
-      { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
-    ]);
-    expect(knowledgeKey(stopped)).not.toBe(knowledgeKey(base));
-  });
-
-  it("does not change on a repeated failure, but does on a distinct one", () => {
-    const failure = (command: string, output: string, seq: number): Event => ({
-      type: "add_node",
-      node: workNode(`o${seq}`, "observation", command, seq, { command, verdict: "fail", output }),
-    });
-    const once = fold([request("r1", "do it", 0), move("m1", "orientation", "green", 1), failure("git status", "fatal: no repo", 2)]);
-    const twice = fold([
-      request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
-      failure("git status", "fatal: no repo", 2),
-      failure("git status", "fatal: no repo", 3),
-    ]);
-    expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
-    const other = fold([
-      request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
-      failure("git status", "fatal: no repo", 2),
-      failure("git log", "fatal: no repo", 3),
-    ]);
-    expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
-  });
-
-  it("does not change on a repeated refusal, but does on a distinct one", () => {
-    const refusal = (target: string, seq: number, turn: number): Event => ({
-      type: "record_rejection",
-      tool: "read",
-      target,
-      reason: "repeated_action",
-      turn,
-    });
-    const base = [request("r1", "do it", 0), move("m1", "orientation", "green", 1)];
-    const once = fold([...base, refusal("/app/a", 1, 1)]);
-    const twice = fold([...base, refusal("/app/a", 1, 1), refusal("/app/a", 2, 2)]);
-    expect(knowledgeKey(twice)).toBe(knowledgeKey(once));
-    const other = fold([...base, refusal("/app/a", 1, 1), refusal("/app/b", 2, 2)]);
-    expect(knowledgeKey(other)).not.toBe(knowledgeKey(once));
   });
 });
 

@@ -5,6 +5,7 @@ import { TurnMeter } from "../../bench/metrics";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
+import { createObserverDeps } from "../../src/llm/observer";
 import type { Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { runTask } from "./harness";
@@ -157,8 +158,26 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   const run = await runTask(task, propose, {
     maxTurns: options.maxTurns,
     network: options.network ?? "on",
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
   });
   const elapsedMs = Date.now() - started;
+  const sessionJournal = run.result.session?.journal ?? [];
+  const advisories = run.result.events.flatMap((event) =>
+    event.type === "add_node" && (event.node.kind === "hint" || event.node.kind === "memo")
+      ? [{ kind: event.node.kind, payload: event.node.payload }]
+      : [],
+  );
+  writeFileSync(
+    join(dir, "session.json"),
+    JSON.stringify({ journal: sessionJournal, advisories }, null, 2),
+  );
+  const triggers = sessionJournal.filter((event) => event.type === "trigger");
+  const reactions = sessionJournal.filter((event) => event.type === "reaction");
+  if (triggers.length > 0) {
+    console.info(
+      `[${task.id}] observer triggers=${triggers.length} reactions=${reactions.length} advisories=${advisories.length}`,
+    );
+  }
   const refused = new Set(
     run.result.events
       .filter((event) => event.type === "record_rejection")

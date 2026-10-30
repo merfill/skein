@@ -17,6 +17,10 @@ export const WORK_KINDS = [
   // An engine-owned fact about the session (e.g. the environment probe). It hangs off no
   // plan or state; the projection renders it where the current state needs it.
   "fact",
+  // A tape-agent advisory: a state-scoped `hint` or a unit-scoped `memo`, rendered as a
+  // `system` turn. Neither counts as task knowledge.
+  "hint",
+  "memo",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -65,6 +69,7 @@ export interface MovePayload {
   // The state's stop condition, concretized by the doxa in the request's terms (a state
   // attribute like `what`); the island's generic criterion is the fallback.
   done?: string;
+  turn?: number;
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):

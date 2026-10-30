@@ -30,6 +30,7 @@ import type { Context, TapeMessage } from "../src/ir/project";
 import { project } from "../src/ir/project";
 import type { Proposals } from "../src/llm/schemas";
 import { createChatModel } from "../src/llm/client";
+import { createObserverDeps } from "../src/llm/observer";
 import { runAgent, type AgentResult } from "../src/loop/graph";
 import { probeSession } from "../src/loop/probe";
 import { buildMessages, promptText, propose as proposeModel } from "../src/loop/propose";
@@ -223,6 +224,7 @@ async function main(): Promise<void> {
           workspace,
           maxTurns: startTurn + 1,
           probe: (workspace) => probeSession(workspace, { network: net }),
+          ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
         },
         events === undefined
           ? { request: { id: "r1", text: request } }

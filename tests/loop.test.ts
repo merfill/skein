@@ -649,7 +649,7 @@ describe("the message tape", () => {
       return proposal({ operator: "apply", action: { tool: "bash", command: `echo step${index}` } });
     };
     await runAgent(
-      { propose, workspace, maxTurns: 8, noProgress: 10 },
+      { propose, workspace, maxTurns: 8 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -705,7 +705,7 @@ describe("the message tape", () => {
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 8, noProgress: 10 },
+      { propose, workspace, maxTurns: 8 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -736,7 +736,7 @@ describe("the message tape", () => {
       }
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo one" } });
     };
-    await runAgent({ propose, workspace, maxTurns: 6, noProgress: 10 }, { request: { id: "r1", text: "green" } });
+    await runAgent({ propose, workspace, maxTurns: 6 }, { request: { id: "r1", text: "green" } });
     // After the later run, the read's tool message is still in the tape (the tape is the
     // tree's history, not a bounded working set).
     const tape = contexts.at(-1)?.history.map((message) => message.text).join("\n") ?? "";
@@ -869,16 +869,16 @@ describe("runAgent", () => {
     expect(result.stopReason).toBe("request_addressed");
   });
 
-  it("stops with no_progress when nothing changes", async () => {
+  it("runs to max_turns when nothing changes", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const result = await runAgent(
-      { propose: fixed({ operator: "recall", id: "r1" }), workspace, maxTurns: 10, noProgress: 2 },
+      { propose: fixed({ operator: "recall", id: "r1" }), workspace, maxTurns: 4 },
       { request: { id: "r1", text: "green" } },
     );
-    expect(result.stopReason).toBe("no_progress");
+    expect(result.stopReason).toBe("max_turns");
   });
 
-  it("stops with no_progress on a repeatedly refused command", async () => {
+  it("reaches max_turns on a repeatedly refused command", async () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     let index = 0;
     const propose = async (): Promise<Proposals> => {
@@ -893,10 +893,10 @@ describe("runAgent", () => {
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo hi" } });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 12, noProgress: 2 },
+      { propose, workspace, maxTurns: 6 },
       { request: { id: "r1", text: "green" } },
     );
-    expect(result.stopReason).toBe("no_progress");
+    expect(result.stopReason).toBe("max_turns");
     // A repeated command is a failed observation with a reason, not a node-less refusal.
     expect(
       [...fold(result.events).nodes.values()].some(
@@ -946,7 +946,7 @@ describe("runAgent", () => {
       return proposal({ operator: "decline", why: "nothing to do" });
     };
     await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 3 },
+      { propose, workspace, maxTurns: 6 },
       { request: { id: "r1", text: "green" } },
     );
     // The refusal reason is on the tape the model sees next, so the loop is never blind.
@@ -985,7 +985,7 @@ describe("runAgent", () => {
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 8, noProgress: 3 },
+      { propose, workspace, maxTurns: 8 },
       { request: { id: "r1", text: "read the long file" } },
     );
     // The windowed recall returned the middle fragment (line 60), rendered as a node.
@@ -1051,7 +1051,7 @@ describe("runAgent", () => {
       return proposal({ operator: "apply", action: { tool: "bash", command: "true" } });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 6, noProgress: 2 },
+      { propose, workspace, maxTurns: 6 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -1091,7 +1091,7 @@ describe("runAgent", () => {
       return proposal({ operator: "recall", id: readId ?? "missing" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 5, noProgress: 2 },
+      { propose, workspace, maxTurns: 5 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -1116,7 +1116,7 @@ describe("runAgent", () => {
       return proposal({ operator: "recall", id: moveIdOf(context) ?? "missing" });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 5, noProgress: 2 },
+      { propose, workspace, maxTurns: 5 },
       { request: { id: "r1", text: "green" } },
     );
 
@@ -1151,7 +1151,7 @@ describe("failed edit materializes the file content", () => {
       return proposal({ operator: "apply", action: { tool: "bash", command: "echo done" } });
     };
     const result = await runAgent(
-      { propose, workspace, maxTurns: 8, noProgress: 100 },
+      { propose, workspace, maxTurns: 8 },
       { request: { id: "r1", text: "green" } },
     );
 

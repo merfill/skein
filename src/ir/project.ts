@@ -70,18 +70,12 @@ export interface Context {
   // hand-built context (tests), where the full surface is offered.
   applicable?: Applicable;
   constraints: { id: string; forbid: string[] }[];
-  // A soft attractor: when the state has made no progress for `stall` turns, the projection
-  // nudges the doxa to decide (an order is not dictated; §2.8, docs/testing.md).
-  nudge?: string;
 }
 
 export interface ProjectOptions {
   // A structural move the engine refused: appended as a transient assistant call + `tool`
   // reason for this turn only (the refused move creates no node; §2.7).
   rejection?: { text: string; name: string; args: Record<string, unknown> };
-  // The loop's stall counter (§2.8): after a turn with no progress it grows; the projection
-  // turns it into the soft nudge.
-  stall?: number;
 }
 
 function stripRef(ref: string): string {
@@ -118,7 +112,7 @@ function mutatedPaths(state: State, actionId: string): string[] {
 
 // A tool result rendered for the tape, from the bounded inline body (the full body stays
 // addressable by id via `recall`/`search`, docs/ir_semantics.md §7).
-function observationText(node: Node): string {
+export function observationText(node: Node): string {
   const payload = nodePayload(node) ?? {};
   const parts: string[] = [];
   if (typeof payload.ref === "string") {
@@ -439,6 +433,36 @@ function probeOf(state: State): SessionProbe | undefined {
     : { environment: payload as EnvironmentFact };
 }
 
+function advisoriesOf(state: State, moveId: string | undefined): TapeMessage[] {
+  const nodes = [...state.nodes.values()]
+    .filter((node) => {
+      if (node.kind === "memo") return true;
+      if (node.kind !== "hint") return false;
+      const payload = node.payload as { state?: unknown } | undefined;
+      return (
+        moveId !== undefined &&
+        payload?.state === moveId &&
+        !isMoveFinished(state, moveId)
+      );
+    })
+    .sort((left, right) => left.seq - right.seq);
+
+  return nodes.map((node) => {
+    const payload = node.payload as
+      | { text?: unknown; evidence?: unknown }
+      | undefined;
+    const text = typeof payload?.text === "string" ? payload.text : node.label;
+    const evidence = Array.isArray(payload?.evidence)
+      ? payload.evidence.filter((id): id is string => typeof id === "string")
+      : [];
+    const suffix = evidence.length > 0 ? ` (evidence: ${evidence.join(", ")})` : "";
+    return {
+      role: "system",
+      text: `${node.kind === "hint" ? "Tape-agent hint" : "Tape-agent memo"}: ${text}${suffix}`,
+    };
+  });
+}
+
 export function project(state: State, options: ProjectOptions = {}): Context {
   const history: TapeMessage[] = [];
   const island = islandOf(state);
@@ -478,10 +502,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   const done = focusedPayload?.done;
   const situation = situationOf(state);
   const frontier = applicable(state, currentFocus(state));
-  const nudge =
-    options.stall !== undefined && options.stall > 0 && island !== undefined
-      ? `You have made no progress for ${options.stall} turn(s) in ${ISLANDS[island].label}. Act, or call \`stop\` when the \`done\` criterion holds.`
-      : undefined;
+  history.push(...advisoriesOf(state, focusedMove));
   return {
     history,
     situation,
@@ -489,6 +510,5 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     ...(done !== undefined && done !== "" ? { done } : {}),
     applicable: frontier,
     constraints: constraintsOf(state),
-    ...(nudge !== undefined ? { nudge } : {}),
   };
 }

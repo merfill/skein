@@ -19,6 +19,7 @@ import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
+import { createObserverDeps } from "../src/llm/observer";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toolNamesFor } from "../src/llm/tools";
 import { probeSession } from "../src/loop/probe";
@@ -197,7 +198,13 @@ async function main(): Promise<void> {
   console.log(`trace ${tracePath}   model=${settings.model}   turns=${turns}   observations=${observations.length}`);
   console.log(`request: ${requestText.slice(0, 140)}…\n`);
 
-  const result = await runAgent({ propose, workspace, maxTurns: turns, probe: probeSession }, { request: { id: "r1", text: requestText } });
+  const result = await runAgent({
+    propose,
+    workspace,
+    maxTurns: turns,
+    probe: probeSession,
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+  }, { request: { id: "r1", text: requestText } });
 
   console.log("| t | situation | action(s) | in | out | reason | calls |");
   console.log("|---|---|---|---|---|---|---|");

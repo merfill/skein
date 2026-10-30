@@ -49,7 +49,7 @@ describe("the message tape under a long horizon", () => {
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 40, noProgress: 1000 },
+      { propose, workspace, maxTurns: 40 },
       { request: { id: "r1", text: "grow" } },
     );
 
@@ -86,7 +86,7 @@ describe("the message tape under a long horizon", () => {
     };
 
     await runAgent(
-      { propose, workspace, maxTurns: 10, noProgress: 1000 },
+      { propose, workspace, maxTurns: 10 },
       { request: { id: "r1", text: "collapse" } },
     );
 

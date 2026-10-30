@@ -8,6 +8,7 @@ import type { Event } from "../../src/ir/events";
 import { type State } from "../../src/ir/graph";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
+import { createObserverDeps } from "../../src/llm/observer";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { probeSession } from "../../src/loop/probe";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
@@ -184,7 +185,13 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
   const checkCommand = resolveCheck(fixture, options.check);
 
   const result = await runAgent(
-    { propose, workspace: fsWorkspace(root), maxTurns: options.maxTurns ?? settings.maxTurns, probe: probeSession },
+    {
+      propose,
+      workspace: fsWorkspace(root),
+      maxTurns: options.maxTurns ?? settings.maxTurns,
+      probe: probeSession,
+      ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    },
     {
       request: { id: "r1", text: request },
       ...(constraints.length > 0 ? { constraints } : {}),

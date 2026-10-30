@@ -78,6 +78,11 @@ function toMessage(message: TapeMessage, names: Map<string, string>): ModelMessa
   return result;
 }
 
+export function historyMessages(history: readonly TapeMessage[]): ModelMessage[] {
+  const names = toolNames(history);
+  return history.map((message) => toMessage(message, names));
+}
+
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
 // the tape itself, then the situation's prompt (the request/transition instruction, the open
 // state's per-turn tail, or the terminal instruction). The base prompt carries the contract and
@@ -90,8 +95,7 @@ export function buildMessages(context: Context): ModelMessage[] {
       content: `Constraint (${constraint.id}): never touch paths matching ${constraint.forbid.join(", ")}.`,
     });
   }
-  const names = toolNames(context.history);
-  for (const message of context.history) messages.push(toMessage(message, names));
+  messages.push(...historyMessages(context.history));
   // Each situation appends its own last message. An open state gets the per-turn tail (conduct,
   // criterion, closure): never stored, so the next turn rebuilds without it. The
   // transition one is a `system` turn: it is the engine's rule for choosing the next state, not

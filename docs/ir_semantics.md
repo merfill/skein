@@ -250,16 +250,13 @@ as an **observation with a reason**.
 
 ### 2.8 Loop detection
 
-Looping is not a separate sensor but an **absence of progress**. Progress at a point is a
-cursor shift, **new knowledge** (a new observation or a new outcome, or a fragment retrieved
-by `recall`/`search`), a closure, or a **new `move`** (a change of state). The
-layers are deterministic: a **repeat action** (the same command with the same inputs and an
-unchanged world) is refused and its observation names the existing result; **stagnation**
-(the cursor does not shift, the `move` does not change, and there is no new knowledge for
-`K` turns) returns to the parent; **exhaustion** without progress
-at the root stops the run (`no_progress`). A change of state is progress, so a run that keeps
-entering new islands is not stalled. The projection can also carry a soft attractor keyed to
-the **turns since the last `move`** (§7, docs/plans/archive/state_protocol_plan.md §4a).
+A repeat action (the same command with the same inputs and an unchanged world) is refused and
+its observation names the existing result. There is no deterministic `no_progress` anymore,
+and the projection carries no soft attractor. Looping is the subject of `RequestObserver`
+triggers (Tier 4a): `state_cycle` on the third entry into the same island, `state_long` beyond
+20 turns in a state, `budget` near `max_turns`. In `patch|recovery|construction|end` at
+`max_turns` the engine allows `G` more turns once (`SKEIN_GRACE_TURNS`, default 5); otherwise
+`max_turns` ends the run.
 
 ---
 

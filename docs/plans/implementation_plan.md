@@ -73,36 +73,44 @@ staleness; objective arbiter. Details — `docs/plans/archive/tier0_plan.md`.
    The premature `stop` on `fix-ocaml-gc`/`custom-memory-heap-crash` was fixed by the
    stop-closure refactor (§4); re-check their accuracy numbers after the next run.
 
-**Tier 4 — controllability and sessions (strategic direction; order — 4b first, then 4a).**
+**Tier 4 — controllability and sessions (strategic direction; order — 4a first, then 4b).**
 
 The value of the projection is not the turn count but **observability**: the engine knows a
 state and its boundaries, so algorithms that a monotone tape cannot cheaply support apply to
-the structure. Both directions share one mechanism — the **meta-unit**: the same IR, its own
+the structure. Both directions share one mechanism — the **agent unit**: the same IR, its own
 state vocabulary, read-only outline tools, and operations that logos checks and applies. The
-mechanism is built once and instantiated twice: the session agent and the tape/IR agent.
+mechanism is built once and instantiated twice: the RequestObserver and the SessionAgent.
 
-- **4b — session and session agent (first).** Develops `docs/session_concepts.md`: a container
-  of units (the session journal, `focus`, `pending`), two independent statuses (unit
-  open/closed vs `active`/`suspended`/`abandoned`/`completed`), a meta-unit with the
-  `respond`/`resume`/`revise`/`redirect`/`cancel`/`query` operations, and a deterministic
-  hierarchical outline L0–L4. The difference from a monotone tape: a request is a first-class
-  addressable unit, and the session agent enumerates/locates past requests **structurally**
-  (outline, `recall` by id), without similarity/RAG. The session agent does not edit task
-  trees — it only proposes operations; logos checks the preconditions. Invariants: nothing is
-  deleted or compressed into a summary-truth; no verdicts or stored statuses. Minimal slice —
-  `docs/session_concepts.md` §10.
-- **4a — triggers and the tape/IR agent (second).** The engine deterministically notices an
-  event in the structure (a repeated `action→observation` over unchanged material, a repeated
-  state chain through `move` edges, stagnation, a premature `stop`, budget burn, etc.) and
-  emits a **trigger**; the tape/IR agent with read-only outline tools decides what to do and
+- **4a — triggers and the RequestObserver (first).** The engine deterministically notices an
+  event in the structure (a repeated `action→observation` over unchanged material, a third
+  entry into an island, >20 turns in a state, a repeated state chain through `move` edges,
+  a premature `stop`, budget burn, etc.) and
+  emits a **trigger**; the RequestObserver with read-only outline tools decides what to do and
   proposes an action; logos checks and applies. A trigger is an observation, not a verdict.
   The list of triggers, the agent's tools and the reactions are open; they get a dedicated
   document, `docs/controllability.md` (RU: `docs/controllability_ru.md`). This lifts the deferred cycle/premature-stop
-  detection without turning it into a hard gate.
+  detection without turning it into a hard gate. 4a introduces a minimal session container (the
+  journal and the unit stack) as the carrier; session operations and attention statuses stay in
+  4b. The existing thresholds (`no_progress`, `max_turns`, thrash-guard) are rewritten: terminal
+  completion yields to the trigger.
+- **4b — session and SessionAgent (second).** Develops `docs/session_concepts.md` on the
+  container from 4a: units, the session journal, the stack (its top is `focus`), `pending`,
+  two independent statuses (unit open/closed vs
+  `active`/`suspended`/`abandoned`/`completed`), a agent unit with the
+  `respond`/`resume`/`revise`/`redirect`/`cancel`/`query` operations, and a deterministic
+  hierarchical outline L0–L4. The difference from a monotone tape: a request is a first-class
+  addressable unit, and the SessionAgent enumerates/locates past requests **structurally**
+  (outline, `recall` by id), without similarity/RAG. The SessionAgent does not edit task
+  trees — it only proposes operations; logos checks the preconditions. Invariants: nothing is
+  deleted or compressed into a summary-truth; no verdicts or stored statuses. Minimal slice —
+  `docs/session_concepts.md` §10.
 
-**Why this order.** 4b gives something to touch by hand (dialogue continuity, addressable past
-requests) and builds the meta-unit; 4a reuses the same mechanism and adds triggers/tools. The
-semantics of triggers is discussed separately, in its own document.
+**Why this order.** 4a strikes at the main criterion — controllability: the engine already
+knows the structure and can deterministically notice an event, and the agent unit with a
+read-only outline decides what to do about it; this also lifts the deferred
+cycle/premature-stop detection. 4b reuses the same mechanism and adds the session container
+and operations over units. The semantics of triggers is discussed separately, in its own
+document.
 
 ## 4. Current status
 
@@ -338,13 +346,13 @@ go-ahead.
 ## 5. Boundaries
 
 Deliberately out of scope for the current stages: AST/symbol table, embeddings,
-CSP/arithmetic, UI, multilinguality, multiple LLM providers. The meta-unit (Tier 4) is the
+CSP/arithmetic, UI, multilinguality, multiple LLM providers. The agent unit (Tier 4) is the
 same IR, not a subagent; similarity/RAG stays out of scope.
 
 ## 6. Open questions
 
-- **Tier 4 (sessions and controllability).** Order — 4b → 4a. Session open questions —
-  `docs/session_concepts.md` §8; triggers, the tape/IR agent's tools and the reactions —
+- **Tier 4 (sessions and controllability).** Order — 4a → 4b. Session open questions —
+  `docs/session_concepts.md` §8; triggers, the RequestObserver's tools and the reactions —
   `docs/controllability.md`.
 - Proposal validation: strict zod contract vs a lenient JSON fallback (as in
   Ankyra `llm/structured.py`).

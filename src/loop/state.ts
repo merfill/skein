@@ -3,6 +3,7 @@ import { Annotation } from "@langchain/langgraph";
 import type { Event } from "../ir/events";
 import type { Context } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
+import type { SessionState } from "../session/types";
 
 // One move rendered as a role-tagged turn, kept in loop state (not IR): a proposal (the
 // doxa's move) or a tool result. `nodeId` is the result node a tool turn produced.
@@ -36,8 +37,8 @@ export const LoopState = Annotation.Root({
   // The message behind a terminal stop (currently the `llm_error` text), so it can be
   // persisted to the run trace instead of living only in a transient turn (graph §propose).
   stopText: Annotation<string | null>(last<string | null>(null)),
-  progressKey: Annotation<string>(last("")),
-  stall: Annotation<number>(last(0)),
+  session: Annotation<SessionState | null>(last<SessionState | null>(null)),
+  grace: Annotation<boolean>(last(false)),
   // The structural move just refused (classify created no node): its rendered reason and the
   // call it corresponds to, so the next turn renders it as an assistant call + `tool` reason
   // (the doxa sees why its move failed, §2.7). Reset to null on every accepted move.

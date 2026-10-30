@@ -24,9 +24,11 @@ export interface State {
   focusOf: Map<string, string>;
   // Full traversal stack of goals, root first; `descend`/`return` fold into it.
   branch: string[];
-  // world state: latest mutated version and first observed version per ref
+  // Latest mutated version and first observed version per ref
   mutated: Map<string, string>;
   observed: Map<string, string>;
+  // How many times a state island was entered through `move`.
+  stateEntries: Map<string, number>;
   // Patch moves whose files the engine restored after a failed Verification.
   reverted: Set<string>;
   lastMutationSeq: number;
@@ -44,6 +46,7 @@ export function emptyState(): State {
     branch: [],
     mutated: new Map(),
     observed: new Map(),
+    stateEntries: new Map(),
     reverted: new Set(),
     lastMutationSeq: 0,
     seq: 0,
@@ -162,6 +165,7 @@ export function fold(events: readonly Event[], base: State = emptyState()): Stat
     branch: [...base.branch],
     mutated: new Map(base.mutated),
     observed: new Map(base.observed),
+    stateEntries: new Map(base.stateEntries),
     reverted: new Set(base.reverted),
     lastMutationSeq: base.lastMutationSeq,
     rootId: base.rootId,
@@ -182,6 +186,13 @@ function applyEvent(state: State, event: Event): void {
       if (event.node.kind === "request") {
         state.rootId = event.node.id;
         state.branch = [event.node.id];
+      }
+      if (event.node.kind === "move") {
+        const raw = (event.node.payload as { state?: unknown } | undefined)?.state;
+        const island = typeof raw === "string" ? (raw === "finish" ? "end" : raw) : undefined;
+        if (island !== undefined) {
+          state.stateEntries.set(island, (state.stateEntries.get(island) ?? 0) + 1);
+        }
       }
       const focus = currentFocus(state);
       if (focus !== undefined) state.focusOf.set(event.node.id, focus);

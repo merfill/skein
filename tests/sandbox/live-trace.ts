@@ -5,6 +5,7 @@ import { TurnMeter } from "../../bench/metrics";
 import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
+import { createObserverDeps } from "../../src/llm/observer";
 import type { Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
@@ -72,7 +73,10 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  const { result, workspace } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, propose, { maxTurns });
+  const { result, workspace } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, propose, {
+    maxTurns,
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+  });
   const source = workspace.read("ocaml/runtime/shared_heap.c") ?? "";
   const fixed = !source.includes("RLE-SWEEP-BUG");
   console.info(`\n=== result ===\nstop=${result.stopReason} turns=${result.turns} fixed=${fixed}`);

@@ -3,6 +3,7 @@ import type { State } from "../../src/ir/graph";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
+import type { ObserverDeps } from "../../src/session/observer";
 import type { Workspace } from "../../src/tools/workspace";
 import type { NetworkMode } from "./network";
 import { sandboxWorkspace, type SandboxSpec } from "./workspace";
@@ -21,6 +22,7 @@ export interface SandboxRunOptions {
   // Agent network mode. `on` gives the agent the bridge; `off` detaches it for the agent
   // phase only — the verifier always keeps its own network (`network.ts`).
   network?: NetworkMode;
+  observer?: ObserverDeps;
 }
 
 export interface SandboxRun {
@@ -40,6 +42,7 @@ export async function runSandbox(
       propose,
       workspace,
       maxTurns: options.maxTurns ?? 24,
+      ...(options.observer !== undefined ? { observer: options.observer } : {}),
     },
     {
       request: { id: "r1", text: request },

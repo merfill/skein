@@ -1,15 +1,30 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
+import { loadSettings } from "../config/settings";
 import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
-import { knowledgeKey } from "../ir/progress";
 import { project } from "../ir/project";
 import { SESSION_PROBE_ID, type SessionProbe } from "../ir/session";
 import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/traversal";
 import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
+import { applyReaction } from "../session/apply";
+import { runRequestObserver, type ObserverDeps } from "../session/observer";
+import {
+  createSession,
+  observerDepth,
+  openUnit,
+  popUnit,
+  pushUnit,
+  recordReaction,
+  recordTrigger,
+  sessionFocus,
+  unitOf,
+} from "../session/session";
+import { detectTriggers } from "../session/triggers";
+import type { SessionState } from "../session/types";
 import { commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
@@ -46,14 +61,24 @@ function describeTarget(action: Action): string {
   return target.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
+const NEAR_END_ISLANDS = new Set(["end", "patch", "recovery", "construction"]);
+
+function isNearEnd(state: State): boolean {
+  const move = currentMove(state);
+  const island = move !== undefined ? moveIsland(state, move) : undefined;
+  return island !== undefined && NEAR_END_ISLANDS.has(island);
+}
+
 export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
   maxTurns: number;
+  graceTurns?: number;
   // The session probe (`src/loop/probe.ts`): environment and material. The real entry points
   // pass it so the fact is journalled once at request start; a replay or a unit test omits it.
   probe?: (workspace: Workspace) => SessionProbe | undefined;
-  noProgress?: number;
+  // The request observer. Absent by default, so the task loop runs without one.
+  observer?: ObserverDeps;
   // An external actor (a human or a program) may emit events before each turn — the seam
   // for future user intervention. Absent by default.
   arbiter?: (state: State, turn: number) => Event[];
@@ -67,6 +92,7 @@ export interface AgentInput {
   seed?: Event[];
   // The turn number the resumed journal stopped at; `maxTurns` remains absolute.
   startTurn?: number;
+  session?: SessionState;
 }
 
 export interface AgentResult {
@@ -77,11 +103,12 @@ export interface AgentResult {
   // The message behind a terminal stop (`llm_error` today), persisted by the caller so a
   // provider failure is diagnosable after the fact.
   stopText?: string | null;
+  session?: SessionState;
 }
 
 export function compileGraph(deps: AgentDeps) {
   const signatures: VersionCache = new Map();
-  const noProgress = deps.noProgress ?? 10;
+  const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
 
   const projectNode = (state: LoopStateType) => {
     // The external actor (if any) may react before the turn; its events join the journal
@@ -102,7 +129,6 @@ export function compileGraph(deps: AgentDeps) {
       events: [...external, ...drift, ...focusDrift],
       context: project(current, {
         ...(rejection !== undefined ? { rejection } : {}),
-        stall: state.stall,
       }),
     };
   };
@@ -203,7 +229,7 @@ export function compileGraph(deps: AgentDeps) {
     };
   };
 
-  const progressNode = (state: LoopStateType) => {
+  const progressNode = async (state: LoopStateType) => {
     if (state.done) return {};
     const current = fold(state.events);
     const rootId = current.rootId;
@@ -221,22 +247,86 @@ export function compileGraph(deps: AgentDeps) {
         return { done: true, stopReason: "request_addressed" };
       }
     }
-    // Closure wins over the budget: if the last allowed turn closed the request, that is
-    // the honest verdict, not `max_turns`.
-    if (state.turn >= deps.maxTurns) return { done: true, stopReason: "max_turns" };
-    // Progress is the knowledge in the tree (a new node); a recall/search is now a node too.
-    const key = knowledgeKey(current);
-    if (key === state.progressKey) {
-      const stall = state.stall + 1;
-      if (stall >= noProgress) return { stall, done: true, stopReason: "no_progress" };
-      return { stall };
+
+    const session = state.session ?? undefined;
+    const unitId = session !== undefined ? sessionFocus(session)?.unitId : undefined;
+    let events: Event[] = [];
+    let done = false;
+    let stopReason: string | null = null;
+    let stopText: string | null = null;
+
+    if (session !== undefined && unitId !== undefined) {
+      const unit = unitOf(session, unitId);
+      if (state.events.length > unit.journal.length) {
+        unit.journal.push(...state.events.slice(unit.journal.length));
+      }
+      unit.turn = state.turn;
+
+      const move = currentMove(current);
+      const island = move !== undefined ? moveIsland(current, move) : undefined;
+      const nearClosure = island !== undefined && isTerminalIsland(island);
+      const triggers = detectTriggers(
+        { state: current, session, unitId, turn: state.turn, terminal: nearClosure },
+        { maxTurns: deps.maxTurns },
+      );
+      const trigger =
+        triggers.find((candidate) => candidate.kind === "budget") ?? triggers[0];
+
+      if (
+        trigger !== undefined &&
+        deps.observer !== undefined &&
+        observerDepth(session) < (deps.observer.maxDepth ?? 1)
+      ) {
+        recordTrigger(session, unitId, state.turn, trigger);
+        const observerUnitId = `observer:${trigger.id}`;
+        openUnit(session, observerUnitId, "observer", [], state.turn);
+        pushUnit(session, observerUnitId, 0);
+        const observer = await runRequestObserver({
+          trigger,
+          state: current,
+          tools: deps.observer.tools,
+          agent: deps.observer.agent,
+          events: state.events,
+          ...(deps.observer.maxTurns !== undefined ? { maxTurns: deps.observer.maxTurns } : {}),
+          ...(deps.observer.surveyLimit !== undefined
+            ? { surveyLimit: deps.observer.surveyLimit }
+            : {}),
+        });
+        popUnit(session);
+        unitOf(session, observerUnitId).journal.push(...observer.journal);
+
+        if (observer.decision !== undefined) {
+          recordReaction(session, unitId, observer.decision);
+          if (observer.decision.kind === "halt") {
+            done = true;
+            stopReason = "observer_halt";
+            stopText = observer.decision.reason;
+          } else {
+            const applied = applyReaction({
+              state: current,
+              reaction: observer.decision,
+              sourceUnit: observerUnitId,
+            });
+            if (applied.ok) events = applied.events;
+          }
+        }
+      }
     }
-    return { progressKey: key, stall: 0 };
+
+    if (done) return { events, done, stopReason, stopText, session };
+    if (state.turn >= deps.maxTurns && state.grace !== true) {
+      if (isNearEnd(current)) return { events, session, grace: true };
+      return { events, done: true, stopReason: "max_turns", session };
+    }
+    if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) {
+      return { events, done: true, stopReason: "max_turns", session };
+    }
+    return { events, session };
   };
 
   const route = (state: LoopStateType): "project" | typeof END => {
     if (state.done) return END;
-    if (state.turn >= deps.maxTurns) return END;
+    if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) return END;
     return "project";
   };
 
@@ -255,6 +345,7 @@ export function compileGraph(deps: AgentDeps) {
 
 export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<AgentResult> {
   const graph = compileGraph(deps);
+  const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
   const seed: Event[] = input.seed !== undefined ? [...input.seed] : [
     {
       type: "add_node",
@@ -300,6 +391,12 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
     }
   }
 
+  const session = input.session ?? createSession();
+  if (input.session === undefined) {
+    openUnit(session, input.request.id, "task", seed, input.startTurn ?? 0);
+    pushUnit(session, input.request.id, input.startTurn ?? 0);
+  }
+
   const final = await graph.invoke(
     {
       events: seed,
@@ -308,10 +405,10 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
       done: false,
       stopReason: null,
       stopText: null,
-      progressKey: "",
-      stall: 0,
+      session,
+      grace: false,
     },
-    { recursionLimit: deps.maxTurns * 5 + 20 },
+    { recursionLimit: (deps.maxTurns + graceTurns) * 5 + 20 },
   );
 
   return {
@@ -320,5 +417,6 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
     stopReason: final.stopReason,
     turns: final.turn,
     stopText: final.stopText,
+    session: final.session ?? session,
   };
 }
