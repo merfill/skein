@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { runSessionAgent, createSessionTools, type SessionAgent } from "../src/session/session_agent";
 import { readUnit, type ReadFile } from "../src/session/reading";
 import { attentionOf, createSession } from "../src/session/session";
 import { unitOutline, sessionOutline } from "../src/session/session_outline";
@@ -56,35 +55,5 @@ describe("reading unit: one action, preview and address", () => {
     expect(outline).toContain(`bytes: ${text.length}`);
     expect(outline).toContain("lines: 200");
     expect(outline).toContain("observation: obs:reading:1");
-  });
-
-  it("lets the session agent use read without starting a task", async () => {
-    const session = createSession();
-    let calls = 0;
-    const agent: SessionAgent = async () => {
-      calls += 1;
-      return calls === 1
-        ? { toolCalls: [{ name: "read", args: { path: "big.txt" }, callId: "r1" }] }
-        : { operation: { kind: "respond", text: "line 1 is there" } };
-    };
-
-    const result = await runSessionAgent(
-      { agent, tools: createSessionTools(readFile), readFile },
-      session,
-      "read big.txt",
-    );
-
-    expect(result.applied?.ok).toBe(true);
-    expect(result.operation).toEqual({ kind: "respond", text: "line 1 is there" });
-    expect(session.units.has("reading:1")).toBe(true);
-    expect(attentionOf(session, "reading:1")).toBe("completed");
-    expect(
-      result.journal.some(
-        (event) =>
-          event.type === "add_node" &&
-          event.node.kind === "observation" &&
-          String((event.node.payload as { result?: unknown }).result).includes("reading reading:1"),
-      ),
-    ).toBe(true);
   });
 });

@@ -23,23 +23,9 @@ import {
   type SessionToolCall,
 } from "../session/session_agent";
 import type { ReadFile } from "../session/reading";
-import { PROBE_KINDS, type SessionWorkspace } from "../session/session_workspace";
 import type { SessionOperation } from "../session/types";
 
 const unitSchema = z.object({ id: z.string() });
-const readSchema = z.object({ path: z.string() });
-const grepSchema = z.object({
-  pattern: z.string(),
-  path: z.string().optional(),
-  include: z.string().optional(),
-  from: z.number().int().positive().optional(),
-});
-const listSchema = z.object({
-  path: z.string().optional(),
-  include: z.string().optional(),
-  from: z.number().int().positive().optional(),
-});
-const probeSchema = z.object({ kind: z.enum(PROBE_KINDS).optional() });
 const stateSchema = z.object({ unit: z.string(), id: z.string() });
 const turnsSchema = z.object({
   unit: z.string(),
@@ -69,32 +55,8 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "unit",
     description:
-      "Return one unit's structure: states and closures, or a reading unit's path/size/observation. Call with the unit id from the trace (e.g. r1, reading:1).",
+      "Return one unit's structure: states and closures, or a reading unit's path/size/observation. Call with the unit id from the trace (e.g. r1, g1, reading:1).",
     schema: unitSchema,
-  },
-  {
-    name: "read",
-    description:
-      "Read a file in one action. Returns a bounded preview, the full size and the address of a reading unit; for a small file the preview is the complete content, so answer from it. Use `body`/`search` on the reading unit for more. Do not start a task to read a file. Call with { path }.",
-    schema: readSchema,
-  },
-  {
-    name: "grep",
-    description:
-      "Search workspace file contents by regular expression (read-only). Use it to locate code — where something is defined or used — without starting a task. `path` scopes to a file or directory; `include` is a glob (e.g. \"**/*.ts\"); `from` pages matches (1-based). Returns `path:line: match` with a `continue from` cursor. This reads the live workspace; `search` searches a past unit's stored bodies instead.",
-    schema: grepSchema,
-  },
-  {
-    name: "list",
-    description:
-      "List workspace files (read-only), scoped by `path` (file or directory) and `include` glob; `from` pages the result. Returns a bounded JSON { root, total, from, returned, files, next }. Use it to see what exists without starting a task.",
-    schema: listSchema,
-  },
-  {
-    name: "probe",
-    description:
-      "Read one recorded toolchain fact (read-only; computed once per session). `kind`: environment (default: all groups), packages, interpreters, build, tests, vcs, tools, material, all. Use it to learn which compilers, package managers, interpreters or test tools exist before proposing a task.",
-    schema: probeSchema,
   },
   {
     name: "state",
@@ -123,19 +85,19 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "respond",
     description:
-      "Answer directly without opening a separate task. Use it for quick answers, clarifications and confirmations, not for multi-step analysis. Call with { text }.",
+      "Answer conversationally: greeting, thanks, confirmation, clarification or a direct factual pointer. Not for analysis or explanation of the material.",
     schema: respondSchema,
   },
   {
     name: "general",
     description:
-      "Start a general, non-coding task (analysis, explanation, comparison, short investigation). Use it when the request needs several read-only turns and should have its own record. It does not change files; the result is an answer. `text` must stand on its own: the general agent sees only this text.",
+      "Start a non-coding analysis, explanation or report on the material. Use it when that analysis is the request itself; include the goal and relevant context.",
     schema: generalSchema,
   },
   {
     name: "start",
     description:
-      "Start a coding task: work that changes files or runs commands with side effects. `text` must stand on its own: the coding agent sees only this text.",
+      "Start a coding task: work that changes files or runs commands with side effects. The coding agent sees only your brief, so include the goal, relevant facts and acceptance.",
     schema: startSchema,
   },
 ];
@@ -195,7 +157,6 @@ export interface SessionAgentDepsOptions extends SessionModelOptions {
   maxTurns?: number;
   surveyLimit?: number;
   readFile?: ReadFile;
-  workspace?: SessionWorkspace;
 }
 
 // The report is one plain completion: the task trace is already deterministic, so it needs no
@@ -227,15 +188,13 @@ export function createSessionAgentDeps(
   model: LanguageModel,
   options: SessionAgentDepsOptions = {},
 ): SessionAgentDeps {
-  const readFile = options.readFile ?? options.workspace?.read;
+  const readFile = options.readFile;
   return {
     agent: modelSessionAgent(model, options),
     tools: createSessionTools(readFile),
     report: modelSessionReporter(model, options),
     ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
     ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
-    ...(readFile !== undefined ? { readFile } : {}),
-    ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
   };
 }
 
@@ -284,7 +243,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `read`/`grep`/`list`/`probe`/`unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `start`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `start`.",
             };
             continue;
           }

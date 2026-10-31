@@ -113,19 +113,19 @@ visible, not just the final reward.
 
 ### Session live
 
-Three synthetic scripts exercise the session container with a real model and a fixed
+Two synthetic scripts exercise the session container with a real model and a fixed
 workspace (run only with `SKEIN_LIVE=true`):
 
 ```sh
-SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts        # read -> task -> report
-SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts  # list/grep/probe, no task
-SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts # code research -> Markdown, no task
+SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts  # general read -> task -> report
+SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # analysis -> general, read-only, no task
 ```
 
-`session-live` checks the dialogue across `read`, `start` and the post-task report;
-`session-tools-live` checks the workspace tools and asserts `tasks=0`; `session-research-live`
-asks a general question about a mini-project and asserts a Markdown answer that cites the
-code, with no task. The scripts print every session call/result and the final view.
+`session-live` checks the dialogue across the general unit, `start` and the post-task report;
+`general-live` asks a general question about a mini-project and asserts that the session agent
+routes to `general`, the general unit uses `read`/`grep`/`list`, no coding task is opened, and
+the answer is Markdown with paths. The scripts print every session call/result and the final
+view.
 
 ### IR operation steps
 

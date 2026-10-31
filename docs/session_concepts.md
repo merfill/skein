@@ -3,10 +3,10 @@
 > Russian original — `docs/session_concepts_ru.md`.
 >
 > Status: **partially implemented**. The session container and the first 4b slice are in place:
-> attention statuses, the L0/L1 outline, the session unit with `respond`/`start`, the memory
-> tools `read`/`grep`/`list`/`probe`/`unit`/`state`/`turns`/`body`/`search`, reading units, the
-> `runSessionTurn` driver, the REPL and the CLI. The synthetic live scenario passed; session
-> persistence, Ctrl-C, resume strategies, `revise`, pins and `attempt` are the next steps.
+> attention statuses, the L0/L1 outline, the session unit with `respond`/`general`/`start`, the
+> memory tools `unit`/`state`/`turns`/`body`/`search`, the general unit, the `runSessionTurn`
+> driver, the REPL, the TUI and the CLI. Live scenarios passed; session persistence, Ctrl-C,
+> resume strategies, `revise`, pins and `attempt` are the next steps.
 >
 > Builds on: `concepts.md` (doxa/logos, projection), `ir_semantics.md` (the IR, operators,
 > invariants), `projection.md` (the tape).
@@ -120,7 +120,7 @@ preconditions and applies it.
 
 **Unit.** One IR with its own root and its own journal. A unit has a type: `task` — an ordinary
 coding task (`request → move → plan → …`); `general` — a non-coding task with one work segment
-(the same IR shape, read-only tools, `stop.why` is the answer; not a coding island); `session` —
+(the same IR shape, read-only tools, the assistant answer is stored on the stop node; not a coding island); `session` —
 a unit that interprets a user utterance; `observer` — a RequestObserver unit; `reading` — one
 file read. Types form a closed registry that can be extended.
 
@@ -265,9 +265,10 @@ The session agent's tape contains:
 1. the base prompt: who it is and which operations are admissible;
 2. the current user utterance as the root;
 3. L0 — the unit traces in full, including the answer/operation, refusal and decision reasoning;
-4. the results of the tools it requested (workspace `read`/`grep`/`list`/`probe`, memory
+4. the results of the memory tools it requested (`unit`/`state`/`turns`/`body`/`search`,
    L1–L4). Each such result becomes an observation of the session unit and is therefore
-   addressable.
+   addressable. The session agent has no workspace tools; material reading belongs to the
+   general unit.
 
 The traces include the session agent's own past turns: its answers and operations. The dialogue
 is thus reconstructed structurally, without retelling.
@@ -277,7 +278,7 @@ is thus reconstructed structurally, without retelling.
 | Operation | Admissible when | Effect |
 |---|---|---|
 | `respond` | always; non-empty text up to 4000 chars | answers the user in GitHub-flavored Markdown; task trees unchanged |
-| `general` | there is a brief up to 4000 chars | pops the current focus (the unit stays as a trace) and opens a general unit: one work segment, read-only tools, `stop.why` is the answer |
+| `general` | there is a brief up to 4000 chars | pops the current focus (the unit stays as a trace) and opens a general unit: one work segment, read-only tools, the assistant answer is stored on the stop node |
 | `start` | there is a coding-task text up to 4000 chars | pops the current focus and opens a new coding request with that text |
 
 Exceeding the limit is a logos refusal. The refusal is written to the session journal, shown in
@@ -286,7 +287,7 @@ the L0 trace (`(refused: …)`), and changes no task tree; the interpretation is
 The session agent only **proposes**. Logos checks the preconditions and applies the operation as
 a session event.
 
-A `general` unit has no post-task report: its `stop.why` is the answer. After a `start` task finishes, the driver asks the session agent for a **report** and records it
+A `general` unit has no post-task report: its assistant answer is the result, stored on the stop node; `stop.why` is a short closure note. After a `start` task finishes, the driver asks the session agent for a **report** and records it
 on the same session unit. The report is the user-facing Markdown answer: what was done, where,
 how it was verified, and any caveats. It uses the task's deterministic trace (states, changed
 files, outcome) and does not open a new session unit. A failed report never hides the task
@@ -296,15 +297,10 @@ An interpretation that produces neither an operation nor a tool call, or that ex
 safety cap, ends with a `no_decision` event (`empty_reply`/`max_turns`). The unit stays
 suspended; L0 and the terminal view show the reason.
 
-`read` is not a session operation but a read-only session-agent tool. It reads a file, creates a
-reading unit and returns a preview plus an address. `start` is not used to read a file.
-
-`grep`, `list` and `probe` are read-only tools too, but they create no unit: their result is an
-ordinary observation of the session unit, bounded and paged with a cursor. `grep`/`list` see the
-live workspace (locate code, see what exists); `probe` returns one recorded toolchain fact by
-`kind` (`environment`, `packages`, `interpreters`, `build`, `tests`, `vcs`, `tools`, `material`,
-`all`) and is computed once per session. `search` remains the memory tool: it searches the stored
-bodies of a past unit, not the workspace.
+The session agent has no workspace read tools (`read`/`grep`/`list`/`probe`). A material
+question goes to the `general` unit, which reads with its own plan actions; a coding change goes
+to `start`. `search` remains the memory tool: it searches the stored bodies of a past unit, not
+the workspace.
 
 `resume`, `cancel`, `revise` and `query` are not in the current vocabulary:
 
@@ -404,19 +400,10 @@ L1 example for `r2`:
 
 ### 5.1. Reading a file
 
-Reading is one action, not a task. The `read(path)` tool:
-
-- reads the file through the workspace;
-- creates a reading unit with a request (the path) and an observation;
-- returns a **preview** and an **address**:
-  - `bytes` is the full file size, `lines` the full line count;
-  - a small file is shown in full;
-  - a large one — the first ~120 lines/8 KB and `…[lines 1–120 of N; continue from 121]`;
-- the full body is not copied onto the tape: it is read by `path`/`version` through the reading
-  unit's `body`/`search`.
-
-On "what does it say" the session agent reads the preview; if that is not enough it pages a
-window; if it needs to find something it searches; then it answers with `respond`. A summary is
+The session agent no longer reads files. A material question is routed to the general unit,
+which reads with its own plan actions (`read`/`grep`/`list`) and answers. The reading unit
+remains a standalone one-action unit for direct callers and older journals; it is not produced
+by the session agent. A summary is
 only the answer or a note, never the fact.
 
 ## 6. The projection
@@ -500,11 +487,11 @@ Implemented: the session container, attention statuses, the L0/L1 outline, and t
 with `respond`/`start`. The session unit's L0 trace includes the answer or the `start` text (the
 reformulation); the task unit's trace shows the reformulation as its `request`.
 
-Session agent tools: `read` (a file, as a reading unit), `grep`/`list` (the live workspace),
-`probe` (toolchain/environment facts), `unit` (L1), `state` (L2), `turns` (turns with reasoning),
-`body` (L4), `search` (L4, over stored bodies). `attempt` (L3) is deferred; `outline` is
-unnecessary because L0 is on the tape. The workspace tools create no unit: their results are
-observations of the session unit.
+Session agent tools: `unit` (L1), `state` (L2), `turns` (turns with reasoning), `body` (L4),
+`search` (L4, over stored bodies); the operations are `respond`/`general`/`start`. The session
+agent has **no workspace tools** — `read`/`grep`/`list`/`probe` were removed; material reading is
+the general unit's work, and coding changes are the task's. `attempt` (L3) is deferred; `outline`
+is unnecessary because L0 is on the tape.
 
 The `runSessionTurn` driver, the `runRepl` loop and the `src/cli.ts` entry point are implemented;
 the scenario is verified offline with scripted agents. Reformulation and confirmation are set by

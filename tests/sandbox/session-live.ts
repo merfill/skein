@@ -2,6 +2,7 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import { observationText } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
+import { modelGeneralProposer } from "../../src/llm/general";
 import { createObserverDeps } from "../../src/llm/observer";
 import { createSessionAgentDeps } from "../../src/llm/session_agent";
 import { probeSession } from "../../src/loop/probe";
@@ -9,7 +10,6 @@ import { modelProposer, type Proposer } from "../../src/loop/propose";
 import { runSessionTurn, type SessionTurnDeps } from "../../src/session/driver";
 import { createSession, unitOf } from "../../src/session/session";
 import { sessionOutline } from "../../src/session/session_outline";
-import { createSessionWorkspace } from "../../src/session/session_workspace";
 import { fsWorkspace } from "../../src/tools/workspace";
 import { cleanupWorkspaces, makeWorkspace } from "../ops/helpers";
 
@@ -119,16 +119,20 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  const sessionWorkspace = createSessionWorkspace(root);
 
   const deps: SessionTurnDeps = {
-    sessionAgent: createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
+    sessionAgent: createSessionAgentDeps(model, { settings }),
     task: {
       propose,
       workspace: root,
       maxTurns: settings.maxTurns,
       probe: probeSession,
       ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    },
+    general: {
+      propose: modelGeneralProposer(model, { settings }),
+      workspace: root,
+      maxTurns: 8,
     },
   };
 
@@ -153,6 +157,14 @@ async function main(): Promise<void> {
       if (result.reply !== undefined) {
         replies += 1;
         console.info(`  reply=${result.reply}`);
+      }
+      if (result.general !== undefined) {
+        console.info(
+          `  general ${result.general.unitId}: ${result.general.result.stopReason ?? "?"} after ${result.general.result.turns} turns`,
+        );
+        printTaskEvents(result.general.result.events);
+        const answer = lastStop(result.general.result.events);
+        if (answer !== undefined) console.info(`  general answer: ${short(answer)}`);
       }
       if (result.task !== undefined) {
         tasks += 1;

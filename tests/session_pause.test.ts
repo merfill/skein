@@ -17,7 +17,7 @@ import {
   runRequestObserver,
   type RequestObserver,
 } from "../src/session/observer";
-import { attentionOf, createSession } from "../src/session/session";
+import { attentionOf, createSession, openUnit } from "../src/session/session";
 import { createSessionTools, type SessionAgent } from "../src/session/session_agent";
 import { memoryTelemetry } from "../src/session/telemetry";
 import type { Trigger } from "../src/session/types";
@@ -28,6 +28,23 @@ afterEach(cleanupWorkspaces);
 const START: SessionAgent = async () => ({
   operation: { kind: "start", text: "edit src/app.txt" },
 });
+
+function withReadingUnit(session: ReturnType<typeof createSession>): ReturnType<typeof createSession> {
+  openUnit(session, "reading:1", "reading", [
+    {
+      type: "add_node",
+      node: {
+        id: "reading:1",
+        space: "work",
+        kind: "request",
+        label: "a.txt",
+        payload: { text: "a.txt" },
+        seq: 0,
+      },
+    },
+  ]);
+  return session;
+}
 
 // The task writes once, then aborts before the next action. The write is committed by the
 // turn's `progress`; the abort is honoured at the following step boundary.
@@ -138,12 +155,12 @@ describe("session pause and resume", () => {
   it("keeps the completed tool turns and resumes the same unit", async () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const controller = new AbortController();
-    const session = createSession();
+    const session = withReadingUnit(createSession());
     let calls = 0;
     const agent: SessionAgent = async () => {
       calls += 1;
       if (calls === 1) {
-        return { toolCalls: [{ name: "list", args: {}, callId: "l1" }] };
+        return { toolCalls: [{ name: "unit", args: { id: "reading:1" }, callId: "l1" }] };
       }
       if (calls === 2) {
         controller.abort();
@@ -180,14 +197,14 @@ describe("session pause and resume", () => {
 describe("REPL pause menu", () => {
   it("pauses, resumes on 'r', and prints the answer", async () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
-    const session = createSession();
+    const session = withReadingUnit(createSession());
     let current: AbortController | undefined;
     let calls = 0;
     const agent: SessionAgent = async () => {
       calls += 1;
       if (calls === 1) {
         current?.abort();
-        return { toolCalls: [{ name: "list", args: {}, callId: "l1" }] };
+        return { toolCalls: [{ name: "unit", args: { id: "reading:1" }, callId: "l1" }] };
       }
       return { operation: { kind: "respond", text: "done" } };
     };

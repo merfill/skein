@@ -56,7 +56,9 @@ function taskOutcome(events: readonly Event[], stopReason: string | null): strin
 function answerOf(events: readonly Event[]): string | undefined {
   let answer: string | undefined;
   for (const event of events) {
-    if (event.type === "add_node" && event.node.kind === "stop") answer = event.node.label;
+    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
+    const payload = event.node.payload as { answer?: unknown } | undefined;
+    answer = typeof payload?.answer === "string" ? payload.answer : event.node.label;
   }
   return answer;
 }

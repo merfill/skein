@@ -2,7 +2,7 @@
 
 > Russian mirror — `docs/plans/tui_plan_ru.md`.
 >
-> Status: implemented (first slice). Typecheck clean; offline suite — **528 passed,
+> Status: implemented (first slice). Typecheck clean; offline suite — **524 passed,
 > 40 skipped**. Live model runs were not part of this slice.
 
 ## 1. Goal

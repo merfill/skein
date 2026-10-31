@@ -114,19 +114,18 @@ N раз и собирает все провалы, так что флаки п�
 
 ### Live сессии
 
-Три синтетических скрипта проверяют контейнер сессии живой моделью на фиксированном
+Два синтетических скрипта проверяют контейнер сессии живой моделью на фиксированном
 workspace (только с `SKEIN_LIVE=true`):
 
 ```sh
-SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts        # read -> task -> report
-SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts  # list/grep/probe, без task
-SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts # research по коду -> Markdown, без task
+SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts  # general read -> task -> report
+SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # анализ -> general, read-only, без task
 ```
 
-`session-live` проверяет диалог через `read`, `start` и post-task report;
-`session-tools-live` — workspace-инструменты и `tasks=0`; `session-research-live` задаёт
-общий вопрос по мини-проекту и требует Markdown-ответ со ссылками на код, без task.
-Скрипты печатают каждый session call/result и итоговый view.
+`session-live` проверяет диалог через general-unit, `start` и post-task report;
+`general-live` задаёт общий вопрос по мини-проекту и требует, чтобы session-агент выбрал
+`general`, general-unit использовал `read`/`grep`/`list`, coding task не открывался, а ответ
+был Markdown с путями. Скрипты печатают каждый session call/result и итоговый view.
 
 ### Live-шаги по операциям
 

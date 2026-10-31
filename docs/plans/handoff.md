@@ -65,16 +65,18 @@
 - **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
   pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
   в in-memory sink. Панели/UI нет.
-- Typecheck чистый; офлайн-набор: **528 passed, 40 skipped**. Live/bench для 4c, TUI и general не запускались.
+- Typecheck чистый; офлайн-набор: **524 passed, 40 skipped**. Live/bench для 4c и TUI не запускались; general-live пройдена.
 - **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
   `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.
-- **Инструменты workspace:** `grep`/`list`/`probe` добавлены как tool-call'ы (не unit'ы);
-  результат — наблюдение session-unit'а. `probe` кэшируется на сессию.
-- **Live-синта `session-tools-live` пройдена:** `list` (5 файлов), `grep add`, `probe
-  interpreters`; все ходы — `respond`; `tasks=0, replies=4`.
-- **Live-синта `session-research-live` пройдена:** общий вопрос по коду → Markdown с разделами
-  и путями; `tasks=0, replies=1, tools={grep:2,read:4,list:1}`.
+- **Разделение инструментов (A, 2026-10-31):** у session-агента больше нет
+  `read`/`grep`/`list`/`probe`; остались memory/outline (`unit`/`state`/`turns`/`body`/`search`)
+  и операции `respond`/`general`/`start`. Чтение материала — general-unit, изменения — task.
+  Старые `session-tools-live` и `session-research-live` удалены; их место заняла
+  `general-live`.
+- **Live-синта `general-live` пройдена:** анализ → `general`, coding task не открыт,
+  general-unit прочитал 6 файлов (`list`/`read`), ответ Markdown с путями, `tasks=0,
+  general=1, turns=4`.
 - **Post-task report:** после `start` драйвер просит агента сессии написать Markdown-report;
   событие `report` пишется в тот же session-unit. Report — отдельная plain-комплита по
   детерминированному следу задачи, без инструментов.
@@ -146,12 +148,10 @@
   откат по снапшоту, предупреждение без снапшота, REPL-меню, классификация обрыва.
 - `tests/telemetry.test.ts`: usage, снимки контекста, производные представления.
 - `tests/checkpoint.test.ts`: `restoreTree` и точечное восстановление.
-- `tests/sandbox/session-live.ts` — live-синта с подробным логом (session calls/results,
-  reasoning, task turns, `task answer`).
-- `tests/sandbox/session-tools-live.ts` — live-синта read-only инструментов: `list`, `grep`,
-  `probe`; проверяет, что задача не открывается (`tasks=0`).
-- `tests/sandbox/session-research-live.ts` — live-синта общего вопроса по коду: Markdown-ответ
-  с путями, `grep`/`read`/`list`, без task.
+- `tests/sandbox/session-live.ts` — live-синта с подробным логом (general read, session
+  calls/results, reasoning, task turns, `task answer`).
+- `tests/sandbox/general-live.ts` — live-синта анализа: `general`, read-only инструменты,
+  Markdown-ответ с путями, без coding task.
 
 ## Результаты live-прогонов
 
@@ -166,8 +166,9 @@
 4. CLI (`tsx src/cli.ts --dir …`): `list`/`grep`/`read` → Markdown-ответы; затем `start` →
    `task r1` и post-task `report` с разделами Changes/Verification/Caveat. Служебные строки
    `[n] move/stop` показываются только с `--verbose`; reasoning — тоже.
-5. Research (`session-research-live`): вопрос «как устроен post-task report» по мини-проекту →
-   Markdown с `##`-разделами, `src/driver.py`, `record_report`, `src/view.py`; без task.
+5. General (`general-live`): запрос «разбери по шагам, как устроен запуск задачи на
+   бенчмарке» по мини-проекту → `general`, 4 хода, `list`/`read`, Markdown с путями; coding
+   task не открылся.
 6. CLI по копии репозитория: «как устроен post-task report» → `grep`/`list`/`read`, Markdown с
    путями и строками; task не открывался.
 
@@ -237,6 +238,5 @@ Live (только с go-ahead):
 
 ```sh
 SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts
-SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts
-SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts
+SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts
 ```

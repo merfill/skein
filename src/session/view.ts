@@ -69,6 +69,16 @@ function sessionLines(journal: readonly Event[], options: RenderOptions): string
   return lines;
 }
 
+function generalAnswer(events: readonly Event[]): string | undefined {
+  let answer: string | undefined;
+  for (const event of events) {
+    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
+    const payload = event.node.payload as { answer?: unknown } | undefined;
+    answer = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+  }
+  return answer;
+}
+
 function taskAnswer(events: readonly Event[]): string | undefined {
   let answer: string | undefined;
   for (const event of events) {
@@ -145,6 +155,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     const outcome = run.done ? (run.stopReason ?? "done") : "still open";
     lines.push(`general ${unitId}: ${outcome} after ${run.turns} turns`);
     lines.push(...taskLines(run.events, options));
+    const answer = generalAnswer(run.events);
+    if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
   }
   if (result.report !== undefined) {
     lines.push("report:", result.report);

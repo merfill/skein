@@ -2,8 +2,8 @@
 
 > Английское зеркало — `docs/plans/general_unit_plan.md`.
 >
-> Статус: реализован первый срез. Typecheck чистый; офлайн-набор — **528 passed,
-> 40 skipped**. Live-прогона модели пока нет.
+> Статус: реализован первый срез. Typecheck чистый; офлайн-набор — **524 passed,
+> 40 skipped**. Live `general-live` пройдена: маршрут `general`, read-only инструменты, без coding task, Markdown-ответ.
 
 ## 1. Зачем
 
@@ -42,8 +42,8 @@ You are a general analysis agent. You work in one state, General.
 State: General — answer the request from the material.
 Done: the answer is complete and supported by what you read.
 This state only reads: do not change files and do not run mutating commands.
-Answer in GitHub-flavored Markdown. When the answer is complete, close the state with `stop`;
-put the final answer in `why`.
+Answer in GitHub-flavored Markdown. Write the final answer as the assistant message. When it is
+complete, close the state with `stop`; `why` is a short closure note.
 ```
 
 Лента:
@@ -60,15 +60,16 @@ system: Finish state General — <answer/why>
 
 ## 4. Маршрутизация сессии
 
-Новая операция `general { text }`. Промпт сессии различает:
+Новая операция `general { text }`. Маршрут выбирается по типу результата, не по ожидаемой
+длине:
 
-- `respond` — быстрый ответ, уточнение, подтверждение;
-- `general` — самодостаточный не-кодинговый анализ/объяснение/сравнение/короткое
-  исследование, которому может понадобиться несколько read-only ходов и собственный след;
-- `start` — работа, меняющая файлы или запускающая команды с побочными эффектами.
+- `respond` — разговорный ответ или прямой фактический указатель; отдельного следа нет;
+- `general` — сам запрос является не-кодинговым анализом/объяснением/сравнением/отчётом по
+  материалу; он получает собственный след;
+- `start` — запрос меняет файлы или запускает команды с побочными эффектами.
 
-General-агент видит только `text`; session-агент переформулирует запрос так, чтобы тот стоял
-сам по себе. Post-task report нет: ответ — это `stop.why`.
+General-агент видит только бриф; session-агент включает в него цель и релевантный контекст.
+Post-task report нет: ответ — assistant-сообщение, сохранённое на stop-узле; `stop.why` — короткий итог.
 
 ## 5. UI
 
@@ -93,7 +94,7 @@ General-агент видит только `text`; session-агент переф
 
 - `probe`/`fetch` в general-инструментах;
 - live-сценарий, доказывающий, что session-агент выбирает `general` для анализа;
-- отдельный general-report/summary (пока ответ — `stop.why`);
+- отдельный general-report/summary (пока ответ хранится на stop-узле);
 - отдельный фильтр/бейдж истории, если смешанный список станет шумным;
 - включать `general` в кодинговый base prompt сознательно не стали.
 

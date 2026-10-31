@@ -2,8 +2,8 @@
 
 > Russian mirror — `docs/plans/general_unit_plan_ru.md`.
 >
-> Status: implemented (first slice). Typecheck clean; offline suite — **528 passed,
-> 40 skipped**. No live model run yet.
+> Status: implemented (first slice). Typecheck clean; offline suite — **524 passed,
+> 40 skipped**. Live `general-live` passed: routing `general`, read-only tools, no coding task, Markdown answer.
 
 ## 1. Why
 
@@ -27,7 +27,7 @@ request → move(general) → plan → items → actions → observations → st
 - `move.payload.state` is the unit-level label `general`; `moveIsland` returns `undefined`, so the
   coding state machine never sees it;
 - the plan is an ordinary plan; `read`/`grep`/`list` actions append items and observations;
-- `stop` on the move closes the only segment and the unit; `stop.why` is the final answer;
+- `stop` on the move closes the only segment and the unit; the final answer is the assistant message stored as `answer` on the stop node, `stop.why` is a short closure note;
 - `attentionOf` derives `completed` from that `stop`.
 
 The unit has its own journal and isolation: it sees only the reformulated request and its own
@@ -42,8 +42,8 @@ You are a general analysis agent. You work in one state, General.
 State: General — answer the request from the material.
 Done: the answer is complete and supported by what you read.
 This state only reads: do not change files and do not run mutating commands.
-Answer in GitHub-flavored Markdown. When the answer is complete, close the state with `stop`;
-put the final answer in `why`.
+Answer in GitHub-flavored Markdown. Write the final answer as the assistant message. When it is
+complete, close the state with `stop`; `why` is a short closure note.
 ```
 
 The tape is:
@@ -60,15 +60,15 @@ model surface is `read`, `grep`, `list` and `stop`; mutating tools are not offer
 
 ## 4. Session routing
 
-New operation `general { text }`. The session prompt distinguishes:
+New operation `general { text }`. The routing is by the kind of result, not by expected length:
 
-- `respond` — quick answer, clarification, confirmation;
-- `general` — self-contained non-coding analysis/explanation/comparison/investigation that may
-  need several read-only turns and its own record;
-- `start` — work that changes files or runs commands with side effects.
+- `respond` — a conversational reply or a direct factual pointer; no separate record;
+- `general` — the request is itself a non-coding analysis/explanation/comparison/report on the
+  material; it gets its own record;
+- `start` — the request changes files or runs side-effecting commands.
 
-The general agent sees only `text`; the session agent reformulates the request so it stands
-alone. There is no post-task report: the unit's `stop.why` is the answer.
+The general agent sees only the brief; the session agent includes the goal and relevant context.
+There is no post-task report: the unit's assistant answer is the result, stored on the stop node; `stop.why` is a short closure note.
 
 ## 5. UI
 
@@ -93,7 +93,7 @@ alone. There is no post-task report: the unit's `stop.why` is the answer.
 
 - `probe`/`fetch` in the general tool surface;
 - a live scenario proving the session agent chooses `general` for analysis;
-- general-specific report/summary (the answer is `stop.why` for now);
+- general-specific report/summary (the assistant answer is stored on the stop node for now);
 - a separate history filter or badge if the mixed list becomes noisy;
 - mapping `general` into the coding base prompt is deliberately absent.
 

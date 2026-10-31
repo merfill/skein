@@ -14,19 +14,7 @@ import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
 import { applyOperation, type OperationResult } from "./operations";
 import type { ProgressSink } from "./progress";
-import {
-  readUnit,
-  readingResultText,
-  type ReadFile,
-} from "./reading";
-import {
-  grepText,
-  listText,
-  probeText,
-  PROBE_KINDS,
-  type ProbeKind,
-  type SessionWorkspace,
-} from "./session_workspace";
+import type { ReadFile } from "./reading";
 import {
   openUnit,
   popUnit,
@@ -51,12 +39,12 @@ import { sessionOutline, unitOutline } from "./session_outline";
 import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
-  "You are the assistant that handles coding and general tasks: you talk to the user, answer questions, and prepare work for the coding or general agent. Above is the history of earlier work: what was asked and how it ended.",
-  "Choose the route before acting:\n- `respond` — a quick answer, clarification, confirmation, or a short explanation that does not need a separate record.\n- `general` — a self-contained non-coding task: analysis, explanation, comparison, or a short investigation. It may need several read-only turns and does not change files. Reformulate it as a complete brief; the general agent sees only that text.\n- `start` — work that changes files or runs commands with side effects. Reformulate it with the goal, relevant facts and acceptance; the coding agent sees only that text.",
+  "You are the assistant that handles coding and general tasks: you talk to the user, answer from earlier work, and prepare work for the coding or general agent. Above is the history of earlier work: what was asked and how it ended.",
+  "Choose the route by the kind of result:\n- `respond` — a conversational reply or an answer from earlier work; no separate record.\n- `general` — the request is itself a non-coding analysis, explanation, comparison or report on the material; it gets its own record. Reformulate it as a brief with the goal and relevant context.\n- `start` — the request changes files or runs side-effecting commands; reformulate it with the goal, facts and acceptance.",
   "Before starting work, make sure the brief is clear. If the request is ambiguous, or the reformulation depends on earlier work, first state it as you understand it and ask the user to confirm. Start only after the user agrees, or when the request is already unambiguous.",
-  "To read a file, use `read`: it is one action, not a task. It returns a bounded preview and an address; use `body`/`search` on that reading unit for more. Do not start a task to read a file.",
+  "You have no workspace tools: do not read files, edit them, or run commands yourself. Use `unit`/`state`/`turns`/`body`/`search` to inspect earlier work; the general agent reads the material and the coding agent makes changes.",
   "Answer in GitHub-flavored Markdown: short `##` sections, bullet lists, and `code` for paths and symbols. For a codebase investigation, say what you found, where (`path:line`), and what it means; cite only what the tools returned. No preamble.",
-  "Ids: earlier work looks like `r1`, `g1`, or `reading:1`; observation ids look like `obs:…`. `read` returns both. When earlier work matters, inspect it with the history tools. Do not edit files or run commands yourself. Stay brief and concrete; do not retell the record. Keep an answer under about 350 words and a task description under about 250 words.",
+  "Ids: earlier work looks like `r1`, `g1`, or `reading:1`; observation ids look like `obs:…`. When earlier work matters, inspect it with the history tools. Stay brief and concrete; do not retell the record. Keep an answer under about 350 words and a task description under about 250 words.",
 ].join("\n\n");
 
 // The post-task answer: the session agent reports a finished task to the user. It is a report,
@@ -125,10 +113,6 @@ export interface SessionAgentDeps {
   tools: SessionTools;
   // Side-channel telemetry; never rendered on the tape.
   telemetry?: TelemetrySink;
-  // Read-only file access for the `read` tool; the reading unit keeps the trace.
-  readFile?: ReadFile;
-  // Read-only workspace access for `grep`/`list` and the session probe.
-  workspace?: SessionWorkspace;
   // The post-task report. Absent in tests and replays that do not need an extra model call.
   report?: SessionReporter;
   maxTurns?: number;
@@ -145,8 +129,6 @@ export interface SessionUnitRunInput {
   startTurn?: number;
   maxTurns?: number;
   surveyLimit?: number;
-  readFile?: ReadFile;
-  workspace?: SessionWorkspace;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
   // A user pause: the in-flight model call is aborted and the loop returns `paused`.
@@ -295,56 +277,8 @@ function executeTool(
   session: SessionState,
   name: string,
   args: Record<string, unknown>,
-  readFile?: ReadFile,
-  workspace?: SessionWorkspace,
 ): string {
   try {
-    if (name === "read") {
-      const path = stringArg(args, "path");
-      if (path === undefined) return "missing argument: path";
-      const reader = readFile ?? workspace?.read;
-      if (reader === undefined) return "tool unavailable: read";
-      return readingResultText(readUnit(session, path, reader));
-    }
-    if (name === "grep") {
-      const pattern = stringArg(args, "pattern");
-      if (pattern === undefined) return "missing argument: pattern";
-      if (workspace === undefined) return "tool unavailable: grep";
-      const path = stringArg(args, "path");
-      const include = stringArg(args, "include");
-      const from = numberArg(args, "from");
-      return grepText(
-        workspace.grep(pattern, {
-          ...(path !== undefined ? { path } : {}),
-          ...(include !== undefined ? { include } : {}),
-        }),
-        from,
-      );
-    }
-    if (name === "list") {
-      if (workspace === undefined) return "tool unavailable: list";
-      const path = stringArg(args, "path");
-      const include = stringArg(args, "include");
-      const from = numberArg(args, "from");
-      return listText(
-        workspace.listFiles({
-          ...(path !== undefined ? { path } : {}),
-          ...(include !== undefined ? { include } : {}),
-        }),
-        {
-          ...(path !== undefined ? { root: path } : {}),
-          ...(from !== undefined ? { from } : {}),
-        },
-      );
-    }
-    if (name === "probe") {
-      if (workspace === undefined) return "tool unavailable: probe";
-      const kind = stringArg(args, "kind");
-      if (kind !== undefined && !PROBE_KINDS.includes(kind as ProbeKind)) {
-        return `unknown probe kind: ${kind}`;
-      }
-      return probeText(workspace.probe(), (kind as ProbeKind | undefined) ?? "environment");
-    }
     if (name === "unit") {
       const id = stringArg(args, "id");
       return id === undefined ? "missing argument: id" : tools.unit(session, id);
@@ -554,8 +488,6 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         input.session,
         toolCall.name,
         toolCall.args,
-        input.readFile,
-        input.workspace,
       );
       input.telemetry?.record({
         type: "tool_call",
@@ -724,8 +656,6 @@ export async function runSessionAgent(
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
       ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
-      ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
-      ...(deps.workspace !== undefined ? { workspace: deps.workspace } : {}),
       outline,
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(surveyLimit !== undefined ? { surveyLimit } : {}),

@@ -301,11 +301,11 @@ Beyond Tier 0, the current line adds:
   Details — `docs/plans/tui_plan.md`; tests — `tests/tui_*`.
 - **General unit (2026-10-31, first slice).** A new non-coding `general` unit with the same IR
   shape as a task but one work segment (`move(general)`, plan, actions, `stop`), read-only
-  `read`/`grep`/`list` tools and the answer in `stop.why`. Session operation `general`;
+  `read`/`grep`/`list` tools; the assistant answer is stored on the stop node, `stop.why` is a short note. Session operation `general`;
   routing is `respond` / `general` / `start`, so analysis no longer enters the coding island
   graph. The TUI reuses the states panel and history; there is no separate window. Details —
   `docs/plans/general_unit_plan.md`; tests — `tests/general_unit.test.ts`; offline
-  **528 passed, 40 skipped**.
+  **524 passed, 40 skipped**.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit

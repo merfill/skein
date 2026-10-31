@@ -9,7 +9,6 @@ import { modelGeneralProposer } from "./llm/general";
 import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
-import { createSessionWorkspace } from "./session/session_workspace";
 import { memoryTelemetry } from "./session/telemetry";
 import type { SessionTurnDeps } from "./session/driver";
 import { runTui } from "./tui/run";
@@ -143,12 +142,11 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  const sessionWorkspace = createSessionWorkspace(workspace);
   const telemetry = memoryTelemetry();
 
   const deps: SessionTurnDeps = {
     sessionAgent: {
-      ...createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
+      ...createSessionAgentDeps(model, { settings }),
       telemetry: telemetry.sink,
     },
     task: {

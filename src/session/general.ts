@@ -19,7 +19,7 @@ export const GENERAL_BASE_PROMPT = [
   "State: General — answer the request from the material.",
   "Done: the answer is complete and supported by what you read.",
   "This state only reads: do not change files and do not run mutating commands.",
-  "Answer in GitHub-flavored Markdown. When the answer is complete, close the state with `stop`; put the final answer in `why`.",
+  "Answer in GitHub-flavored Markdown. Write the final answer as the assistant message. When it is complete, close the state with `stop`; `why` is a short closure note.",
 ].join("\n\n");
 
 export type GeneralProposer = (
@@ -261,6 +261,17 @@ export async function runGeneralAgent(
       emit?.({ type: "tool_started", agent: "general", unitId, turn, tool, target });
       const before = events.length;
       const outcome = executeAction(action, current, deps.workspace, turn, proposals.reasoning);
+      if (action.operator === "stop" && proposals.thought.trim() !== "") {
+        const answer = proposals.thought.trim();
+        for (const event of outcome.events) {
+          if (event.type === "add_node" && event.node.kind === "stop") {
+            event.node.payload = {
+              ...(event.node.payload as Record<string, unknown> | undefined),
+              answer,
+            };
+          }
+        }
+      }
       events.push(...outcome.events);
       emit?.({ type: "events_added", unitId, events: events.slice(before) });
       const failed = outcome.events.some(
