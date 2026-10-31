@@ -2,6 +2,8 @@
 
 > Английское зеркало — `docs/plans/session_agent_plan.md`.
 >
+> Обновление (2026-10-31): `read`/`grep`/`list`/`probe` убраны из SessionAgent; работа с материалом перенесена в general-unit (`docs/plans/general_unit_plan_ru.md`). Остальное — исторический срез 4b.
+>
 > Статус: **первый срез реализован** (статусы, L0/L1, session-unit + `SessionAgent`,
 > `respond`/`start`, инструменты `read`/`unit`/`state`/`turns`/`body`/`search`; `attempt` отложен).
 > Не входит: драйвер нескольких utterance, reading island, пины, `revise`, прерывание

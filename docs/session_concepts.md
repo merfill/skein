@@ -484,8 +484,9 @@ same tape. Traces do not store a separate "memory state"; they are derived from 
 ## 10. Minimal next step
 
 Implemented: the session container, attention statuses, the L0/L1 outline, and the session unit
-with `respond`/`start`. The session unit's L0 trace includes the answer or the `start` text (the
-reformulation); the task unit's trace shows the reformulation as its `request`.
+with `respond`/`general`/`start`. The session unit's L0 trace includes the answer, the `general`
+answer preview/actions, or the `start` text (the reformulation); the task unit's trace shows the
+reformulation as its `request`.
 
 Session agent tools: `unit` (L1), `state` (L2), `turns` (turns with reasoning), `body` (L4),
 `search` (L4, over stored bodies); the operations are `respond`/`general`/`start`. The session
@@ -505,8 +506,9 @@ reasoning in a `Thought:` block (the `reasoning` field, not the ephemeral `thoug
 
 Next steps:
 
-1. The live `read` scenario passed: reading is one turn, `body` by `obs:reading:1`, then `start`
-   with the reformulation; the task created `Makefile`/a test and `make test` passed.
+1. The live `general-live` and `session-live` scenarios passed: reading/analysis routes to
+   `general` and uses read-only tools; follow-ups use `respond`; changes use `start`. The older
+   session dialogue now reads through the general unit.
 2. Interruption is implemented: pause/resume/cancel at all three levels, the task-entry snapshot
    rollback, and the telemetry contract (`plans/session_interrupt_plan`).
 3. Session persistence across restarts — a separate slice.

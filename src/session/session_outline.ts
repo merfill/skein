@@ -151,12 +151,8 @@ function generalActionText(state: State, actionId: string): string | undefined {
   const result = observation?.payload as
     | { total?: unknown; failed?: unknown; refused?: unknown }
     | undefined;
-  const suffix =
-    result?.failed === true || result?.refused === true
-      ? " (failed)"
-      : typeof result?.total === "number"
-        ? ` (${result.total} line(s))`
-        : "";
+  const failed = result?.failed === true || result?.refused === true;
+  const total = typeof result?.total === "number" ? result.total : undefined;
   if (name === "read") {
     const path =
       typeof args.filePath === "string"
@@ -164,15 +160,18 @@ function generalActionText(state: State, actionId: string): string | undefined {
         : typeof args.path === "string"
           ? args.path
           : action.label;
+    const suffix = failed ? " (failed)" : total !== undefined ? ` (${total} line(s))` : "";
     return `read ${path.startsWith("read ") ? path.slice(5) : path}${suffix}`;
   }
   if (name === "grep") {
     const pattern = typeof args.pattern === "string" ? args.pattern : "?";
     const path = typeof args.path === "string" ? ` in ${args.path}` : "";
+    const suffix = failed ? " (failed)" : total !== undefined ? ` (${total} match(es))` : "";
     return `grep "${pattern}"${path}${suffix}`;
   }
   if (name === "list") {
     const path = typeof args.path === "string" ? ` ${args.path}` : "";
+    const suffix = failed ? " (failed)" : total !== undefined ? ` (${total} file(s))` : "";
     return `list${path}${suffix}`;
   }
   return name ?? action.label;

@@ -34,11 +34,11 @@
   `tui_view_model.test.ts`.
 - **General-юнит:** `UnitType "general"` — один рабочий сегмент с той же IR-формой
   (`request → move(general) → plan → items → actions → observations → stop`), read-only
-  инструменты `read`/`grep`/`list`, `stop.why` — финальный ответ. Операция `general` в
-  session-агенте; routing: `respond` / `general` / `start`. Панель и история общие, отдельного
-  окна нет. Файлы — `src/session/general.ts`, `src/llm/general.ts`; тест —
-  `tests/general_unit.test.ts`. Существующие task/island-промпты не менялись.
-- **Осталось:** live-сценарий выбора `general` для анализа; `probe`/`fetch` в general; transcript
+  инструменты `read`/`grep`/`list`; assistant-ответ хранится на stop-узле, `stop.why` — короткий
+  итог. Операция `general` в session-агенте; routing: `respond` / `general` / `start`. Панель и
+  история общие, отдельного окна нет. Файлы — `src/session/general.ts`, `src/llm/general.ts`;
+  тест — `tests/general_unit.test.ts`. Существующие task/island-промпты не менялись.
+- **Осталось:** `probe`/`fetch` в general; transcript
   viewer (`Ctrl-O`) с нативным scrollback/поиском, OSC 8 ссылки,
   copy-code, раскрытие tool-результатов, потоковый текст модели, mouse/изображения/Mermaid,
   персистентность сессии и выбор сессии, стоимость. Детали — `docs/plans/tui_plan.md`.
@@ -65,7 +65,7 @@
 - **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
   pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
   в in-memory sink. Панели/UI нет.
-- Typecheck чистый; офлайн-набор: **524 passed, 40 skipped**. Live/bench для 4c и TUI не запускались; general-live пройдена.
+- Typecheck чистый; офлайн-набор: **524 passed, 40 skipped**. Live/bench для 4c и TUI не запускались; general-live и session-live пройдены.
 - **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
   `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.
@@ -77,6 +77,9 @@
 - **Live-синта `general-live` пройдена:** анализ → `general`, coding task не открыт,
   general-unit прочитал 6 файлов (`list`/`read`), ответ Markdown с путями, `tasks=0,
   general=1, turns=4`.
+- **Live-синта `session-live` пройдена на всех маршрутах:** «прочитай NOTES.md» → `general`
+  (4 хода, `list`/`read`/`grep`), «какое там правило?» → `respond`, «создай Makefile/тест» →
+  `start`; `routes=["general","respond","start"]`, `tasks=1, general=1, replies=1`.
 - **Post-task report:** после `start` драйвер просит агента сессии написать Markdown-report;
   событие `report` пишется в тот же session-unit. Report — отдельная plain-комплита по
   детерминированному следу задачи, без инструментов.
@@ -95,33 +98,36 @@
 
 ### 4b — память и сессия
 
-- `src/session/types.ts`: unit-типы `task|observer|session|reading`; статусы внимания
+- `src/session/types.ts`: unit-типы `task|general|observer|session|reading`; статусы внимания
   (`active|suspended|abandoned|completed`), `abandoned` зарезервирован и не порождается.
 - `src/session/session.ts`: журнал сессии append-only, стек, `pending`, `utteranceSeq`,
   `attentionOf`; события `suspend|resume|abandon|operation|refusal`.
 - `src/session/session_outline.ts`: L0/L1; L0 включает ответ/операцию, отказ и reasoning;
+  для general — детерминированный trace действий (`read`/`grep`/`list`) и preview answer;
   reading-unit показывает полный размер.
 - `src/session/session_memory.ts`: `state` (L2), `turns` (ходы + reasoning), `body` (L4),
   `search` (L4); `body` отклоняет не-наблюдения.
-- `src/session/reading.ts`: reading-unit, `read(path)`, preview + полный размер
-  (`bytes`/`lines`) + адрес; полное тело читается по path/version.
+- `src/session/reading.ts`: standalone reading-unit, `read(path)`, preview + полный размер
+  (`bytes`/`lines`) + адрес; session-агент его больше не создаёт (материал читает general).
 - `src/session/session_agent.ts` + `src/llm/session_agent.ts`: bounded loop (12 ходов),
-  reasoning, `surveyLimit`, текстовый ответ без tool call превращается в `respond`; ответы —
-  GitHub-flavored Markdown до ~350 слов.
-- `src/session/operations.ts`: `respond` (≤4000, Markdown) и `start` (≤4000); отказ пишется в журнал
+  reasoning, `surveyLimit`, memory/outline tools only (без workspace), текстовый ответ без tool
+  call превращается в `respond`; ответы — GitHub-flavored Markdown до ~350 слов.
+- `src/session/operations.ts`: `respond`, `general` и `start` (≤4000); отказ пишется в журнал
   сессии (`refusal`) и виден в L0.
-- `src/session/driver.ts`: `runSessionTurn` — `respond` или `start`; task изолирован, контекст
-  передаётся только текстом переформулировки.
+- `src/session/driver.ts`: `runSessionTurn` — `respond`, `general` или `start`; general и task
+  изолированы, контекст передаётся только текстом переформулировки.
 - `src/session/repl.ts`, `src/cli.ts`, `npm run cli`.
 - `src/loop/graph.ts`: `AgentInput.open` для открытия task-unit в существующей сессии.
 - `src/session/session_workspace.ts`: read-only `SessionWorkspace` (`read`/`version`/`listFiles`/
-  `grep`/`probe`) и форматтеры с окном/курсором. Инструменты `grep`/`list`/`probe` в
-  session-agent; описания — только в tool definitions, не в промпте.
+  `grep`/`probe`) и форматтеры с окном/курсором. В session-agent не подключён: чтение материала
+  делает general-unit через обычные task-инструменты `read`/`grep`/`list`.
+- `src/session/general.ts` + `src/llm/general.ts`: general-unit (один `move(general)`, план,
+  read-only `read`/`grep`/`list`, `stop`; assistant-ответ на stop-узле).
 - `src/session/{types,session,session_outline}.ts`: событие `report` в журнале сессии и его
   след в L0.
 - `src/session/driver.ts` + `src/llm/session_agent.ts`: post-task `report` (`SESSION_REPORT_PROMPT`,
   `modelSessionReporter`); trace = состояния задачи, изменённые файлы, исход, число ходов.
-- `src/session/view.ts`: терминальный рендер `renderTurn` (calls/results, task moves/actions,
+- `src/session/view.ts`: терминальный рендер `renderTurn` (calls/results, task/general moves/actions,
   answer/report, `--verbose` для reasoning); `src/session/repl.ts` реэкспортирует.
 
 ### 4c — прерывание, откат и телеметрия
@@ -174,7 +180,7 @@
 
 ## Возможные типы unit'ов
 
-Сейчас есть `task`, `session`, `observer`, `reading`. Новый тип оправдан, если у работы
+Сейчас есть `task`, `general`, `session`, `observer`, `reading`. Новый тип оправдан, если у работы
 свой корень и журнал, нужен отдельный след в L0 и адресуемые наблюдения, и она не сводится
 к одному tool-call внутри session-unit'а.
 

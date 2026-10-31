@@ -19,7 +19,7 @@ the fast `bench/turn.ts` probe), see `docs/task_testing.md`.
 | Live gate | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | fixing bug fixtures with a live model | minutes, money |
 | Live scenarios | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | short scenarios per loop branch | minutes, money |
 | Sandbox (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | one model run over the sandbox, with token breakdown | 1 run, money |
-| Session live | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | dialogue, workspace tools, post-task report | minutes, money |
+| Session live | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | general/respond/start routes, post-task report | minutes, money |
 | Synthetic bench | `npm run bench -- <case>` | one case from `skein-plugin` | minutes, money |
 | Bench gate | `npm run bench:gate -- <runDir>` | a run against `bench/baseline.json` | seconds |
 | Harbor | `bash bench/harbor/run.sh` | real terminal-bench tasks | long, money |
@@ -121,7 +121,7 @@ SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts  # general read -> task ->
 SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # analysis -> general, read-only, no task
 ```
 
-`session-live` checks the dialogue across the general unit, `start` and the post-task report;
+`session-live` checks the dialogue across all three routes (`general`, `respond`, `start`) and the post-task report;
 `general-live` asks a general question about a mini-project and asserts that the session agent
 routes to `general`, the general unit uses `read`/`grep`/`list`, no coding task is opened, and
 the answer is Markdown with paths. The scripts print every session call/result and the final

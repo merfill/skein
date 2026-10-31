@@ -19,7 +19,7 @@
 | Live-гейт | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | починка багфиксов живой моделью | минуты, деньги |
 | Live-сценарии | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | короткие сценарии на ветки движка | минуты, деньги |
 | Песочница (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | один прогон моделью по песочнице, с разрезом токенов | 1 прогон, деньги |
-| Live сессии | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | диалог, workspace-инструменты, post-task report | минуты, деньги |
+| Live сессии | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | маршруты general/respond/start, post-task report | минуты, деньги |
 | Синтетический бенч | `npm run bench -- <case>` | один кейс из `skein-plugin` | минуты, деньги |
 | Гейт бенча | `npm run bench:gate -- <runDir>` | прогон против `bench/baseline.json` | секунды |
 | Harbor | `bash bench/harbor/run.sh` | реальные задачи terminal-bench | долго, деньги |
@@ -122,7 +122,7 @@ SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts  # general read -> task ->
 SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # анализ -> general, read-only, без task
 ```
 
-`session-live` проверяет диалог через general-unit, `start` и post-task report;
+`session-live` проверяет диалог на всех трёх маршрутах (`general`, `respond`, `start`) и post-task report;
 `general-live` задаёт общий вопрос по мини-проекту и требует, чтобы session-агент выбрал
 `general`, general-unit использовал `read`/`grep`/`list`, coding task не открывался, а ответ
 был Markdown с путями. Скрипты печатают каждый session call/result и итоговый view.

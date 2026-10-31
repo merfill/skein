@@ -8,7 +8,7 @@ import { createSessionAgentDeps } from "../../src/llm/session_agent";
 import { probeSession } from "../../src/loop/probe";
 import { modelProposer, type Proposer } from "../../src/loop/propose";
 import { runSessionTurn, type SessionTurnDeps } from "../../src/session/driver";
-import { createSession, unitOf } from "../../src/session/session";
+import { attentionOf, createSession, unitOf } from "../../src/session/session";
 import { sessionOutline } from "../../src/session/session_outline";
 import { fsWorkspace } from "../../src/tools/workspace";
 import { cleanupWorkspaces, makeWorkspace } from "../ops/helpers";
@@ -145,12 +145,17 @@ async function main(): Promise<void> {
 
   let tasks = 0;
   let replies = 0;
+  let generals = 0;
+  const routes: string[] = [];
+  const failures: string[] = [];
   try {
-    for (const line of dialogue) {
+    for (const [index, line] of dialogue.entries()) {
       console.info(`\n=== user: ${line}`);
       const result = await runSessionTurn(deps, session, line);
       console.info(`  session turns=${result.interpretation?.turns ?? 0}`);
       if (result.interpretation !== undefined) printSessionJournal(result.interpretation.journal);
+      const route = result.operation?.kind ?? "none";
+      routes.push(route);
       console.info(`  operation=${JSON.stringify(result.operation)}`);
       if (result.reasoning !== undefined) console.info(`  reasoning=${result.reasoning}`);
       console.info(`  applied=${JSON.stringify(result.applied)}`);
@@ -159,6 +164,7 @@ async function main(): Promise<void> {
         console.info(`  reply=${result.reply}`);
       }
       if (result.general !== undefined) {
+        generals += 1;
         console.info(
           `  general ${result.general.unitId}: ${result.general.result.stopReason ?? "?"} after ${result.general.result.turns} turns`,
         );
@@ -178,13 +184,33 @@ async function main(): Promise<void> {
         if (answer !== undefined) console.info(`  task answer: ${short(answer)}`);
       }
       console.info(`  session outline:\n${sessionOutline(session)}`);
+
+      if (index === 0 && route !== "general") failures.push("read was not routed to general");
+      if (index === 0 && result.task !== undefined) failures.push("read opened a coding task");
+      if (index === 0 && result.general === undefined) failures.push("read opened no general unit");
+      if (index === 1 && route !== "respond") failures.push("follow-up was not routed to respond");
+      if (index === 1 && result.reply === undefined) failures.push("follow-up produced no reply");
+      if (index === 2 && route !== "start") failures.push("Makefile request was not routed to start");
+      if (index === 2 && result.task === undefined) failures.push("Makefile request opened no coding task");
     }
 
     console.info(`\n=== applied file ===\n${workspace.ws.read("src/app.txt")}`);
-    console.info(`\ntasks=${tasks} replies=${replies} utteranceSeq=${session.utteranceSeq}`);
-    if (tasks === 0 || replies === 0) {
-      console.error("scenario did not exercise both a task and an answer");
+    console.info(
+      `\nroutes=${JSON.stringify(routes)} tasks=${tasks} general=${generals} replies=${replies} utteranceSeq=${session.utteranceSeq}`,
+    );
+    if (routes.join(",") !== "general,respond,start") {
+      failures.push(`unexpected route order: ${routes.join(",")}`);
+    }
+    if (tasks !== 1) failures.push(`expected one coding task, got ${tasks}`);
+    if (generals !== 1) failures.push(`expected one general unit, got ${generals}`);
+    if (replies !== 1) failures.push(`expected one reply, got ${replies}`);
+    if (attentionOf(session, "g1") !== "completed") failures.push("g1 is not completed");
+    if (attentionOf(session, "r1") !== "completed") failures.push("r1 is not completed");
+    if (failures.length > 0) {
+      console.error(`\nFAIL:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
       process.exitCode = 1;
+    } else {
+      console.info("\nOK: general, respond and start routes all exercised.");
     }
   } finally {
     cleanupWorkspaces();

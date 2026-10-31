@@ -2,6 +2,8 @@
 
 > Russian original — `docs/plans/session_agent_plan_ru.md`.
 >
+> Update (2026-10-31): `read`/`grep`/`list`/`probe` were removed from the SessionAgent; material work moved to the general unit (`docs/plans/general_unit_plan.md`). The rest of this plan is the historical 4b slice.
+>
 > Status: **first slice implemented** (statuses, L0/L1, session unit + `SessionAgent`,
 > `respond`/`start`, tools `read`/`unit`/`state`/`turns`/`body`/`search`; `attempt` deferred). Out of
 > scope: the multi-utterance driver, the reading island, pins, `revise`, user interruption, live

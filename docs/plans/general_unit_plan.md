@@ -3,7 +3,7 @@
 > Russian mirror — `docs/plans/general_unit_plan_ru.md`.
 >
 > Status: implemented (first slice). Typecheck clean; offline suite — **524 passed,
-> 40 skipped**. Live `general-live` passed: routing `general`, read-only tools, no coding task, Markdown answer.
+> 40 skipped**. Live `general-live` and `session-live` passed: `general`/`respond`/`start` routes, read-only tools, no coding task for reads, Markdown answer.
 
 ## 1. Why
 

@@ -3,7 +3,7 @@
 > Английское зеркало — `docs/plans/general_unit_plan.md`.
 >
 > Статус: реализован первый срез. Typecheck чистый; офлайн-набор — **524 passed,
-> 40 skipped**. Live `general-live` пройдена: маршрут `general`, read-only инструменты, без coding task, Markdown-ответ.
+> 40 skipped**. Live `general-live` и `session-live` пройдены: маршруты `general`/`respond`/`start`, read-only инструменты, чтение без coding task, Markdown-ответ.
 
 ## 1. Зачем
 

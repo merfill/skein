@@ -91,13 +91,13 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "general",
     description:
-      "Start a non-coding analysis, explanation or report on the material. Use it when that analysis is the request itself; include the goal and relevant context.",
+      "Read, inspect, analyse, explain or report on the material. Use it whenever that work is the request itself; include the goal and relevant context.",
     schema: generalSchema,
   },
   {
     name: "start",
     description:
-      "Start a coding task: work that changes files or runs commands with side effects. The coding agent sees only your brief, so include the goal, relevant facts and acceptance.",
+      "Change files or run side-effecting commands. The coding agent sees only your brief, so include the goal, relevant facts and acceptance.",
     schema: startSchema,
   },
 ];
