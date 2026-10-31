@@ -12,15 +12,18 @@ function agentPrefix(agent: TraceEntry["agent"]): string {
 }
 
 function previewLines(text: string, width: number): TraceLine[] {
-  const lines = text.replace(/\t/g, "  ").split("\n");
-  const shown = lines.slice(0, PREVIEW_LINES);
-  const out: TraceLine[] = shown.map((line) => ({
-    text: `  ${line.slice(0, Math.max(10, width - 2))}`,
-    dim: true,
-  }));
-  if (lines.length > PREVIEW_LINES) {
-    out.push({ text: "  …", dim: true });
+  const source = text.replace(/\t/g, "  ").split("\n");
+  const lines: string[] = [];
+  for (const line of source) {
+    if (line === "") {
+      lines.push("");
+    } else {
+      lines.push(...wrap(line, Math.max(10, width - 2)));
+    }
   }
+  const shown = lines.slice(0, PREVIEW_LINES);
+  const out: TraceLine[] = shown.map((line) => ({ text: `  ${line}`, dim: true }));
+  if (lines.length > PREVIEW_LINES) out.push({ text: "  …", dim: true });
   return out;
 }
 
@@ -58,11 +61,19 @@ export function traceLines(entries: readonly TraceEntry[], width: number): Trace
         break;
       }
       case "state": {
-        out.push({ text: `  ■ ${entry.text}`, color: theme.state, bold: true });
+        const parts = wrap(entry.text, Math.max(10, width - 4));
+        parts.forEach((part, index) => {
+          out.push({
+            text: index === 0 ? `  ■ ${part}` : `    ${part}`,
+            color: theme.state,
+            bold: true,
+          });
+        });
         break;
       }
       case "notice": {
-        out.push({ text: `  ${entry.text}`, dim: true });
+        const parts = wrap(entry.text, Math.max(10, width - 2));
+        for (const part of parts) out.push({ text: `  ${part}`, dim: true });
         break;
       }
       case "assistant": {

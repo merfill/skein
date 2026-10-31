@@ -47,13 +47,11 @@ export function TracePanel(props: {
   focused: boolean;
 }) {
   const { lines, rows, width, scroll, focused } = props;
-  const maxScroll = Math.max(0, lines.length - Math.max(1, rows));
+  const viewport = Math.max(1, rows - (focused ? 2 : 0));
+  const maxScroll = Math.max(0, lines.length - viewport);
   const offset = Math.min(scroll, maxScroll);
-  const indicator = offset > 0;
-  const viewport = Math.max(1, rows - (indicator ? 1 : 0));
   const start = Math.max(0, lines.length - viewport - offset);
-  const end = Math.max(0, lines.length - offset);
-  const visible = lines.slice(start, end);
+  const visible = lines.slice(start, start + viewport);
   return (
     <Box
       flexDirection="column"
@@ -64,18 +62,17 @@ export function TracePanel(props: {
       paddingX={1}
       overflow="hidden"
     >
-      {indicator ? <T dimColor>↑ {offset} more (down to follow)</T> : null}
       {visible.length === 0 ? (
         <T dimColor>No messages yet. Type a request below.</T>
       ) : null}
       {visible.map((line, index) => (
         <T
-          key={`${start + index}`}
+          key={start + index}
           {...(line.color !== undefined ? { color: line.color } : {})}
           {...(line.dim === true ? { dimColor: true } : {})}
           {...(line.bold === true ? { bold: true } : {})}
           {...(line.underline === true ? { underline: true } : {})}
-          wrap="truncate-end"
+          wrap="wrap"
         >
           {line.spans === undefined
             ? line.text
@@ -126,7 +123,11 @@ function detailLines(state: TaskState | undefined, width: number): string[] {
   if (actions.length > 0) {
     lines.push("actions:");
     for (const action of actions) {
-      lines.push(`  t${action.turn + 1}  ${action.label}`);
+      const prefix = `  t${action.turn + 1}  `;
+      const parts = wrap(action.label, Math.max(10, width - prefix.length));
+      parts.forEach((part, index) => {
+        lines.push(index === 0 ? `${prefix}${part}` : `${" ".repeat(prefix.length)}${part}`);
+      });
     }
   }
   return lines;
@@ -238,7 +239,7 @@ export function HistoryOverlay(props: {
   const detailRows = Math.max(3, height - listRows - 5);
   const detail: string[] = [];
   if (task !== undefined) {
-    detail.push(`#${task.number} ${task.request}`);
+    detail.push(...wrap(`#${task.number} ${task.request}`, Math.max(20, width - 4)));
     detail.push(`${task.attention} · ${task.outcome}`);
     detail.push(
       `${task.turns} turns · ${compactTokens(task.tokensIn)} in / ${compactTokens(task.tokensOut)} out · ` +

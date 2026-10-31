@@ -514,7 +514,7 @@ export function TuiApp(props: TuiAppProps) {
     if (value !== "") insert(value);
   });
 
-  const lines = traceLines(trace, Math.max(20, mainWidth - (focus === "trace" ? 2 : 0)));
+  const lines = traceLines(trace, Math.max(20, mainWidth - (focus === "trace" ? 4 : 2)));
   const mode = running ? "working" : paused !== undefined ? "paused" : "idle";
   const activityColor = running ? theme.warning : paused !== undefined ? theme.error : theme.success;
 
