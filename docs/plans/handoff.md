@@ -13,7 +13,7 @@
   `src/loop/graph.ts`, `src/session/{session_agent,observer,driver}.ts`. События:
   `turn_started`, `model_call_started/finished`, `tool_started/finished`, `events_added`,
   `state_changed`, `turn_finished`, `paused`, `report_started/finished`.
-- **Панели:** header (`ctx` — вход последнего model call, `Σ in/out` — суммарный расход, задачи, ходы, вызовы, workspace, модель, режим), main trace,
+- **Панели:** header (`ctx` — вход последнего model call агента сессии, `Σ in/out` — суммарный расход всех вызовов, задачи, ходы, вызовы, workspace, модель, режим), main trace,
   постоянная панель текущей задачи справа (состояния, диапазоны ходов, токены, действия,
   полный `stop.why`), read-only история задач слева по `Ctrl-T`, activity, composer,
   pause/help overlay. Панели юнитов нет: `reading`/`session`/`observer` — внутренние адреса;
@@ -21,8 +21,9 @@
 - **View-model:** `src/tui/view_model.ts` — состояния из `move`, токены по turn-диапазонам из
   task-телеметрии, wall-clock из TUI store, исходы как факт (`open at`, `stop.why`,
   `cancelled at`). Header считает `Σ` по всем model calls (`usageTotals`), включая
-  session-agent, поэтому расход виден и без запуска задачи; `ctx` — вход последнего вызова,
-  а не сумма (сумма больше окна, потому что контекст переотправляется каждый ход).
+  session-agent, поэтому расход виден и без запуска задачи; `ctx` — вход последнего вызова
+  именно агента сессии, а не задачи, и не сумма (сумма больше окна, потому что контекст
+  переотправляется каждый ход).
 - **Markdown:** `marked` → спаны; `lowlight` подсвечивает код; `string-width` переносит по
   колонкам; таблицы, списки, blockquote, ссылки, inline-код. `theme.ts` — тёмная/светлая
   палитры, автоопределение по `COLORFGBG`, override `SKEIN_THEME=light|dark`. Заголовки и

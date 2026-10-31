@@ -69,8 +69,9 @@ telemetry. `stop.why` is shown literally — it is a fact, not a verdict. A roll
 The selected state's detail block wraps long outcomes; `PgUp`/`PgDn` scroll the detail.
 Wall-clock is tracked by the TUI store from task start to result (paused tasks remain open).
 
-The header keeps two token numbers apart: `ctx` is the input size of the last model call (the
-current context window), `Σ in/out` is the cumulative usage of every model call in the session.
+The header keeps two token numbers apart: `ctx` is the input size of the last **session-agent**
+model call (the context the interpreter is working with), `Σ in/out` is the cumulative usage of
+every model call in the session (session, task and observer).
 The cumulative figure is naturally larger than the window because the context is resent on every
 turn; it is not a context-usage meter.
 

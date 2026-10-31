@@ -31,7 +31,7 @@ export function HeaderBar(props: {
         <T color={modeColor}> · {mode}</T>
         <T dimColor>
           {" "}
-          · ctx {compactTokens(totals.contextTokens)} · Σ{" "}
+          · ctx {compactTokens(totals.sessionContextTokens)} · Σ{" "}
           {compactTokens(totals.tokensIn)}/{compactTokens(totals.tokensOut)} ·{" "}
           {totals.totalTasks} tasks · {totals.totalTurns}t · {totals.modelCalls}c
         </T>
