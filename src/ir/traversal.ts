@@ -9,7 +9,7 @@ import {
   unactionableOf,
   type State,
 } from "./graph";
-import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
+import { GENERAL_STATE, ISLANDS, isTerminalIsland, type IslandId } from "./islands";
 import type { MovePayload } from "./types";
 
 export function stackOf(state: State): string[] {
@@ -32,8 +32,9 @@ export function movePayload(state: State, id: string): MovePayload | undefined {
 
 export function moveIsland(state: State, id: string): IslandId | undefined {
   const island = movePayload(state, id)?.state;
+  if (island === GENERAL_STATE) return undefined;
   // A journal written before the terminal state was renamed still says `finish`.
-  return (island as string | undefined) === "finish" ? "end" : island;
+  return (island as string | undefined) === "finish" ? "end" : (island as IslandId | undefined);
 }
 
 // Is the state of this `move` finished? A state (including the terminal End state, which

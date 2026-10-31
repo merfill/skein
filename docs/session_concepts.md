@@ -119,8 +119,10 @@ preconditions and applies it.
 ## 2. Concepts
 
 **Unit.** One IR with its own root and its own journal. A unit has a type: `task` — an ordinary
-task (`request → move → plan → …`); `session` — a unit that interprets a user utterance;
-`observer` — a RequestObserver unit. Types form a closed registry that can be extended.
+coding task (`request → move → plan → …`); `general` — a non-coding task with one work segment
+(the same IR shape, read-only tools, `stop.why` is the answer; not a coding island); `session` —
+a unit that interprets a user utterance; `observer` — a RequestObserver unit; `reading` — one
+file read. Types form a closed registry that can be extended.
 
 **Session.** A container over units:
 `Session = (J_s, U, stack, pending)`, where `J_s` is the session journal, `U` is the set of
@@ -171,7 +173,8 @@ A pin answers "keep it in mind" without inflating the tape. Not implemented in t
 slice.
 
 **Session operation.** A structured action of the session agent on the session. The vocabulary
-is currently minimal: `respond` (answer) and `start` (begin a task). Resume, cancel, revise and
+is currently `respond` (answer), `general` (begin a non-coding task) and `start` (begin a coding
+task). Resume, cancel, revise and
 query (`resume`/`cancel`/`revise`/`query`) are deferred. Logos checks admissibility and applies
 the operation.
 
@@ -274,7 +277,8 @@ is thus reconstructed structurally, without retelling.
 | Operation | Admissible when | Effect |
 |---|---|---|
 | `respond` | always; non-empty text up to 4000 chars | answers the user in GitHub-flavored Markdown; task trees unchanged |
-| `start` | there is a task text up to 4000 chars | pops the current focus (the unit stays as a trace) and opens a new request with that text |
+| `general` | there is a brief up to 4000 chars | pops the current focus (the unit stays as a trace) and opens a general unit: one work segment, read-only tools, `stop.why` is the answer |
+| `start` | there is a coding-task text up to 4000 chars | pops the current focus and opens a new coding request with that text |
 
 Exceeding the limit is a logos refusal. The refusal is written to the session journal, shown in
 the L0 trace (`(refused: …)`), and changes no task tree; the interpretation is still complete.
@@ -282,7 +286,7 @@ the L0 trace (`(refused: …)`), and changes no task tree; the interpretation is
 The session agent only **proposes**. Logos checks the preconditions and applies the operation as
 a session event.
 
-After a `start` task finishes, the driver asks the session agent for a **report** and records it
+A `general` unit has no post-task report: its `stop.why` is the answer. After a `start` task finishes, the driver asks the session agent for a **report** and records it
 on the same session unit. The report is the user-facing Markdown answer: what was done, where,
 how it was verified, and any caveats. It uses the task's deterministic trace (states, changed
 files, outcome) and does not open a new session unit. A failed report never hides the task

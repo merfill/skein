@@ -19,6 +19,10 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
+// A general-unit work segment is not a coding island; it is one generic state in the IR.
+export const GENERAL_STATE = "general" as const;
+export type StateId = IslandId | typeof GENERAL_STATE;
+
 export interface Island {
   id: IslandId;
   label: string;

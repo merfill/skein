@@ -6,6 +6,7 @@ import { applyReaction } from "./apply";
 import { LOCAL_SESSION_ID, type TelemetrySink } from "./telemetry";
 import type { OperationResult } from "./operations";
 import type { ProgressSink } from "./progress";
+import { runGeneralAgent, type GeneralDeps, type GeneralResult } from "./general";
 import { runRequestObserver } from "./observer";
 import {
   popUnit,
@@ -35,6 +36,7 @@ import type {
 export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
+  general?: GeneralDeps;
   // The driver records pause/resume/cancel here; the loops receive their own copy.
   telemetry?: TelemetrySink;
   onProgress?: ProgressSink;
@@ -48,7 +50,7 @@ export interface SessionTurnOptions {
 }
 
 export interface PausedState {
-  agent: "session" | "task" | "observer";
+  agent: "session" | "task" | "general" | "observer";
   // The paused unit: the session unit, the task unit, or the observer unit.
   unitId: string;
   utterance: string;
@@ -73,6 +75,7 @@ export interface SessionTurnResult {
   reasoning?: string;
   reply?: string;
   task?: { unitId: string; result: AgentResult };
+  general?: { unitId: string; result: GeneralResult };
   // The session agent's Markdown report after the task finished.
   report?: string;
   // Why the interpretation ended without an operation.
@@ -91,6 +94,12 @@ function nextRequestId(session: SessionState): string {
   let index = 1;
   while (session.units.has(`r${index}`)) index += 1;
   return `r${index}`;
+}
+
+function nextGeneralId(session: SessionState): string {
+  let index = 1;
+  while (session.units.has(`g${index}`)) index += 1;
+  return `g${index}`;
 }
 
 // `progress` checks request closure before syncing the focus unit journal, so the final stop
@@ -270,6 +279,30 @@ async function dispatch(
 
   const pending = takePending(session);
   if (pending === undefined) return result;
+
+  if (applied.operation.kind === "general") {
+    if (deps.general === undefined) return result;
+    const unitId = nextGeneralId(session);
+    const run = await runGeneralAgent(deps.general, {
+      request: { id: unitId, text: pending.text },
+      session,
+      open: true,
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    syncUnit(session, unitId, run);
+    result.general = { unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "general",
+        unitId,
+        utterance,
+        utteranceTurn: turn,
+        startTurn: unitOf(session, unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
 
   const unitId = nextRequestId(session);
   const snapshot = snapshotFor(deps, unitId);
@@ -462,6 +495,33 @@ export async function resumeTurn(
     );
   }
 
+  if (paused.agent === "general") {
+    if (deps.general === undefined) return { session, turn: paused.utteranceTurn, paused };
+    const unit = unitOf(session, paused.unitId);
+    const run = await runGeneralAgent(deps.general, {
+      request: { id: paused.unitId, text: requestText(unit.journal) },
+      seed: unit.journal,
+      startTurn: unit.turn,
+      session,
+      open: false,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
+    syncUnit(session, paused.unitId, run);
+    const result = makeResult(session, paused.utteranceTurn);
+    result.general = { unitId: paused.unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "general",
+        unitId: paused.unitId,
+        utterance: paused.utterance,
+        utteranceTurn: paused.utteranceTurn,
+        startTurn: unitOf(session, paused.unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   if (paused.agent === "observer") {
     return resumeObserver(deps, session, paused, options.signal);
   }
@@ -513,7 +573,7 @@ export function cancelTurn(
   if (paused.agent === "observer" && sessionFocus(session)?.unitId === paused.unitId) {
     popUnit(session);
   }
-  if (paused.agent === "session") {
+  if (paused.agent === "session" || paused.agent === "general") {
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     telemetry?.record({
       type: "cancel",

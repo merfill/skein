@@ -2,7 +2,7 @@
 
 > Russian mirror — `docs/plans/tui_plan_ru.md`.
 >
-> Status: implemented (first slice). Typecheck clean; offline suite — **526 passed,
+> Status: implemented (first slice). Typecheck clean; offline suite — **528 passed,
 > 40 skipped**. Live model runs were not part of this slice.
 
 ## 1. Goal
@@ -49,18 +49,20 @@ it never writes those events into the session journal itself.
 |---|---|---|
 | header | top, always | current context tokens and cumulative in/out (`Σ`), tasks, task turns, model calls, workspace, model, mode |
 | main trace | centre | user turns, answers/reports, tool calls/results, state markers; scrollable |
-| current task | right, always when width >= 72 | request, attention, wall-clock, states with turn ranges/turns/tokens, selected-state details (`what`, full `stop.why`, actions) |
-| task history | left overlay (`Ctrl-T`) | read-only task list, selected task details; covers the trace, does not resize it |
+| current task | right, always when width >= 72 | request, attention, wall-clock, states with turn ranges/turns/tokens, selected-state details (`what`, full `stop.why`, actions); a `general` unit is one such state |
+| task history | left overlay (`Ctrl-T`) | read-only task/general list, selected unit details; covers the trace, does not resize it |
 | activity | above composer | the current agent/tool/state/action and whether the run is paused |
 | composer | bottom | multiline input, cursor, `/` text is ordinary content for now |
 | pause / help | overlays | `r`/`c`/`q`, key reference |
 
 There is no unit panel: `reading`, `session` and `observer` units are internal addresses, not
-navigable user objects. History shows task units only.
+navigable user objects. History shows `task` and `general` units; a general unit is rendered as
+one state.
 
 ## 4. Task view
 
-A state is a `move`; its turn range starts at `move.payload.turn`. The next state's start
+A state is a `move`; for a general unit there is exactly one, labelled `general`. Its turn
+range starts at `move.payload.turn`. The next state's start
 minus one is the end; the current state ends at the task's last turn. Tokens per state come
 from task `model_call` telemetry in that turn range; tool calls come from task `tool_call`
 telemetry. `stop.why` is shown literally — it is a fact, not a verdict. A rollback is shown as

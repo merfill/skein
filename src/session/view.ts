@@ -116,6 +116,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push(reason !== undefined ? `session: no decision (${reason})` : "session: no action");
   } else if (operation.kind === "respond") {
     lines.push("session: respond");
+  } else if (operation.kind === "general") {
+    lines.push(`session: general("${operation.text}")`);
   } else {
     lines.push(`session: start("${operation.text}")`);
   }
@@ -138,6 +140,12 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     }
   }
 
+  if (result.general !== undefined) {
+    const { unitId, result: run } = result.general;
+    const outcome = run.done ? (run.stopReason ?? "done") : "still open";
+    lines.push(`general ${unitId}: ${outcome} after ${run.turns} turns`);
+    lines.push(...taskLines(run.events, options));
+  }
   if (result.report !== undefined) {
     lines.push("report:", result.report);
   }

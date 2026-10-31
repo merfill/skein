@@ -296,8 +296,14 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   токены, действия, полный `stop.why`), read-only overlay истории задач и header с размером текущего
   контекста и суммарным расходом токенов. Markdown рендерится стилизованными спанами (`marked` + `lowlight`),
   темы светлая/тёмная (`COLORFGBG`, `SKEIN_THEME`). Старый REPL остаётся за `--plain`.
-  Детали — `docs/plans/tui_plan_ru.md`; тесты — `tests/tui_*`; офлайн **526 passed,
-  40 skipped**.
+  Детали — `docs/plans/tui_plan_ru.md`; тесты — `tests/tui_*`.
+- **General unit (2026-10-31, первый срез).** Новый не-кодинговый `general` unit с той же
+  формой IR, что у task, но одним рабочим сегментом (`move(general)`, план, действия, `stop`),
+  read-only `read`/`grep`/`list` и ответом в `stop.why`. Операция сессии `general`; routing —
+  `respond` / `general` / `start`, поэтому анализ больше не попадает в кодинговый граф
+  островов. TUI переиспользует панель состояний и историю; отдельного окна нет. Детали —
+  `docs/plans/general_unit_plan_ru.md`; тест — `tests/general_unit.test.ts`; офлайн
+  **528 passed, 40 skipped**.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
 offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с явного разрешения владельца.

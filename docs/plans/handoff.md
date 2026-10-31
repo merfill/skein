@@ -32,7 +32,14 @@
   `src/session/progress.ts`, `src/cli.ts`.
 - **Тесты:** `tests/tui_app.test.tsx`, `tui_markdown.test.ts`, `tui_progress.test.ts`,
   `tui_view_model.test.ts`.
-- **Осталось:** transcript viewer (`Ctrl-O`) с нативным scrollback/поиском, OSC 8 ссылки,
+- **General-юнит:** `UnitType "general"` — один рабочий сегмент с той же IR-формой
+  (`request → move(general) → plan → items → actions → observations → stop`), read-only
+  инструменты `read`/`grep`/`list`, `stop.why` — финальный ответ. Операция `general` в
+  session-агенте; routing: `respond` / `general` / `start`. Панель и история общие, отдельного
+  окна нет. Файлы — `src/session/general.ts`, `src/llm/general.ts`; тест —
+  `tests/general_unit.test.ts`. Существующие task/island-промпты не менялись.
+- **Осталось:** live-сценарий выбора `general` для анализа; `probe`/`fetch` в general; transcript
+  viewer (`Ctrl-O`) с нативным scrollback/поиском, OSC 8 ссылки,
   copy-code, раскрытие tool-результатов, потоковый текст модели, mouse/изображения/Mermaid,
   персистентность сессии и выбор сессии, стоимость. Детали — `docs/plans/tui_plan.md`.
 
@@ -58,7 +65,7 @@
 - **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
   pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
   в in-memory sink. Панели/UI нет.
-- Typecheck чистый; офлайн-набор: **526 passed, 40 skipped**. Live/bench для 4c и TUI не запускались.
+- Typecheck чистый; офлайн-набор: **528 passed, 40 skipped**. Live/bench для 4c, TUI и general не запускались.
 - **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
   `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.

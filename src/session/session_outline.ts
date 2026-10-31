@@ -72,7 +72,9 @@ function decisionText(decision: TraceDecision): string {
       ? ""
       : operation.kind === "respond"
         ? `respond: "${short(operation.text)}"`
-        : `start: "${short(operation.text)}"`;
+        : operation.kind === "general"
+          ? `general: "${short(operation.text)}"`
+          : `start: "${short(operation.text)}"`;
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
@@ -97,10 +99,10 @@ function endingOf(state: State): string {
   if (unactionable !== undefined) return `unactionable: "${labelOf(state, unactionable)}"`;
   const move = currentMove(state);
   if (move === undefined) return "open";
-  const island = moveIsland(state, move) ?? "unknown";
+  const island = moveIsland(state, move) ?? movePayload(state, move)?.state ?? "unknown";
   if (!isMoveFinished(state, move)) return `open at ${island}`;
   const stop = stopOf(state, move);
-  return `${island}: "${stop !== undefined ? labelOf(state, stop) : ""}"`;
+  return `${island}: "${stop !== undefined ? short(labelOf(state, stop)) : ""}"`;
 }
 
 interface ReadingInfo {
@@ -133,7 +135,11 @@ function unitLine(session: SessionState, unit: Unit, index: number): string {
   const label = requestLabel(state, unit);
   const status = attentionOf(session, unit.id);
   const ending =
-    unit.type === "task" ? endingOf(state) : unit.type === "reading" ? readingEnding(unit) : "";
+    unit.type === "task" || unit.type === "general"
+      ? endingOf(state)
+      : unit.type === "reading"
+        ? readingEnding(unit)
+        : "";
   // A session unit's trace carries its answer or the reformulated request it committed. The
   // task unit's trace carries the same reformulation as its request once the driver opens it.
   const decision = unit.type === "session" ? decisionOf(session, unit.id) : undefined;
@@ -217,7 +223,7 @@ export function unitOutline(
     lines.push(`... ${moves.length - limit} more (before ${shown[0] ?? ""})`);
   }
   for (const move of shown) {
-    const island = moveIsland(state, move) ?? "unknown";
+    const island = moveIsland(state, move) ?? movePayload(state, move)?.state ?? "unknown";
     const payload = movePayload(state, move);
     const closed = isMoveFinished(state, move);
     const stop = stopOf(state, move);

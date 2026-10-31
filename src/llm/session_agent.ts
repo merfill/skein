@@ -63,6 +63,7 @@ const searchSchema = z.object({
 });
 const respondSchema = z.object({ text: z.string() });
 const startSchema = z.object({ text: z.string() });
+const generalSchema = z.object({ text: z.string() });
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
@@ -122,13 +123,19 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "respond",
     description:
-      "Answer the user without changing any unit. Call with { text } when the message does not call for work.",
+      "Answer directly without opening a separate task. Use it for quick answers, clarifications and confirmations, not for multi-step analysis. Call with { text }.",
     schema: respondSchema,
+  },
+  {
+    name: "general",
+    description:
+      "Start a general, non-coding task (analysis, explanation, comparison, short investigation). Use it when the request needs several read-only turns and should have its own record. It does not change files; the result is an answer. `text` must stand on its own: the general agent sees only this text.",
+    schema: generalSchema,
   },
   {
     name: "start",
     description:
-      "Start a new task. `text` is a self-contained reformulation of the user's request with the relevant context from the session traces. The previous task is not closed; it remains in the session.",
+      "Start a coding task: work that changes files or runs commands with side effects. `text` must stand on its own: the coding agent sees only this text.",
     schema: startSchema,
   },
 ];
@@ -155,6 +162,10 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
     case "start": {
       const value = startSchema.parse(input);
       return { kind: "start", text: value.text };
+    }
+    case "general": {
+      const value = generalSchema.parse(input);
+      return { kind: "general", text: value.text };
     }
     default:
       return undefined;

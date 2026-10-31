@@ -38,6 +38,8 @@ export function validateOperation(
       return textProblem(operation.text, MAX_RESPOND_TEXT);
     case "start":
       return textProblem(operation.text, MAX_START_TEXT);
+    case "general":
+      return textProblem(operation.text, MAX_START_TEXT);
   }
 }
 
@@ -58,7 +60,14 @@ export function applyOperation(input: ApplyOperationInput): OperationResult {
       // still suspended/completed by its own journal. Nothing is written to its journal.
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);
-      setPending(session, operation.text);
+      setPending(session, operation.text, "task");
+      recordOperation(session, sourceUnit, turn, operation, reasoning);
+      return { ok: true, operation };
+    }
+    case "general": {
+      const focus = sessionFocus(session);
+      if (focus !== undefined) popUnit(session);
+      setPending(session, operation.text, "general");
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
     }

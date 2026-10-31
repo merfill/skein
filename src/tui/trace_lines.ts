@@ -7,6 +7,7 @@ const PREVIEW_LINES = 4;
 
 function agentPrefix(agent: TraceEntry["agent"]): string {
   if (agent === "session") return "[session] ";
+  if (agent === "general") return "[general] ";
   if (agent === "observer") return "[observer] ";
   return "";
 }

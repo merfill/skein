@@ -298,7 +298,14 @@ Beyond Tier 0, the current line adds:
   actions, full `stop.why`), a read-only task-history overlay, and a session header with the
   current context size plus cumulative tokens. Markdown is rendered as styled spans (`marked` + `lowlight`) with
   light/dark themes (`COLORFGBG`, `SKEIN_THEME`). The old REPL stays behind `--plain`.
-  Details — `docs/plans/tui_plan.md`; tests — `tests/tui_*`; offline **526 passed, 40 skipped**.
+  Details — `docs/plans/tui_plan.md`; tests — `tests/tui_*`.
+- **General unit (2026-10-31, first slice).** A new non-coding `general` unit with the same IR
+  shape as a task but one work segment (`move(general)`, plan, actions, `stop`), read-only
+  `read`/`grep`/`list` tools and the answer in `stop.why`. Session operation `general`;
+  routing is `respond` / `general` / `start`, so analysis no longer enters the coding island
+  graph. The TUI reuses the states panel and history; there is no separate window. Details —
+  `docs/plans/general_unit_plan.md`; tests — `tests/general_unit.test.ts`; offline
+  **528 passed, 40 skipped**.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit

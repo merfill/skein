@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "observer" | "session" | "reading";
+export type UnitType = "task" | "general" | "observer" | "session" | "reading";
 
 export interface Unit {
   id: string;
@@ -18,6 +18,7 @@ export interface UnitRef {
 
 export interface PendingUtterance {
   text: string;
+  unitType?: "task" | "general";
 }
 
 export type TriggerKind = "budget" | "state_cycle" | "state_long";
@@ -43,7 +44,8 @@ export type Reaction =
 // strategies and `revise` are deferred.
 export type SessionOperation =
   | { kind: "respond"; text: string }
-  | { kind: "start"; text: string };
+  | { kind: "start"; text: string }
+  | { kind: "general"; text: string };
 
 // The session's attention for a unit. Derived from the journals, never stored as a field:
 // `completed` is a terminal marker of the unit journal, `abandoned` is a session fact, and

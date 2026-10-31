@@ -1,4 +1,4 @@
-import type { IslandId } from "./islands";
+import type { StateId } from "./islands";
 
 export type Space = "work" | "artifact";
 
@@ -64,7 +64,7 @@ export type Provenance =
 // authored and never changes; `what` is the state's own goal text (a state IS its goal —
 // there is no separate goal node, docs/plans/archive/goal_into_move_plan.md).
 export interface MovePayload {
-  state: IslandId;
+  state: StateId;
   what: string;
   // The state's stop condition, concretized by the doxa in the request's terms (a state
   // attribute like `what`); the island's generic criterion is the fallback.

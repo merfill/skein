@@ -135,6 +135,7 @@ function usageFor(
   unitId: string,
   startTurn: number,
   endTurn: number,
+  agent: "task" | "general",
 ): { input: number; output: number; reasoning: number; toolCalls: number } {
   let input = 0;
   let output = 0;
@@ -142,12 +143,12 @@ function usageFor(
   let toolCalls = 0;
   for (const event of events) {
     if (event.type === "session" || event.unitId !== unitId) continue;
-    if (event.type === "model_call" && event.agent === "task") {
+    if (event.type === "model_call" && event.agent === agent) {
       if (event.turn < startTurn || event.turn > endTurn) continue;
       input += event.usage?.inputTokens ?? 0;
       output += event.usage?.outputTokens ?? 0;
       reasoning += event.usage?.reasoningTokens ?? 0;
-    } else if (event.type === "tool_call" && event.agent === "task") {
+    } else if (event.type === "tool_call" && event.agent === agent) {
       if (event.turn < startTurn || event.turn > endTurn) continue;
       if (event.tool === "stop" || event.tool === "decline" || event.tool.startsWith("state:")) {
         continue;
@@ -191,7 +192,13 @@ function buildTask(
     const next = ids[index + 1];
     const nextStart = next !== undefined ? (movePayload(state, next).turn ?? start + 1) : undefined;
     const end = nextStart !== undefined ? Math.max(start, nextStart - 1) : Math.max(start, unit.turn - 1);
-    const usage = usageFor(telemetry, unit.id, start, end);
+    const usage = usageFor(
+      telemetry,
+      unit.id,
+      start,
+      end,
+      unit.type === "general" ? "general" : "task",
+    );
     const stopId = stopOf(state, id);
     return {
       id,
@@ -250,7 +257,9 @@ export function buildTuiView(
 ): TuiView {
   const now = options.now ?? Date.now();
   const timings = options.timings ?? new Map<string, TaskTiming>();
-  const tasks = unitsInOrder(session).filter((unit) => unit.type === "task");
+  const tasks = unitsInOrder(session).filter(
+    (unit) => unit.type === "task" || unit.type === "general",
+  );
   const byTask = new Map<string, TaskView>();
   tasks.forEach((unit, index) => {
     byTask.set(

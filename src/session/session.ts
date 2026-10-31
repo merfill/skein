@@ -71,8 +71,12 @@ export function observerDepth(session: SessionState): number {
   ).length;
 }
 
-export function setPending(session: SessionState, text: string): void {
-  session.pending = { text };
+export function setPending(
+  session: SessionState,
+  text: string,
+  unitType: "task" | "general" = "task",
+): void {
+  session.pending = unitType === "task" ? { text } : { text, unitType };
 }
 
 export function takePending(session: SessionState): PendingUtterance | undefined {
@@ -218,6 +222,11 @@ function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent
 
 function unitCompleted(session: SessionState, unit: Unit): boolean {
   if (unit.type === "task") return taskEnded(unit.journal);
+  if (unit.type === "general") {
+    const state = fold(unit.journal);
+    const move = currentMove(state);
+    return move !== undefined && isMoveFinished(state, move);
+  }
   // A session unit is completed once its operation is committed or refused.
   if (unit.type === "session") {
     return session.journal.some(

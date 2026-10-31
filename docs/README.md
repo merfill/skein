@@ -94,6 +94,10 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [plans/tui_plan.md](plans/tui_plan.md) · [RU](plans/tui_plan_ru.md) — the terminal UI:
   panels, live progress, Markdown spans, syntax highlighting and themes (implemented; first
   slice).
+- [plans/general_unit_plan.md](plans/general_unit_plan.md) ·
+  [RU](plans/general_unit_plan_ru.md) — the `general` non-coding unit: one work segment, the
+  read-only tool surface, session routing and the shared states panel/history (implemented;
+  first slice).
 - `plans/archive/` — completed or superseded plans, kept for the record.
 - [plans/archive/state_protocol_plan.md](plans/archive/state_protocol_plan.md) ·
   [RU](plans/archive/state_protocol_plan_ru.md) — the state protocol redesign: states as the

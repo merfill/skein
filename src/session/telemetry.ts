@@ -43,7 +43,7 @@ export type MetricEvent =
   | {
       type: "model_call";
       sessionId: string;
-      agent: "session" | "task" | "observer";
+      agent: "session" | "task" | "general" | "observer";
       unitId: string;
       turn: number;
       callId?: string;
@@ -57,7 +57,7 @@ export type MetricEvent =
   | {
       type: "tool_call";
       sessionId: string;
-      agent: "session" | "task" | "observer";
+      agent: "session" | "task" | "general" | "observer";
       unitId: string;
       turn: number;
       callId?: string;
@@ -189,7 +189,7 @@ export function usageTotals(events: readonly MetricEvent[]): UsageTotals {
 
 export interface ContextPoint {
   at: number;
-  agent: "session" | "task" | "observer";
+  agent: "session" | "task" | "general" | "observer";
   unitId: string;
   turn: number;
   context: ContextSnapshot;

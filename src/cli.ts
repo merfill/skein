@@ -5,6 +5,7 @@ import { createChatModel } from "./llm/client";
 import { createObserverDeps } from "./llm/observer";
 import type { Action } from "./llm/schemas";
 import { createSessionAgentDeps } from "./llm/session_agent";
+import { modelGeneralProposer } from "./llm/general";
 import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
@@ -157,6 +158,12 @@ async function main(): Promise<void> {
       probe: probeSession,
       telemetry: telemetry.sink,
       ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    },
+    general: {
+      propose: modelGeneralProposer(model, { settings }),
+      workspace,
+      maxTurns: args.maxTurns ?? settings.maxTurns,
+      telemetry: telemetry.sink,
     },
     telemetry: telemetry.sink,
   };
