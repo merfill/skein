@@ -1,8 +1,38 @@
 # Handoff — Tier 4: RequestObserver и сессия
 
 > Рабочий документ передачи. Английского зеркала нет.
-> Отправная точка — `docs/session_concepts.md`/`_ru.md` и планы
+> Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
+
+## TUI (сделано, 2026-10-31)
+
+- **Основной режим:** `npm run cli` открывает Ink-TUI в alternate screen. Старый построчный
+  REPL остаётся за `--plain`; `Enter` отправляет, `Ctrl-J` — новая строка, `Ctrl-C` —
+  прервать/выйти, `Ctrl-D` — выйти.
+- **Живой прогресс:** `src/session/progress.ts` — side-channel `ProgressEvent`; его испускают
+  `src/loop/graph.ts`, `src/session/{session_agent,observer,driver}.ts`. События:
+  `turn_started`, `model_call_started/finished`, `tool_started/finished`, `events_added`,
+  `state_changed`, `turn_finished`, `paused`, `report_started/finished`.
+- **Панели:** header (токены, задачи, ходы, вызовы, workspace, модель, режим), main trace,
+  постоянная панель текущей задачи справа (состояния, диапазоны ходов, токены, действия,
+  полный `stop.why`), read-only история задач слева по `Ctrl-T`, activity, composer,
+  pause/help overlay. Панели юнитов нет: `reading`/`session`/`observer` — внутренние адреса;
+  история показывает только `task`.
+- **View-model:** `src/tui/view_model.ts` — состояния из `move`, токены по turn-диапазонам из
+  task-телеметрии, wall-clock из TUI store, исходы как факт (`open at`, `stop.why`,
+  `cancelled at`). Header считает usage по всем model calls, включая session-agent
+  (`usageTotals`), поэтому токены видны и без запуска задачи.
+- **Markdown:** `marked` → спаны; `lowlight` подсвечивает код; `string-width` переносит по
+  колонкам; таблицы, списки, blockquote, ссылки, inline-код. `theme.ts` — тёмная/светлая
+  палитры, автоопределение по `COLORFGBG`, override `SKEIN_THEME=light|dark`. Заголовки и
+  синтаксис приглушённые.
+- **Файлы:** `src/tui/{app,panels,trace_lines,markdown,highlight,theme,view_model,run,types}`,
+  `src/session/progress.ts`, `src/cli.ts`.
+- **Тесты:** `tests/tui_app.test.tsx`, `tui_markdown.test.ts`, `tui_progress.test.ts`,
+  `tui_view_model.test.ts`.
+- **Осталось:** transcript viewer (`Ctrl-O`) с нативным scrollback/поиском, OSC 8 ссылки,
+  copy-code, раскрытие tool-результатов, потоковый текст модели, mouse/изображения/Mermaid,
+  персистентность сессии и выбор сессии, стоимость. Детали — `docs/plans/tui_plan.md`.
 
 ## Статус
 
@@ -26,7 +56,7 @@
 - **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
   pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
   в in-memory sink. Панели/UI нет.
-- Typecheck чистый; офлайн-набор: **517 passed, 40 skipped**. Live/bench для 4c не запускались.
+- Typecheck чистый; офлайн-набор: **526 passed, 40 skipped**. Live/bench для 4c и TUI не запускались.
 - **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
   `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.
@@ -189,7 +219,9 @@
 ```sh
 npm run typecheck
 SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'
-npm run cli -- --dir <project> [--verbose]
+npm run cli -- --dir <project>            # TUI
+npm run cli -- --dir <project> --plain    # old REPL
+SKEIN_THEME=light npm run cli -- --dir <project>
 ```
 
 Live (только с go-ahead):

@@ -13,6 +13,7 @@ import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
 import { applyOperation, type OperationResult } from "./operations";
+import type { ProgressSink } from "./progress";
 import {
   readUnit,
   readingResultText,
@@ -133,6 +134,7 @@ export interface SessionAgentDeps {
   report?: SessionReporter;
   maxTurns?: number;
   surveyLimit?: number;
+  onProgress?: ProgressSink;
 }
 
 export interface SessionUnitRunInput {
@@ -152,6 +154,7 @@ export interface SessionUnitRunInput {
   signal?: AbortSignal;
   // Side-channel telemetry; never rendered on the tape.
   telemetry?: TelemetrySink;
+  onProgress?: ProgressSink;
 }
 
 export interface SessionUnitRunResult {
@@ -417,8 +420,12 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         ).length
       : 0;
 
+  const progressUnitId = sessionFocus(input.session)?.unitId ?? "";
   for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
-    if (isAborted(input.signal)) return { journal, turns, paused: true };
+    if (isAborted(input.signal)) {
+      input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
+      return { journal, turns, paused: true };
+    }
     const messages = buildSessionMessages(projectSessionUnit(journal, outline));
     if (surveys >= surveyLimit) {
       messages.push({
@@ -427,6 +434,18 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       });
     }
     const startedAt = Date.now();
+    input.onProgress?.({
+      type: "turn_started",
+      agent: "session",
+      unitId: progressUnitId,
+      turn,
+    });
+    input.onProgress?.({
+      type: "model_call_started",
+      agent: "session",
+      unitId: progressUnitId,
+      turn,
+    });
     let reply: SessionReply;
     try {
       reply = await input.agent(
@@ -434,6 +453,13 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         input.signal !== undefined ? { signal: input.signal } : undefined,
       );
     } catch (error) {
+      input.onProgress?.({
+        type: "model_call_finished",
+        agent: "session",
+        unitId: progressUnitId,
+        turn,
+        status: isAborted(input.signal) ? "aborted" : "error",
+      });
       if (input.telemetry !== undefined) {
         input.telemetry.record({
           type: "model_call",
@@ -467,8 +493,20 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         context: contextSnapshot(messages),
       });
     }
+    input.onProgress?.({
+      type: "model_call_finished",
+      agent: "session",
+      unitId: progressUnitId,
+      turn,
+      model: reply.model,
+      status: isAborted(input.signal) ? "aborted" : "ok",
+      ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+    });
     if (reply.operation !== undefined) {
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      if (isAborted(input.signal)) {
+        input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
+        return { journal, turns, paused: true };
+      }
       return {
         journal,
         operation: reply.operation,
@@ -481,6 +519,16 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
     }
     for (const [index, toolCall] of reply.toolCalls.entries()) {
       const callId = toolCall.callId ?? `session:call:${journal.length}`;
+      const emitFrom = journal.length;
+      const target = JSON.stringify(toolCall.args).slice(0, 160);
+      input.onProgress?.({
+        type: "tool_started",
+        agent: "session",
+        unitId: progressUnitId,
+        turn,
+        tool: toolCall.name,
+        target,
+      });
       journal.push({
         type: "add_node",
         node: {
@@ -537,8 +585,26 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
           seq: journal.length,
         },
       });
+      input.onProgress?.({
+        type: "events_added",
+        unitId: progressUnitId,
+        events: journal.slice(emitFrom),
+      });
+      input.onProgress?.({
+        type: "tool_finished",
+        agent: "session",
+        unitId: progressUnitId,
+        turn,
+        tool: toolCall.name,
+        target,
+        status: "ok",
+        preview: toolResult,
+      });
       surveys += 1;
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      if (isAborted(input.signal)) {
+        input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
+        return { journal, turns, paused: true };
+      }
     }
   }
 
@@ -658,6 +724,7 @@ export async function runSessionAgent(
       ...(options.startTurn !== undefined ? { startTurn: options.startTurn } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
+      ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
       ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
       ...(deps.workspace !== undefined ? { workspace: deps.workspace } : {}),
       outline,

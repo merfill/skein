@@ -293,6 +293,12 @@ Beyond Tier 0, the current line adds:
   `tests/routing.test.ts`; live 3 tasks × K=3 (`fix-code`, `db-wal`, `log-summary`,
   `--turns 34/32/21`): 9/9 `reward=1`, the edges were never taken and the normal routes did not
   move. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
+- **Terminal UI (2026-10-31, done).** `npm run cli` now opens an Ink TUI: live progress from
+  the loop/session/observer, a persistent current-task states panel (turn ranges, tokens,
+  actions, full `stop.why`), a read-only task-history overlay, and a session header with
+  overall tokens. Markdown is rendered as styled spans (`marked` + `lowlight`) with
+  light/dark themes (`COLORFGBG`, `SKEIN_THEME`). The old REPL stays behind `--plain`.
+  Details — `docs/plans/tui_plan.md`; tests — `tests/tui_*`; offline **526 passed, 40 skipped**.
 
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit
@@ -302,8 +308,8 @@ go-ahead.
 
 - **Generation display/interrupt (streaming UX).** Streaming is in place as transport (above),
   but tokens are not surfaced: showing and interrupting the output needs the loop to consume
-  consume the AI SDK `textStream`/`fullStream` at the loop level rather than only assembling the
-  result. Deferred.
+  the AI SDK `textStream`/`fullStream` at the loop level rather than only assembling the
+  result. The TUI shows activity and tool events, not streamed text. Deferred.
 - **Possible tools.** `write` is done. Still candidates, by size of the gap: `edit` by
   range / `multiedit` (find/replace breaks on ambiguous or duplicated fragments);
   `web_fetch` (docs, error analysis — currently reachable through `run`/`curl`, so low

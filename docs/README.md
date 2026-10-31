@@ -22,6 +22,12 @@ and Russian, the Russian version in a file with the `_ru` suffix.
   hierarchical outline, and task isolation (implemented; verified offline and live; see `plans/session_agent_plan`
   and `plans/session_driver_plan`). Tier 4, second.
 
+## Terminal UI
+
+- [plans/tui_plan.md](plans/tui_plan.md) · [RU](plans/tui_plan_ru.md) — the Ink session TUI:
+  live agent/tool/state progress, the current-task states panel, task history, Markdown spans
+  with code highlighting, light/dark themes, and the `--plain` fallback (implemented).
+
 ## The IR (the engine's source of truth)
 
 - [ir.md](ir.md) · [RU](ir_ru.md) — the IR as built: operations, state, control.
@@ -85,6 +91,9 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [plans/ai_sdk_migration_plan.md](plans/ai_sdk_migration_plan.md) ·
   [RU](plans/ai_sdk_migration_plan_ru.md) — migrate the model layer to the Vercel AI SDK,
   keeping LangGraph and the IR (proposed).
+- [plans/tui_plan.md](plans/tui_plan.md) · [RU](plans/tui_plan_ru.md) — the terminal UI:
+  panels, live progress, Markdown spans, syntax highlighting and themes (implemented; first
+  slice).
 - `plans/archive/` — completed or superseded plans, kept for the record.
 - [plans/archive/state_protocol_plan.md](plans/archive/state_protocol_plan.md) ·
   [RU](plans/archive/state_protocol_plan_ru.md) — the state protocol redesign: states as the

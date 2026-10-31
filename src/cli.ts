@@ -11,13 +11,15 @@ import { runRepl } from "./session/repl";
 import { createSessionWorkspace } from "./session/session_workspace";
 import { memoryTelemetry } from "./session/telemetry";
 import type { SessionTurnDeps } from "./session/driver";
-import { fsWorkspace } from "./tools/workspace";
+import { runTui } from "./tui/run";
+import { fsWorkspace, type Workspace } from "./tools/workspace";
 
 interface CliArgs {
   dir: string;
   maxTurns?: number;
   model?: string;
   verbose?: boolean;
+  plain?: boolean;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -37,6 +39,8 @@ function parseArgs(argv: readonly string[]): CliArgs {
       index += 1;
     } else if (flag === "--verbose") {
       args.verbose = true;
+    } else if (flag === "--plain") {
+      args.plain = true;
     } else if (flag !== undefined && !flag.startsWith("--")) {
       args.dir = flag;
     }
@@ -48,54 +52,14 @@ function actionName(action: Action): string {
   return action.operator === "apply" ? action.action.tool : action.operator;
 }
 
-async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
-  const settings = loadSettings();
-  const model = createChatModel({
-    ...settings,
-    ...(args.model !== undefined ? { model: args.model } : {}),
-  });
-  const workspace = fsWorkspace(args.dir, {
-    runTimeoutMs: settings.runTimeoutMs,
-    checkpoints: true,
-  });
-  const basePropose = modelProposer(model);
-  let taskTurn = 0;
-  const propose: Proposer = async (context) => {
-    const proposal = await basePropose(context);
-    taskTurn += 1;
-    if (args.verbose === true) {
-      const actions = proposal.actions.map(actionName).join(", ");
-      process.stdout.write(`  [${taskTurn}] ${actions}\n`);
-    }
-    return proposal;
-  };
-
-  const sessionWorkspace = createSessionWorkspace(workspace);
-  const telemetry = memoryTelemetry();
-
-  const deps: SessionTurnDeps = {
-    sessionAgent: {
-      ...createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
-      telemetry: telemetry.sink,
-    },
-    task: {
-      propose,
-      workspace,
-      maxTurns: args.maxTurns ?? settings.maxTurns,
-      probe: probeSession,
-      telemetry: telemetry.sink,
-      ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
-    },
-    telemetry: telemetry.sink,
-  };
-
+async function runPlain(args: CliArgs, deps: SessionTurnDeps, workspace: Workspace): Promise<void> {
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: process.stdin.isTTY === true,
   });
   emitKeypressEvents(process.stdin);
+  let active: AbortController | undefined;
   rl.on("keypress", (_text, key) => {
     // Esc pauses; Ctrl-C is handled by the SIGINT handler below.
     if (key?.name === "escape" && active !== undefined && !active.signal.aborted) {
@@ -112,7 +76,6 @@ async function main(): Promise<void> {
   process.stdout.write(`workspace: ${workspace.root}\n`);
   rl.prompt();
 
-  let active: AbortController | undefined;
   let paused = false;
   const onSigint = (): void => {
     if (active !== undefined && !active.signal.aborted) {
@@ -150,9 +113,67 @@ async function main(): Promise<void> {
       },
     );
   } finally {
-    workspace.clearCheckpoints?.();
     process.off("SIGINT", onSigint);
     rl.close();
+  }
+}
+
+async function main(): Promise<void> {
+  const args = parseArgs(process.argv.slice(2));
+  const settings = loadSettings();
+  const modelName = args.model ?? settings.model;
+  const model = createChatModel({
+    ...settings,
+    model: modelName,
+  });
+  const workspace = fsWorkspace(args.dir, {
+    runTimeoutMs: settings.runTimeoutMs,
+    checkpoints: true,
+  });
+  const basePropose = modelProposer(model);
+  let taskTurn = 0;
+  const propose: Proposer = async (context) => {
+    const proposal = await basePropose(context);
+    taskTurn += 1;
+    if (args.plain === true && args.verbose === true) {
+      const actions = proposal.actions.map(actionName).join(", ");
+      process.stdout.write(`  [${taskTurn}] ${actions}\n`);
+    }
+    return proposal;
+  };
+
+  const sessionWorkspace = createSessionWorkspace(workspace);
+  const telemetry = memoryTelemetry();
+
+  const deps: SessionTurnDeps = {
+    sessionAgent: {
+      ...createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
+      telemetry: telemetry.sink,
+    },
+    task: {
+      propose,
+      workspace,
+      maxTurns: args.maxTurns ?? settings.maxTurns,
+      probe: probeSession,
+      telemetry: telemetry.sink,
+      ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    },
+    telemetry: telemetry.sink,
+  };
+
+  try {
+    if (args.plain === true) {
+      await runPlain(args, deps, workspace);
+    } else {
+      await runTui({
+        deps,
+        telemetry,
+        workspace: workspace.root,
+        model: modelName,
+      });
+    }
+  } finally {
+    workspace.clearCheckpoints?.();
   }
 }
 

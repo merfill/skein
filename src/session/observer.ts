@@ -13,6 +13,7 @@ import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
 import { outline, observationBody, renderedState, stateAttempt, stateOutline, stateTurns } from "./outline";
+import type { ProgressSink } from "./progress";
 import type { Reaction, Trigger } from "./types";
 
 export const OBSERVER_BASE_PROMPT = [
@@ -81,6 +82,7 @@ export interface ObserverDeps {
   maxTurns?: number;
   maxDepth?: number;
   surveyLimit?: number;
+  onProgress?: ProgressSink;
 }
 
 export interface ObserverRunInput {
@@ -98,6 +100,7 @@ export interface ObserverRunInput {
   // The observer unit id and the telemetry sink (side channel, never rendered).
   unitId?: string;
   telemetry?: TelemetrySink;
+  onProgress?: ProgressSink;
 }
 
 export interface ObserverRunResult {
@@ -307,8 +310,12 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
         ).length
       : 0;
 
+  const progressUnitId = input.unitId ?? "";
   for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
-    if (isAborted(input.signal)) return { journal, turns, paused: true };
+    if (isAborted(input.signal)) {
+      input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+      return { journal, turns, paused: true };
+    }
     const context = projectObserver(input.trigger, journal);
     const messages = buildObserverMessages(context);
     if (surveys >= surveyLimit) {
@@ -319,6 +326,18 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
       });
     }
     const startedAt = Date.now();
+    input.onProgress?.({
+      type: "turn_started",
+      agent: "observer",
+      unitId: progressUnitId,
+      turn,
+    });
+    input.onProgress?.({
+      type: "model_call_started",
+      agent: "observer",
+      unitId: progressUnitId,
+      turn,
+    });
     let reply: ObserverReply;
     try {
       reply = await input.agent(
@@ -326,6 +345,13 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
         input.signal !== undefined ? { signal: input.signal } : undefined,
       );
     } catch (error) {
+      input.onProgress?.({
+        type: "model_call_finished",
+        agent: "observer",
+        unitId: progressUnitId,
+        turn,
+        status: isAborted(input.signal) ? "aborted" : "error",
+      });
       if (input.telemetry !== undefined) {
         input.telemetry.record({
           type: "model_call",
@@ -340,10 +366,22 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
           context: contextSnapshot(messages),
         });
       }
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      if (isAborted(input.signal)) {
+        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+        return { journal, turns, paused: true };
+      }
       throw error;
     }
     turns = turn;
+    input.onProgress?.({
+      type: "model_call_finished",
+      agent: "observer",
+      unitId: progressUnitId,
+      turn,
+      model: reply.model,
+      status: isAborted(input.signal) ? "aborted" : "ok",
+      ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+    });
     if (input.telemetry !== undefined) {
       input.telemetry.record({
         type: "model_call",
@@ -360,7 +398,10 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
       });
     }
     if (reply.decision !== undefined) {
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      if (isAborted(input.signal)) {
+        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+        return { journal, turns, paused: true };
+      }
       return { journal, decision: reply.decision, turns };
     }
     if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
@@ -368,6 +409,16 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
     }
     for (const call of reply.toolCalls) {
       const callId = call.callId ?? `observer:call:${journal.length}`;
+      const emitFrom = journal.length;
+      const target = JSON.stringify(call.args).slice(0, 160);
+      input.onProgress?.({
+        type: "tool_started",
+        agent: "observer",
+        unitId: progressUnitId,
+        turn,
+        tool: call.name,
+        target,
+      });
       journal.push({
         type: "add_node",
         node: {
@@ -415,8 +466,26 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
           seq: journal.length,
         },
       });
+      input.onProgress?.({
+        type: "events_added",
+        unitId: progressUnitId,
+        events: journal.slice(emitFrom),
+      });
+      input.onProgress?.({
+        type: "tool_finished",
+        agent: "observer",
+        unitId: progressUnitId,
+        turn,
+        tool: call.name,
+        target,
+        status: "ok",
+        preview: toolResult,
+      });
       surveys += 1;
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      if (isAborted(input.signal)) {
+        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+        return { journal, turns, paused: true };
+      }
     }
   }
 

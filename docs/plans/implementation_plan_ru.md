@@ -291,6 +291,13 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `tests/routing.test.ts`; живой прогон 3 задач × K=3 (`fix-code`, `db-wal`, `log-summary`,
   `--turns 34/32/21`): 9/9 `reward=1`, рёбра не выбраны ни разу, нормальные пути не сдвинулись.
   Трасса: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
+- **Терминальный UI (2026-10-31, сделано).** `npm run cli` открывает Ink-TUI: живой прогресс
+  из loop/session/observer, постоянная панель состояний текущей задачи (диапазоны ходов,
+  токены, действия, полный `stop.why`), read-only overlay истории задач и header с общим
+  расходом токенов. Markdown рендерится стилизованными спанами (`marked` + `lowlight`),
+  темы светлая/тёмная (`COLORFGBG`, `SKEIN_THEME`). Старый REPL остаётся за `--plain`.
+  Детали — `docs/plans/tui_plan_ru.md`; тесты — `tests/tui_*`; офлайн **526 passed,
+  40 skipped**.
 
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
 offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с явного разрешения владельца.
@@ -299,8 +306,8 @@ offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с я
 
 - **Показ/прерывание генерации (стриминг-UX).** Стриминг сделан как транспорт (см. выше), но
   токены наружу не отдаются: чтобы показывать и прерывать вывод, нужно потреблять
-  потреблять `textStream`/`fullStream` AI SDK на уровне цикла, а не только собирать результат.
-  Отложено.
+  `textStream`/`fullStream` AI SDK на уровне цикла, а не только собирать результат. TUI
+  показывает activity и tool-события, но не потоковый текст. Отложено.
 
 - **Возможные инструменты.** `write` сделан. Кандидаты по величине пробела: `edit` по
   диапазону / `multiedit` (find/replace ломается на неоднозначных/повторяющихся

@@ -22,10 +22,17 @@
     "@langchain/langgraph": "^1.4.18",
     "ai": "^6.0.309",
     "dotenv": "^18.0.4",
+    "ink": "^8.0.0",
+    "lowlight": "^3.3.0",
+    "marked": "^18.1.2",
+    "react": "^19.3.1",
+    "string-width": "^8.3.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"

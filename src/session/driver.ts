@@ -5,6 +5,7 @@ import type { Workspace } from "../tools/workspace";
 import { applyReaction } from "./apply";
 import { LOCAL_SESSION_ID, type TelemetrySink } from "./telemetry";
 import type { OperationResult } from "./operations";
+import type { ProgressSink } from "./progress";
 import { runRequestObserver } from "./observer";
 import {
   popUnit,
@@ -36,6 +37,7 @@ export interface SessionTurnDeps {
   task: AgentDeps;
   // The driver records pause/resume/cancel here; the loops receive their own copy.
   telemetry?: TelemetrySink;
+  onProgress?: ProgressSink;
 }
 
 export interface SessionTurnOptions {
@@ -228,6 +230,7 @@ async function reportTask(
   result: SessionTurnResult,
 ): Promise<void> {
   if (deps.sessionAgent.report === undefined) return;
+  deps.onProgress?.({ type: "report_started", unitId: interpretationUnitId });
   try {
     const report = await deps.sessionAgent.report({
       utterance,
@@ -238,8 +241,14 @@ async function reportTask(
       recordReport(session, interpretationUnitId, turn, report);
       result.report = report;
     }
+    deps.onProgress?.({
+      type: "report_finished",
+      unitId: interpretationUnitId,
+      ...(result.report !== undefined ? { text: result.report } : {}),
+    });
   } catch {
     // The task result is the fact; the report is a presentation aid.
+    deps.onProgress?.({ type: "report_finished", unitId: interpretationUnitId });
   }
 }
 
@@ -342,6 +351,7 @@ async function resumeObserver(
     ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
     ...(observerDeps.maxTurns !== undefined ? { maxTurns: observerDeps.maxTurns } : {}),
     ...(observerDeps.surveyLimit !== undefined ? { surveyLimit: observerDeps.surveyLimit } : {}),
+    ...(observerDeps.onProgress !== undefined ? { onProgress: observerDeps.onProgress } : {}),
     ...(signal !== undefined ? { signal } : {}),
   });
   observerUnit.journal.push(...observer.journal.slice(observerUnit.journal.length));

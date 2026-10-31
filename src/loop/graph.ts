@@ -17,6 +17,7 @@ import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/trav
 import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { applyReaction } from "../session/apply";
+import type { ProgressSink } from "../session/progress";
 import {
   runRequestObserver,
   type ObserverDeps,
@@ -96,6 +97,7 @@ export interface AgentDeps {
   signal?: AbortSignal;
   // Side-channel telemetry; never rendered on the tape.
   telemetry?: TelemetrySink;
+  onProgress?: ProgressSink;
 }
 
 export interface AgentInput {
@@ -160,7 +162,20 @@ export function compileGraph(deps: AgentDeps) {
     const context = state.context ?? project(fold(state.events));
     const session = state.session ?? undefined;
     const unitId = session !== undefined ? sessionFocus(session)?.unitId : undefined;
+    const taskUnitId = fold(state.events).rootId ?? "";
     const startedAt = Date.now();
+    deps.onProgress?.({
+      type: "turn_started",
+      agent: "task",
+      unitId: taskUnitId,
+      turn: state.turn,
+    });
+    deps.onProgress?.({
+      type: "model_call_started",
+      agent: "task",
+      unitId: taskUnitId,
+      turn: state.turn,
+    });
     let proposals: Proposals;
     try {
       proposals = await deps.propose(
@@ -182,9 +197,17 @@ export function compileGraph(deps: AgentDeps) {
           context: contextSnapshot(buildMessages(context)),
         });
       }
+      deps.onProgress?.({
+        type: "model_call_finished",
+        agent: "task",
+        unitId: taskUnitId,
+        turn: state.turn,
+        status: isAborted(deps.signal) ? "aborted" : "error",
+      });
       // A user pause aborted the model call: it is not a provider failure and is not
       // retried. Stop without a stopReason; the unit stays open.
       if (isAborted(deps.signal)) {
+        deps.onProgress?.({ type: "paused", agent: "task", unitId: taskUnitId });
         return { context, proposals: null, done: true, paused: true, recent: [] };
       }
       // A persistent model failure (e.g. the provider keeps truncating) must not crash
@@ -216,6 +239,16 @@ export function compileGraph(deps: AgentDeps) {
           context: contextSnapshot(buildMessages(context)),
         });
       }
+      deps.onProgress?.({
+        type: "model_call_finished",
+        agent: "task",
+        unitId: taskUnitId,
+        turn: state.turn,
+        model: proposals.model,
+        status: "aborted",
+        ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+      });
+      deps.onProgress?.({ type: "paused", agent: "task", unitId: taskUnitId });
       return { context, proposals: null, done: true, paused: true, recent: [] };
     }
     if (deps.telemetry !== undefined && unitId !== undefined) {
@@ -233,6 +266,15 @@ export function compileGraph(deps: AgentDeps) {
         context: contextSnapshot(buildMessages(context)),
       });
     }
+    deps.onProgress?.({
+      type: "model_call_finished",
+      agent: "task",
+      unitId: taskUnitId,
+      turn: state.turn,
+      model: proposals.model,
+      status: "ok",
+      ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+    });
     return {
       context,
       proposals,
@@ -261,9 +303,21 @@ export function compileGraph(deps: AgentDeps) {
     let done = false;
     let stopReason: string | null = null;
     let executed = false;
+    const taskUnitId = fold(state.events).rootId ?? "";
+    const emitPaused = (): void => {
+      deps.onProgress?.({ type: "paused", agent: "task", unitId: taskUnitId });
+      deps.onProgress?.({
+        type: "turn_finished",
+        agent: "task",
+        unitId: taskUnitId,
+        turn: state.turn,
+        stopReason: null,
+      });
+    };
     for (const action of proposals.actions) {
       // A pause before this action drops the proposal and stops at the last committed step.
       if (isAborted(deps.signal)) {
+        emitPaused();
         return {
           events,
           recent,
@@ -295,6 +349,17 @@ export function compileGraph(deps: AgentDeps) {
         if (TERMINAL.has(action.operator)) break;
         continue;
       }
+      const emitFrom = events.length;
+      const actionTarget = describeTarget(action);
+      const progressTool = action.operator === "apply" ? action.action.tool : action.operator;
+      deps.onProgress?.({
+        type: "tool_started",
+        agent: "task",
+        unitId: taskUnitId,
+        turn: state.turn,
+        tool: progressTool,
+        target: actionTarget,
+      });
       // A failed Verification leaves a patch that is known not to work. Before the move back
       // to Localization the engine restores the tree to its pre-patch state, so Localization
       // reasons about the original code and Patch cannot no-op on the rejected change. The
@@ -335,10 +400,46 @@ export function compileGraph(deps: AgentDeps) {
       executed = true;
       done = outcome.done;
       if (outcome.stopReason !== null) stopReason = outcome.stopReason;
+      const added = events.slice(emitFrom);
+      deps.onProgress?.({ type: "events_added", unitId: taskUnitId, events: added });
+      const failed = outcome.events.some(
+        (event) =>
+          event.type === "add_node" &&
+          event.node.kind === "observation" &&
+          (event.node.payload as { failed?: unknown } | undefined)?.failed === true,
+      );
+      deps.onProgress?.({
+        type: "tool_finished",
+        agent: "task",
+        unitId: taskUnitId,
+        turn: state.turn,
+        tool: progressTool,
+        target: actionTarget,
+        status: failed ? "error" : "ok",
+        preview: outcome.turn.text,
+      });
+      if (action.operator === "move" || action.operator === "stop") {
+        const after = fold([...state.events, ...events]);
+        const changedMove = currentMove(after);
+        if (changedMove !== undefined) {
+          const payload = after.nodes.get(changedMove)?.payload as
+            | { state?: string; what?: string }
+            | undefined;
+          deps.onProgress?.({
+            type: "state_changed",
+            unitId: taskUnitId,
+            turn: state.turn,
+            ...(payload?.state !== undefined ? { state: payload.state } : {}),
+            ...(payload?.what !== undefined ? { what: payload.what } : {}),
+            ...(action.operator === "stop" ? { closed: true } : {}),
+          });
+        }
+      }
       if (done) break;
       if (TERMINAL.has(action.operator)) break;
       // The action finished; a pause requested meanwhile is honoured before the next action.
       if (isAborted(deps.signal)) {
+        emitPaused();
         return {
           events,
           recent,
@@ -350,6 +451,13 @@ export function compileGraph(deps: AgentDeps) {
         };
       }
     }
+    deps.onProgress?.({
+      type: "turn_finished",
+      agent: "task",
+      unitId: taskUnitId,
+      turn: state.turn,
+      stopReason,
+    });
     return {
       events,
       recent,
@@ -431,6 +539,9 @@ export function compileGraph(deps: AgentDeps) {
             ...(deps.observer.maxTurns !== undefined ? { maxTurns: deps.observer.maxTurns } : {}),
             ...(deps.observer.surveyLimit !== undefined
               ? { surveyLimit: deps.observer.surveyLimit }
+              : {}),
+            ...(deps.observer.onProgress !== undefined
+              ? { onProgress: deps.observer.onProgress }
               : {}),
           });
         } catch (error) {
