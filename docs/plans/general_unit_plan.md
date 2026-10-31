@@ -75,6 +75,9 @@ There is no post-task report: the unit's assistant answer is the result, stored 
 - The existing right-hand task panel shows the general unit as one `general` state with turns,
   tokens and actions; there is no separate general window.
 - The existing history overlay can show the unit as a task-like row.
+- The L0 trace is deterministic: it lists the unit's actions from the plan (`read NOTES.md`,
+  `grep "RULE"`, `list .`) and a short preview of the answer stored on the stop node. The full
+  answer and observation bodies stay addressable through the unit (`turns`/`body`/`search`).
 - Trace rows are prefixed `[general]`; the final answer is a normal Markdown assistant turn.
 - The header's `Σ` includes general model calls; `ctx` remains the session agent's context.
 

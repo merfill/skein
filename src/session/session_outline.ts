@@ -1,4 +1,4 @@
-import { childrenOf, fold, stopOf, unactionableOf, type State } from "../ir/graph";
+import { childrenOf, fold, planOf, stopOf, unactionableOf, type State } from "../ir/graph";
 import { currentMove, isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
 import {
   attentionOf,
@@ -130,16 +130,104 @@ function readingEnding(unit: Unit): string {
   return `read ${info.bytes ?? "?"} B, ${info.lines ?? "?"} line(s)${info.observation !== undefined ? `; ${info.observation}` : ""}`;
 }
 
+function resultOfAction(state: State, actionId: string): string | undefined {
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "result" && edge.from === actionId) return edge.to;
+  }
+  return undefined;
+}
+
+function generalActionText(state: State, actionId: string): string | undefined {
+  const action = state.nodes.get(actionId);
+  if (action === undefined || action.kind !== "action") return undefined;
+  const payload = action.payload as { call?: { name?: unknown; args?: unknown } } | undefined;
+  const name = typeof payload?.call?.name === "string" ? payload.call.name : undefined;
+  const args =
+    payload?.call?.args !== null && typeof payload?.call?.args === "object"
+      ? (payload.call.args as Record<string, unknown>)
+      : {};
+  const observationId = resultOfAction(state, actionId);
+  const observation = observationId !== undefined ? state.nodes.get(observationId) : undefined;
+  const result = observation?.payload as
+    | { total?: unknown; failed?: unknown; refused?: unknown }
+    | undefined;
+  const suffix =
+    result?.failed === true || result?.refused === true
+      ? " (failed)"
+      : typeof result?.total === "number"
+        ? ` (${result.total} line(s))`
+        : "";
+  if (name === "read") {
+    const path =
+      typeof args.filePath === "string"
+        ? args.filePath
+        : typeof args.path === "string"
+          ? args.path
+          : action.label;
+    return `read ${path.startsWith("read ") ? path.slice(5) : path}${suffix}`;
+  }
+  if (name === "grep") {
+    const pattern = typeof args.pattern === "string" ? args.pattern : "?";
+    const path = typeof args.path === "string" ? ` in ${args.path}` : "";
+    return `grep "${pattern}"${path}${suffix}`;
+  }
+  if (name === "list") {
+    const path = typeof args.path === "string" ? ` ${args.path}` : "";
+    return `list${path}${suffix}`;
+  }
+  return name ?? action.label;
+}
+
+function generalEnding(state: State, unit: Unit): string {
+  const move = currentMove(state);
+  if (move === undefined) return "open";
+  const plan = planOf(state, move);
+  const actions: string[] = [];
+  const seen = new Set<string>();
+  if (plan !== undefined) {
+    for (const itemId of childrenOf(state, plan)) {
+      for (const actionId of childrenOf(state, itemId)) {
+        const text = generalActionText(state, actionId);
+        if (text !== undefined && !seen.has(text)) {
+          seen.add(text);
+          actions.push(text);
+        }
+      }
+    }
+  }
+  const stop = stopOf(state, move);
+  const stopNode = stop !== undefined ? state.nodes.get(stop) : undefined;
+  const payload = stopNode?.payload as { answer?: unknown } | undefined;
+  const answer =
+    typeof payload?.answer === "string"
+      ? payload.answer
+      : stopNode?.label !== undefined
+        ? stopNode.label
+        : undefined;
+  const parts: string[] = [];
+  if (actions.length > 0) {
+    const shown = actions.slice(0, 6);
+    parts.push(
+      `actions: ${shown.join("; ")}${actions.length > shown.length ? `; +${actions.length - shown.length} more` : ""}`,
+    );
+  }
+  if (answer !== undefined && answer !== "") parts.push(`answer: "${short(answer)}"`);
+  if (parts.length === 0) return isMoveFinished(state, move) ? "closed" : "open";
+  return parts.join("; ");
+}
+
 function unitLine(session: SessionState, unit: Unit, index: number): string {
   const state = fold(unit.journal);
   const label = requestLabel(state, unit);
   const status = attentionOf(session, unit.id);
   const ending =
-    unit.type === "task" || unit.type === "general"
+    unit.type === "task"
       ? endingOf(state)
-      : unit.type === "reading"
-        ? readingEnding(unit)
-        : "";
+      : unit.type === "general"
+        ? generalEnding(state, unit)
+        : unit.type === "reading"
+          ? readingEnding(unit)
+          : "";
   // A session unit's trace carries its answer or the reformulated request it committed. The
   // task unit's trace carries the same reformulation as its request once the driver opens it.
   const decision = unit.type === "session" ? decisionOf(session, unit.id) : undefined;

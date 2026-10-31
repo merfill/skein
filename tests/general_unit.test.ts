@@ -105,7 +105,8 @@ describe("general unit", () => {
 
     const outline = sessionOutline(session);
     expect(outline).toContain('general g1 "analyse NOTES.md"');
-    expect(outline).toContain('general: "## Answer');
+    expect(outline).toContain('actions: read NOTES.md');
+    expect(outline).toContain('answer: "## Answer');
 
     const view = buildTuiView(session, telemetry.events);
     expect(view.current?.unitId).toBe("g1");

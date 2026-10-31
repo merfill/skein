@@ -287,7 +287,7 @@ the L0 trace (`(refused: …)`), and changes no task tree; the interpretation is
 The session agent only **proposes**. Logos checks the preconditions and applies the operation as
 a session event.
 
-A `general` unit has no post-task report: its assistant answer is the result, stored on the stop node; `stop.why` is a short closure note. After a `start` task finishes, the driver asks the session agent for a **report** and records it
+A `general` unit has no post-task report: its assistant answer is the result, stored on the stop node; `stop.why` is a short closure note. Its L0 trace lists the plan's actions and a short answer preview; the full answer and observations stay addressable through the unit. After a `start` task finishes, the driver asks the session agent for a **report** and records it
 on the same session unit. The report is the user-facing Markdown answer: what was done, where,
 how it was verified, and any caveats. It uses the task's deterministic trace (states, changed
 files, outcome) and does not open a new session unit. A failed report never hides the task
