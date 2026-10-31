@@ -4,18 +4,21 @@ import type { IslandId } from "./islands";
 // (docs/state_testing.md §3). The probe itself lives in `src/loop/probe.ts`; this module is
 // pure so the projection can select and format the subset a state needs.
 
-export type EnvironmentGroup =
-  | "vcs"
-  | "build"
-  | "compilers"
-  | "interpreters"
-  | "test"
-  | "pkg"
-  | "core"
-  | "crypto"
-  | "data"
-  | "archive"
-  | "net";
+export const ALL_ENVIRONMENT_GROUPS = [
+  "vcs",
+  "build",
+  "compilers",
+  "interpreters",
+  "test",
+  "pkg",
+  "core",
+  "crypto",
+  "data",
+  "archive",
+  "net",
+] as const;
+
+export type EnvironmentGroup = (typeof ALL_ENVIRONMENT_GROUPS)[number];
 
 export interface EnvironmentTool {
   name: string;
@@ -80,20 +83,19 @@ function toolLine(tool: EnvironmentTool): string {
   return tool.version !== undefined && tool.version !== "" ? `${tool.name} ${tool.version}` : tool.name;
 }
 
-// A compact Markdown brief for the state, or "" when it has nothing to say. Only facts: no
-// recommendation about which language to use.
-export function environmentBrief(fact: EnvironmentFact, island?: IslandId): string {
-  const groups = groupsFor(island);
+// A compact Markdown brief for an explicit set of groups, or "" when it has nothing to say.
+// Only facts: no recommendation about which language to use.
+export function environmentGroupsBrief(
+  fact: EnvironmentFact,
+  groups: readonly EnvironmentGroup[],
+  options: { showRoot?: boolean } = {},
+): string {
   if (groups.length === 0) return "";
   const found = fact.found.filter((tool) => groups.includes(tool.group));
   const missing = fact.missing.filter((tool) => groups.includes(tool.group));
   const partial = fact.partial === true ? " (partial; the probe hit its time budget)" : "";
   const lines: string[] = [`Environment${partial}`];
-  const showRoot =
-    island === "orientation" ||
-    island === "recovery" ||
-    island === "construction" ||
-    island === "verification";
+  const showRoot = options.showRoot === true;
   if (showRoot && fact.root !== "") lines.push(`root: ${fact.root}`);
   if (fact.network !== undefined) {
     lines.push(
@@ -127,4 +129,17 @@ export function environmentBrief(fact: EnvironmentFact, island?: IslandId): stri
     lines.push(`missing: ${shown.join(", ")}${more}`);
   }
   return lines.length > 1 ? lines.join("\n") : "";
+}
+
+// A compact Markdown brief for the state, or "" when it has nothing to say.
+export function environmentBrief(fact: EnvironmentFact, island?: IslandId): string {
+  const groups = groupsFor(island);
+  if (groups.length === 0) return "";
+  return environmentGroupsBrief(fact, groups, {
+    showRoot:
+      island === "orientation" ||
+      island === "recovery" ||
+      island === "construction" ||
+      island === "verification",
+  });
 }

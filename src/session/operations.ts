@@ -5,7 +5,7 @@ import type { SessionOperation, SessionState } from "./types";
 // checks the preconditions and applies it as a session event. No task journal is touched.
 // The vocabulary is `respond` and `start`; resume/cancel strategies and `revise` are deferred.
 
-const MAX_RESPOND_TEXT = 2000;
+const MAX_RESPOND_TEXT = 4000;
 const MAX_START_TEXT = 4000;
 
 export type OperationResult =

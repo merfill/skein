@@ -153,13 +153,38 @@ describe("session agent: bounded unit loop", () => {
     );
   });
 
-  it("returns focus to the task when the agent proposes nothing", async () => {
+  it("records an empty reply as no_decision", async () => {
     const session = taskSession();
     const agent: SessionAgent = async () => ({});
     const result = await runSessionAgent({ agent, tools }, session, "hi");
     expect(result.operation).toBeUndefined();
     expect(result.applied).toBeUndefined();
+    expect(result.noDecision).toBe("empty_reply");
     expect(sessionFocus(session)?.unitId).toBe("r1");
+    expect(
+      session.journal.some(
+        (event) => event.type === "no_decision" && event.reason === "empty_reply",
+      ),
+    ).toBe(true);
+    expect(sessionOutline(session)).toContain("no decision: empty_reply");
+    expect(attentionOf(session, "session:1")).toBe("suspended");
+  });
+
+  it("records max_turns when the loop runs out", async () => {
+    const session = taskSession();
+    const agent: SessionAgent = async () => ({
+      toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }],
+    });
+    const result = await runSessionAgent({ agent, tools }, session, "hi", { maxTurns: 2 });
+    expect(result.operation).toBeUndefined();
+    expect(result.noDecision).toBe("max_turns");
+    expect(
+      session.journal.some(
+        (event) => event.type === "no_decision" && event.reason === "max_turns",
+      ),
+    ).toBe(true);
+    expect(sessionOutline(session)).toContain("no decision: max_turns");
+    expect(attentionOf(session, "session:1")).toBe("suspended");
   });
 
   it("replays the journal and shows L0 as a system message", async () => {

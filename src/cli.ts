@@ -8,6 +8,7 @@ import { createSessionAgentDeps } from "./llm/session_agent";
 import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
+import { createSessionWorkspace } from "./session/session_workspace";
 import type { SessionTurnDeps } from "./session/driver";
 import { fsWorkspace } from "./tools/workspace";
 
@@ -15,6 +16,7 @@ interface CliArgs {
   dir: string;
   maxTurns?: number;
   model?: string;
+  verbose?: boolean;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -32,6 +34,8 @@ function parseArgs(argv: readonly string[]): CliArgs {
     } else if (flag === "--model" && value !== undefined) {
       args.model = value;
       index += 1;
+    } else if (flag === "--verbose") {
+      args.verbose = true;
     } else if (flag !== undefined && !flag.startsWith("--")) {
       args.dir = flag;
     }
@@ -56,23 +60,17 @@ async function main(): Promise<void> {
   const propose: Proposer = async (context) => {
     const proposal = await basePropose(context);
     taskTurn += 1;
-    const actions = proposal.actions.map(actionName).join(", ");
-    process.stdout.write(`  [${taskTurn}] ${actions}\n`);
+    if (args.verbose === true) {
+      const actions = proposal.actions.map(actionName).join(", ");
+      process.stdout.write(`  [${taskTurn}] ${actions}\n`);
+    }
     return proposal;
   };
 
-  const readFile = (path: string) => {
-    const text = workspace.read(path);
-    return {
-      text,
-      version: workspace.version(path),
-      bytes: text.length,
-      lines: text.split("\n").length,
-    };
-  };
+  const sessionWorkspace = createSessionWorkspace(workspace);
 
   const deps: SessionTurnDeps = {
-    sessionAgent: createSessionAgentDeps(model, { settings, readFile }),
+    sessionAgent: createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
     task: {
       propose,
       workspace,
@@ -97,7 +95,13 @@ async function main(): Promise<void> {
   process.stdout.write(`workspace: ${workspace.root}\n`);
   rl.prompt();
   try {
-    await runRepl(lines(), deps, (line) => process.stdout.write(`${line}\n`));
+    await runRepl(
+      lines(),
+      deps,
+      (line) => process.stdout.write(`${line}\n`),
+      undefined,
+      { ...(args.verbose === true ? { verbose: true } : {}) },
+    );
   } finally {
     rl.close();
   }

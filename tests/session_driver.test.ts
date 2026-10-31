@@ -10,7 +10,12 @@ import {
   createSession,
   sessionFocus,
 } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type {
+  SessionAgent,
+  SessionReportInput,
+  SessionTools,
+} from "../src/session/session_agent";
+import { sessionOutline } from "../src/session/session_outline";
 import type { SessionOperation } from "../src/session/types";
 import { cleanupWorkspaces, makeWorkspace, move } from "./ops/helpers";
 
@@ -78,6 +83,34 @@ describe("session driver: one utterance turn", () => {
     expect(attentionOf(session, "r1")).toBe("completed");
     expect(attentionOf(session, "r2")).toBe("completed");
     expect(sessionFocus(session)?.unitId).toBe("r2");
+  });
+
+  it("asks the session agent for a Markdown report after the task", async () => {
+    const session = createSession();
+    const inputs: SessionReportInput[] = [];
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "start", text: "fix the build" } }),
+        tools,
+        report: async (input) => {
+          inputs.push(input);
+          return "## Done\n\n- task `r1` finished.";
+        },
+      },
+      task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
+    };
+
+    const result = await runSessionTurn(turnDeps, session, "fix it");
+
+    expect(result.report).toBe("## Done\n\n- task `r1` finished.");
+    expect(inputs[0]?.utterance).toBe("fix it");
+    expect(inputs[0]?.request).toBe("fix the build");
+    expect(inputs[0]?.trace).toContain("outcome: request_addressed");
+    expect(inputs[0]?.trace).toContain("unit r1 (task)");
+    expect(
+      session.journal.some((event) => event.type === "report" && event.text.includes("## Done")),
+    ).toBe(true);
+    expect(sessionOutline(session)).toContain('report: "## Done');
   });
 
   it("answers without starting a task", async () => {

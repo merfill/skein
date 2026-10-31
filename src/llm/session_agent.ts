@@ -13,16 +13,31 @@ import { z, ZodError } from "zod";
 import { loadSettings, type Settings } from "../config/settings";
 import {
   createSessionTools,
+  SESSION_REPORT_PROMPT,
   type SessionAgent,
   type SessionAgentDeps,
   type SessionReply,
+  type SessionReporter,
   type SessionToolCall,
 } from "../session/session_agent";
 import type { ReadFile } from "../session/reading";
+import { PROBE_KINDS, type SessionWorkspace } from "../session/session_workspace";
 import type { SessionOperation } from "../session/types";
 
 const unitSchema = z.object({ id: z.string() });
 const readSchema = z.object({ path: z.string() });
+const grepSchema = z.object({
+  pattern: z.string(),
+  path: z.string().optional(),
+  include: z.string().optional(),
+  from: z.number().int().positive().optional(),
+});
+const listSchema = z.object({
+  path: z.string().optional(),
+  include: z.string().optional(),
+  from: z.number().int().positive().optional(),
+});
+const probeSchema = z.object({ kind: z.enum(PROBE_KINDS).optional() });
 const stateSchema = z.object({ unit: z.string(), id: z.string() });
 const turnsSchema = z.object({
   unit: z.string(),
@@ -61,6 +76,24 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
     schema: readSchema,
   },
   {
+    name: "grep",
+    description:
+      "Search workspace file contents by regular expression (read-only). Use it to locate code — where something is defined or used — without starting a task. `path` scopes to a file or directory; `include` is a glob (e.g. \"**/*.ts\"); `from` pages matches (1-based). Returns `path:line: match` with a `continue from` cursor. This reads the live workspace; `search` searches a past unit's stored bodies instead.",
+    schema: grepSchema,
+  },
+  {
+    name: "list",
+    description:
+      "List workspace files (read-only), scoped by `path` (file or directory) and `include` glob; `from` pages the result. Returns a bounded JSON { root, total, from, returned, files, next }. Use it to see what exists without starting a task.",
+    schema: listSchema,
+  },
+  {
+    name: "probe",
+    description:
+      "Read one recorded toolchain fact (read-only; computed once per session). `kind`: environment (default: all groups), packages, interpreters, build, tests, vcs, tools, material, all. Use it to learn which compilers, package managers, interpreters or test tools exist before proposing a task.",
+    schema: probeSchema,
+  },
+  {
     name: "state",
     description:
       "Return a state's plan: items, the current action, its result id and outcome (L2). Call with { unit, id }; unit is a task id (e.g. r1).",
@@ -75,7 +108,7 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "body",
     description:
-      "Read a stored observation by id, optionally windowed. `id` is an observation id from `unit`/`state`/`turns`/`search` (e.g. obs:reading:1); a unit id or a file path is not an observation id. Call with { unit, id, start?, end? }.",
+      "Return a result in full (or a line window) when its preview was cut off. `unit` is the unit that produced it; `id` is the result id printed with it. `start`/`end` select lines.",
     schema: bodySchema,
   },
   {
@@ -149,18 +182,47 @@ export interface SessionAgentDepsOptions extends SessionModelOptions {
   maxTurns?: number;
   surveyLimit?: number;
   readFile?: ReadFile;
+  workspace?: SessionWorkspace;
+}
+
+// The report is one plain completion: the task trace is already deterministic, so it needs no
+// tools and its output is not a session unit.
+export function modelSessionReporter(
+  model: LanguageModel,
+  options: SessionModelOptions = {},
+): SessionReporter {
+  return async (input) => {
+    const settings = options.settings ?? loadSettings();
+    const result = await generateText({
+      model,
+      system: SESSION_REPORT_PROMPT,
+      prompt: [
+        `Original request:\n${input.utterance}`,
+        `Task request:\n${input.request}`,
+        `Task trace:\n${input.trace}`,
+      ].join("\n\n"),
+      maxRetries: 0,
+      temperature: settings.temperature,
+      maxOutputTokens: settings.maxTokens,
+    });
+    const text = result.text.trim();
+    return text !== "" ? text : undefined;
+  };
 }
 
 export function createSessionAgentDeps(
   model: LanguageModel,
   options: SessionAgentDepsOptions = {},
 ): SessionAgentDeps {
+  const readFile = options.readFile ?? options.workspace?.read;
   return {
     agent: modelSessionAgent(model, options),
-    tools: createSessionTools(options.readFile),
+    tools: createSessionTools(readFile),
+    report: modelSessionReporter(model, options),
     ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
     ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
-    ...(options.readFile !== undefined ? { readFile: options.readFile } : {}),
+    ...(readFile !== undefined ? { readFile } : {}),
+    ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
   };
 }
 
@@ -203,7 +265,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `read`/`unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `start`.",
+                "You must call one of the session tools: a read-only `read`/`grep`/`list`/`probe`/`unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `start`.",
             };
             continue;
           }

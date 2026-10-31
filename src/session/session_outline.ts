@@ -6,7 +6,7 @@ import {
   unitOf,
   unitsInOrder,
 } from "./session";
-import type { SessionOperation, SessionState, Unit } from "./types";
+import type { NoDecisionReason, SessionOperation, SessionState, Unit } from "./types";
 
 // The hierarchical outline of a session (docs/session_concepts.md §5): L0 — the units,
 // L1 — a unit's states. It is a deterministic read of the session and unit journals, not a
@@ -32,42 +32,53 @@ function labelOf(state: State, id: string): string {
 }
 
 interface TraceDecision {
-  operation: SessionOperation;
+  operation?: SessionOperation;
   reason?: string;
   reasoning?: string;
+  // The post-task answer, when the session unit started a task that has since finished.
+  report?: string;
+  // Why an interpretation turn ended without an operation.
+  noDecision?: NoDecisionReason;
 }
 
-// The decision a session unit committed or had refused; one interpretation turn has at most one.
+// The decision a session unit committed or had refused; a report may follow a `start`.
 function decisionOf(session: SessionState, unitId: string): TraceDecision | undefined {
-  let decision: TraceDecision | undefined;
+  const decision: TraceDecision = {};
   for (const event of session.journal) {
     if (event.unitId !== unitId) continue;
     if (event.type === "operation") {
-      decision = {
-        operation: event.operation,
-        ...(event.reasoning !== undefined ? { reasoning: event.reasoning } : {}),
-      };
+      decision.operation = event.operation;
+      if (event.reasoning !== undefined) decision.reasoning = event.reasoning;
+      delete decision.reason;
     } else if (event.type === "refusal") {
-      decision = {
-        operation: event.operation,
-        reason: event.reason,
-        ...(event.reasoning !== undefined ? { reasoning: event.reasoning } : {}),
-      };
+      decision.operation = event.operation;
+      decision.reason = event.reason;
+      if (event.reasoning !== undefined) decision.reasoning = event.reasoning;
+    } else if (event.type === "report") {
+      decision.report = event.text;
+    } else if (event.type === "no_decision") {
+      decision.noDecision = event.reason;
     }
   }
-  return decision;
+  return Object.keys(decision).length > 0 ? decision : undefined;
 }
 
 function decisionText(decision: TraceDecision): string {
-  const { operation, reason, reasoning } = decision;
+  const { operation, reason, reasoning, report, noDecision } = decision;
   const text =
-    operation.kind === "respond"
-      ? `respond: "${short(operation.text)}"`
-      : `start: "${short(operation.text)}"`;
+    operation === undefined
+      ? ""
+      : operation.kind === "respond"
+        ? `respond: "${short(operation.text)}"`
+        : `start: "${short(operation.text)}"`;
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
-  return `${text}${refused}${thought}`;
+  const answer = report !== undefined ? `${text !== "" ? " · " : ""}report: "${short(report)}"` : "";
+  const base = `${text}${refused}${thought}${answer}`;
+  const missing =
+    noDecision !== undefined ? `${base !== "" ? " · " : ""}no decision: ${noDecision}` : "";
+  return `${base}${missing}`;
 }
 
 function requestLabel(state: State, unit: Unit): string {

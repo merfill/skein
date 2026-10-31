@@ -4,9 +4,9 @@
 >
 > Status: **partially implemented**. The session container and the first 4b slice are in place:
 > attention statuses, the L0/L1 outline, the session unit with `respond`/`start`, the memory
-> tools `read`/`unit`/`state`/`turns`/`body`/`search`, reading units, the `runSessionTurn` driver,
-> the REPL and the CLI. The synthetic live scenario passed; session persistence, Ctrl-C, resume
-> strategies, `revise`, pins and `attempt` are the next steps.
+> tools `read`/`grep`/`list`/`probe`/`unit`/`state`/`turns`/`body`/`search`, reading units, the
+> `runSessionTurn` driver, the REPL and the CLI. The synthetic live scenario passed; session
+> persistence, Ctrl-C, resume strategies, `revise`, pins and `attempt` are the next steps.
 >
 > Builds on: `concepts.md` (doxa/logos, projection), `ir_semantics.md` (the IR, operators,
 > invariants), `projection.md` (the tape).
@@ -175,6 +175,15 @@ is currently minimal: `respond` (answer) and `start` (begin a task). Resume, can
 query (`resume`/`cancel`/`revise`/`query`) are deferred. Logos checks admissibility and applies
 the operation.
 
+**Report.** The session agent's Markdown answer after a task it started has finished. It is a
+report on the outcome, not a second interpretation of the utterance, so it is appended to the
+same session unit as the `start`. A report closes nothing and starts nothing.
+
+**No decision.** An interpretation can end without an operation: the model returns neither a
+tool call nor text (`empty_reply`), or the loop reaches its safety cap (`max_turns`). The session
+journal records the reason; the unit stays suspended and L0 shows `no decision: …`. It is not a
+silent drop.
+
 **Request reformulation.** A semantic action of the session agent: based on the utterance and the
 traces, compose the text of the new task so that it carries the needed context. The result is an
 ordinary task-unit request, not a separate kind of knowledge.
@@ -240,8 +249,9 @@ The session agent's tape contains:
 1. the base prompt: who it is and which operations are admissible;
 2. the current user utterance as the root;
 3. L0 — the unit traces in full, including the answer/operation, refusal and decision reasoning;
-4. the results of the tools it requested (L1–L4). Each such result becomes an observation of the
-   session unit and is therefore addressable.
+4. the results of the tools it requested (workspace `read`/`grep`/`list`/`probe`, memory
+   L1–L4). Each such result becomes an observation of the session unit and is therefore
+   addressable.
 
 The traces include the session agent's own past turns: its answers and operations. The dialogue
 is thus reconstructed structurally, without retelling.
@@ -250,7 +260,7 @@ is thus reconstructed structurally, without retelling.
 
 | Operation | Admissible when | Effect |
 |---|---|---|
-| `respond` | always; non-empty text up to 2000 chars | answers the user; task trees unchanged |
+| `respond` | always; non-empty text up to 4000 chars | answers the user in GitHub-flavored Markdown; task trees unchanged |
 | `start` | there is a task text up to 4000 chars | pops the current focus (the unit stays as a trace) and opens a new request with that text |
 
 Exceeding the limit is a logos refusal. The refusal is written to the session journal, shown in
@@ -259,8 +269,25 @@ the L0 trace (`(refused: …)`), and changes no task tree; the interpretation is
 The session agent only **proposes**. Logos checks the preconditions and applies the operation as
 a session event.
 
+After a `start` task finishes, the driver asks the session agent for a **report** and records it
+on the same session unit. The report is the user-facing Markdown answer: what was done, where,
+how it was verified, and any caveats. It uses the task's deterministic trace (states, changed
+files, outcome) and does not open a new session unit. A failed report never hides the task
+result; the terminal stop remains the fact.
+
+An interpretation that produces neither an operation nor a tool call, or that exhausts the
+safety cap, ends with a `no_decision` event (`empty_reply`/`max_turns`). The unit stays
+suspended; L0 and the terminal view show the reason.
+
 `read` is not a session operation but a read-only session-agent tool. It reads a file, creates a
 reading unit and returns a preview plus an address. `start` is not used to read a file.
+
+`grep`, `list` and `probe` are read-only tools too, but they create no unit: their result is an
+ordinary observation of the session unit, bounded and paged with a cursor. `grep`/`list` see the
+live workspace (locate code, see what exists); `probe` returns one recorded toolchain fact by
+`kind` (`environment`, `packages`, `interpreters`, `build`, `tests`, `vcs`, `tools`, `material`,
+`all`) and is computed once per session. `search` remains the memory tool: it searches the stored
+bodies of a past unit, not the workspace.
 
 `resume`, `cancel`, `revise` and `query` are not in the current vocabulary:
 
@@ -314,7 +341,7 @@ projection, not separate "knowledge".
 
 | Level | Address | Shows | Source |
 |---|---|---|---|
-| L0 — session | — (on the tape) | unit traces: id, type, request/utterance, result, status, answer/operation/refusal, decision reasoning | session journal + fold |
+| L0 — session | — (on the tape) | unit traces: id, type, request/utterance, result, status, answer/operation/refusal, report, no decision, decision reasoning | session journal + fold |
 | L1 — unit | `unit` | states: id, island, authored `what`, closed?, `stop.why` | `request.move`, `move.stop` |
 | L2 — state | `state` | plan items: the chosen action, result id, outcome, number of earlier alternatives | `plan.items`, `item.alts` |
 | turns | `turns` | action, result, the task agent's reasoning (bounded) | `action`, `action.result` |
@@ -417,6 +444,10 @@ same tape. Traces do not store a separate "memory state"; they are derived from 
    truncation.
 10. A reading unit is not a task: one `read` action, a preview + full size + address; the full
     body is not copied onto the tape.
+11. A report is appended to the session unit that started the task; it closes nothing and starts
+    nothing. A failed report does not hide the task's terminal stop.
+12. A no-decision turn closes nothing: the unit stays suspended and the journal keeps the reason
+    (`empty_reply` or `max_turns`).
 
 ## 8. Open questions
 
@@ -452,12 +483,21 @@ Implemented: the session container, attention statuses, the L0/L1 outline, and t
 with `respond`/`start`. The session unit's L0 trace includes the answer or the `start` text (the
 reformulation); the task unit's trace shows the reformulation as its `request`.
 
-Session agent tools: `unit` (L1), `state` (L2), `turns` (turns with reasoning), `body` (L4),
-`search` (L4). `attempt` (L3) is deferred; `outline` is unnecessary because L0 is on the tape.
+Session agent tools: `read` (a file, as a reading unit), `grep`/`list` (the live workspace),
+`probe` (toolchain/environment facts), `unit` (L1), `state` (L2), `turns` (turns with reasoning),
+`body` (L4), `search` (L4, over stored bodies). `attempt` (L3) is deferred; `outline` is
+unnecessary because L0 is on the tape. The workspace tools create no unit: their results are
+observations of the session unit.
 
 The `runSessionTurn` driver, the `runRepl` loop and the `src/cli.ts` entry point are implemented;
 the scenario is verified offline with scripted agents. Reformulation and confirmation are set by
 the prompt.
+
+After a task the driver asks the session agent for a `report` (GitHub-flavored Markdown) and
+records it on the same session unit. The terminal view (`src/session/view.ts`) shows the session
+tool calls/results, the task moves/actions/stops, and the Markdown answer or report. Tool results
+are previews with an explicit truncation marker; `--verbose` expands them and shows the provider's
+reasoning in a `Thought:` block (the `reasoning` field, not the ephemeral `thought` text).
 
 Next steps:
 

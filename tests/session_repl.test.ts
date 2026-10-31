@@ -52,7 +52,8 @@ describe("session REPL", () => {
     );
 
     expect(output).toContain("session: respond");
-    expect(output).toContain("answer: hi");
+    expect(output).toContain("answer:");
+    expect(output).toContain("hi");
     expect(output).toContain('session: start("fix it")');
     expect(output).toContain("task r1: request_addressed after 2 turns");
     expect(session.utteranceSeq).toBe(2);

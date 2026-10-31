@@ -4,6 +4,7 @@ import { isTerminalIsland } from "../ir/islands";
 import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import type {
   Attention,
+  NoDecisionReason,
   PendingUtterance,
   Reaction,
   SessionEvent,
@@ -139,6 +140,26 @@ export function recordOperation(
     operation,
     ...(reasoning !== undefined ? { reasoning } : {}),
   });
+}
+
+export function recordReport(
+  session: SessionState,
+  unitId: string,
+  turn: number,
+  text: string,
+): void {
+  unitOf(session, unitId);
+  append(session, { type: "report", unitId, turn, text });
+}
+
+export function recordNoDecision(
+  session: SessionState,
+  unitId: string,
+  turn: number,
+  reason: NoDecisionReason,
+): void {
+  unitOf(session, unitId);
+  append(session, { type: "no_decision", unitId, turn, reason });
 }
 
 export function recordRefusal(

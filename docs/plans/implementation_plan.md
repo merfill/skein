@@ -104,10 +104,11 @@ mechanism is built once and instantiated twice: the RequestObserver and the Sess
   trees — it only proposes operations; logos checks the preconditions. Invariants: nothing is
   deleted or compressed into a summary-truth; no verdicts or stored statuses. Minimal slice —
   `docs/session_concepts.md` §10. **Implemented and verified live** — attention statuses,
-  L0/L1, the session unit and `SessionAgent`, memory tools (`read`/`unit`/`state`/`turns`/
-  `body`/`search`), `respond`/`start`, `runSessionTurn`, the REPL and CLI
-  (`session_agent_plan`, `session_driver_plan`); persistence, Ctrl-C, resume strategies,
-  `revise`, pins, `attempt` and the reading island remain.
+  L0/L1, the session unit and `SessionAgent`, memory/workspace tools (`read`/`grep`/`list`/
+  `probe`/`unit`/`state`/`turns`/`body`/`search`), `respond`/`start`, the post-task `report`,
+  the view layer, `runSessionTurn`, the REPL and CLI (`session_agent_plan`,
+  `session_driver_plan`); persistence, Ctrl-C, resume strategies, `revise`, pins, `attempt`
+  and the reading island remain.
 
 **Why this order.** 4a strikes at the main criterion — controllability: the engine already
 knows the structure and can deterministically notice an event, and the agent unit with a

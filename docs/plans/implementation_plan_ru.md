@@ -104,10 +104,11 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   задач — только предлагает операции; логос проверяет предусловия. Инварианты: ничего не
   удаляем и не сжимаем в резюме-истину; без вердиктов и хранимых статусов. Минимальный
   срез — `docs/session_concepts_ru.md` §10. **Реализовано и проверено live** — статусы
-  внимания, L0/L1, session-unit и `SessionAgent`, инструменты памяти (`read`/`unit`/`state`/
-  `turns`/`body`/`search`), `respond`/`start`, `runSessionTurn`, REPL и CLI
-  (`session_agent_plan`, `session_driver_plan`); сохранение, Ctrl-C, стратегии возобновления,
-  `revise`, пины, `attempt` и reading island остаются.
+  внимания, L0/L1, session-unit и `SessionAgent`, инструменты памяти/workspace (`read`/`grep`/
+  `list`/`probe`/`unit`/`state`/`turns`/`body`/`search`), `respond`/`start`, post-task
+  `report`, view-слой, `runSessionTurn`, REPL и CLI (`session_agent_plan`,
+  `session_driver_plan`); сохранение, Ctrl-C, стратегии возобновления, `revise`, пины,
+  `attempt` и reading island остаются.
 
 **Почему такой порядок.** 4a бьёт прямо в главный критерий — управляемость: движок уже
 знает структуру и может детерминированно заметить событие, а agent-unit с read-only-обзором

@@ -215,7 +215,8 @@ describe("synthetic session: read, memory, reformulation, confirmation", () => {
     expect(requestText(r1?.journal ?? [])).toContain(RULE);
     expect(JSON.stringify(r1?.journal)).not.toContain("Earlier tasks");
 
-    expect(output).toContain(`answer: Правило: ${RULE}`);
+    expect(output).toContain("answer:");
+    expect(output).toContain(`Правило: ${RULE}`);
     expect(output.some((line) => line.includes('session: start("In src/app.txt, apply the rule:'))).toBe(true);
     expect(output.some((line) => line.includes("session: respond"))).toBe(true);
     expect(output.some((line) => line.includes('session: start("Add a test for the applied rule")'))).toBe(true);

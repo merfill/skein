@@ -19,6 +19,7 @@
 | Live-гейт | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | починка багфиксов живой моделью | минуты, деньги |
 | Live-сценарии | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | короткие сценарии на ветки движка | минуты, деньги |
 | Песочница (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | один прогон моделью по песочнице, с разрезом токенов | 1 прогон, деньги |
+| Live сессии | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | диалог, workspace-инструменты, post-task report | минуты, деньги |
 | Синтетический бенч | `npm run bench -- <case>` | один кейс из `skein-plugin` | минуты, деньги |
 | Гейт бенча | `npm run bench:gate -- <runDir>` | прогон против `bench/baseline.json` | секунды |
 | Harbor | `bash bench/harbor/run.sh` | реальные задачи terminal-bench | долго, деньги |
@@ -110,6 +111,22 @@ N раз и собирает все провалы, так что флаки п�
 код/stdout/stderr). Мягкий отчёт печатает ещё и `refuted=` — провалившиеся проверки
 целей, — чтобы был виден прогон, восстановившийся после неверного фикса
 (`tempting-wrong`, `two-step-fix`), а не только итоговый reward.
+
+### Live сессии
+
+Три синтетических скрипта проверяют контейнер сессии живой моделью на фиксированном
+workspace (только с `SKEIN_LIVE=true`):
+
+```sh
+SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts        # read -> task -> report
+SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts  # list/grep/probe, без task
+SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts # research по коду -> Markdown, без task
+```
+
+`session-live` проверяет диалог через `read`, `start` и post-task report;
+`session-tools-live` — workspace-инструменты и `tasks=0`; `session-research-live` задаёт
+общий вопрос по мини-проекту и требует Markdown-ответ со ссылками на код, без task.
+Скрипты печатают каждый session call/result и итоговый view.
 
 ### Live-шаги по операциям
 

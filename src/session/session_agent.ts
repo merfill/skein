@@ -11,9 +11,18 @@ import {
   type ReadFile,
 } from "./reading";
 import {
+  grepText,
+  listText,
+  probeText,
+  PROBE_KINDS,
+  type ProbeKind,
+  type SessionWorkspace,
+} from "./session_workspace";
+import {
   openUnit,
   popUnit,
   pushUnit,
+  recordNoDecision,
   recordRefusal,
   sessionFocus,
   setPending,
@@ -30,7 +39,7 @@ import {
   type TurnRange,
 } from "./session_memory";
 import { sessionOutline, unitOutline } from "./session_outline";
-import type { SessionOperation, SessionState } from "./types";
+import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
   "You are the assistant that handles coding tasks: you talk to the user and prepare work for the coding agent. Above is the history of earlier tasks: what was asked and how it ended.",
@@ -38,8 +47,28 @@ export const SESSION_BASE_PROMPT = [
   "When the user asks for work, reformulate the message into a complete task description for the coding agent: the goal, the relevant facts from earlier work, and the acceptance. The coding agent sees only this description, so it must stand on its own.",
   "Before starting, make sure the task is clear. If the request is ambiguous, or the reformulation depends on earlier work, first state the task as you understand it and ask the user to confirm. Start only after the user agrees, or when the request is already unambiguous.",
   "To read a file, use `read`: it is one action, not a task. It returns a bounded preview and an address; use `body`/`search` on that reading unit for more. Use `start` only for work that changes files or needs several turns.",
-  "Ids: unit ids look like `r1` or `reading:1`; observation ids look like `obs:…`. `read` returns both. When earlier work matters, inspect it with the history tools. Do not edit files or run commands yourself. Stay brief and concrete; do not retell the record. Keep an answer under about 120 words and a task description under about 250 words.",
+  "Answer in GitHub-flavored Markdown: short `##` sections, bullet lists, and `code` for paths and symbols. For a codebase investigation, say what you found, where (`path:line`), and what it means; cite only what the tools returned. No preamble.",
+  "Ids: unit ids look like `r1` or `reading:1`; observation ids look like `obs:…`. `read` returns both. When earlier work matters, inspect it with the history tools. Do not edit files or run commands yourself. Stay brief and concrete; do not retell the record. Keep an answer under about 350 words and a task description under about 250 words.",
 ].join("\n\n");
+
+// The post-task answer: the session agent reports a finished task to the user. It is a report,
+// not a second interpretation, so it does not open a session unit of its own.
+export const SESSION_REPORT_PROMPT = [
+  "You are the assistant that reports a finished coding task to the user. The original request, the task request and the task trace are below.",
+  "Write a concise GitHub-flavored Markdown report: what was done, where, how it was verified, and any caveats. Use only facts from the trace; do not invent results. If the task is still open, say where it stopped.",
+  "Do not start a new task and do not change files. No preamble; keep it under about 250 words.",
+].join("\n\n");
+
+export interface SessionReportInput {
+  // The user utterance that started the turn.
+  utterance: string;
+  // The reformulated task request the task agent received.
+  request: string;
+  // A deterministic trace of the task: states, changed files, outcome.
+  trace: string;
+}
+
+export type SessionReporter = (input: SessionReportInput) => Promise<string | undefined>;
 
 export interface SessionToolCall {
   name: string;
@@ -82,6 +111,10 @@ export interface SessionAgentDeps {
   tools: SessionTools;
   // Read-only file access for the `read` tool; the reading unit keeps the trace.
   readFile?: ReadFile;
+  // Read-only workspace access for `grep`/`list` and the session probe.
+  workspace?: SessionWorkspace;
+  // The post-task report. Absent in tests and replays that do not need an extra model call.
+  report?: SessionReporter;
   maxTurns?: number;
   surveyLimit?: number;
 }
@@ -95,6 +128,7 @@ export interface SessionUnitRunInput {
   maxTurns?: number;
   surveyLimit?: number;
   readFile?: ReadFile;
+  workspace?: SessionWorkspace;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
 }
@@ -104,6 +138,8 @@ export interface SessionUnitRunResult {
   operation?: SessionOperation;
   reasoning?: string;
   turns: number;
+  // Set when the loop ended without an operation (an empty reply or the safety cap).
+  noDecision?: NoDecisionReason;
 }
 
 export interface SessionContext {
@@ -235,13 +271,54 @@ function executeTool(
   name: string,
   args: Record<string, unknown>,
   readFile?: ReadFile,
+  workspace?: SessionWorkspace,
 ): string {
   try {
     if (name === "read") {
       const path = stringArg(args, "path");
       if (path === undefined) return "missing argument: path";
-      if (readFile === undefined) return "tool unavailable: read";
-      return readingResultText(readUnit(session, path, readFile));
+      const reader = readFile ?? workspace?.read;
+      if (reader === undefined) return "tool unavailable: read";
+      return readingResultText(readUnit(session, path, reader));
+    }
+    if (name === "grep") {
+      const pattern = stringArg(args, "pattern");
+      if (pattern === undefined) return "missing argument: pattern";
+      if (workspace === undefined) return "tool unavailable: grep";
+      const path = stringArg(args, "path");
+      const include = stringArg(args, "include");
+      const from = numberArg(args, "from");
+      return grepText(
+        workspace.grep(pattern, {
+          ...(path !== undefined ? { path } : {}),
+          ...(include !== undefined ? { include } : {}),
+        }),
+        from,
+      );
+    }
+    if (name === "list") {
+      if (workspace === undefined) return "tool unavailable: list";
+      const path = stringArg(args, "path");
+      const include = stringArg(args, "include");
+      const from = numberArg(args, "from");
+      return listText(
+        workspace.listFiles({
+          ...(path !== undefined ? { path } : {}),
+          ...(include !== undefined ? { include } : {}),
+        }),
+        {
+          ...(path !== undefined ? { root: path } : {}),
+          ...(from !== undefined ? { from } : {}),
+        },
+      );
+    }
+    if (name === "probe") {
+      if (workspace === undefined) return "tool unavailable: probe";
+      const kind = stringArg(args, "kind");
+      if (kind !== undefined && !PROBE_KINDS.includes(kind as ProbeKind)) {
+        return `unknown probe kind: ${kind}`;
+      }
+      return probeText(workspace.probe(), (kind as ProbeKind | undefined) ?? "environment");
     }
     if (name === "unit") {
       const id = stringArg(args, "id");
@@ -305,7 +382,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
   const journal = [
     ...(input.journal !== undefined ? input.journal : seedSessionUnit(input.utterance)),
   ];
-  const maxTurns = input.maxTurns ?? 4;
+  const maxTurns = input.maxTurns ?? 12;
   const surveyLimit = input.surveyLimit ?? 4;
   const outline = input.outline ?? sessionOutline(input.session);
   let surveys = 0;
@@ -328,7 +405,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       };
     }
     if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
-      return { journal, turns: turn };
+      return { journal, turns: turn, noDecision: "empty_reply" };
     }
     for (const [index, toolCall] of reply.toolCalls.entries()) {
       const callId = toolCall.callId ?? `session:call:${journal.length}`;
@@ -369,6 +446,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
               toolCall.name,
               toolCall.args,
               input.readFile,
+              input.workspace,
             ),
           },
           seq: journal.length,
@@ -378,7 +456,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
     }
   }
 
-  return { journal, turns: maxTurns };
+  return { journal, turns: maxTurns, noDecision: "max_turns" };
 }
 
 export interface RunSessionAgentOptions {
@@ -396,6 +474,7 @@ export interface RunSessionAgentResult {
   applied?: OperationResult;
   reasoning?: string;
   turns: number;
+  noDecision?: NoDecisionReason;
 }
 
 function nextSessionUnitId(session: SessionState): string {
@@ -472,6 +551,7 @@ export async function runSessionAgent(
       tools: deps.tools,
       agent: deps.agent,
       ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
+      ...(deps.workspace !== undefined ? { workspace: deps.workspace } : {}),
       outline,
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(surveyLimit !== undefined ? { surveyLimit } : {}),
@@ -487,6 +567,7 @@ export async function runSessionAgent(
       journal: unit.journal,
       turns: run.turns,
       ...(run.reasoning !== undefined ? { reasoning: run.reasoning } : {}),
+      ...(run.noDecision !== undefined ? { noDecision: run.noDecision } : {}),
     };
     if (run.operation !== undefined) {
       result.operation = run.operation;
@@ -509,6 +590,8 @@ export async function runSessionAgent(
         );
         appendRefusal(unit.journal, run.operation, applied.reason, run.reasoning);
       }
+    } else if (run.noDecision !== undefined) {
+      recordNoDecision(session, unitId, turn, run.noDecision);
     }
     return result;
   } catch (error) {

@@ -9,6 +9,7 @@ import { modelProposer, type Proposer } from "../../src/loop/propose";
 import { runSessionTurn, type SessionTurnDeps } from "../../src/session/driver";
 import { createSession, unitOf } from "../../src/session/session";
 import { sessionOutline } from "../../src/session/session_outline";
+import { createSessionWorkspace } from "../../src/session/session_workspace";
 import { fsWorkspace } from "../../src/tools/workspace";
 import { cleanupWorkspaces, makeWorkspace } from "../ops/helpers";
 
@@ -118,18 +119,10 @@ async function main(): Promise<void> {
     return proposal;
   };
 
-  const readFile = (path: string) => {
-    const text = root.read(path);
-    return {
-      text,
-      version: root.version(path),
-      bytes: text.length,
-      lines: text.split("\n").length,
-    };
-  };
+  const sessionWorkspace = createSessionWorkspace(root);
 
   const deps: SessionTurnDeps = {
-    sessionAgent: createSessionAgentDeps(model, { settings, readFile }),
+    sessionAgent: createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
     task: {
       propose,
       workspace: root,

@@ -146,7 +146,7 @@ budget is `surveyLimit` (default 4) with a "Decide now" message.
 
 | Operation | Admissible when | Effect |
 |---|---|---|
-| `respond` | always; non-empty text up to 2000 chars | records the operation and reasoning; task trees unchanged |
+| `respond` | always; non-empty text up to 4000 chars | records the operation and reasoning; task trees unchanged |
 | `start` | non-empty text up to 4000 chars | pops the current focus, puts the text into `pending`; a future driver opens the new request |
 
 Every applied operation is recorded as an `operation` event on the session journal; the source

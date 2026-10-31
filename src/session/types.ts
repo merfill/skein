@@ -48,6 +48,10 @@ export type SessionOperation =
 // neither closes a state (docs/session_concepts.md §2).
 export type Attention = "active" | "suspended" | "abandoned" | "completed";
 
+// Why an interpretation turn ended without an operation: the model gave nothing, or the loop
+// reached its safety cap. The unit stays suspended; the journal keeps the reason.
+export type NoDecisionReason = "empty_reply" | "max_turns";
+
 export type SessionEvent =
   | { type: "open_unit"; unitId: string; unitType: UnitType; turn: number }
   | { type: "push"; unitId: string; turn: number }
@@ -71,7 +75,11 @@ export type SessionEvent =
       operation: SessionOperation;
       reason: string;
       reasoning?: string;
-    };
+    }
+  // The session agent's answer after a task it started has finished. It is a report, not a
+  // second interpretation of the utterance, so it belongs to the same session unit.
+  | { type: "report"; unitId: string; turn: number; text: string }
+  | { type: "no_decision"; unitId: string; turn: number; reason: NoDecisionReason };
 
 export interface SessionState {
   journal: SessionEvent[];

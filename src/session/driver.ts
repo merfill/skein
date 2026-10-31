@@ -1,12 +1,14 @@
+import type { Event } from "../ir/events";
 import { runAgent, type AgentDeps, type AgentResult } from "../loop/graph";
-import { takePending, unitOf } from "./session";
+import { recordReport, takePending, unitOf } from "./session";
 import {
   runSessionAgent,
   type RunSessionAgentResult,
   type SessionAgentDeps,
 } from "./session_agent";
+import { unitOutline } from "./session_outline";
 import type { OperationResult } from "./operations";
-import type { SessionOperation, SessionState } from "./types";
+import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 // One dialogue turn: interpret the user's line, apply the operation, and, for `start`, run the
 // new task unit. The task sees only the reformulated request; the session (traces, history
@@ -32,6 +34,10 @@ export interface SessionTurnResult {
   reasoning?: string;
   reply?: string;
   task?: { unitId: string; result: AgentResult };
+  // The session agent's Markdown report after the task finished.
+  report?: string;
+  // Why the interpretation ended without an operation.
+  noDecision?: NoDecisionReason;
 }
 
 function nextRequestId(session: SessionState): string {
@@ -48,6 +54,50 @@ function syncUnit(session: SessionState, unitId: string, result: AgentResult): v
     unit.journal.push(...result.events.slice(unit.journal.length));
   }
   unit.turn = result.turns;
+}
+
+function requestText(journal: readonly Event[]): string {
+  for (const event of journal) {
+    if (event.type !== "add_node" || event.node.kind !== "request") continue;
+    const payload = event.node.payload as { text?: unknown } | undefined;
+    return typeof payload?.text === "string" ? payload.text : event.node.label;
+  }
+  return "";
+}
+
+function lastStop(events: readonly Event[]): string | undefined {
+  let stop: string | undefined;
+  for (const event of events) {
+    if (event.type === "add_node" && event.node.kind === "stop") stop = event.node.label;
+  }
+  return stop;
+}
+
+function changedFiles(events: readonly Event[]): string[] {
+  const refs = new Set<string>();
+  for (const event of events) {
+    if (event.type === "mutate") refs.add(event.ref);
+  }
+  return [...refs];
+}
+
+// The deterministic facts the reporter may use: the task's states, changed files, outcome.
+function taskTrace(
+  session: SessionState,
+  unitId: string,
+  events: readonly Event[],
+  result: AgentResult,
+): string {
+  const changed = changedFiles(events);
+  const stop = lastStop(events);
+  const outcome =
+    stop !== undefined ? `${result.stopReason ?? "done"}: ${stop}` : (result.stopReason ?? "still open");
+  return [
+    unitOutline(session, unitId),
+    changed.length > 0 ? `changed files: ${changed.join(", ")}` : "changed files: none",
+    `outcome: ${outcome}`,
+    `turns: ${result.turns}`,
+  ].join("\n");
 }
 
 export async function runSessionTurn(
@@ -74,6 +124,9 @@ export async function runSessionTurn(
       : {}),
     ...(interpretation.applied !== undefined ? { applied: interpretation.applied } : {}),
     ...(interpretation.reasoning !== undefined ? { reasoning: interpretation.reasoning } : {}),
+    ...(interpretation.noDecision !== undefined
+      ? { noDecision: interpretation.noDecision }
+      : {}),
   };
 
   if (interpretation.applied === undefined || !interpretation.applied.ok) {
@@ -97,5 +150,23 @@ export async function runSessionTurn(
   });
   syncUnit(session, unitId, run);
   result.task = { unitId, result: run };
+
+  // The session agent reports the finished task in the user's language. A failed report must
+  // never hide the task result: the caller can still show the terminal stop.
+  if (deps.sessionAgent.report !== undefined) {
+    try {
+      const report = await deps.sessionAgent.report({
+        utterance,
+        request: requestText(unitOf(session, unitId).journal),
+        trace: taskTrace(session, unitId, run.events, run),
+      });
+      if (report !== undefined && report.trim() !== "") {
+        recordReport(session, interpretation.unitId, turn, report);
+        result.report = report;
+      }
+    } catch {
+      // The task result is the fact; the report is a presentation aid.
+    }
+  }
   return result;
 }

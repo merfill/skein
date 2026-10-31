@@ -19,6 +19,7 @@ the fast `bench/turn.ts` probe), see `docs/task_testing.md`.
 | Live gate | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | fixing bug fixtures with a live model | minutes, money |
 | Live scenarios | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | short scenarios per loop branch | minutes, money |
 | Sandbox (live) | `SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts` | one model run over the sandbox, with token breakdown | 1 run, money |
+| Session live | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | dialogue, workspace tools, post-task report | minutes, money |
 | Synthetic bench | `npm run bench -- <case>` | one case from `skein-plugin` | minutes, money |
 | Bench gate | `npm run bench:gate -- <runDir>` | a run against `bench/baseline.json` | seconds |
 | Harbor | `bash bench/harbor/run.sh` | real terminal-bench tasks | long, money |
@@ -109,6 +110,22 @@ and `run.json` records the verdict (`done`, `stopReason`, `turns`, and the exter
 `check` code/stdout/stderr). The soft report also prints `refuted=` — the goal checks that
 failed — so a run that recovered from a wrong fix (`tempting-wrong`, `two-step-fix`) is
 visible, not just the final reward.
+
+### Session live
+
+Three synthetic scripts exercise the session container with a real model and a fixed
+workspace (run only with `SKEIN_LIVE=true`):
+
+```sh
+SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts        # read -> task -> report
+SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts  # list/grep/probe, no task
+SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts # code research -> Markdown, no task
+```
+
+`session-live` checks the dialogue across `read`, `start` and the post-task report;
+`session-tools-live` checks the workspace tools and asserts `tasks=0`; `session-research-live`
+asks a general question about a mini-project and asserts a Markdown answer that cites the
+code, with no task. The scripts print every session call/result and the final view.
 
 ### IR operation steps
 

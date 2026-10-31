@@ -151,8 +151,8 @@ describe("session operations: logos checks and applies", () => {
     const session = taskSession();
     const before = session.journal.length;
     expect(validateOperation(session, { kind: "respond", text: "  " })).toBe("empty text");
-    expect(validateOperation(session, { kind: "respond", text: "x".repeat(2001) })).toBe(
-      "text too long (max 2000)",
+    expect(validateOperation(session, { kind: "respond", text: "x".repeat(4001) })).toBe(
+      "text too long (max 4000)",
     );
     expect(validateOperation(session, { kind: "start", text: "x".repeat(4001) })).toBe(
       "text too long (max 4000)",
@@ -166,5 +166,19 @@ describe("session operations: logos checks and applies", () => {
       }),
     ).toEqual({ ok: false, reason: "unknown source unit: missing" });
     expect(session.journal).toHaveLength(before);
+  });
+
+  it("accepts a Markdown answer up to 4000 chars", () => {
+    const session = taskSession();
+    const answer = [
+      "## Findings",
+      "",
+      "- `src/session/driver.ts`: opens a task unit.",
+      "- `src/session/session.ts`: derives attention from journals.",
+    ].join("\n");
+    expect(validateOperation(session, { kind: "respond", text: answer })).toBeUndefined();
+    expect(
+      validateOperation(session, { kind: "respond", text: "x".repeat(4000) }),
+    ).toBeUndefined();
   });
 });
