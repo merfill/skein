@@ -293,8 +293,8 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   Трасса: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 - **Терминальный UI (2026-10-31, сделано).** `npm run cli` открывает Ink-TUI: живой прогресс
   из loop/session/observer, постоянная панель состояний текущей задачи (диапазоны ходов,
-  токены, действия, полный `stop.why`), read-only overlay истории задач и header с общим
-  расходом токенов. Markdown рендерится стилизованными спанами (`marked` + `lowlight`),
+  токены, действия, полный `stop.why`), read-only overlay истории задач и header с размером текущего
+  контекста и суммарным расходом токенов. Markdown рендерится стилизованными спанами (`marked` + `lowlight`),
   темы светлая/тёмная (`COLORFGBG`, `SKEIN_THEME`). Старый REPL остаётся за `--plain`.
   Детали — `docs/plans/tui_plan_ru.md`; тесты — `tests/tui_*`; офлайн **526 passed,
   40 skipped**.

@@ -66,6 +66,7 @@ export interface HeaderView {
   totalTasks: number;
   totalTurns: number;
   modelCalls: number;
+  contextTokens: number;
   tokensIn: number;
   tokensOut: number;
 }
@@ -275,10 +276,17 @@ export function buildTuiView(
 
   const history = [...byTask.values()].reverse();
   const usage = usageTotals(telemetry);
+  let contextTokens = 0;
+  for (const event of telemetry) {
+    if (event.type !== "model_call") continue;
+    if (event.usage?.inputTokens !== undefined) contextTokens = event.usage.inputTokens;
+    else if (event.context?.approxTokens !== undefined) contextTokens = event.context.approxTokens;
+  }
   const header: HeaderView = {
     totalTasks: tasks.length,
     totalTurns: tasks.reduce((sum, unit) => sum + unit.turn, 0),
     modelCalls: usage.calls,
+    contextTokens,
     tokensIn: usage.inputTokens,
     tokensOut: usage.outputTokens,
   };

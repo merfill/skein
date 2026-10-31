@@ -105,6 +105,7 @@ describe("TUI view model", () => {
     expect(view.header.totalTasks).toBe(1);
     expect(view.header.totalTurns).toBe(6);
     expect(view.header.tokensIn).toBe(300);
+    expect(view.header.contextTokens).toBe(200);
     expect(view.current?.unitId).toBe("r1");
     expect(view.current?.request).toBe("fix the report");
     expect(view.current?.states).toHaveLength(2);
@@ -166,6 +167,7 @@ describe("TUI header usage", () => {
     ]);
     expect(view.header.totalTasks).toBe(0);
     expect(view.header.modelCalls).toBe(1);
+    expect(view.header.contextTokens).toBe(1200);
     expect(view.header.tokensIn).toBe(1200);
     expect(view.header.tokensOut).toBe(300);
   });

@@ -295,8 +295,8 @@ Beyond Tier 0, the current line adds:
   move. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 - **Terminal UI (2026-10-31, done).** `npm run cli` now opens an Ink TUI: live progress from
   the loop/session/observer, a persistent current-task states panel (turn ranges, tokens,
-  actions, full `stop.why`), a read-only task-history overlay, and a session header with
-  overall tokens. Markdown is rendered as styled spans (`marked` + `lowlight`) with
+  actions, full `stop.why`), a read-only task-history overlay, and a session header with the
+  current context size plus cumulative tokens. Markdown is rendered as styled spans (`marked` + `lowlight`) with
   light/dark themes (`COLORFGBG`, `SKEIN_THEME`). The old REPL stays behind `--plain`.
   Details — `docs/plans/tui_plan.md`; tests — `tests/tui_*`; offline **526 passed, 40 skipped**.
 
