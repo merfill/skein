@@ -144,6 +144,34 @@ describe("workspace checkpoint", () => {
     expect(() => checkpoint.restore(`${checkpoint.runId}:99`, ["keep.txt"])).toThrow(/unknown checkpoint/);
   });
 
+  it("restores the whole tree: changed and deleted paths come back, new paths go away", () => {
+    const root = makeRoot();
+    writeFileSync(join(root, "keep.txt"), "original\n");
+    writeFileSync(join(root, "deleted.txt"), "restore me\n");
+    mkdirSync(join(root, "dir"), { recursive: true });
+    writeFileSync(join(root, "dir", "child.txt"), "child\n");
+    const checkpoint = createCheckpoint(root);
+    const token = checkpoint.checkpoint("task-start");
+
+    writeFileSync(join(root, "keep.txt"), "changed\n");
+    rmSync(join(root, "deleted.txt"));
+    rmSync(join(root, "dir"), { recursive: true });
+    writeFileSync(join(root, "created.txt"), "new\n");
+
+    const restored = checkpoint.restoreTree(token);
+    expect(readFileSync(join(root, "keep.txt"), "utf8")).toBe("original\n");
+    expect(readFileSync(join(root, "deleted.txt"), "utf8")).toBe("restore me\n");
+    expect(readFileSync(join(root, "dir", "child.txt"), "utf8")).toBe("child\n");
+    expect(existsSync(join(root, "created.txt"))).toBe(false);
+    expect(restored).toEqual(
+      expect.arrayContaining([
+        { path: "keep.txt", version: expect.any(String) },
+        { path: "deleted.txt", version: expect.any(String) },
+        { path: "created.txt", version: "absent" },
+      ]),
+    );
+  });
+
   it("restores a path through the read-only-surface script", () => {
     const root = makeRoot();
     writeFileSync(join(root, "main.db-wal"), "wal-bytes\n");

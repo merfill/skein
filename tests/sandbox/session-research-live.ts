@@ -129,8 +129,8 @@ async function main(): Promise<void> {
   try {
     console.info(`\n=== user: ${QUESTION}`);
     const result = await runSessionTurn(deps, session, QUESTION);
-    console.info(`  session turns=${result.interpretation.turns}`);
-    printJournal(result.interpretation.journal);
+    console.info(`  session turns=${result.interpretation?.turns ?? 0}`);
+    if (result.interpretation !== undefined) printJournal(result.interpretation.journal);
     console.info(`  operation=${JSON.stringify(result.operation)}`);
     if (result.reply !== undefined) console.info(`  reply:\n${result.reply}`);
     if (result.task !== undefined) console.error(`  unexpected task: ${result.task.unitId}`);

@@ -14,6 +14,8 @@ import type { NoDecisionReason, SessionOperation, SessionState, Unit } from "./t
 
 export interface OutlineOptions {
   limit?: number;
+  // The session agent's L0 is shown in full; other callers (the terminal view) may bound it.
+  truncate?: boolean;
 }
 
 export const DEFAULT_SESSION_OUTLINE_LIMIT = 20;
@@ -143,7 +145,10 @@ export function sessionOutline(session: SessionState, options: OutlineOptions = 
   const units = unitsInOrder(session).filter((unit) => unit.type !== "observer");
   if (units.length === 0) return "no units";
 
-  const limit = Math.max(1, options.limit ?? DEFAULT_SESSION_OUTLINE_LIMIT);
+  const limit =
+    options.truncate === false
+      ? Number.MAX_SAFE_INTEGER
+      : Math.max(1, options.limit ?? DEFAULT_SESSION_OUTLINE_LIMIT);
   const indexOf = (unit: Unit): number => units.indexOf(unit) + 1;
   const lines: string[] = [];
 

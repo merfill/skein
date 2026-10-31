@@ -107,8 +107,9 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   внимания, L0/L1, session-unit и `SessionAgent`, инструменты памяти/workspace (`read`/`grep`/
   `list`/`probe`/`unit`/`state`/`turns`/`body`/`search`), `respond`/`start`, post-task
   `report`, view-слой, `runSessionTurn`, REPL и CLI (`session_agent_plan`,
-  `session_driver_plan`); сохранение, Ctrl-C, стратегии возобновления, `revise`, пины,
-  `attempt` и reading island остаются.
+  `session_driver_plan`); сохранение, возобновление пройденного unit'а, `revise`, пины,
+  `attempt` и reading island остаются. Прерывание — приостановка/возобновление/отмена,
+  снапшот-откат задачи и контракт телеметрии — реализовано (`session_interrupt_plan`).
 
 **Почему такой порядок.** 4a бьёт прямо в главный критерий — управляемость: движок уже
 знает структуру и может детерминированно заметить событие, а agent-unit с read-only-обзором

@@ -138,6 +138,17 @@ describe("session outline: L0 and L1", () => {
     expect(outline).toContain('4. task u4 "task 4" active; open');
   });
 
+  it("shows every unit when truncation is off (the session agent's L0)", () => {
+    const session = createSession();
+    for (let index = 1; index <= 4; index += 1) {
+      openUnit(session, `u${index}`, "task", [request("req", `task ${index}`)]);
+    }
+    const outline = sessionOutline(session, { truncate: false });
+    expect(outline).toContain('1. task u1 "task 1"');
+    expect(outline).toContain('4. task u4 "task 4"');
+    expect(outline).not.toContain("more (before");
+  });
+
   it("shows the focus even when it is outside the last window", () => {
     const session = createSession();
     for (let index = 1; index <= 4; index += 1) {

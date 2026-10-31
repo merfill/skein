@@ -10,7 +10,9 @@ import {
 } from "ai";
 import { z, ZodError } from "zod";
 
+import { isAborted } from "../abort";
 import { loadSettings, type Settings } from "../config/settings";
+import { usageOf } from "../session/telemetry";
 import {
   createSessionTools,
   SESSION_REPORT_PROMPT,
@@ -230,7 +232,7 @@ export function modelSessionAgent(
   model: LanguageModel,
   options: SessionModelOptions = {},
 ): SessionAgent {
-  return async (messages: ModelMessage[]) => {
+  return async (messages: ModelMessage[], callOptions = {}) => {
     const settings = options.settings ?? loadSettings();
     let repair: ModelMessage | undefined;
     for (;;) {
@@ -244,6 +246,7 @@ export function modelSessionAgent(
           maxRetries: 0,
           temperature: settings.temperature,
           maxOutputTokens: settings.maxTokens,
+          ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
         const calls: NativeCall[] = result.toolCalls.map((call) => ({
           toolName: call.toolName,
@@ -259,7 +262,12 @@ export function modelSessionAgent(
           // A plain-text answer is a valid session reply. Ask once for a tool call; if the
           // model insists on text, treat it as `respond` rather than dropping the answer.
           if (result.text.trim() !== "" && repair !== undefined) {
-            return { operation: { kind: "respond", text: result.text }, ...reasoning };
+            return {
+              operation: { kind: "respond", text: result.text },
+              ...reasoning,
+              ...(usageOf(result.usage) !== undefined ? { usage: usageOf(result.usage) } : {}),
+              model: settings.model,
+            };
           }
           if (repair === undefined) {
             repair = {
@@ -269,7 +277,11 @@ export function modelSessionAgent(
             };
             continue;
           }
-          return reasoning;
+          return {
+            ...reasoning,
+            ...(usageOf(result.usage) !== undefined ? { usage: usageOf(result.usage) } : {}),
+            model: settings.model,
+          };
         }
         const reply = toSessionReply(calls);
         return {
@@ -277,8 +289,11 @@ export function modelSessionAgent(
           ...(result.reasoningText !== undefined && result.reasoningText !== ""
             ? { reasoning: result.reasoningText }
             : {}),
+          ...(usageOf(result.usage) !== undefined ? { usage: usageOf(result.usage) } : {}),
+          model: settings.model,
         };
       } catch (error) {
+        if (isAborted(callOptions.signal)) throw error;
         if (
           (NoSuchToolError.isInstance(error) ||
             InvalidToolInputError.isInstance(error) ||

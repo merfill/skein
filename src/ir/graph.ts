@@ -238,6 +238,12 @@ function applyEvent(state: State, event: Event): void {
       state.lastMutationSeq = state.seq;
       break;
     }
+    case "rollback": {
+      // The world was restored outside the tree; the journal keeps the fact. The restored
+      // versions are re-observed by `reconcile` on the next projection.
+      state.lastMutationSeq = state.seq;
+      break;
+    }
     case "record_rejection": {
       state.rejections.push({
         seq: state.seq,

@@ -10,11 +10,14 @@ import {
   readSync,
   readdirSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+
+import { createCheckpoint, type Checkpoint } from "./checkpoint";
 
 export interface GrepMatch {
   path: string;
@@ -83,6 +86,9 @@ export interface WorkspaceOptions {
   // How long `startJob` blocks for a just-started job to finish before handing back a
   // handle (docs/tools.md §4.7). A genuinely long/open-ended command returns `running`.
   jobGraceMs?: number;
+  // Keep a workspace checkpoint store under `.skein/checkpoints` (task rollback). Off by
+  // default so tests and benches do not pay for snapshots unless they ask.
+  checkpoints?: boolean;
 }
 
 // Per-command overrides for `run` (the `bash` tool's `workdir`/`timeout`).
@@ -125,6 +131,10 @@ export interface Workspace {
   // `write`, `apply_patch`, deletions). A plain filesystem workspace does not implement it.
   checkpoint?(label: string): string;
   restoreCheckpoint?(id: string, paths: readonly string[]): { path: string; version: string }[];
+  // A full tree restore for a task rollback on cancel.
+  restoreTree?(id: string): { path: string; version: string }[];
+  // Drop the checkpoint store at a session boundary.
+  clearCheckpoints?(): void;
 }
 
 export const SKIP_DIRS = new Set([
@@ -259,6 +269,12 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
   const base = resolve(root);
   const runTimeoutMs = options.runTimeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
   const jobGraceMs = options.jobGraceMs ?? JOB_START_GRACE_MS;
+  // A new session starts with a clean store; old trees are removed at the session boundary.
+  let checkpoints: Checkpoint | undefined;
+  if (options.checkpoints === true) {
+    rmSync(join(base, ".skein", "checkpoints"), { recursive: true, force: true });
+    checkpoints = createCheckpoint(base);
+  }
 
   const abs = (path: string): string => {
     const full = resolve(base, path);
@@ -588,5 +604,15 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
     pollJob,
     fetchTo,
     applyPatch,
+    ...(checkpoints !== undefined
+      ? {
+          checkpoint: (label: string) => checkpoints.checkpoint(label),
+          restoreCheckpoint: (id: string, paths: readonly string[]) =>
+            checkpoints.restore(id, paths),
+          restoreTree: (id: string) => checkpoints.restoreTree(id),
+          clearCheckpoints: () =>
+            rmSync(join(base, ".skein", "checkpoints"), { recursive: true, force: true }),
+        }
+      : {}),
   };
 }

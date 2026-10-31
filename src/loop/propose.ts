@@ -13,7 +13,10 @@ import {
   turnInstruction,
 } from "./prompt";
 
-export type Proposer = (context: Context) => Promise<Proposals>;
+export type Proposer = (
+  context: Context,
+  options?: { signal?: AbortSignal },
+) => Promise<Proposals>;
 
 export { BASE_PROMPT };
 
@@ -161,6 +164,10 @@ export async function propose(
   });
 }
 
-export function modelProposer(model: LanguageModel): Proposer {
-  return (context) => propose(model, context);
+export function modelProposer(model: LanguageModel, defaults: ToolsOptions = {}): Proposer {
+  return (context, options = {}) =>
+    propose(model, context, {
+      ...defaults,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
 }

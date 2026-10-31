@@ -107,8 +107,8 @@ async function main(): Promise<void> {
     for (const line of DIALOGUE) {
       console.info(`\n=== user: ${line}`);
       const result = await runSessionTurn(deps, session, line);
-      console.info(`  session turns=${result.interpretation.turns}`);
-      printJournal(result.interpretation.journal);
+      console.info(`  session turns=${result.interpretation?.turns ?? 0}`);
+      if (result.interpretation !== undefined) printJournal(result.interpretation.journal);
       console.info(`  operation=${JSON.stringify(result.operation)}`);
       if (result.reasoning !== undefined) console.info(`  reasoning=${short(result.reasoning)}`);
       if (result.reply !== undefined) {

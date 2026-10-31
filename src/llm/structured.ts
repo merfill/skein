@@ -12,7 +12,9 @@ import {
 } from "ai";
 import { z } from "zod";
 
+import { isAborted } from "../abort";
 import { loadSettings, type Settings } from "../config/settings";
+import { usageOf } from "../session/telemetry";
 import { PROVIDER_NAME } from "./client";
 import type { Proposals } from "./schemas";
 import { proposalTools, toProposal } from "./tools";
@@ -46,6 +48,9 @@ export interface StructuredOptions {
   ceiling?: number;
   bumps?: number;
   settings?: Settings;
+  // Cancellation of the in-flight model request (the pause action). An aborted call is
+  // rethrown immediately and is never retried or repaired.
+  signal?: AbortSignal;
   // The completion cap is a per-call option in the AI SDK, but the model carries the
   // reasoning-effort setting; raising the cap (or disabling reasoning) needs a fresh instance.
   rebuild?: (maxTokens: number, options?: { reasoningOff?: boolean }) => LanguageModel;
@@ -62,6 +67,7 @@ interface ModelCall {
   json?: boolean;
   streaming: boolean;
   usageHandlers?: unknown[];
+  abortSignal?: AbortSignal;
 }
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,6 +93,7 @@ async function callModel(call: ModelCall): Promise<ModelReply> {
     maxRetries: 0,
     temperature: call.settings.temperature,
     maxOutputTokens: call.maxTokens ?? call.settings.maxTokens,
+    ...(call.abortSignal !== undefined ? { abortSignal: call.abortSignal } : {}),
     ...(call.tools !== undefined ? { tools: call.tools, stopWhen: stepCountIs(1) } : {}),
     ...(call.json === true
       ? {
@@ -265,8 +272,10 @@ async function callJson(
       json: true,
       streaming,
       usageHandlers: options.usageHandlers,
+      abortSignal: options.signal,
     });
   } catch (error) {
+    if (isAborted(options.signal)) throw error;
     if (isCompletionCap(error)) throw error;
     options.onError?.(error, "json");
     // The retry drops the JSON-mode request body (some OpenAI-compatible backends reject
@@ -280,6 +289,7 @@ async function callJson(
       json: false,
       streaming,
       usageHandlers: options.usageHandlers,
+      abortSignal: options.signal,
     });
   }
   options.onResponse?.(reply);
@@ -326,6 +336,7 @@ export async function invokeStructured<T extends z.ZodTypeAny>(
         await callJson(model, schema, messages, maxTokens, options, settings, settings.streaming, repair),
       ) as z.infer<T>;
     } catch (error) {
+      if (isAborted(options.signal)) throw error;
       if (isCompletionCap(error) && raised < bumps) {
         const base = maxTokens ?? settings.maxTokens;
         const next = nextMaxTokens(base, settings.maxTokens, ceiling);
@@ -371,6 +382,8 @@ export interface ToolsOptions {
   retries?: number;
   // Base backoff between retries, in ms (linear). Tests set 0 to stay fast.
   retryDelayMs?: number;
+  // Cancellation of the in-flight model request; an aborted call is never retried or repaired.
+  signal?: AbortSignal;
   // Raising the completion cap or disabling the provider's reasoning needs a fresh model
   // instance (the settings are baked into `createChatModel`).
   rebuild?: (maxTokens: number, options?: { reasoningOff?: boolean }) => LanguageModel;
@@ -388,6 +401,8 @@ async function invokeWithRetry(
     try {
       return await callModel(call);
     } catch (error) {
+      // A user pause aborted the request: never resent, never reported as a provider error.
+      if (isAborted(call.abortSignal)) throw error;
       // Deterministic for the route/turn: let the caller repair or switch reasoning instead
       // of resending the identical request.
       if (isReasoningContentRequired(error) || isToolCallError(error)) throw error;
@@ -431,12 +446,14 @@ export async function invokeTools(
           tools,
           streaming: settings.streaming,
           usageHandlers: options.usageHandlers,
+          abortSignal: options.signal,
         },
         retries,
         retryDelayMs,
         options.onError,
       );
     } catch (error) {
+      if (isAborted(options.signal)) throw error;
       // A malformed call (unknown tool, args that fail the schema) gets one repair round,
       // as the JSON path does, instead of sinking the whole run as `llm_error`.
       if (isToolCallError(error)) {
@@ -472,6 +489,8 @@ export async function invokeTools(
           ...(settings.reasoningTape && reply.reasoning !== undefined
             ? { reasoning: reply.reasoning }
             : {}),
+          ...(usageOf(reply.usage) !== undefined ? { usage: usageOf(reply.usage) } : {}),
+          model: settings.model,
         };
       } catch (error) {
         if (repair !== undefined) throw error;

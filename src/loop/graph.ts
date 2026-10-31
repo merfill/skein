@@ -1,6 +1,12 @@
 import { END, START, StateGraph } from "@langchain/langgraph";
 
+import { isAborted } from "../abort";
 import { loadSettings } from "../config/settings";
+import {
+  LOCAL_SESSION_ID,
+  contextSnapshot,
+  type TelemetrySink,
+} from "../session/telemetry";
 import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
@@ -11,7 +17,11 @@ import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/trav
 import type { Action, Proposals } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { applyReaction } from "../session/apply";
-import { runRequestObserver, type ObserverDeps } from "../session/observer";
+import {
+  runRequestObserver,
+  type ObserverDeps,
+  type ObserverRunResult,
+} from "../session/observer";
 import {
   createSession,
   observerDepth,
@@ -29,7 +39,7 @@ import { commandOf, executeAction, resolveBody } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
-import type { Proposer } from "./propose";
+import { buildMessages, type Proposer } from "./propose";
 import { LoopState, type LoopStateType } from "./state";
 
 // A move that changes the focus or ends the run: it must be the last call of a batch, so
@@ -82,6 +92,10 @@ export interface AgentDeps {
   // An external actor (a human or a program) may emit events before each turn — the seam
   // for future user intervention. Absent by default.
   arbiter?: (state: State, turn: number) => Event[];
+  // A user pause: the in-flight model call is aborted and the loop stops at a step boundary.
+  signal?: AbortSignal;
+  // Side-channel telemetry; never rendered on the tape.
+  telemetry?: TelemetrySink;
 }
 
 export interface AgentInput {
@@ -96,11 +110,17 @@ export interface AgentInput {
   // Open and push the request unit even when a session is supplied (the session driver uses
   // this to start a new task). Defaults to `session === undefined`.
   open?: boolean;
+  // A user pause; takes precedence over `deps.signal` when both are set.
+  signal?: AbortSignal;
+  // The task-entry checkpoint id, stored on the opened task unit for cancel rollback.
+  snapshot?: string;
 }
 
 export interface AgentResult {
   events: Event[];
   done: boolean;
+  // The run stopped on a user pause; the unit stays open and is not closed.
+  paused?: boolean;
   stopReason: string | null;
   turns: number;
   // The message behind a terminal stop (`llm_error` today), persisted by the caller so a
@@ -138,10 +158,35 @@ export function compileGraph(deps: AgentDeps) {
 
   const proposeNode = async (state: LoopStateType) => {
     const context = state.context ?? project(fold(state.events));
+    const session = state.session ?? undefined;
+    const unitId = session !== undefined ? sessionFocus(session)?.unitId : undefined;
+    const startedAt = Date.now();
     let proposals: Proposals;
     try {
-      proposals = await deps.propose(context);
+      proposals = await deps.propose(
+        context,
+        deps.signal !== undefined ? { signal: deps.signal } : undefined,
+      );
     } catch (error) {
+      if (deps.telemetry !== undefined && unitId !== undefined) {
+        deps.telemetry.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "task",
+          unitId,
+          turn: state.turn,
+          model: "",
+          startedAt,
+          endedAt: Date.now(),
+          status: isAborted(deps.signal) ? "aborted" : "error",
+          context: contextSnapshot(buildMessages(context)),
+        });
+      }
+      // A user pause aborted the model call: it is not a provider failure and is not
+      // retried. Stop without a stopReason; the unit stays open.
+      if (isAborted(deps.signal)) {
+        return { context, proposals: null, done: true, paused: true, recent: [] };
+      }
       // A persistent model failure (e.g. the provider keeps truncating) must not crash
       // the run: stop gracefully with `llm_error` so the partial work is kept. The message
       // is also carried on `stopText` so the trace can record it (not only a transient turn).
@@ -155,6 +200,39 @@ export function compileGraph(deps: AgentDeps) {
         recent: [{ seq: state.turn, kind: "proposal" as const, text }],
       };
     }
+    if (isAborted(deps.signal)) {
+      if (deps.telemetry !== undefined && unitId !== undefined) {
+        deps.telemetry.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "task",
+          unitId,
+          turn: state.turn,
+          model: proposals.model ?? "",
+          startedAt,
+          endedAt: Date.now(),
+          status: "aborted",
+          ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+          context: contextSnapshot(buildMessages(context)),
+        });
+      }
+      return { context, proposals: null, done: true, paused: true, recent: [] };
+    }
+    if (deps.telemetry !== undefined && unitId !== undefined) {
+      deps.telemetry.record({
+        type: "model_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "task",
+        unitId,
+        turn: state.turn,
+        model: proposals.model ?? "",
+        startedAt,
+        endedAt: Date.now(),
+        status: "ok",
+        ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+        context: contextSnapshot(buildMessages(context)),
+      });
+    }
     return {
       context,
       proposals,
@@ -163,6 +241,8 @@ export function compileGraph(deps: AgentDeps) {
   };
 
   const executeNode = (state: LoopStateType) => {
+    // The pause already ended the graph in `propose`; nothing is executed.
+    if (state.paused === true) return {};
     const proposals = state.proposals;
     if (!proposals || proposals.actions.length === 0) {
       return {
@@ -180,7 +260,20 @@ export function compileGraph(deps: AgentDeps) {
     let rejection: LoopStateType["rejection"] = null;
     let done = false;
     let stopReason: string | null = null;
+    let executed = false;
     for (const action of proposals.actions) {
+      // A pause before this action drops the proposal and stops at the last committed step.
+      if (isAborted(deps.signal)) {
+        return {
+          events,
+          recent,
+          turn: executed ? state.turn + 1 : state.turn,
+          done: true,
+          paused: true,
+          stopReason: null,
+          rejection,
+        };
+      }
       const current = fold([...state.events, ...events]);
       const classification = classify(action, current);
       if (!classification.accept) {
@@ -214,13 +307,48 @@ export function compileGraph(deps: AgentDeps) {
           target = fold([...state.events, ...events]);
         }
       }
+      const toolStartedAt = Date.now();
       const outcome = executeAction(action, target, deps.workspace, state.turn, proposals.reasoning);
+      const telemetryUnit =
+        state.session !== null && state.session !== undefined
+          ? sessionFocus(state.session)?.unitId
+          : undefined;
+      if (deps.telemetry !== undefined && telemetryUnit !== undefined) {
+        const mutated = outcome.events
+          .filter((event) => event.type === "mutate")
+          .map((event) => event.ref);
+        deps.telemetry.record({
+          type: "tool_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "task",
+          unitId: telemetryUnit,
+          turn: state.turn,
+          tool: describeTarget(action),
+          startedAt: toolStartedAt,
+          endedAt: Date.now(),
+          status: "ok",
+          ...(mutated.length > 0 ? { mutated } : {}),
+        });
+      }
       events.push(...outcome.events);
       recent.push(outcome.turn);
+      executed = true;
       done = outcome.done;
       if (outcome.stopReason !== null) stopReason = outcome.stopReason;
       if (done) break;
       if (TERMINAL.has(action.operator)) break;
+      // The action finished; a pause requested meanwhile is honoured before the next action.
+      if (isAborted(deps.signal)) {
+        return {
+          events,
+          recent,
+          turn: state.turn + 1,
+          done: true,
+          paused: true,
+          stopReason: null,
+          rejection,
+        };
+      }
     }
     return {
       events,
@@ -265,6 +393,11 @@ export function compileGraph(deps: AgentDeps) {
       }
       unit.turn = state.turn;
 
+      // A pause after the turn is committed stops before the observer and the next turn.
+      if (isAborted(deps.signal)) {
+        return { events, done: true, paused: true, session };
+      }
+
       const move = currentMove(current);
       const island = move !== undefined ? moveIsland(current, move) : undefined;
       const nearClosure = island !== undefined && isTerminalIsland(island);
@@ -284,19 +417,33 @@ export function compileGraph(deps: AgentDeps) {
         const observerUnitId = `observer:${trigger.id}`;
         openUnit(session, observerUnitId, "observer", [], state.turn);
         pushUnit(session, observerUnitId, 0);
-        const observer = await runRequestObserver({
-          trigger,
-          state: current,
-          tools: deps.observer.tools,
-          agent: deps.observer.agent,
-          events: state.events,
-          ...(deps.observer.maxTurns !== undefined ? { maxTurns: deps.observer.maxTurns } : {}),
-          ...(deps.observer.surveyLimit !== undefined
-            ? { surveyLimit: deps.observer.surveyLimit }
-            : {}),
-        });
-        popUnit(session);
+        let observer: ObserverRunResult;
+        try {
+          observer = await runRequestObserver({
+            trigger,
+            state: current,
+            tools: deps.observer.tools,
+            agent: deps.observer.agent,
+            events: state.events,
+            unitId: observerUnitId,
+            ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
+            ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
+            ...(deps.observer.maxTurns !== undefined ? { maxTurns: deps.observer.maxTurns } : {}),
+            ...(deps.observer.surveyLimit !== undefined
+              ? { surveyLimit: deps.observer.surveyLimit }
+              : {}),
+          });
+        } catch (error) {
+          if (sessionFocus(session)?.unitId === observerUnitId) popUnit(session);
+          throw error;
+        }
         unitOf(session, observerUnitId).journal.push(...observer.journal);
+        unitOf(session, observerUnitId).turn = observer.turns;
+        if (observer.paused === true) {
+          // Keep the observer unit on the stack; the driver resumes it before the task.
+          return { events, done: true, paused: true, session };
+        }
+        popUnit(session);
 
         if (observer.decision !== undefined) {
           recordReaction(session, unitId, observer.decision);
@@ -312,6 +459,9 @@ export function compileGraph(deps: AgentDeps) {
             });
             if (applied.ok) events = applied.events;
           }
+        }
+        if (isAborted(deps.signal)) {
+          return { events, done: true, paused: true, session };
         }
       }
     }
@@ -347,7 +497,9 @@ export function compileGraph(deps: AgentDeps) {
 }
 
 export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<AgentResult> {
-  const graph = compileGraph(deps);
+  const runDeps =
+    input.signal !== undefined ? { ...deps, signal: input.signal } : deps;
+  const graph = compileGraph(runDeps);
   const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
   const seed: Event[] = input.seed !== undefined ? [...input.seed] : [
     {
@@ -398,6 +550,9 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   const opens = input.open ?? input.session === undefined;
   if (opens) {
     openUnit(session, input.request.id, "task", seed, input.startTurn ?? 0);
+    if (input.snapshot !== undefined) {
+      unitOf(session, input.request.id).checkpoint = input.snapshot;
+    }
     pushUnit(session, input.request.id, input.startTurn ?? 0);
   }
 
@@ -418,6 +573,7 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   return {
     events: final.events,
     done: final.done,
+    ...(final.paused === true ? { paused: true } : {}),
     stopReason: final.stopReason,
     turns: final.turn,
     stopText: final.stopText,

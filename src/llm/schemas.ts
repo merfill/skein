@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { Usage } from "../session/telemetry";
+
 import { ISLAND_IDS } from "../ir/islands";
 
 export const applySchema = z.discriminatedUnion("tool", [
@@ -215,4 +217,7 @@ export interface Proposals {
   // The model's hidden reasoning for this move, when the provider surfaced it (`structured.ts`).
   // Journalled on the turn's action nodes and shown back on the tape next turn.
   reasoning?: string;
+  // Side-channel telemetry: the provider's usage and model id (docs/plans/session_interrupt_plan §5).
+  usage?: Usage;
+  model?: string;
 }

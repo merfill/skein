@@ -33,6 +33,8 @@ export const LoopState = Annotation.Root({
   proposals: Annotation<Proposals | null>(last<Proposals | null>(null)),
   turn: Annotation<number>(last(0)),
   done: Annotation<boolean>(last(false)),
+  // A user pause ended the graph at a committed step boundary; no stop is produced.
+  paused: Annotation<boolean>(last(false)),
   stopReason: Annotation<string | null>(last<string | null>(null)),
   // The message behind a terminal stop (currently the `llm_error` text), so it can be
   // persisted to the run trace instead of living only in a transient turn (graph §propose).

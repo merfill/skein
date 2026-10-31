@@ -107,8 +107,9 @@ mechanism is built once and instantiated twice: the RequestObserver and the Sess
   L0/L1, the session unit and `SessionAgent`, memory/workspace tools (`read`/`grep`/`list`/
   `probe`/`unit`/`state`/`turns`/`body`/`search`), `respond`/`start`, the post-task `report`,
   the view layer, `runSessionTurn`, the REPL and CLI (`session_agent_plan`,
-  `session_driver_plan`); persistence, Ctrl-C, resume strategies, `revise`, pins, `attempt`
-  and the reading island remain.
+  `session_driver_plan`); persistence, resuming a past unit, `revise`, pins, `attempt` and the
+  reading island remain. Interruption — pause/resume/cancel, task snapshot rollback and the
+  telemetry contract — is implemented (`session_interrupt_plan`).
 
 **Why this order.** 4a strikes at the main criterion — controllability: the engine already
 knows the structure and can deterministically notice an event, and the agent unit with a

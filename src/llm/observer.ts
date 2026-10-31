@@ -10,7 +10,9 @@ import {
 } from "ai";
 import { z, ZodError } from "zod";
 
+import { isAborted } from "../abort";
 import { loadSettings, type Settings } from "../config/settings";
+import { usageOf } from "../session/telemetry";
 import type { Reaction } from "../session/types";
 import {
   defaultObserverTools,
@@ -163,7 +165,7 @@ export function modelRequestObserver(
   model: LanguageModel,
   options: ObserverModelOptions = {},
 ): RequestObserver {
-  return async (messages: ModelMessage[]) => {
+  return async (messages: ModelMessage[], callOptions = {}) => {
     const settings = options.settings ?? loadSettings();
     let repair: ModelMessage | undefined;
     for (;;) {
@@ -177,6 +179,7 @@ export function modelRequestObserver(
           maxRetries: 0,
           temperature: settings.temperature,
           maxOutputTokens: settings.maxTokens,
+          ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
         const calls: NativeCall[] = result.toolCalls.map((call) => ({
           toolName: call.toolName,
@@ -192,8 +195,13 @@ export function modelRequestObserver(
           };
           continue;
         }
-        return toObserverReply(calls);
+        return {
+          ...toObserverReply(calls),
+          ...(usageOf(result.usage) !== undefined ? { usage: usageOf(result.usage) } : {}),
+          model: settings.model,
+        };
       } catch (error) {
+        if (isAborted(callOptions.signal)) throw error;
         if (
           (NoSuchToolError.isInstance(error) ||
             InvalidToolInputError.isInstance(error) ||

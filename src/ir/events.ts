@@ -59,6 +59,13 @@ export const eventSchema = z.discriminatedUnion("type", [
     files: z.array(z.object({ ref: z.string(), version: z.string() })),
     reason: z.string().optional(),
   }),
+  // A task rollback on cancel: the whole working tree was restored from the task-entry
+  // checkpoint. It is a fact of the changed world; it closes nothing.
+  z.object({
+    type: z.literal("rollback"),
+    checkpoint: z.string(),
+    reason: z.string(),
+  }),
   z.object({
     type: z.literal("record_rejection"),
     tool: z.string(),

@@ -1,6 +1,13 @@
 import type { ModelMessage } from "ai";
 
+import { isAborted } from "../abort";
 import type { Event } from "../ir/events";
+import {
+  LOCAL_SESSION_ID,
+  contextSnapshot,
+  type TelemetrySink,
+  type Usage,
+} from "./telemetry";
 import type { State } from "../ir/graph";
 import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
@@ -58,9 +65,15 @@ export interface ObserverToolCall {
 export interface ObserverReply {
   toolCalls?: ObserverToolCall[];
   decision?: Reaction;
+  // Side-channel telemetry (docs/plans/session_interrupt_plan §5).
+  usage?: Usage;
+  model?: string;
 }
 
-export type RequestObserver = (messages: ModelMessage[]) => Promise<ObserverReply>;
+export type RequestObserver = (
+  messages: ModelMessage[],
+  options?: { signal?: AbortSignal },
+) => Promise<ObserverReply>;
 
 export interface ObserverDeps {
   agent: RequestObserver;
@@ -77,14 +90,22 @@ export interface ObserverRunInput {
   agent: RequestObserver;
   journal?: readonly Event[];
   events?: readonly Event[];
+  startTurn?: number;
   maxTurns?: number;
   surveyLimit?: number;
+  // A user pause: the in-flight model call is aborted and the loop returns `paused`.
+  signal?: AbortSignal;
+  // The observer unit id and the telemetry sink (side channel, never rendered).
+  unitId?: string;
+  telemetry?: TelemetrySink;
 }
 
 export interface ObserverRunResult {
   journal: Event[];
   decision?: Reaction;
   turns: number;
+  // The loop stopped on a user pause; the journal is committed and the unit stays open.
+  paused?: boolean;
 }
 
 export interface ObserverContext {
@@ -275,11 +296,19 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
       ? input.journal
       : seedObserverUnit(input.trigger, input.state, input.tools)),
   ];
+  const startTurn = input.startTurn ?? 0;
+  let turns = startTurn;
   const maxTurns = input.maxTurns ?? 6;
   const surveyLimit = input.surveyLimit ?? 3;
-  let surveys = 0;
+  let surveys =
+    input.journal !== undefined
+      ? input.journal.filter(
+          (event) => event.type === "add_node" && event.node.kind === "observation",
+        ).length
+      : 0;
 
-  for (let turn = 1; turn <= maxTurns; turn += 1) {
+  for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
+    if (isAborted(input.signal)) return { journal, turns, paused: true };
     const context = projectObserver(input.trigger, journal);
     const messages = buildObserverMessages(context);
     if (surveys >= surveyLimit) {
@@ -289,12 +318,53 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
           "You have inspected enough. Decide now: call `hint`, `memo`, or `halt`.",
       });
     }
-    const reply = await input.agent(messages);
+    const startedAt = Date.now();
+    let reply: ObserverReply;
+    try {
+      reply = await input.agent(
+        messages,
+        input.signal !== undefined ? { signal: input.signal } : undefined,
+      );
+    } catch (error) {
+      if (input.telemetry !== undefined) {
+        input.telemetry.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "observer",
+          unitId: input.unitId ?? "",
+          turn,
+          model: "",
+          startedAt,
+          endedAt: Date.now(),
+          status: isAborted(input.signal) ? "aborted" : "error",
+          context: contextSnapshot(messages),
+        });
+      }
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      throw error;
+    }
+    turns = turn;
+    if (input.telemetry !== undefined) {
+      input.telemetry.record({
+        type: "model_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "observer",
+        unitId: input.unitId ?? "",
+        turn,
+        model: reply.model ?? "",
+        startedAt,
+        endedAt: Date.now(),
+        status: isAborted(input.signal) ? "aborted" : "ok",
+        ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+        context: contextSnapshot(messages),
+      });
+    }
     if (reply.decision !== undefined) {
-      return { journal, decision: reply.decision, turns: turn };
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      return { journal, decision: reply.decision, turns };
     }
     if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
-      return { journal, turns: turn };
+      return { journal, turns };
     }
     for (const call of reply.toolCalls) {
       const callId = call.callId ?? `observer:call:${journal.length}`;
@@ -309,6 +379,26 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
           seq: journal.length,
         },
       });
+      const toolStartedAt = Date.now();
+      const toolResult = executeTool(
+        input.tools,
+        input.state,
+        call.name,
+        call.args,
+        input.events,
+        input.trigger.turn,
+      );
+      input.telemetry?.record({
+        type: "tool_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "observer",
+        unitId: input.unitId ?? "",
+        turn,
+        tool: call.name,
+        startedAt: toolStartedAt,
+        endedAt: Date.now(),
+        status: "ok",
+      });
       journal.push({
         type: "add_node",
         node: {
@@ -320,19 +410,13 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
             origin: "engine",
             tool: call.name,
             callId,
-            result: executeTool(
-              input.tools,
-              input.state,
-              call.name,
-              call.args,
-              input.events,
-              input.trigger.turn,
-            ),
+            result: toolResult,
           },
           seq: journal.length,
         },
       });
       surveys += 1;
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
     }
   }
 

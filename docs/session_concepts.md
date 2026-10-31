@@ -218,16 +218,29 @@ session
 
 ## 3. Interruption
 
-The user can interrupt execution. Formally this is not an IR operation.
+The user can interrupt execution. Formally this is not an IR operation: it writes no event,
+closes no state, changes no focus and does not fill `pending`.
 
-- If a model reply has not passed the check yet (proposed), an interrupt simply **discards** it.
-  Nothing appears in the journal: no node, no `stop`, no change of the task's status.
-- If a tool is interrupted, what actually happened is recorded honestly: the result, the error,
-  or `killed by <SIG>`; a partial file change is a `mutate`, a fact of the world.
-- Suspension is a **session** status (`suspended`), not an event of the task tree.
-- The user's utterance goes into `pending` and waits to be interpreted.
+- Interruption is a **pause** at a step boundary. A step is one tool call; a model call is a
+  proposal, not a step.
+- A model call in flight is **aborted** (its proposal is not a fact); on resume the model is
+  asked again.
+- A mutating tool already running is allowed to finish; its result, error or `killed by <SIG>`
+  is recorded honestly, and a partial file change is a `mutate`, a fact of the world. The pause
+  is honoured after the step is committed, never inside a mutating tool.
+- The unit stays open and keeps its focus; the committed turns are the resume point. Resume
+  re-enters the loop from the unit's journal (`seed`/`startTurn`), so the projection is rebuilt
+  from the same events and no committed step is re-executed.
+- **Cancel** is the separate command: it rolls back to the session level (the paused units stay
+  in the session as traces), so the next utterance is interpreted by the session agent. It does
+  not close a state either.
+- The same rules hold for the session agent, the task agent and the observer; the user sees
+  "working" or "paused", not which agent is running. The observer is a sub-step of the task's
+  progress: on resume the paused observer is finished first, then the task continues.
+- An interrupted session-unit interpretation commits the turns it completed and stays without
+  an operation; it is `suspended` by derivation, not by an event.
 
-So `stop` remains the only way to close a state: an interrupt closes nothing.
+So `stop` remains the only way to close a state: an interruption or a cancel closes nothing.
 
 ## 4. The session agent
 
@@ -503,5 +516,7 @@ Next steps:
 
 1. The live `read` scenario passed: reading is one turn, `body` by `obs:reading:1`, then `start`
    with the reformulation; the task created `Makefile`/a test and `make test` passed.
-2. Session persistence across restarts and Ctrl-C handling.
-3. Resume strategies, `revise`, pins, `attempt` and the reading island — separate slices.
+2. Interruption is implemented: pause/resume/cancel at all three levels, the task-entry snapshot
+   rollback, and the telemetry contract (`plans/session_interrupt_plan`).
+3. Session persistence across restarts — a separate slice.
+4. Resuming a past unit, `revise`, pins, `attempt` and the reading island — separate slices.

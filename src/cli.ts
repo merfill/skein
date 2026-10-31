@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline";
+import { createInterface, emitKeypressEvents } from "node:readline";
 
 import { loadSettings } from "./config/settings";
 import { createChatModel } from "./llm/client";
@@ -9,6 +9,7 @@ import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
 import { createSessionWorkspace } from "./session/session_workspace";
+import { memoryTelemetry } from "./session/telemetry";
 import type { SessionTurnDeps } from "./session/driver";
 import { fsWorkspace } from "./tools/workspace";
 
@@ -54,7 +55,10 @@ async function main(): Promise<void> {
     ...settings,
     ...(args.model !== undefined ? { model: args.model } : {}),
   });
-  const workspace = fsWorkspace(args.dir, { runTimeoutMs: settings.runTimeoutMs });
+  const workspace = fsWorkspace(args.dir, {
+    runTimeoutMs: settings.runTimeoutMs,
+    checkpoints: true,
+  });
   const basePropose = modelProposer(model);
   let taskTurn = 0;
   const propose: Proposer = async (context) => {
@@ -68,22 +72,35 @@ async function main(): Promise<void> {
   };
 
   const sessionWorkspace = createSessionWorkspace(workspace);
+  const telemetry = memoryTelemetry();
 
   const deps: SessionTurnDeps = {
-    sessionAgent: createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
+    sessionAgent: {
+      ...createSessionAgentDeps(model, { settings, workspace: sessionWorkspace }),
+      telemetry: telemetry.sink,
+    },
     task: {
       propose,
       workspace,
       maxTurns: args.maxTurns ?? settings.maxTurns,
       probe: probeSession,
+      telemetry: telemetry.sink,
       ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
     },
+    telemetry: telemetry.sink,
   };
 
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     terminal: process.stdin.isTTY === true,
+  });
+  emitKeypressEvents(process.stdin);
+  rl.on("keypress", (_text, key) => {
+    // Esc pauses; Ctrl-C is handled by the SIGINT handler below.
+    if (key?.name === "escape" && active !== undefined && !active.signal.aborted) {
+      active.abort();
+    }
   });
   async function* lines(): AsyncGenerator<string> {
     for await (const line of rl) {
@@ -94,15 +111,47 @@ async function main(): Promise<void> {
 
   process.stdout.write(`workspace: ${workspace.root}\n`);
   rl.prompt();
+
+  let active: AbortController | undefined;
+  let paused = false;
+  const onSigint = (): void => {
+    if (active !== undefined && !active.signal.aborted) {
+      active.abort();
+      return;
+    }
+    if (paused) {
+      rl.close();
+      return;
+    }
+    process.stdout.write("\nenter a message (or exit)\n");
+    rl.prompt();
+  };
+  process.on("SIGINT", onSigint);
+
   try {
     await runRepl(
       lines(),
       deps,
       (line) => process.stdout.write(`${line}\n`),
       undefined,
-      { ...(args.verbose === true ? { verbose: true } : {}) },
+      {
+        ...(args.verbose === true ? { verbose: true } : {}),
+        createSignal: () => {
+          const controller = new AbortController();
+          active = controller;
+          return controller.signal;
+        },
+        onTurnEnd: () => {
+          active = undefined;
+        },
+        onPauseChanged: (value) => {
+          paused = value;
+        },
+      },
     );
   } finally {
+    workspace.clearCheckpoints?.();
+    process.off("SIGINT", onSigint);
     rl.close();
   }
 }

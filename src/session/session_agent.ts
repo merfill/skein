@@ -1,5 +1,13 @@
 import type { ModelMessage } from "ai";
 
+import { isAborted } from "../abort";
+import {
+  LOCAL_SESSION_ID,
+  contextSnapshot,
+  type TelemetrySink,
+  type Usage,
+} from "./telemetry";
+
 import type { Event } from "../ir/events";
 import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
@@ -81,9 +89,15 @@ export interface SessionReply {
   operation?: SessionOperation;
   // The session agent's hidden reasoning for this reply, shown back on its tape.
   reasoning?: string;
+  // Side-channel telemetry (docs/plans/session_interrupt_plan §5).
+  usage?: Usage;
+  model?: string;
 }
 
-export type SessionAgent = (messages: ModelMessage[]) => Promise<SessionReply>;
+export type SessionAgent = (
+  messages: ModelMessage[],
+  options?: { signal?: AbortSignal },
+) => Promise<SessionReply>;
 
 export interface SessionTools {
   unit(session: SessionState, id: string): string;
@@ -109,6 +123,8 @@ export const defaultSessionTools: SessionTools = createSessionTools();
 export interface SessionAgentDeps {
   agent: SessionAgent;
   tools: SessionTools;
+  // Side-channel telemetry; never rendered on the tape.
+  telemetry?: TelemetrySink;
   // Read-only file access for the `read` tool; the reading unit keeps the trace.
   readFile?: ReadFile;
   // Read-only workspace access for `grep`/`list` and the session probe.
@@ -125,12 +141,17 @@ export interface SessionUnitRunInput {
   tools: SessionTools;
   agent: SessionAgent;
   journal?: readonly Event[];
+  startTurn?: number;
   maxTurns?: number;
   surveyLimit?: number;
   readFile?: ReadFile;
   workspace?: SessionWorkspace;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
+  // A user pause: the in-flight model call is aborted and the loop returns `paused`.
+  signal?: AbortSignal;
+  // Side-channel telemetry; never rendered on the tape.
+  telemetry?: TelemetrySink;
 }
 
 export interface SessionUnitRunResult {
@@ -140,6 +161,8 @@ export interface SessionUnitRunResult {
   turns: number;
   // Set when the loop ended without an operation (an empty reply or the safety cap).
   noDecision?: NoDecisionReason;
+  // The loop stopped on a user pause; the journal is committed and the unit stays open.
+  paused?: boolean;
 }
 
 export interface SessionContext {
@@ -382,12 +405,20 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
   const journal = [
     ...(input.journal !== undefined ? input.journal : seedSessionUnit(input.utterance)),
   ];
+  const startTurn = input.startTurn ?? 0;
+  let turns = startTurn;
   const maxTurns = input.maxTurns ?? 12;
   const surveyLimit = input.surveyLimit ?? 4;
-  const outline = input.outline ?? sessionOutline(input.session);
-  let surveys = 0;
+  const outline = input.outline ?? sessionOutline(input.session, { truncate: false });
+  let surveys =
+    input.journal !== undefined
+      ? input.journal.filter(
+          (event) => event.type === "add_node" && event.node.kind === "observation",
+        ).length
+      : 0;
 
-  for (let turn = 1; turn <= maxTurns; turn += 1) {
+  for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
+    if (isAborted(input.signal)) return { journal, turns, paused: true };
     const messages = buildSessionMessages(projectSessionUnit(journal, outline));
     if (surveys >= surveyLimit) {
       messages.push({
@@ -395,17 +426,58 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         content: "You have inspected enough. Decide now: call `respond` or `start`.",
       });
     }
-    const reply = await input.agent(messages);
+    const startedAt = Date.now();
+    let reply: SessionReply;
+    try {
+      reply = await input.agent(
+        messages,
+        input.signal !== undefined ? { signal: input.signal } : undefined,
+      );
+    } catch (error) {
+      if (input.telemetry !== undefined) {
+        input.telemetry.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "session",
+          unitId: sessionFocus(input.session)?.unitId ?? "",
+          turn,
+          model: "",
+          startedAt,
+          endedAt: Date.now(),
+          status: isAborted(input.signal) ? "aborted" : "error",
+          context: contextSnapshot(messages),
+        });
+      }
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
+      throw error;
+    }
+    turns = turn;
+    if (input.telemetry !== undefined) {
+      input.telemetry.record({
+        type: "model_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "session",
+        unitId: sessionFocus(input.session)?.unitId ?? "",
+        turn,
+        model: reply.model ?? "",
+        startedAt,
+        endedAt: Date.now(),
+        status: isAborted(input.signal) ? "aborted" : "ok",
+        ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+        context: contextSnapshot(messages),
+      });
+    }
     if (reply.operation !== undefined) {
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
       return {
         journal,
         operation: reply.operation,
         ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
-        turns: turn,
+        turns,
       };
     }
     if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
-      return { journal, turns: turn, noDecision: "empty_reply" };
+      return { journal, turns, noDecision: "empty_reply" };
     }
     for (const [index, toolCall] of reply.toolCalls.entries()) {
       const callId = toolCall.callId ?? `session:call:${journal.length}`;
@@ -429,6 +501,26 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
           seq: journal.length,
         },
       });
+      const toolStartedAt = Date.now();
+      const toolResult = executeTool(
+        input.tools,
+        input.session,
+        toolCall.name,
+        toolCall.args,
+        input.readFile,
+        input.workspace,
+      );
+      input.telemetry?.record({
+        type: "tool_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "session",
+        unitId: sessionFocus(input.session)?.unitId ?? "",
+        turn,
+        tool: toolCall.name,
+        startedAt: toolStartedAt,
+        endedAt: Date.now(),
+        status: "ok",
+      });
       journal.push({
         type: "add_node",
         node: {
@@ -440,19 +532,13 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
             origin: "engine",
             tool: toolCall.name,
             callId,
-            result: executeTool(
-              input.tools,
-              input.session,
-              toolCall.name,
-              toolCall.args,
-              input.readFile,
-              input.workspace,
-            ),
+            result: toolResult,
           },
           seq: journal.length,
         },
       });
       surveys += 1;
+      if (isAborted(input.signal)) return { journal, turns, paused: true };
     }
   }
 
@@ -464,6 +550,10 @@ export interface RunSessionAgentOptions {
   unitId?: string;
   maxTurns?: number;
   surveyLimit?: number;
+  startTurn?: number;
+  // The outline captured when the unit first opened; required to rebuild the same prefix.
+  outline?: string;
+  signal?: AbortSignal;
 }
 
 export interface RunSessionAgentResult {
@@ -475,6 +565,10 @@ export interface RunSessionAgentResult {
   reasoning?: string;
   turns: number;
   noDecision?: NoDecisionReason;
+  // The loop stopped on a user pause; the unit is committed, open and focused.
+  paused?: boolean;
+  // The L0 outline used for this interpretation, so a resume can reuse the same prefix.
+  outline?: string;
 }
 
 function nextSessionUnitId(session: SessionState): string {
@@ -534,22 +628,36 @@ export async function runSessionAgent(
   options: RunSessionAgentOptions = {},
 ): Promise<RunSessionAgentResult> {
   const turn = options.turn ?? 0;
-  setPending(session, utterance);
-  const pending = takePending(session);
   const unitId = options.unitId ?? nextSessionUnitId(session);
+  const resuming = options.unitId !== undefined && session.units.has(unitId);
+  let utteranceText = utterance;
+  if (!resuming) {
+    setPending(session, utterance);
+    const pending = takePending(session);
+    utteranceText = pending?.text ?? utterance;
+  }
   // L0 without the current interpretation turn: it is the root of this unit, not a past trace.
-  const outline = sessionOutline(session);
-  openUnit(session, unitId, "session", [], turn);
-  pushUnit(session, unitId, turn);
+  const outline = options.outline ?? sessionOutline(session, { truncate: false });
+  if (!resuming) {
+    openUnit(session, unitId, "session", [], turn);
+    pushUnit(session, unitId, turn);
+  } else if (sessionFocus(session)?.unitId !== unitId) {
+    pushUnit(session, unitId, turn);
+  }
+  const seed = resuming ? unitOf(session, unitId).journal : undefined;
 
   try {
     const maxTurns = options.maxTurns ?? deps.maxTurns;
     const surveyLimit = options.surveyLimit ?? deps.surveyLimit;
     const run = await runSessionUnit({
-      utterance: pending?.text ?? utterance,
+      utterance: utteranceText,
       session,
       tools: deps.tools,
       agent: deps.agent,
+      ...(seed !== undefined ? { journal: seed } : {}),
+      ...(options.startTurn !== undefined ? { startTurn: options.startTurn } : {}),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
       ...(deps.readFile !== undefined ? { readFile: deps.readFile } : {}),
       ...(deps.workspace !== undefined ? { workspace: deps.workspace } : {}),
       outline,
@@ -557,15 +665,28 @@ export async function runSessionAgent(
       ...(surveyLimit !== undefined ? { surveyLimit } : {}),
     });
     const unit = unitOf(session, unitId);
-    unit.journal.push(...run.journal);
+    unit.journal.push(...run.journal.slice(unit.journal.length));
     unit.turn = turn;
-    popUnit(session);
 
+    if (run.paused === true) {
+      return {
+        session,
+        unitId,
+        journal: unit.journal,
+        turns: run.turns,
+        outline,
+        paused: true,
+        ...(run.reasoning !== undefined ? { reasoning: run.reasoning } : {}),
+      };
+    }
+
+    popUnit(session);
     const result: RunSessionAgentResult = {
       session,
       unitId,
       journal: unit.journal,
       turns: run.turns,
+      outline,
       ...(run.reasoning !== undefined ? { reasoning: run.reasoning } : {}),
       ...(run.noDecision !== undefined ? { noDecision: run.noDecision } : {}),
     };

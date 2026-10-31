@@ -7,6 +7,8 @@ export interface Unit {
   type: UnitType;
   journal: Event[];
   turn: number;
+  // The task-entry checkpoint id (task units only). Engine scaffolding, not the projection.
+  checkpoint?: string;
 }
 
 export interface UnitRef {

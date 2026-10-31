@@ -78,6 +78,10 @@ and Russian, the Russian version in a file with the `_ru` suffix.
   [RU](plans/session_driver_plan_ru.md) — Tier 4b: the terminal REPL, its driver,
   `respond`/`start`, task isolation, request reformulation and the utterance ordinal
   (implemented; verified offline and with the live synthetic session).
+- [plans/session_interrupt_plan.md](plans/session_interrupt_plan.md) ·
+  [RU](plans/session_interrupt_plan_ru.md) — Tier 4c: pause/resume/cancel uniformly for the
+  session agent, the task agent and the observer, plus the telemetry contract for the future
+  status panel (implemented; verified offline).
 - [plans/ai_sdk_migration_plan.md](plans/ai_sdk_migration_plan.md) ·
   [RU](plans/ai_sdk_migration_plan_ru.md) — migrate the model layer to the Vercel AI SDK,
   keeping LangGraph and the IR (proposed).

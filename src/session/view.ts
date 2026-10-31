@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 import { observationText } from "../ir/project";
-import type { SessionTurnResult } from "./driver";
+import type { CancelResult, SessionTurnResult } from "./driver";
 
 // The terminal view is a deterministic projection of a driver turn, not a second store: the
 // session-unit journal supplies the tool calls/results, the task events supply the work, and
@@ -102,7 +102,8 @@ function taskLines(events: readonly Event[], options: RenderOptions): string[] {
 }
 
 export function renderTurn(result: SessionTurnResult, options: RenderOptions = {}): string[] {
-  const lines = sessionLines(result.interpretation.journal, options);
+  const lines =
+    result.interpretation !== undefined ? sessionLines(result.interpretation.journal, options) : [];
 
   const operation = result.operation;
   if (operation === undefined) {
@@ -140,5 +141,14 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
   if (result.report !== undefined) {
     lines.push("report:", result.report);
   }
+  if (result.paused !== undefined) {
+    lines.push("paused: [r]esume  [c]ancel  [q]uit");
+  }
+  return lines;
+}
+
+export function renderCancel(result: CancelResult): string[] {
+  const lines = ["cancelled"];
+  if (result.warning !== undefined) lines.push(`warning: ${result.warning}`);
   return lines;
 }

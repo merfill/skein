@@ -1,138 +1,201 @@
-# Handoff — RequestObserver (Tier 4a)
+# Handoff — Tier 4: RequestObserver и сессия
 
-> Единый handoff вместо старых файлов. Не добавлять RU-зеркало и ссылку в README.
-> Это рабочий документ передачи; код 4a реализован и проверен.
+> Рабочий документ передачи. Английского зеркала нет.
+> Отправная точка — `docs/session_concepts.md`/`_ru.md` и планы
+> `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
 ## Статус
 
-- **4a реализован.** Детерминированные триггеры, минимальная сессия, `RequestObserver`,
-  `hint`/`memo`/`halt`, инструменты обзора.
-- **4b не реализован:** `SessionAgent`, операции сессии и статусы внимания остаются
-  концепцией.
-- Typecheck и офлайн-набор: **447 passed, 40 skipped**.
-- Синтетические live-сценарии `entry`/`long` прошли.
-- Реальные live-прогоны трёх задач прошли; `state_cycle` на реальной задаче пока не
-  подтверждён (см. ниже).
-- Изменения готовы к коммиту; этот handoff входит в коммит.
+- **4a реализован:** триггеры, минимальная сессия, `RequestObserver`, `hint`/`memo`/`halt`,
+  инструменты обзора.
+- **4b реализован:** статусы внимания, L0/L1, session-unit, операции `respond`/`start`,
+  инструменты `read`/`unit`/`state`/`turns`/`body`/`search`, reading-unit, драйвер
+  `runSessionTurn`, REPL, CLI.
+- **4c реализован:** прерывание как пауза на границе шага, возобновление с журнала и отмена с
+  полным откатом задачи из снапшота входа. Единообразно для агента сессии, задачи и
+  наблюдателя; `AbortSignal` протянут через модельные адаптеры, обрыв модели не ретраится и не
+  становится `llm_error`. В REPL: `Esc` — пауза, `Ctrl-C` — меню с `c`, повторный `Ctrl-C` на
+  паузе — выход; меню `r`/`c`/`q`. Отмена задачи пишет `rollback` в журнал и предупреждает,
+  если снапшота нет.
+- **Снапшоты:** хранилище перенесено из `tests/sandbox/checkpoint.ts` в
+  `src/tools/checkpoint.ts` без переписывания (hardlink-клон, дельта, кэш сигнатур), добавлен
+  `restoreTree`; `fsWorkspace` получил опцию `checkpoints`, CLI чистит хранилище на границах
+  сессии.
+- **L0:** в агенте сессии больше не усекается (`truncate: false`); строки append-only;
+  у session-unit фиксируются запрос, переформулировка и возврат.
+- **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
+  pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
+  в in-memory sink. Панели/UI нет.
+- Typecheck чистый; офлайн-набор: **517 passed, 40 skipped**. Live/bench для 4c не запускались.
+- **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
+  `respond`; затем `start` с переформулировкой, включающей правило; задача создала
+  `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.
+- **Инструменты workspace:** `grep`/`list`/`probe` добавлены как tool-call'ы (не unit'ы);
+  результат — наблюдение session-unit'а. `probe` кэшируется на сессию.
+- **Live-синта `session-tools-live` пройдена:** `list` (5 файлов), `grep add`, `probe
+  interpreters`; все ходы — `respond`; `tasks=0, replies=4`.
+- **Live-синта `session-research-live` пройдена:** общий вопрос по коду → Markdown с разделами
+  и путями; `tasks=0, replies=1, tools={grep:2,read:4,list:1}`.
+- **Post-task report:** после `start` драйвер просит агента сессии написать Markdown-report;
+  событие `report` пишется в тот же session-unit. Report — отдельная plain-комплита по
+  детерминированному следу задачи, без инструментов.
+- **View-слой:** `src/session/view.ts` показывает calls/results сессии, ходы задачи, answer и
+  report. Результаты инструментов — preview 600 символов с `… [truncated; use --verbose]`;
+  `--verbose` раскрывает полный результат и reasoning в блоке `Thought:` (как collapsed
+  «Thought» в opencode).
 
 ## Что реализовано
 
-### Сессия и стек
+### 4a
 
-- `src/session/types.ts`, `src/session/session.ts`:
-  - журнал сессии, unit'ы, стек, `pending`, `focus` как вершина стека;
-  - типы unit'ов: `task | observer | session`;
-  - `observerDepth`, push/pop, append-only журнал.
-- `src/session/triggers.ts`:
-  - `budget`: остаток ≤ `K`, только для открытого состояния;
-  - `state_cycle`: `N`-й вход в тот же остров через `move`;
-  - `state_long`: больше `M` ходов в состоянии;
-  - дедуп по anchor/эпохе; счётчики — производные поля `State`.
-- `src/ir/graph.ts`: `stateEntries` считается в `fold`; `move.turn` пишется при входе.
+- `src/session/{types,session,triggers,observer,outline,apply}.ts`.
+- Триггеры `budget`/`state_cycle`/`state_long`; observer-unit; `hint`/`memo`/`halt`.
+- `SKEIN_OBSERVER`, пороги в `src/config/settings.ts`.
 
-### Grace на `max_turns`
+### 4b — память и сессия
 
-- Острова `end|patch|recovery|construction`: один раз `+G` ходов.
-- Жёсткий потолок `max_turns + G`; остальные состояния завершаются сразу.
-- Отдельного observer-триггера на самом `max_turns` нет.
+- `src/session/types.ts`: unit-типы `task|observer|session|reading`; статусы внимания
+  (`active|suspended|abandoned|completed`), `abandoned` зарезервирован и не порождается.
+- `src/session/session.ts`: журнал сессии append-only, стек, `pending`, `utteranceSeq`,
+  `attentionOf`; события `suspend|resume|abandon|operation|refusal`.
+- `src/session/session_outline.ts`: L0/L1; L0 включает ответ/операцию, отказ и reasoning;
+  reading-unit показывает полный размер.
+- `src/session/session_memory.ts`: `state` (L2), `turns` (ходы + reasoning), `body` (L4),
+  `search` (L4); `body` отклоняет не-наблюдения.
+- `src/session/reading.ts`: reading-unit, `read(path)`, preview + полный размер
+  (`bytes`/`lines`) + адрес; полное тело читается по path/version.
+- `src/session/session_agent.ts` + `src/llm/session_agent.ts`: bounded loop (12 ходов),
+  reasoning, `surveyLimit`, текстовый ответ без tool call превращается в `respond`; ответы —
+  GitHub-flavored Markdown до ~350 слов.
+- `src/session/operations.ts`: `respond` (≤4000, Markdown) и `start` (≤4000); отказ пишется в журнал
+  сессии (`refusal`) и виден в L0.
+- `src/session/driver.ts`: `runSessionTurn` — `respond` или `start`; task изолирован, контекст
+  передаётся только текстом переформулировки.
+- `src/session/repl.ts`, `src/cli.ts`, `npm run cli`.
+- `src/loop/graph.ts`: `AgentInput.open` для открытия task-unit в существующей сессии.
+- `src/session/session_workspace.ts`: read-only `SessionWorkspace` (`read`/`version`/`listFiles`/
+  `grep`/`probe`) и форматтеры с окном/курсором. Инструменты `grep`/`list`/`probe` в
+  session-agent; описания — только в tool definitions, не в промпте.
+- `src/session/{types,session,session_outline}.ts`: событие `report` в журнале сессии и его
+  след в L0.
+- `src/session/driver.ts` + `src/llm/session_agent.ts`: post-task `report` (`SESSION_REPORT_PROMPT`,
+  `modelSessionReporter`); trace = состояния задачи, изменённые файлы, исход, число ходов.
+- `src/session/view.ts`: терминальный рендер `renderTurn` (calls/results, task moves/actions,
+  answer/report, `--verbose` для reasoning); `src/session/repl.ts` реэкспортирует.
 
-### Observer
+### 4c — прерывание, откат и телеметрия
 
-- `src/session/observer.ts`: `runRequestObserver`, seed `outline`/`state`, bounded loop,
-  survey-лимит, decision.
-- `src/llm/observer.ts`: AI SDK adapter, zod-схемы инструментов, `createObserverDeps`.
-- Инструменты: `outline`, `state`, `turns`, `attempt`, `body`, `rendered`.
-- Реакции: `hint` (state-scoped), `memo` (unit-scoped), `halt`.
-- Hint/memo пишутся в журнал задачи как `system`, hint привязан к `move`; `applyReaction`
-  проверяет evidence и длину (≤ 800 символов).
-- `surveyLimit` (по умолчанию 3): после лимита observer получает «Decide now».
-- Вложенность: инфраструктура `ObserverDeps.maxDepth`/`observerDepth`; реальные вложенные
-  триггеры — будущее.
-- `SKEIN_OBSERVER=false` отключает observer в live/bench; по умолчанию включён.
+- `src/abort.ts`: `isAborted`.
+- `src/llm/{structured,session_agent,observer}.ts`: `abortSignal`; `usage`/`model` в
+  `Proposals`/`SessionReply`/`ObserverReply`; обрыв не ретраится.
+- `src/loop/{graph,state,propose}.ts`: `paused` в состоянии/результате, проверки на границе
+  шага, `telemetry` в `AgentDeps`.
+- `src/session/{session_agent,observer}.ts`: `signal`, `startTurn`, `paused`, `telemetry`.
+- `src/session/driver.ts`: `paused` в `SessionTurnResult`, `resumeTurn`, `cancelTurn`, полный
+  откат по снапшоту, событие `rollback`, запись pause/resume/cancel в телеметрию.
+- `src/session/repl.ts`/`src/cli.ts`: режим паузы, меню, `Esc`/`Ctrl-C`, очистка снапшотов.
+- `src/tools/{checkpoint,workspace}.ts`: `restoreTree`, опция `checkpoints`,
+  `clearCheckpoints`; тестовый путь оставлен shim'ом.
+- `src/session/telemetry.ts`: контракт и производные представления; `src/session/session_outline.ts`:
+  L0 без усечения для агента сессии.
+- `src/ir/{events,graph}.ts`: событие `rollback`.
 
-### Lenta/projection
+### Тесты и сценарии
 
-- `hint`/`memo` рендерятся как `system`; hint исчезает при закрытии состояния, memo живёт
-  до конца запроса.
-- `nudge` и терминальный `no_progress` удалены; `max_turns` — абсолютный предохранитель.
-- `outline`/`state` показывают observer'у `entries`/`turns`; счётчики в агенте задачи пока
-  не показываются (это будущий терминал/UI).
+- `tests/session_attention|outline|operations|agent|memory|reading|workspace_tools|view|driver|repl|scenario.test.ts`.
+- `tests/session_pause.test.ts`: пауза/возобновление/отмена задачи, сессии и наблюдателя,
+  откат по снапшоту, предупреждение без снапшота, REPL-меню, классификация обрыва.
+- `tests/telemetry.test.ts`: usage, снимки контекста, производные представления.
+- `tests/checkpoint.test.ts`: `restoreTree` и точечное восстановление.
+- `tests/sandbox/session-live.ts` — live-синта с подробным логом (session calls/results,
+  reasoning, task turns, `task answer`).
+- `tests/sandbox/session-tools-live.ts` — live-синта read-only инструментов: `list`, `grep`,
+  `probe`; проверяет, что задача не открывается (`tasks=0`).
+- `tests/sandbox/session-research-live.ts` — live-синта общего вопроса по коду: Markdown-ответ
+  с путями, `grep`/`read`/`list`, без task.
 
-## Переменные окружения
+## Результаты live-прогонов
 
-- `SKEIN_OBSERVER` — `true` по умолчанию, `false` отключает.
-- `SKEIN_STATE_CYCLE_ENTRIES` — по умолчанию `3`.
-- `SKEIN_STATE_LONG_TURNS` — по умолчанию `20`.
-- `SKEIN_BUDGET_TURNS` — по умолчанию `3`.
-- `SKEIN_GRACE_TURNS` — по умолчанию `5`.
-- `SKEIN_MAX_TURNS` — общий лимит ходов.
+1. Первый: чтение через task (12–15 ходов), ответа на «какое правило» не было; выяснилось, что
+   текстовый ответ модели выбрасывался, а `body` принимал неверные id.
+2. Второй: лимиты 800 → 2000/4000, отказ и reasoning в L0. Чтение всё ещё через task;
+   модель уходила в уточнения, `да` не подходило к вопросу.
+3. Третий (после reading-unit и исправлений): `read` — один ход, `body` по `obs:reading:1`,
+   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
+   `Makefile`/`tests/test_app.py`, `make test` — `exit 0`, `Ran 1 test … OK`. Файл
+   `src/app.txt` не менялся (не требовался). `tasks=1, replies=2`.
+4. CLI (`tsx src/cli.ts --dir …`): `list`/`grep`/`read` → Markdown-ответы; затем `start` →
+   `task r1` и post-task `report` с разделами Changes/Verification/Caveat. Служебные строки
+   `[n] move/stop` показываются только с `--verbose`; reasoning — тоже.
+5. Research (`session-research-live`): вопрос «как устроен post-task report» по мини-проекту →
+   Markdown с `##`-разделами, `src/driver.py`, `record_report`, `src/view.py`; без task.
+6. CLI по копии репозитория: «как устроен post-task report» → `grep`/`list`/`read`, Markdown с
+   путями и строками; task не открывался.
 
-## Live-проверка
+## Возможные типы unit'ов
 
-### Синтетика
+Сейчас есть `task`, `session`, `observer`, `reading`. Новый тип оправдан, если у работы
+свой корень и журнал, нужен отдельный след в L0 и адресуемые наблюдения, и она не сводится
+к одному tool-call внутри session-unit'а.
 
-- `tests/sandbox/observer-live.ts entry` — третий `patch`, `state_cycle`; hint применён.
-- `tests/sandbox/observer-live.ts long` — 21 ход в `orientation`, `state_long`; hint применён.
+| Кандидат | Зачем | Оценка |
+|---|---|---|
+| `search` / `list` | «где используется X», «что лежит в каталоге» | **сделано как tools** `grep`/`list`, без unit: один tool-call, снимок мира, тело вне ленты не нужно |
+| `fetch` | URL → файл/наблюдение, внешняя документация | следующий кандидат в факт-unit, если нужен адресуемый источник |
+| `command` / `check` | один запуск команды: версия, тест, проверка | не нужен: это Verification внутри `task`; сессия read-only |
+| `job` | долгий процесс: start/poll/stop, свой журнал | не нужен: background уже в `task` |
+| `review` | проверка diff/тестов и замечания | не unit: island внутри `task` |
+| `delegate` | подзадача со своим журналом | отклонено: против non-goals «не строить субагентов» |
 
-### Реальные задачи (низкие пороги)
+`probe` (окружение, пакетные менеджеры, интерпретаторы, material) — тоже **tool**, а не unit:
+он отдаёт уже записанный `SessionProbe` по `kind` и кэшируется на сессию.
 
-1. `fix-ocaml-gc`, `SKEIN_STATE_CYCLE_ENTRIES=2`, `--turns 12`:
-   - reward 0, `max_turns`, 1 `budget`-триггер, 1 hint, **1.89₽**;
-   - `state_cycle` не сработал: повторного входа в остров не было.
-2. `regex-log`, `SKEIN_STATE_LONG_TURNS=3`, `--turns 12`:
-   - reward 1, `request_addressed`, 2 триггера (`state_long`, затем `budget`), 2 hint,
-     **3.51₽**.
-3. `password-recovery`, `--turns 3`:
-   - reward 0, `max_turns`, 1 `budget`-триггер на первом ходу, 1 hint, **0.224₽**.
+Виды работы внутри `task` (`orientation`, `localization`, `research`, `patch`, `recovery`,
+`construction`, `verification`, `end`) — это острова, а не типы unit'ов; новый «тип задачи»
+не требует нового unit'а, а другого маршрута по островам.
 
-Итого ≈ **5.62₽**. Трассы и `session.json` пишутся в
-`bench/runs/sandbox-tasks/<timestamp>-<task>/`.
+## Оставшиеся вопросы
 
-## Найдено и исправлено при проверке
-
-- `budget` срабатывал на закрытом состоянии, hint не попадал на ленту. Теперь бюджетный
-  триггер требует открытое состояние.
-- `turns` дублировал команду; теперь показывает `-> obs:id: <first line>`.
-- `body` принимает observation/action/closure-label; описание уточнено.
-- Добавлен лимит длины hint/memo (800) на уровне `applyReaction`.
-- Промпт observer переписан: положительная роль советника, три ситуации человеческим
-  языком, survey-лимит, hint как «дельта», без «final turn» и `epoch` в промпте.
-
-## Что осталось
-
-- **Реальный `state_cycle`:** нужен прогон более длинный или задача, которая реально
-  возвращается в тот же остров. Синтетика уже покрыта.
-- **Stage 2:** `repeat`, `reasoning_bloat`; реальные вложенные observer-триггеры поверх
-  `maxDepth`; дополнительные инструменты не нужны.
-- **Терминал/UI:** показ состояния, числа ходов, графа переходов — позже.
-- **Калибровка:** пороги `3/20/K/G`, survey/maxTurns observer и стоимость на реальных
-  трассах.
-- **Политика `max_turns`:** для дальних состояний observer на самом лимите не запускается
-  (решено оставить так).
-- **Коммит/пуш** — следующий шаг.
+- **`no_decision`.** Реализован: `empty_reply`/`max_turns` пишется в журнал сессии, виден в L0
+  и в view (`session: no decision (…)`); unit остаётся `suspended`. Следующий шаг — отличать
+  «модель ничего не сказала» от «упёрлись в cap» в политике (сейчас только reason).
+- **Лимит исследования.** Вопрос по репозиторию упёрся в старый `maxTurns=6` и дал
+  `session: no action`; поднято до 12, после чего тот же вопрос ответил за 6 ходов. Esc/Ctrl-C
+  теперь реализованы, но cap остаётся предохранителем для headless/явного лимита; политика
+  `empty_reply` vs `max_turns` — открыта.
+- **Навигация по id.** Live показал ошибки `body(unit="reading")` и `body(id="reading:1")`.
+  Описания и `body` уже исправлены; нужен повторный live-прогон, чтобы убедиться.
+- **Подтверждение.** Заложено промптом (`respond` с формулировкой → `start`), но live-синта
+  его не проверяет. Нужен сценарий с веткой подтверждения.
+- **Ctrl-C/Esc.** Реализованы: `Esc` — пауза, `Ctrl-C` — меню с `c`, повторный `Ctrl-C` на
+  паузе — выход. Меню текстовое, визуального выделения `c` нет. Live-прогон паузы,
+  возобновления и отмены ещё не делался — нужен go-ahead.
+- **Персистентность.** Сессия живёт в памяти процесса; `.skein/session.json` не реализован.
+  Снапшоты чистятся на границах сессии; политика хранения/очистки внутри сессии — отдельно.
+- **Стратегии возобновления.** Пауза/возобновление текущего unit'а работает; возобновление
+  уже пройденного unit'а — новая задача с новой формулировкой, без копирования IR, отдельный
+  срез. `revise` отложен.
+- **`attempt` (L3), пины, `abandoned`, reading island.** Отложены.
+- **L0 при переполнении.** L0 не усекается; если полный L0 превысит контекстное окно, нужен
+  явный warning/error, а не усечение — пока не реализовано.
+- **Стоимость.** Телеметрия собирает usage; счётчика стоимости, панели и live-meter ещё нет.
+- **Снапшоты.** Включают `.git` и тяжёлые каталоги (кроме `.skein`/секретов); производительность
+  приемлема, но политика хранения и стоимость на больших деревьях — открытый вопрос.
+- **TaskAgent на первом ходу** видит только `move`/`decline` и каждый раз это осмысляет; это
+  нормальное поведение state machine, но стоит проверить, не тратит ли оно ходы.
 
 ## Команды
 
 ```sh
 npm run typecheck
 SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'
+npm run cli -- --dir <project> [--verbose]
 ```
 
 Live (только с go-ahead):
 
 ```sh
-SKEIN_LIVE=true SKEIN_OBSERVER=true SKEIN_STATE_CYCLE_ENTRIES=2 \
-  npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --turns 12
-SKEIN_LIVE=true SKEIN_OBSERVER=true SKEIN_STATE_LONG_TURNS=3 \
-  npx tsx tests/sandbox/sandbox-run.ts regex-log --turns 12
-SKEIN_LIVE=true SKEIN_OBSERVER=true \
-  npx tsx tests/sandbox/sandbox-run.ts password-recovery --turns 3
+SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts
+SKEIN_LIVE=true npx tsx tests/sandbox/session-tools-live.ts
+SKEIN_LIVE=true npx tsx tests/sandbox/session-research-live.ts
 ```
-
-## Файлы
-
-- План: `docs/plans/request_observer_plan{,_ru}.md`.
-- Код: `src/session/`, `src/llm/observer.ts`, `src/config/settings.ts`,
-  `src/ir/graph.ts`, `src/ir/project.ts`, `src/loop/graph.ts`.
-- Тесты: `tests/{session,triggers,apply,outline,observer,observer_model,observer_integration,observer_fixtures,budget_grace}.test.ts`,
-  `tests/sandbox/observer-{fixtures,live}.ts`.
