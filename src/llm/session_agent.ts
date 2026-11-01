@@ -91,7 +91,7 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "general",
     description:
-      "Read, inspect, analyse, explain or report on the material. Use it whenever that work is the request itself; include the goal and relevant context.",
+      "Read, inspect, analyse, explain or report on the material. Use it whenever that work is the request itself; include the goal and only the context the request needs. Do not turn a short request into a broader assignment or an audit.",
     schema: generalSchema,
   },
   {

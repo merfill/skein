@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +42,22 @@ describe("workspace checkpoint", () => {
     expect(readFileSync(join(tree, "link"), "utf8")).toBe("one\n");
     expect(existsSync(join(tree, ".env"))).toBe(false);
     expect(existsSync(join(tree, ".skein"))).toBe(false);
+  });
+
+  it("skips VCS, virtualenv, build output and cache directories", () => {
+    const root = makeRoot();
+    writeFileSync(join(root, "a.txt"), "one\n");
+    for (const dir of [".git", ".venv", "out", "node_modules", "__pycache__", ".pytest_cache"]) {
+      mkdirSync(join(root, dir), { recursive: true });
+      writeFileSync(join(root, dir, "heavy.bin"), "x\n");
+    }
+    const checkpoint = createCheckpoint(root);
+    const record = checkpoint.snapshot("initial");
+    const tree = join(checkpoint.dir, record.tree);
+    expect(existsSync(join(tree, "a.txt"))).toBe(true);
+    for (const dir of [".git", ".venv", "out", "node_modules", "__pycache__", ".pytest_cache"]) {
+      expect(existsSync(join(tree, dir))).toBe(false);
+    }
   });
 
   it("keeps the old tree intact when the workspace changes, and dedupes an idle turn", () => {
@@ -170,6 +186,37 @@ describe("workspace checkpoint", () => {
         { path: "created.txt", version: "absent" },
       ]),
     );
+  });
+
+  it("restores only the paths that changed; a touch alone is not a change", () => {
+    const root = makeRoot();
+    writeFileSync(join(root, "keep.txt"), "original\n");
+    writeFileSync(join(root, "touched.txt"), "same\n");
+    writeFileSync(join(root, "deleted.txt"), "restore me\n");
+    const checkpoint = createCheckpoint(root);
+    const token = checkpoint.checkpoint("general-start");
+
+    writeFileSync(join(root, "keep.txt"), "changed\n");
+    rmSync(join(root, "deleted.txt"));
+    writeFileSync(join(root, "created.txt"), "new\n");
+    const touchedAt = new Date(Date.now() + 5000);
+    utimesSync(join(root, "touched.txt"), touchedAt, touchedAt);
+    const touchedMtime = statSync(join(root, "touched.txt")).mtimeMs;
+
+    const restored = checkpoint.restoreChanged(token);
+
+    expect(readFileSync(join(root, "keep.txt"), "utf8")).toBe("original\n");
+    expect(readFileSync(join(root, "deleted.txt"), "utf8")).toBe("restore me\n");
+    expect(existsSync(join(root, "created.txt"))).toBe(false);
+    expect(readFileSync(join(root, "touched.txt"), "utf8")).toBe("same\n");
+    expect(statSync(join(root, "touched.txt")).mtimeMs).toBe(touchedMtime);
+    expect(restored.map((entry) => entry.path).sort()).toEqual([
+      "created.txt",
+      "deleted.txt",
+      "keep.txt",
+    ]);
+    // No extra snapshot was written just to compare the trees.
+    expect(checkpoint.snapshots).toHaveLength(1);
   });
 
   it("restores a path through the read-only-surface script", () => {

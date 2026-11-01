@@ -21,7 +21,7 @@ event journal and the projection function are the protocol.
 | State model | hybrid graph `work` + `artifact`, append-only journal + deterministic projection |
 | Code non-monotonicity | staleness by version (file hash), no manual retraction |
 | First slice | bugfix by a failing test; the criterion is the test command |
-| Orchestration | LangGraph.js (`@langchain/langgraph`) |
+| Orchestration | plain `while` loop (`src/loop/graph.ts`); LangGraph removed |
 | LLM | as in Ankyra: OpenAI-compatible endpoint; model layer — the Vercel AI SDK (`@ai-sdk/openai-compatible`); reasoning on (default effort `low`; hard tasks `high` per run); secrets only in `.env` |
 | Criterion | a goal's `done_when` is a literal command; its `exitCode` (0 = pass) is the only pass/fail fact |
 | Closure | a frame closes only by the doxa's `stop` (for now accepted only once the criterion passed); a request ends when its goal is stopped |

@@ -1,5 +1,3 @@
-import { END, START, StateGraph } from "@langchain/langgraph";
-
 import { isAborted } from "../abort";
 import { loadSettings } from "../config/settings";
 import {
@@ -41,7 +39,7 @@ import type { Workspace } from "../tools/workspace";
 import { classify } from "./classify";
 import { reconcile, type VersionCache } from "./observe";
 import { buildMessages, type Proposer } from "./propose";
-import { LoopState, type LoopStateType } from "./state";
+import type { LoopState } from "./state";
 
 // A move that changes the focus or ends the run: it must be the last call of a batch, so
 // everything the model emitted after it is dropped (the state it reasoned from is gone).
@@ -83,7 +81,9 @@ function isNearEnd(state: State): boolean {
 export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
-  maxTurns: number;
+  // An explicit safety cap for headless/bench runs. Undefined in the interactive session:
+  // the task runs until the doxa closes it, the observer halts it, or the user stops it.
+  maxTurns?: number;
   graceTurns?: number;
   // The session probe (`src/loop/probe.ts`): environment and material. The real entry points
   // pass it so the fact is journalled once at request start; a replay or a unit test omits it.
@@ -131,11 +131,20 @@ export interface AgentResult {
   session?: SessionState;
 }
 
-export function compileGraph(deps: AgentDeps) {
+function merge(state: LoopState, update: Partial<LoopState>): LoopState {
+  return {
+    ...state,
+    ...update,
+    events: update.events !== undefined ? [...state.events, ...update.events] : state.events,
+    recent: update.recent !== undefined ? [...state.recent, ...update.recent] : state.recent,
+  };
+}
+
+async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopState> {
   const signatures: VersionCache = new Map();
   const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
 
-  const projectNode = (state: LoopStateType) => {
+  const projectNode = (state: LoopState) => {
     // The external actor (if any) may react before the turn; its events join the journal
     // like any other, with the same provenance discipline.
     const external = deps.arbiter ? deps.arbiter(fold(state.events), state.turn) : [];
@@ -158,7 +167,7 @@ export function compileGraph(deps: AgentDeps) {
     };
   };
 
-  const proposeNode = async (state: LoopStateType) => {
+  const proposeNode = async (state: LoopState) => {
     const context = state.context ?? project(fold(state.events));
     const session = state.session ?? undefined;
     const unitId = session !== undefined ? sessionFocus(session)?.unitId : undefined;
@@ -274,6 +283,7 @@ export function compileGraph(deps: AgentDeps) {
       model: proposals.model,
       status: "ok",
       ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+      ...(proposals.reasoning !== undefined ? { reasoning: proposals.reasoning } : {}),
     });
     return {
       context,
@@ -282,13 +292,16 @@ export function compileGraph(deps: AgentDeps) {
     };
   };
 
-  const executeNode = (state: LoopStateType) => {
+  const executeNode = (state: LoopState) => {
     // The pause already ended the graph in `propose`; nothing is executed.
     if (state.paused === true) return {};
     const proposals = state.proposals;
     if (!proposals || proposals.actions.length === 0) {
+      const noProposal = state.noProposal + 1;
       return {
         turn: state.turn + 1,
+        noProposal,
+        ...(noProposal >= 2 ? { done: true, stopReason: "no_decision" } : {}),
         recent: [
           { seq: state.turn, kind: "proposal" as const, text: "rejected: no proposal" },
         ],
@@ -298,8 +311,8 @@ export function compileGraph(deps: AgentDeps) {
     // each call in order against the state the previous calls left; a terminal move
     // (create_goal/stop/decline) ends the batch (the rest of the message is dropped).
     const events: Event[] = [];
-    const recent: LoopStateType["recent"] = [];
-    let rejection: LoopStateType["rejection"] = null;
+    const recent: LoopState["recent"] = [];
+    let rejection: LoopState["rejection"] = null;
     let done = false;
     let stopReason: string | null = null;
     let executed = false;
@@ -352,6 +365,14 @@ export function compileGraph(deps: AgentDeps) {
       const emitFrom = events.length;
       const actionTarget = describeTarget(action);
       const progressTool = action.operator === "apply" ? action.action.tool : action.operator;
+      const edit =
+        action.operator === "apply" && action.action.tool === "edit"
+          ? {
+              path: action.action.path,
+              find: action.action.find,
+              replace: action.action.replace,
+            }
+          : undefined;
       deps.onProgress?.({
         type: "tool_started",
         agent: "task",
@@ -359,6 +380,7 @@ export function compileGraph(deps: AgentDeps) {
         turn: state.turn,
         tool: progressTool,
         target: actionTarget,
+        ...(edit !== undefined ? { edit } : {}),
       });
       // A failed Verification leaves a patch that is known not to work. Before the move back
       // to Localization the engine restores the tree to its pre-patch state, so Localization
@@ -465,10 +487,11 @@ export function compileGraph(deps: AgentDeps) {
       done,
       stopReason,
       rejection,
+      noProposal: 0,
     };
   };
 
-  const progressNode = async (state: LoopStateType) => {
+  const progressNode = async (state: LoopState) => {
     if (state.done) return {};
     const current = fold(state.events);
     const rootId = current.rootId;
@@ -578,40 +601,33 @@ export function compileGraph(deps: AgentDeps) {
     }
 
     if (done) return { events, done, stopReason, stopText, session };
-    if (state.turn >= deps.maxTurns && state.grace !== true) {
-      if (isNearEnd(current)) return { events, session, grace: true };
-      return { events, done: true, stopReason: "max_turns", session };
-    }
-    if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) {
-      return { events, done: true, stopReason: "max_turns", session };
+    if (deps.maxTurns !== undefined) {
+      if (state.turn >= deps.maxTurns && state.grace !== true) {
+        if (isNearEnd(current)) return { events, session, grace: true };
+        return { events, done: true, stopReason: "max_turns", session };
+      }
+      if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) {
+        return { events, done: true, stopReason: "max_turns", session };
+      }
     }
     return { events, session };
   };
 
-  const route = (state: LoopStateType): "project" | typeof END => {
-    if (state.done) return END;
-    if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) return END;
-    return "project";
-  };
-
-  return new StateGraph(LoopState)
-    .addNode("project", projectNode)
-    .addNode("propose", proposeNode)
-    .addNode("execute", executeNode)
-    .addNode("progress", progressNode)
-    .addEdge(START, "project")
-    .addEdge("project", "propose")
-    .addEdge("propose", "execute")
-    .addEdge("execute", "progress")
-    .addConditionalEdges("progress", route)
-    .compile();
+  let state = initial;
+  while (!state.done) {
+    state = merge(state, projectNode(state));
+    state = merge(state, await proposeNode(state));
+    if (state.done) break;
+    state = merge(state, executeNode(state));
+    if (state.done) break;
+    state = merge(state, await progressNode(state));
+  }
+  return state;
 }
 
 export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<AgentResult> {
   const runDeps =
     input.signal !== undefined ? { ...deps, signal: input.signal } : deps;
-  const graph = compileGraph(runDeps);
-  const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
   const seed: Event[] = input.seed !== undefined ? [...input.seed] : [
     {
       type: "add_node",
@@ -667,19 +683,21 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
     pushUnit(session, input.request.id, input.startTurn ?? 0);
   }
 
-  const final = await graph.invoke(
-    {
-      events: seed,
-      recent: [],
-      turn: input.startTurn ?? 0,
-      done: false,
-      stopReason: null,
-      stopText: null,
-      session,
-      grace: false,
-    },
-    { recursionLimit: (deps.maxTurns + graceTurns) * 5 + 20 },
-  );
+  const final = await runTaskLoop(runDeps, {
+    events: seed,
+    recent: [],
+    context: null,
+    proposals: null,
+    turn: input.startTurn ?? 0,
+    done: false,
+    paused: false,
+    stopReason: null,
+    stopText: null,
+    session,
+    grace: false,
+    rejection: null,
+    noProposal: 0,
+  });
 
   return {
     events: final.events,

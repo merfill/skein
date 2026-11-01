@@ -3,6 +3,12 @@ import type { Usage } from "./telemetry";
 
 export type ProgressAgent = "session" | "task" | "general" | "observer";
 
+export interface EditDetail {
+  path: string;
+  find: string;
+  replace: string;
+}
+
 export type ProgressEvent =
   | { type: "turn_started"; agent: ProgressAgent; unitId: string; turn: number }
   | {
@@ -20,6 +26,8 @@ export type ProgressEvent =
       model?: string;
       usage?: Usage;
       status: "ok" | "aborted" | "error";
+      // The model's hidden reasoning for this call, when the tape carries it.
+      reasoning?: string;
     }
   | {
       type: "tool_started";
@@ -28,6 +36,8 @@ export type ProgressEvent =
       turn: number;
       tool: string;
       target: string;
+      // The edit preimage, so the TUI can render a coloured diff.
+      edit?: EditDetail;
     }
   | {
       type: "tool_finished";

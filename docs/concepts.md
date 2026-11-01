@@ -205,7 +205,8 @@ only `requestSettled` is computed.
 - **Deepagents** — eviction and summarization compress the tape but keep it.
   Skein: the context is a projection, not a summary; nothing is lost, only addressed.
 - **LangGraph state** — a typed dict for orchestration, not for context management.
-  Skein: projection into context is the main function.
+  Skein: projection into context is the main function; its task loop is a plain typed
+  record and a `while` loop, with no framework state.
 - **RAG** — retrieval by similarity. Skein: deterministic relevance by structure,
   status and provenance, with addressed recall.
 

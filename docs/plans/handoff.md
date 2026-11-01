@@ -4,6 +4,41 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-01 — TUI, general, task loop
+
+- **General:** бриф session-агента ограничен глубиной запроса (без инвентаризации и
+  аудита, которых не просили); у general свои `general_bash`/`general_stop` (read-only,
+  Markdown-отчёт), facts из probe, snapshot при входе и `restoreChanged` при выходе.
+  История tool-результатов ограничена 2k (голова + 400 хвоста, `recall obs:…`); после
+  `max_turns` — один финальный вызов без инструментов с запретом домысливать. Промпт
+  требует общего вывода, ясного академического языка и отсутствия лишних деталей.
+- **Task loop:** LangGraph удалён. `src/loop/graph.ts` — обычный `while`, `src/loop/state.ts` —
+  типизированная запись. `@langchain/langgraph`/`@langchain/core` убраны из зависимостей.
+  У интерактивной task нет дефолтного `maxTurns`; `--max-turns` остаётся явным лимитом
+  для bench/headless, `budget`-триггер работает только при нём. `state_cycle`/`state_long`
+  observer'а остаются. Два пустых ответа подряд → `no_decision`. Завершённый run без
+  терминального `end` помечается `abandoned`, а не `suspended`.
+- **Checkpoint:** общий `SKIP_DIRS` (`src/tools/skip_dirs.ts`) для `list`/`grep` и снапшота;
+  `restoreChanged` восстанавливает только изменённые пути. На `ankyra` снапшот сканирует
+  263 файла / 6 МБ / ~2 мс вместо 492 МБ.
+- **TUI:** фоновые панели с зазором; блоки сообщений на всю ширину, collapse/expand
+  кликом (при `SKEIN_MOUSE=true`/`Ctrl-G`) или `Tab`+`Space`; Thought-блоки с таймингом;
+  цветной diff для `edit`; подсветка кода (авто для fence без языка); композер 5 строк
+  с переносом и курсором между символами; история ввода `Up/Down`; правая панель —
+  текущее состояние, ходы (`tN · токены · время`), суммы по состоянию и задаче; observer
+  кратко показывается в статусе. Mouse capture по умолчанию выключен (нативное выделение),
+  alternate-scroll — для колеса; `Ctrl-G` переключает capture.
+- **Логи:** `SKEIN_LOG` — JSONL, по умолчанию `<project>/.skein/session.log`
+  (`off`/свой путь). Пишет реплику, бриф, model calls с usage, tool-таргеты, observer,
+  stopReason и ответы; reasoning — до 4k. Полные выводы инструментов остаются в
+  `.skein/observations`.
+- **Проверки:** typecheck чистый; офлайн **556 passed, 40 skipped**. Live: `general-live`,
+  `session-live`, `observer-live` прошли; `fix-ocaml.live` падает на `max_turns` и на чистом
+  `HEAD` тоже (существующая проблема, не регрессия).
+- **Открыто:** почему простая задача уходит в долгий construction (нужен `session.log`
+  следующего прогона); эскалация observer/no-progress guard — после разбора лога;
+  `fix-ocaml.live`; персистентность сессии; L0 при переполнении; стоимость.
+
 ## TUI (сделано, 2026-10-31)
 
 - **Основной режим:** `npm run cli` открывает Ink-TUI в alternate screen. Старый построчный

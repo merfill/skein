@@ -51,7 +51,7 @@ const listParams = z.object({
   from: z.number().int().positive().optional(),
 });
 const editParams = z.object({ filePath: z.string(), oldString: z.string(), newString: z.string() });
-const bashParams = z.object({
+export const bashParams = z.object({
   command: z.string(),
   workdir: z.string().optional(),
   timeout: z.number().int().positive().optional(),
@@ -262,15 +262,31 @@ export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
   return descriptions;
 }
 
+// Tools outside the task registry (the general unit's `general_bash`/`general_stop`). They are
+// bound only when passed explicitly, so the task's surface and the generated base prompt never
+// see them.
+export interface ExtraToolDefinition {
+  description: string;
+  schema: z.ZodTypeAny;
+}
+
 export function proposalTools(
   names?: ReadonlySet<string>,
   descriptions?: Record<string, string>,
+  extra?: Record<string, ExtraToolDefinition>,
 ): ToolSet {
   const tools: ToolSet = {};
   for (const definition of DEFINITIONS) {
     if (names !== undefined && !names.has(definition.name)) continue;
     tools[definition.name] = tool({
       description: descriptions?.[definition.name] ?? definition.description,
+      inputSchema: definition.schema,
+    });
+  }
+  for (const [name, definition] of Object.entries(extra ?? {})) {
+    if (names !== undefined && !names.has(name)) continue;
+    tools[name] = tool({
+      description: descriptions?.[name] ?? definition.description,
       inputSchema: definition.schema,
     });
   }
@@ -412,6 +428,12 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "stop":
       action = { operator: "stop", ...pick("why") };
+      break;
+    case "general_stop":
+      action = { operator: "stop", why: typeof a.report === "string" ? a.report : "" };
+      break;
+    case "general_bash":
+      action = { operator: "apply", action: toApply("bash", a) };
       break;
     case "decline":
       action = { operator: "decline", ...pick("why") };

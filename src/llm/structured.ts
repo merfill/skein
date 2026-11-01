@@ -17,7 +17,7 @@ import { loadSettings, type Settings } from "../config/settings";
 import { usageOf } from "../session/telemetry";
 import { PROVIDER_NAME } from "./client";
 import type { Proposals } from "./schemas";
-import { proposalTools, toProposal } from "./tools";
+import { proposalTools, toProposal, type ExtraToolDefinition } from "./tools";
 
 // Structured output via native tool calls (docs/testing_ru.md §8.1). The AI SDK owns the
 // provider wire format, streaming, reasoning parts and usage; this module owns the skein
@@ -377,6 +377,8 @@ export interface ToolsOptions {
   // Per-tool description overrides for the bound surface (e.g. the state-specific `bash`
   // contract). Direct callers that omit it keep the global descriptions.
   toolDescriptions?: Record<string, string>;
+  // Tools outside the task registry, bound only when named in `allowedTools` (general unit).
+  extraTools?: Record<string, ExtraToolDefinition>;
   // Retries for a THROWN provider call (network/5xx/rate limit): the same request is resent
   // up to this many extra times before the error is given up. Defaults to `settings.llmRetries`.
   retries?: number;
@@ -423,7 +425,7 @@ export async function invokeTools(
   const retryDelayMs = options.retryDelayMs ?? RETRY_DELAY_MS;
   const allowed =
     options.allowedTools !== undefined ? new Set(options.allowedTools) : undefined;
-  const tools = proposalTools(allowed, options.toolDescriptions);
+  const tools = proposalTools(allowed, options.toolDescriptions, options.extraTools);
 
   let maxTokens: number | undefined;
   let raised = 0;

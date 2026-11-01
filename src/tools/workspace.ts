@@ -17,6 +17,8 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
+import { SKIP_DIRS } from "./skip_dirs";
+
 import { createCheckpoint, type Checkpoint } from "./checkpoint";
 
 export interface GrepMatch {
@@ -131,36 +133,16 @@ export interface Workspace {
   // `write`, `apply_patch`, deletions). A plain filesystem workspace does not implement it.
   checkpoint?(label: string): string;
   restoreCheckpoint?(id: string, paths: readonly string[]): { path: string; version: string }[];
+  // Restore only the paths that changed since `id` (content and mode; mtime is ignored).
+  restoreChanged?(id: string): { path: string; version: string }[];
   // A full tree restore for a task rollback on cancel.
   restoreTree?(id: string): { path: string; version: string }[];
   // Drop the checkpoint store at a session boundary.
   clearCheckpoints?(): void;
 }
 
-export const SKIP_DIRS = new Set([
-  "node_modules",
-  ".git",
-  "dist",
-  "coverage",
-  ".skein",
-  "_build",
-  "target",
-  "build",
-  "out",
-  "obj",
-  "__pycache__",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".cache",
-  ".venv",
-  "venv",
-  ".tox",
-  ".gradle",
-  ".next",
-  ".nuxt",
-  ".terraform",
-]);
+export { SKIP_DIRS };
+
 
 // Binary detection is by content, not by an extension allowlist: a coding agent
 // greps source in any language (.c, .h, .rs, .go, .py, …), not just the ones the
@@ -609,6 +591,7 @@ export function fsWorkspace(root: string, options: WorkspaceOptions = {}): Works
           checkpoint: (label: string) => checkpoints.checkpoint(label),
           restoreCheckpoint: (id: string, paths: readonly string[]) =>
             checkpoints.restore(id, paths),
+          restoreChanged: (id: string) => checkpoints.restoreChanged(id),
           restoreTree: (id: string) => checkpoints.restoreTree(id),
           clearCheckpoints: () =>
             rmSync(join(base, ".skein", "checkpoints"), { recursive: true, force: true }),

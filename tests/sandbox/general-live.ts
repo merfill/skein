@@ -5,6 +5,7 @@ import { createChatModel } from "../../src/llm/client";
 import { modelGeneralProposer } from "../../src/llm/general";
 import { createSessionAgentDeps } from "../../src/llm/session_agent";
 import type { Proposer } from "../../src/loop/propose";
+import { probeSession } from "../../src/loop/probe";
 import { runSessionTurn, type SessionTurnDeps } from "../../src/session/driver";
 import { attentionOf, createSession } from "../../src/session/session";
 import { sessionOutline } from "../../src/session/session_outline";
@@ -116,7 +117,19 @@ async function main(): Promise<void> {
   const settings = loadSettings();
   const model = createChatModel(settings);
   const workspace = makeWorkspace(FILES);
-  const root = fsWorkspace(workspace.root);
+  const root = fsWorkspace(workspace.root, { checkpoints: true });
+
+  // One session-scoped probe, like the CLI: the map reaches the session agent and the facts
+  // reach the general unit.
+  let probed = false;
+  let cachedProbe: ReturnType<typeof probeSession>;
+  const sessionProbe = (): ReturnType<typeof probeSession> => {
+    if (!probed) {
+      cachedProbe = probeSession(root);
+      probed = true;
+    }
+    return cachedProbe;
+  };
 
   // A task means the session agent misrouted the analysis; make it visible immediately.
   const decline: Proposer = async () => ({
@@ -125,6 +138,7 @@ async function main(): Promise<void> {
   });
 
   const deps: SessionTurnDeps = {
+    sessionProbe,
     sessionAgent: createSessionAgentDeps(model, { settings }),
     task: { propose: decline, workspace: root, maxTurns: 1 },
     general: {
@@ -161,13 +175,12 @@ async function main(): Promise<void> {
       const unit = session.units.get(result.general.unitId);
       if (unit?.type !== "general") failures.push("the opened unit is not general");
       if (attentionOf(session, result.general.unitId) !== "completed") failures.push("general unit is not completed");
+      if (unit?.checkpoint === undefined) failures.push("the general unit has no entry checkpoint");
     }
     if (answer === "") failures.push("the answer is empty");
     if (!/^##\s/m.test(answer)) failures.push("the answer is not Markdown (no '## ' heading)");
     if (!answer.includes("src/")) failures.push("the answer does not cite src/ paths");
-    if ((tools.read ?? 0) + (tools.grep ?? 0) + (tools.list ?? 0) === 0) {
-      failures.push("the general unit used no read/grep/list tool");
-    }
+    if ((tools.read ?? 0) === 0) failures.push("the general unit read no file with `read`");
 
     if (failures.length > 0) {
       console.error(`\nFAIL:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);

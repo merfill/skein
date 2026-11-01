@@ -152,6 +152,40 @@ describe("session driver: one utterance turn", () => {
     }
   });
 
+  it("orients the session agent with the workspace root and map", async () => {
+    const session = createSession();
+    const made = makeWorkspace();
+    let seen: ModelMessage[] = [];
+    const turnDeps: SessionTurnDeps = {
+      sessionProbe: () => ({
+        material: { root: made.root, repos: [], entries: [], paths: ["README.md"], files: 1 },
+      }),
+      sessionAgent: {
+        agent: async (messages) => {
+          seen = messages;
+          return { operation: { kind: "respond", text: "ok" } };
+        },
+        tools,
+      },
+      task: { propose: proposer, workspace: made.ws, maxTurns: 6 },
+    };
+
+    await runSessionTurn(turnDeps, session, "what language is this project?");
+
+    const intro = seen.find(
+      (message) =>
+        message.role === "system" &&
+        typeof message.content === "string" &&
+        message.content.startsWith("Workspace:"),
+    );
+    expect(intro).toBeDefined();
+    const text = String(intro?.content);
+    expect(text).toContain("this session works in");
+    expect(text).toContain(made.root);
+    expect(text).toContain("Workspace map");
+    expect(text).toContain("README.md");
+  });
+
   it("keeps the task isolated: it sees only the reformulated request", async () => {
     const session = createSession();
     let taskContext: Context | undefined;

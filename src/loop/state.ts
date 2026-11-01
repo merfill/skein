@@ -1,5 +1,3 @@
-import { Annotation } from "@langchain/langgraph";
-
 import type { Event } from "../ir/events";
 import type { Context } from "../ir/project";
 import type { Proposals } from "../llm/schemas";
@@ -15,38 +13,27 @@ export interface Turn {
   error?: string;
 }
 
-const last = <T>(fallback: T) => ({
-  reducer: (_current: T, update: T): T => update,
-  default: () => fallback,
-});
-
-export const LoopState = Annotation.Root({
-  events: Annotation<Event[]>({
-    reducer: (current, update) => current.concat(update),
-    default: () => [],
-  }),
-  recent: Annotation<Turn[]>({
-    reducer: (current, update) => current.concat(update),
-    default: () => [],
-  }),
-  context: Annotation<Context | null>(last<Context | null>(null)),
-  proposals: Annotation<Proposals | null>(last<Proposals | null>(null)),
-  turn: Annotation<number>(last(0)),
-  done: Annotation<boolean>(last(false)),
-  // A user pause ended the graph at a committed step boundary; no stop is produced.
-  paused: Annotation<boolean>(last(false)),
-  stopReason: Annotation<string | null>(last<string | null>(null)),
-  // The message behind a terminal stop (currently the `llm_error` text), so it can be
-  // persisted to the run trace instead of living only in a transient turn (graph §propose).
-  stopText: Annotation<string | null>(last<string | null>(null)),
-  session: Annotation<SessionState | null>(last<SessionState | null>(null)),
-  grace: Annotation<boolean>(last(false)),
-  // The structural move just refused (classify created no node): its rendered reason and the
-  // call it corresponds to, so the next turn renders it as an assistant call + `tool` reason
-  // (the doxa sees why its move failed, §2.7). Reset to null on every accepted move.
-  rejection: Annotation<{ text: string; name: string; args: Record<string, unknown> } | null>(
-    last<{ text: string; name: string; args: Record<string, unknown> } | null>(null),
-  ),
-});
-
-export type LoopStateType = typeof LoopState.State;
+// The task loop's mutable state. This is a plain record now: the loop is a `while`, not a
+// LangGraph graph. `events` and `recent` are append-only in the merge helper.
+export interface LoopState {
+  events: Event[];
+  recent: Turn[];
+  context: Context | null;
+  proposals: Proposals | null;
+  turn: number;
+  done: boolean;
+  // A user pause ended the loop at a committed step boundary; no stop is produced.
+  paused: boolean;
+  stopReason: string | null;
+  // The message behind a terminal stop (the `llm_error` text), persisted by the caller.
+  stopText: string | null;
+  session: SessionState | null;
+  grace: boolean;
+  // The structural move just refused (classify created no node): its rendered reason and
+  // the call it corresponds to, so the next turn renders it as an assistant call + `tool`
+  // reason (the doxa sees why its move failed, §2.7). Reset to null on every accepted move.
+  rejection: { text: string; name: string; args: Record<string, unknown> } | null;
+  // Consecutive model replies with no actions. One retry is allowed; the second stops the
+  // task as `no_decision` instead of spinning forever now that there is no turn cap.
+  noProposal: number;
+}

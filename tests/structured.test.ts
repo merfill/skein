@@ -14,9 +14,10 @@ import { z } from "zod";
 import { TurnMeter } from "../bench/metrics";
 import { loadSettings } from "../src/config/settings";
 import { createChatModel } from "../src/llm/client";
+import { GENERAL_TOOLS } from "../src/llm/general";
 import { invokeStructured, invokeTools, type ToolsOptions } from "../src/llm/structured";
 import { modelCall } from "../src/llm/schemas";
-import { toolNamesFor, toProposal } from "../src/llm/tools";
+import { proposalTools, toolNamesFor, toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { fsWorkspace } from "../src/tools/workspace";
 
@@ -230,6 +231,33 @@ describe("tool calling", () => {
       action: { tool: "apply_patch", patch: "--- a/x\n+++ b/x\n" },
     });
     expect(() => toProposal("nope", {}, "t")).toThrow(/unknown tool/);
+  });
+
+  it("binds the general-only tools only on the general surface", () => {
+    const general = proposalTools(
+      new Set(["read", "recall", "general_bash", "general_stop"]),
+      undefined,
+      GENERAL_TOOLS,
+    );
+    expect(Object.keys(general).sort()).toEqual([
+      "general_bash",
+      "general_stop",
+      "read",
+      "recall",
+    ]);
+    const task = proposalTools(new Set(["read", "bash", "stop"]));
+    expect(Object.keys(task).sort()).toEqual(["bash", "read", "stop"]);
+  });
+
+  it("maps the general-only tools", () => {
+    expect(toProposal("general_bash", { command: "ls" }, "t").action).toEqual({
+      operator: "apply",
+      action: { tool: "bash", command: "ls" },
+    });
+    expect(toProposal("general_stop", { report: "## Answer\n\nDone." }, "t").action).toEqual({
+      operator: "stop",
+      why: "## Answer\n\nDone.",
+    });
   });
 
   it("invokeTools reads the first tool call and the message text", async () => {

@@ -133,6 +133,19 @@ describe("TUI view model", () => {
       current: true,
     });
     expect(patch?.actions.map((action) => action.label)).toEqual(["edit src/driver.ts"]);
+    expect(localization?.turnDetails).toEqual([
+      { turn: 0, tokensIn: 100, tokensOut: 10, durationMs: 1 },
+      { turn: 1, tokensIn: 0, tokensOut: 0, durationMs: 0 },
+      { turn: 2, tokensIn: 0, tokensOut: 0, durationMs: 0 },
+    ]);
+    expect(localization?.durationMs).toBe(1);
+    expect(patch?.turnDetails[0]).toEqual({
+      turn: 3,
+      tokensIn: 200,
+      tokensOut: 20,
+      durationMs: 1,
+    });
+    expect(patch?.durationMs).toBe(1);
     expect(view.current?.outcome).toBe("open at patch");
     expect(view.current?.elapsedMs).toBe(6_000);
     expect(view.history[0]?.unitId).toBe("r1");

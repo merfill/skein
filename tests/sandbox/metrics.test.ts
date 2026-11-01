@@ -1,19 +1,18 @@
-import type { LLMResult } from "@langchain/core/outputs";
 import { describe, expect, it } from "vitest";
 
 import { TurnMeter } from "../../bench/metrics";
 import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
 
 // Offline verification of the sandbox token accounting — no model, no money. It pins the
-// provider shapes `extractUsage` must read (LangChain `usage_metadata`, the provider's
+// provider shapes `extractUsage` must read (`usage_metadata`, the provider's
 // `response_metadata.usage`) so a live run's `metrics.json` is trustworthy.
 
-function llmResult(message: unknown): LLMResult {
-  return { generations: [[{ message }]], llmOutput: {} } as unknown as LLMResult;
+function llmResult(message: unknown): unknown {
+  return { generations: [[{ message }]], llmOutput: {} };
 }
 
 describe("sandbox metrics: token extraction (TurnMeter)", () => {
-  it("reads input/output/reasoning/cache/cost from the LangChain usage shape", async () => {
+  it("reads input/output/reasoning/cache/cost from the usage shape", async () => {
     const meter = new TurnMeter();
     await meter.handleLLMEnd(
       llmResult({

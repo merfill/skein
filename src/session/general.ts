@@ -9,17 +9,14 @@ import type { Action, Proposals } from "../llm/schemas";
 import { commandOf, executeAction } from "../tools";
 import type { Workspace } from "../tools/workspace";
 import { historyMessages } from "../loop/propose";
-import { openUnit, pushUnit } from "./session";
+import { openUnit, pushUnit, unitOf } from "./session";
 import type { ProgressSink } from "./progress";
 import { LOCAL_SESSION_ID, contextSnapshot, type TelemetrySink } from "./telemetry";
 import type { SessionState } from "./types";
 
 export const GENERAL_BASE_PROMPT = [
-  "You are a general analysis agent. You work in one state, General.",
-  "State: General — answer the request from the material.",
-  "Done: the answer is complete and supported by what you read.",
-  "This state only reads: do not change files and do not run mutating commands.",
-  "Answer in GitHub-flavored Markdown. Write the final answer as the assistant message. When it is complete, close the state with `stop`; `why` is a short closure note.",
+  "You are a general-purpose agent working in a workspace. You answer the request by inspecting the workspace and reporting what you find.",
+  "Gather the data needed to answer the request and stop when you judge it minimally sufficient. Start with the answer: two to four sentences stating the main conclusion plainly. Then give only the evidence the request needs; do not inventory files, commands, or implementation details unless they are the answer, and prefer synthesis over exhaustive detail. Once the conclusion is supported, stop inspecting and write the report. Write in clear academic prose: define a term before using it, avoid unexplained jargon and unnecessary detail, and keep the exposition readable for a reader new to the project. Answer in GitHub-flavored Markdown with `general_stop`; the report is shown to the user as-is.",
 ].join("\n\n");
 
 export type GeneralProposer = (
@@ -41,6 +38,10 @@ export interface GeneralInput {
   startTurn?: number;
   session?: SessionState;
   open?: boolean;
+  // Engine-recorded workspace facts (project directory and top-level structure).
+  workspace?: string;
+  // The entry checkpoint id; the read-only unit restores any mutation when it ends.
+  snapshot?: string;
   signal?: AbortSignal;
 }
 
@@ -100,6 +101,11 @@ function requestOf(state: State): string {
   return typeof payload?.text === "string" ? payload.text : (state.nodes.get(root)?.label ?? "");
 }
 
+// The general history is rebuilt every turn, so a full tool result is resent each time. Keep
+// a bounded head and point at the stored observation; `recall` retrieves the full body.
+const TOOL_RESULT_LIMIT = 2000;
+const TOOL_RESULT_TAIL = 400;
+
 function historyOf(state: State, moveId: string): TapeMessage[] {
   const history: TapeMessage[] = [{ role: "user", text: requestOf(state) }];
   const plan = planOf(state, moveId);
@@ -127,19 +133,23 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
       }
       const resultId = resultOf(state, actionId);
       const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
-      history.push({
-        role: "tool",
-        text: result !== undefined ? observationText(result) : action.label,
-        callId: actionId,
-      });
+      const text = result !== undefined ? observationText(result) : action.label;
+      const bounded =
+        text.length <= TOOL_RESULT_LIMIT
+          ? text
+          : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}${
+              resultId !== undefined ? `\n…[truncated; recall ${resultId}]` : "\n…[truncated]"
+            }\n${text.slice(-TOOL_RESULT_TAIL)}`;
+      history.push({ role: "tool", text: bounded, callId: actionId });
     }
   }
   return history;
 }
 
-function messagesOf(state: State, moveId: string): ModelMessage[] {
+function messagesOf(state: State, moveId: string, workspace?: string): ModelMessage[] {
   return [
     { role: "system", content: GENERAL_BASE_PROMPT },
+    ...(workspace !== undefined ? [{ role: "system" as const, content: workspace }] : []),
     ...historyMessages(historyOf(state, moveId)),
   ];
 }
@@ -166,6 +176,9 @@ export async function runGeneralAgent(
   if (input.open === true && session !== undefined) {
     openUnit(session, input.request.id, "general", events, startTurn);
     pushUnit(session, input.request.id, startTurn);
+    if (input.snapshot !== undefined) {
+      unitOf(session, input.request.id).checkpoint = input.snapshot;
+    }
   }
 
   const unitId = input.request.id;
@@ -191,7 +204,7 @@ export async function runGeneralAgent(
       break;
     }
     const state = fold(events);
-    const messages = messagesOf(state, moveId);
+    const messages = messagesOf(state, moveId, input.workspace);
     const startedAt = Date.now();
     emit?.({ type: "turn_started", agent: "general", unitId, turn });
     emit?.({ type: "model_call_started", agent: "general", unitId, turn });
@@ -242,6 +255,7 @@ export async function runGeneralAgent(
       model: proposals.model,
       status: "ok",
       ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+      ...(proposals.reasoning !== undefined ? { reasoning: proposals.reasoning } : {}),
     });
 
     if (proposals.actions.length === 0) {
@@ -258,20 +272,25 @@ export async function runGeneralAgent(
       }
       const current = fold(events);
       const { tool, target } = targetOf(action);
-      emit?.({ type: "tool_started", agent: "general", unitId, turn, tool, target });
+      const edit =
+        action.operator === "apply" && action.action.tool === "edit"
+          ? {
+              path: action.action.path,
+              find: action.action.find,
+              replace: action.action.replace,
+            }
+          : undefined;
+      emit?.({
+        type: "tool_started",
+        agent: "general",
+        unitId,
+        turn,
+        tool,
+        target,
+        ...(edit !== undefined ? { edit } : {}),
+      });
       const before = events.length;
       const outcome = executeAction(action, current, deps.workspace, turn, proposals.reasoning);
-      if (action.operator === "stop" && proposals.thought.trim() !== "") {
-        const answer = proposals.thought.trim();
-        for (const event of outcome.events) {
-          if (event.type === "add_node" && event.node.kind === "stop") {
-            event.node.payload = {
-              ...(event.node.payload as Record<string, unknown> | undefined),
-              answer,
-            };
-          }
-        }
-      }
       events.push(...outcome.events);
       emit?.({ type: "events_added", unitId, events: events.slice(before) });
       const failed = outcome.events.some(
@@ -322,6 +341,130 @@ export async function runGeneralAgent(
       break;
     }
     if (done) break;
+  }
+
+  // The turn limit is a safety cap, not a deliverable: make one final no-tools call so the
+  // work already read still produces a report instead of an empty `max_turns` result.
+  if (!done && !paused) {
+    const messages: ModelMessage[] = [
+      ...messagesOf(fold(events), moveId, input.workspace),
+      {
+        role: "system",
+        content:
+          "The turn limit is reached. Write the final answer now from what you have already read. Use only that material: do not invent or extrapolate collection names, datasets, results, paths, or numbers. If something is not established by what you read, say so explicitly instead of guessing. Do not inspect anything else and do not call other tools; call `general_stop` with the complete Markdown report in `report`.",
+      },
+    ];
+    const startedAt = Date.now();
+    emit?.({ type: "turn_started", agent: "general", unitId, turn });
+    emit?.({ type: "model_call_started", agent: "general", unitId, turn });
+    let proposals: Proposals | undefined;
+    try {
+      proposals = await deps.propose(
+        messages,
+        input.signal !== undefined ? { signal: input.signal } : undefined,
+      );
+      const usage = proposals.usage;
+      deps.telemetry?.record({
+        type: "model_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "general",
+        unitId,
+        turn,
+        model: proposals.model ?? "",
+        startedAt,
+        endedAt: Date.now(),
+        status: "ok",
+        ...(usage !== undefined ? { usage } : {}),
+        context: contextSnapshot(messages),
+      });
+      emit?.({
+        type: "model_call_finished",
+        agent: "general",
+        unitId,
+        turn,
+        model: proposals.model,
+        status: "ok",
+        ...(usage !== undefined ? { usage } : {}),
+        ...(proposals.reasoning !== undefined ? { reasoning: proposals.reasoning } : {}),
+      });
+    } catch (error) {
+      deps.telemetry?.record({
+        type: "model_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "general",
+        unitId,
+        turn,
+        model: "",
+        startedAt,
+        endedAt: Date.now(),
+        status: isAborted(input.signal) ? "aborted" : "error",
+        context: contextSnapshot(messages),
+      });
+      emit?.({
+        type: "model_call_finished",
+        agent: "general",
+        unitId,
+        turn,
+        status: isAborted(input.signal) ? "aborted" : "error",
+      });
+      if (isAborted(input.signal)) {
+        paused = true;
+        emit?.({ type: "paused", agent: "general", unitId });
+      }
+    }
+
+    if (proposals !== undefined && !paused) {
+      const stop = proposals.actions.find((action) => action.operator === "stop");
+      const report =
+        stop !== undefined && stop.operator === "stop"
+          ? (stop.why ?? "").trim()
+          : proposals.thought.trim();
+      if (report !== "") {
+        emit?.({ type: "tool_started", agent: "general", unitId, turn, tool: "stop", target: "stop" });
+        const before = events.length;
+        const outcome = executeAction(
+          { operator: "stop", why: report },
+          fold(events),
+          deps.workspace,
+          turn,
+          proposals.reasoning,
+        );
+        events.push(...outcome.events);
+        emit?.({ type: "events_added", unitId, events: events.slice(before) });
+        emit?.({
+          type: "tool_finished",
+          agent: "general",
+          unitId,
+          turn,
+          tool: "stop",
+          target: "stop",
+          status: "ok",
+          preview: report.slice(0, 600),
+        });
+        deps.telemetry?.record({
+          type: "tool_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "general",
+          unitId,
+          turn,
+          tool: "stop",
+          startedAt: Date.now(),
+          endedAt: Date.now(),
+          status: "ok",
+        });
+        done = true;
+        stopReason = "answered";
+        emit?.({ type: "state_changed", unitId, turn, state: GENERAL_STATE, closed: true });
+      }
+    }
+    turn += 1;
+    emit?.({
+      type: "turn_finished",
+      agent: "general",
+      unitId,
+      turn: turn - 1,
+      stopReason: stopReason ?? "max_turns",
+    });
   }
 
   if (!done && !paused) {

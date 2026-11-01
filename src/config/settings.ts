@@ -27,6 +27,8 @@ export interface Settings {
   // non-streaming fallback / A/B arm.
   streaming: boolean;
   maxTurns: number;
+  // The general unit's safety cap: it stops itself with `general_stop`, this only bounds a loop.
+  generalMaxTurns: number;
   // The request observer's state thresholds: third entry into one island, and the turn
   // limit inside one state.
   stateCycleEntries: number;
@@ -72,6 +74,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     reasoningTape: (env.SKEIN_REASONING_TAPE ?? "true").toLowerCase() !== "false",
     streaming: (env.SKEIN_STREAMING ?? "true").toLowerCase() !== "false",
     maxTurns: num(env.SKEIN_MAX_TURNS, 24),
+    generalMaxTurns: num(env.SKEIN_GENERAL_MAX_TURNS, 9),
     stateCycleEntries: num(env.SKEIN_STATE_CYCLE_ENTRIES, DEFAULT_STATE_CYCLE_ENTRIES),
     stateLongTurns: num(env.SKEIN_STATE_LONG_TURNS, DEFAULT_STATE_LONG_TURNS),
     budgetTurns: num(env.SKEIN_BUDGET_TURNS, DEFAULT_BUDGET_TURNS),

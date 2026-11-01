@@ -12,6 +12,6 @@ export async function runTui(props: TuiAppProps): Promise<void> {
     });
     await instance.waitUntilExit();
   } finally {
-    if (alternate) process.stdout.write("\u001b[?1049l");
+    if (alternate) process.stdout.write("\u001b[?1000l\u001b[?1006l\u001b[?1007l\u001b[?1049l");
   }
 }

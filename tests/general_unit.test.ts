@@ -1,6 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import type { ModelMessage } from "ai";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -117,6 +119,95 @@ describe("general unit", () => {
     expect(view.header.tokensIn).toBe(150);
   });
 
+  it("writes a final report when the turn limit is reached", async () => {
+    const session = createSession();
+    const ws = workspace();
+    let calls = 0;
+    let finalMessages: ModelMessage[] = [];
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "overview" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
+      general: {
+        propose: async (messages): Promise<Proposals> => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              thought: "",
+              actions: [{ operator: "apply", action: { tool: "read", path: "NOTES.md" } }],
+            };
+          }
+          if (calls === 2) {
+            return {
+              thought: "",
+              actions: [{ operator: "apply", action: { tool: "bash", command: "ls" } }],
+            };
+          }
+          finalMessages = messages;
+          return { thought: "", actions: [{ operator: "stop", why: "## Final\n\nOverview." }] };
+        },
+        workspace: ws,
+        maxTurns: 2,
+      },
+    };
+    const result = await runSessionTurn(turnDeps, session, "overview");
+
+    expect(result.general?.result.done).toBe(true);
+    expect(result.general?.result.stopReason).toBe("answered");
+    expect(result.general?.result.turns).toBe(3);
+    const stop = result.general?.result.events.find(
+      (event) => event.type === "add_node" && event.node.kind === "stop",
+    );
+    expect(stop?.type === "add_node" ? stop.node.label : "").toBe("## Final\n\nOverview.");
+    expect(
+      finalMessages.some(
+        (message) =>
+          message.role === "system" &&
+          typeof message.content === "string" &&
+          message.content.includes("turn limit is reached"),
+      ),
+    ).toBe(true);
+  });
+
+  it("bounds a large tool result in the rebuilt history and points at recall", async () => {
+    const session = createSession();
+    const ws = workspace();
+    ws.write("big.txt", `${"x".repeat(6000)}\nTAIL-MARKER\n`);
+    let captured: ModelMessage[] = [];
+    let calls = 0;
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "read big" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
+      general: {
+        propose: async (messages): Promise<Proposals> => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              thought: "",
+              actions: [{ operator: "apply", action: { tool: "read", path: "big.txt" } }],
+            };
+          }
+          captured = messages;
+          return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+        },
+        workspace: ws,
+        maxTurns: 3,
+      },
+    };
+    await runSessionTurn(turnDeps, session, "read big");
+
+    const toolMessage = captured.find((message) => message.role === "tool");
+    const text = JSON.stringify(toolMessage);
+    expect(text.length).toBeLessThan(3000);
+    expect(text).toContain("recall obs:");
+    expect(text).toContain("TAIL-MARKER");
+  });
+
   it("keeps the general unit out of coding-task-specific helpers", async () => {
     const session = createSession();
     const journal: Event[] = [
@@ -155,5 +246,85 @@ describe("general unit", () => {
     ];
     session.units.set("g9", { id: "g9", type: "general", journal, turn: 0 });
     expect(attentionOf(session, "g9")).toBe("suspended");
+  });
+
+  it("passes the deterministic project facts to the general agent", async () => {
+    const session = createSession();
+    const root = mkdtempSync(join(tmpdir(), "skein-general-"));
+    dirs.push(root);
+    const ws = fsWorkspace(root);
+    let messages: ModelMessage[] = [];
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "look around" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 4 },
+      general: {
+        propose: async (input) => {
+          messages = input;
+          return { thought: "", actions: [{ operator: "stop", why: "## Done" }] };
+        },
+        workspace: ws,
+        maxTurns: 4,
+      },
+      sessionProbe: () => ({
+        material: {
+          root,
+          repos: [],
+          entries: [{ name: "src", kind: "dir", files: 2 }],
+          paths: [],
+          files: 2,
+        },
+      }),
+    };
+
+    await runSessionTurn(turnDeps, session, "look around");
+
+    const facts = String(messages[1]?.content);
+    expect(facts).toContain("Project facts");
+    expect(facts).toContain(`project directory: ${root}`);
+    expect(facts).toContain("top-level entries: src/ (2 files)");
+  });
+
+  it("restores a mutation made during the read-only general unit", async () => {
+    const session = createSession();
+    const root = mkdtempSync(join(tmpdir(), "skein-general-"));
+    dirs.push(root);
+    writeFileSync(join(root, "NOTES.md"), "alpha\n");
+    const ws = fsWorkspace(root, { checkpoints: true });
+    let turn = 0;
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "inspect" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 4 },
+      general: {
+        propose: async () => {
+          turn += 1;
+          if (turn === 1) {
+            return {
+              thought: "",
+              actions: [
+                {
+                  operator: "apply",
+                  action: { tool: "bash", command: "printf hacked > NOTES.md" },
+                },
+              ],
+            };
+          }
+          return { thought: "", actions: [{ operator: "stop", why: "## Done" }] };
+        },
+        workspace: ws,
+        maxTurns: 4,
+      },
+    };
+
+    await runSessionTurn(turnDeps, session, "inspect");
+
+    expect(readFileSync(join(root, "NOTES.md"), "utf8")).toBe("alpha\n");
+    const unit = session.units.get("g1");
+    expect(unit?.journal.some((event) => event.type === "rollback")).toBe(true);
   });
 });

@@ -10,6 +10,7 @@ export interface Theme {
   borderFocus: string;
   selectedBg: string;
   panelBg: string;
+  blockBg: string;
   success: string;
   warning: string;
   error: string;
@@ -48,6 +49,7 @@ const dark: Theme = {
   borderFocus: "#7d94a8",
   selectedBg: "#2b3138",
   panelBg: "#1b1f24",
+  blockBg: "#2d2d2d",
   success: "#8fbf9f",
   warning: "#d4b36a",
   error: "#cf8b8b",
@@ -86,6 +88,7 @@ const light: Theme = {
   borderFocus: "#6f879c",
   selectedBg: "#e5e9f0",
   panelBg: "#f4f6f8",
+  blockBg: "#ececec",
   success: "#3f7f5f",
   warning: "#8a6a2a",
   error: "#a84a4a",

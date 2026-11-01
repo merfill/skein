@@ -27,6 +27,13 @@ export interface TaskAction {
   tool?: string;
 }
 
+export interface TaskTurn {
+  turn: number;
+  tokensIn: number;
+  tokensOut: number;
+  durationMs: number;
+}
+
 export interface TaskState {
   id: string;
   island: string;
@@ -38,6 +45,8 @@ export interface TaskState {
   tokensOut: number;
   reasoningTokens: number;
   toolCalls: number;
+  durationMs: number;
+  turnDetails: TaskTurn[];
   closed: boolean;
   current: boolean;
   stopWhy?: string;
@@ -159,6 +168,35 @@ function usageFor(
   return { input, output, reasoning, toolCalls };
 }
 
+function turnDetailsFor(
+  events: readonly MetricEvent[],
+  unitId: string,
+  agent: "task" | "general",
+  startTurn: number,
+  endTurn: number,
+): TaskTurn[] {
+  const byTurn = new Map<number, TaskTurn>();
+  for (const event of events) {
+    if (event.type !== "model_call" || event.agent !== agent || event.unitId !== unitId) continue;
+    if (event.turn < startTurn || event.turn > endTurn) continue;
+    const entry = byTurn.get(event.turn) ?? {
+      turn: event.turn,
+      tokensIn: 0,
+      tokensOut: 0,
+      durationMs: 0,
+    };
+    entry.tokensIn += event.usage?.inputTokens ?? 0;
+    entry.tokensOut += event.usage?.outputTokens ?? 0;
+    entry.durationMs += Math.max(0, event.endedAt - event.startedAt);
+    byTurn.set(event.turn, entry);
+  }
+  const out: TaskTurn[] = [];
+  for (let turn = startTurn; turn <= endTurn; turn += 1) {
+    out.push(byTurn.get(turn) ?? { turn, tokensIn: 0, tokensOut: 0, durationMs: 0 });
+  }
+  return out;
+}
+
 function outcomeOf(state: State, task: Unit): string {
   const move = currentMove(state);
   if (move === undefined) return "no state";
@@ -199,6 +237,13 @@ function buildTask(
       end,
       unit.type === "general" ? "general" : "task",
     );
+    const turnDetails = turnDetailsFor(
+      telemetry,
+      unit.id,
+      unit.type === "general" ? "general" : "task",
+      start,
+      end,
+    );
     const stopId = stopOf(state, id);
     return {
       id,
@@ -211,6 +256,8 @@ function buildTask(
       tokensOut: usage.output,
       reasoningTokens: usage.reasoning,
       toolCalls: usage.toolCalls,
+      durationMs: turnDetails.reduce((sum, turn) => sum + turn.durationMs, 0),
+      turnDetails,
       closed: stopId !== undefined,
       current: index === ids.length - 1,
       ...(stopId !== undefined

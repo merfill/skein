@@ -1,11 +1,13 @@
 import { Box, Text } from "ink";
 import React from "react";
+import stringWidth from "string-width";
 
 import type { PausedState } from "../session/driver";
 import { compactDuration, compactTokens, oneLine, shortId, wrap } from "./format";
 import type { TaskState, TaskView } from "./view_model";
 import { theme } from "./theme";
 import type { Focus, TraceLine } from "./types";
+import { traceWindow } from "./trace_lines";
 import type { HeaderView } from "./view_model";
 
 function T(props: React.ComponentProps<typeof Text>) {
@@ -48,11 +50,8 @@ export function TracePanel(props: {
   focused: boolean;
 }) {
   const { lines, rows, width, scroll, focused } = props;
-  const viewport = Math.max(1, rows - (focused ? 2 : 0));
-  const maxScroll = Math.max(0, lines.length - viewport);
-  const offset = Math.min(scroll, maxScroll);
-  const start = Math.max(0, lines.length - viewport - offset);
-  const visible = lines.slice(start, start + viewport);
+  const view = traceWindow(lines, rows, focused, scroll);
+  const { visible, hiddenAbove, hiddenBelow, start } = view;
   return (
     <Box
       flexDirection="column"
@@ -62,36 +61,65 @@ export function TracePanel(props: {
       borderColor={focused ? theme.borderFocus : theme.border}
       paddingX={1}
       overflow="hidden"
+      backgroundColor={theme.panelBg}
     >
       {visible.length === 0 ? (
         <T dimColor>No messages yet. Type a request below.</T>
       ) : null}
-      {visible.map((line, index) => (
-        <T
-          key={start + index}
-          {...(line.color !== undefined ? { color: line.color } : {})}
-          {...(line.dim === true ? { dimColor: true } : {})}
-          {...(line.bold === true ? { bold: true } : {})}
-          {...(line.underline === true ? { underline: true } : {})}
-          wrap="wrap"
-        >
-          {line.spans === undefined
-            ? line.text
-            : line.spans.map((span, spanIndex) => (
-                <T
-                  key={`${start + index}:${spanIndex}`}
-                  {...(span.color !== undefined ? { color: span.color } : {})}
-                  {...(span.dim === true ? { dimColor: true } : {})}
-                  {...(span.bold === true ? { bold: true } : {})}
-                  {...(span.italic === true ? { italic: true } : {})}
-                  {...(span.underline === true ? { underline: true } : {})}
-                  {...(span.strikethrough === true ? { strikethrough: true } : {})}
-                >
-                  {span.text}
-                </T>
-              ))}
-        </T>
-      ))}
+      {hiddenAbove > 0 ? <T dimColor>↑ {hiddenAbove} more · PgUp</T> : null}
+      {visible.map((line, index) => {
+        const pad =
+          line.bg !== undefined
+            ? " ".repeat(
+                Math.max(
+                  0,
+                  width - 2 - (focused ? 2 : 0) - stringWidth(line.text),
+                ),
+              )
+            : "";
+        return (
+          <T
+            key={start + index}
+            {...(line.color !== undefined ? { color: line.color } : {})}
+            {...(line.dim === true ? { dimColor: true } : {})}
+            {...(line.bold === true ? { bold: true } : {})}
+            {...(line.underline === true ? { underline: true } : {})}
+            {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+            wrap="truncate-end"
+          >
+            {line.spans === undefined
+              ? `${line.text === "" ? " " : line.text}${pad}`
+              : [
+                  ...line.spans.map((span, spanIndex) => (
+                    <T
+                      key={`${start + index}:${spanIndex}`}
+                      {...(span.color !== undefined ? { color: span.color } : {})}
+                      {...(span.dim === true ? { dimColor: true } : {})}
+                      {...(span.bold === true ? { bold: true } : {})}
+                      {...(span.italic === true ? { italic: true } : {})}
+                      {...(span.underline === true ? { underline: true } : {})}
+                      {...(span.strikethrough === true ? { strikethrough: true } : {})}
+                      {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+                    >
+                      {span.text}
+                    </T>
+                  )),
+                  ...(pad !== ""
+                    ? [
+                        <T
+                          key={`${start + index}:pad`}
+                          dimColor={true}
+                          {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+                        >
+                          {pad}
+                        </T>,
+                      ]
+                    : []),
+                ]}
+          </T>
+        );
+      })}
+      {hiddenBelow > 0 ? <T dimColor>↓ {hiddenBelow} more · PgDn</T> : null}
     </Box>
   );
 }
@@ -102,34 +130,27 @@ function stateRow(state: TaskState, selected: boolean, width: number): string {
   const range = `t${state.startTurn + 1}–${state.endTurn + 1}`.padEnd(9, " ");
   const turns = `${state.turns}t`.padStart(3, " ");
   const tokens = compactTokens(state.tokensIn + state.tokensOut).padStart(5, " ");
-  const text = `${mark} ${island}${range}${turns} ${tokens}`;
+  const time = compactDuration(state.durationMs).padStart(5, " ");
+  const text = `${mark} ${island}${range}${turns} ${tokens} ${time}`;
   return oneLine(text, width);
+}
+
+function turnDuration(ms: number): string {
+  if (ms <= 0) return "—";
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
 function detailLines(state: TaskState | undefined, width: number): string[] {
   if (state === undefined) return [];
-  const lines: string[] = [];
-  lines.push(`Selected: ${state.island}`);
-  if (state.what !== "") lines.push(...wrap(`what: ${state.what}`, width));
-  if (state.stopWhy !== undefined && state.stopWhy !== "") {
-    lines.push(...wrap(`outcome: ${state.stopWhy}`, width));
-  } else if (state.current) {
-    lines.push("outcome: open");
-  }
-  lines.push(`turns ${state.startTurn + 1}–${state.endTurn + 1} · ${state.turns}t`);
-  lines.push(
-    `tokens ${compactTokens(state.tokensIn)} in / ${compactTokens(state.tokensOut)} out · ${state.toolCalls} acts`,
-  );
-  const actions = state.actions.slice(-6);
-  if (actions.length > 0) {
-    lines.push("actions:");
-    for (const action of actions) {
-      const prefix = `  t${action.turn + 1}  `;
-      const parts = wrap(action.label, Math.max(10, width - prefix.length));
-      parts.forEach((part, index) => {
-        lines.push(index === 0 ? `${prefix}${part}` : `${" ".repeat(prefix.length)}${part}`);
-      });
-    }
+  const lines: string[] = [
+    `${oneLine(state.island, Math.max(8, width - 20))} · ${state.turns}t · ` +
+      `${compactTokens(state.tokensIn + state.tokensOut)} tok · ${compactDuration(state.durationMs)}`,
+  ];
+  for (const turn of state.turnDetails) {
+    const number = `t${turn.turn + 1}`.padEnd(4, " ");
+    const tokens = compactTokens(turn.tokensIn + turn.tokensOut).padStart(5, " ");
+    const time = turnDuration(turn.durationMs).padStart(6, " ");
+    lines.push(`  ${number}${tokens}  ${time}`);
   }
   return lines;
 }
@@ -142,8 +163,9 @@ export function TaskPanel(props: {
   detailScroll: number;
   focused: boolean;
   paused?: boolean;
+  observer?: string;
 }) {
-  const { task, width, rows, selected, detailScroll, focused, paused } = props;
+  const { task, width, rows, selected, detailScroll, focused, paused, observer } = props;
   if (task === undefined) {
     return (
       <Box
@@ -153,6 +175,7 @@ export function TaskPanel(props: {
         borderStyle={focused ? "round" : undefined}
         borderColor={focused ? theme.borderFocus : theme.border}
         paddingX={1}
+        backgroundColor={theme.panelBg}
       >
         <T bold>Current task</T>
         <T dimColor>no task yet</T>
@@ -180,13 +203,15 @@ export function TaskPanel(props: {
       borderColor={focused ? theme.borderFocus : theme.border}
       paddingX={1}
       overflow="hidden"
+      backgroundColor={theme.panelBg}
     >
       <T bold wrap="truncate-end">
-        {shortId(task.unitId, 8)} {oneLine(task.request, Math.max(10, width - 12))}
+        {shortId(task.unitId, 8)}
       </T>
       <T dimColor wrap="truncate-end">
-        {paused === true ? "paused" : task.attention} · {compactDuration(task.elapsedMs)} ·{" "}
-        {task.toolCalls} calls
+        {observer !== undefined
+          ? `observer · ${observer}`
+          : `${paused === true ? "paused" : task.attention} · ${compactDuration(task.elapsedMs)} · ${compactTokens(task.tokensIn + task.tokensOut)} tok · ${task.turns}t`}
       </T>
       <T color={theme.state} bold>
         States
@@ -295,48 +320,87 @@ export function HistoryOverlay(props: {
   );
 }
 
+function wrapComposerLine(line: string, width: number, marker: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let size = 0;
+  for (const char of Array.from(line)) {
+    // The cursor marker is a one-column block between characters, not a property of the
+    // character after it, so wrapping must account for that column.
+    const charWidth = char === marker ? 1 : stringWidth(char);
+    if (size + charWidth > width && current !== "") {
+      const space = current.lastIndexOf(" ");
+      if (space > 0) {
+        out.push(current.slice(0, space));
+        current = current.slice(space + 1);
+        size = stringWidth(current.replaceAll(marker, " "));
+      } else {
+        out.push(current);
+        current = "";
+        size = 0;
+      }
+    }
+    current += char;
+    size += charWidth;
+  }
+  out.push(current);
+  return out;
+}
+
 export function Composer(props: {
   input: string;
   cursor: number;
   width: number;
+  rows: number;
   focused: boolean;
 }) {
-  const { input, cursor, width, focused } = props;
+  const { input, cursor, width, rows, focused } = props;
   const text = input === "" ? "" : input;
   const marker = "\u0000";
   const before = text.slice(0, cursor);
   const after = text.slice(cursor);
-  const at = after.charAt(0);
-  const rest = after.slice(1);
-  const shown = `${before}${marker}${at}${rest}`;
-  const lines = shown.split("\n");
-  const visible = lines.slice(Math.max(0, lines.length - 4));
+  const shown = `${before}${marker}${after}`;
+  const textWidth = Math.max(10, width - 6);
+  const lines = shown
+    .split("\n")
+    .flatMap((line) => wrapComposerLine(line, textWidth, marker));
+  const markerLine = lines.findIndex((line) => line.includes(marker));
+  const cursorLine = markerLine >= 0 ? markerLine : Math.max(0, lines.length - 1);
+  const height = Math.max(1, rows);
+  const start =
+    lines.length <= height
+      ? 0
+      : Math.max(0, Math.min(cursorLine - (height - 1), lines.length - height));
+  const visible = lines.slice(start, start + height);
+  while (visible.length < height) visible.push("");
   return (
     <Box
       flexDirection="column"
-      borderStyle={focused ? "round" : undefined}
+      borderStyle="round"
       borderColor={focused ? theme.borderFocus : theme.border}
       paddingX={1}
       width={width}
+      backgroundColor={theme.panelBg}
     >
       {visible.map((line, index) => {
+        const absolute = start + index;
+        const prompt = absolute === 0 ? "> " : "  ";
         const markerAt = line.indexOf(marker);
         if (markerAt === -1) {
           return (
             <T key={`composer-${index}`} wrap="truncate-end">
-              {index === 0 ? "> " : "  "}
+              {prompt}
               {line}
             </T>
           );
         }
         const left = line.slice(0, markerAt);
-        const char = line.slice(markerAt + 1, markerAt + 2) || " ";
-        const right = line.slice(markerAt + 2);
+        const right = line.slice(markerAt + 1);
         return (
           <T key={`composer-${index}`} wrap="truncate-end">
-            {index === 0 ? "> " : "  "}
+            {prompt}
             {left}
-            <T inverse>{char}</T>
+            <T inverse> </T>
             {right}
           </T>
         );
@@ -413,8 +477,10 @@ export function HelpOverlay(props: { width: number; height: number }) {
     "  Ctrl-C       abort the running turn",
     "  Ctrl-T       task history",
     "  Tab          cycle focus (composer / trace / task)",
-    "  Up/Down      scroll trace, select a state",
-    "  PgUp/PgDn    scroll trace / state detail",
+    "  Up/Down      composer history / scroll trace / task turns",
+    "  Space        toggle the visible block in the trace",
+    "  PgUp/PgDn    scroll trace / task detail",
+    "  Ctrl-G       toggle mouse capture (click blocks)",
     "  ?            toggle help",
   ];
   return (

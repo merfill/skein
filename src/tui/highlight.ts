@@ -110,16 +110,26 @@ function plain(code: string): TraceSpan[][] {
 }
 
 export function highlightCode(language: string | undefined, code: string): TraceSpan[][] {
-  if (language === undefined || language.trim() === "") return plain(code);
-  const lang = ALIASES[language.toLowerCase()] ?? language.toLowerCase();
+  const requested = language?.trim();
+  if (requested === undefined || requested === "") {
+    try {
+      return highlightTree(lowlight.highlightAuto(code), code);
+    } catch {
+      return plain(code);
+    }
+  }
+  const lang = ALIASES[requested.toLowerCase()] ?? requested.toLowerCase();
   if (lang === "") return plain(code);
   try {
-    const tree: Root = lowlight.highlight(lang, code);
-    const lines: TraceSpan[][] = [[]];
-    walk(tree.children as Nodes[], lines, {});
-    if (lines.length > 1 && lines[lines.length - 1]?.length === 0) lines.pop();
-    return lines.length > 0 ? lines : plain(code);
+    return highlightTree(lowlight.highlight(lang, code), code);
   } catch {
     return plain(code);
   }
+}
+
+function highlightTree(tree: Root, code: string): TraceSpan[][] {
+  const lines: TraceSpan[][] = [[]];
+  walk(tree.children as Nodes[], lines, {});
+  if (lines.length > 1 && lines[lines.length - 1]?.length === 0) lines.pop();
+  return lines.length > 0 ? lines : plain(code);
 }

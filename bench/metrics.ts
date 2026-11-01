@@ -1,10 +1,5 @@
-// Shared metrics for the Skein bench and the Harbor LangGraph adapter:
-// per-call token/cache usage (via a LangChain callback), context size, and the
-// work-graph node/action counts.
-import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import { AIMessage } from "@langchain/core/messages";
-import type { ChatGeneration, LLMResult } from "@langchain/core/outputs";
-
+// Shared metrics for the Skein bench and the Harbor adapter: per-call token/cache
+// usage, context size, and the work-graph node/action counts.
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import type { Action } from "../src/llm/schemas";
@@ -14,7 +9,7 @@ export interface UsageLike {
   input_tokens?: number;
   output_tokens?: number;
   input_token_details?: { cache_read?: number; cache_creation?: number };
-  // Reasoning (hidden "thinking") tokens: LangChain's OpenAI-compatible shape. The
+  // Reasoning (hidden "thinking") tokens: the OpenAI-compatible usage shape. The
   // provider may instead report them under response_metadata (see extractUsage).
   output_token_details?: { reasoning?: number };
 }
@@ -48,7 +43,7 @@ interface ProviderUsage {
   completion_tokens_details?: { reasoning_tokens?: unknown };
 }
 
-export function extractUsage(output: LLMResult): {
+export function extractUsage(output: unknown): {
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -57,14 +52,18 @@ export function extractUsage(output: LLMResult): {
   cost: number | null;
   raw: unknown;
 } {
-  const generation = output.generations?.[0]?.[0] as ChatGeneration | undefined;
+  const result = output as {
+    generations?: { message?: unknown }[][];
+    llmOutput?: unknown;
+  };
+  const generation = result.generations?.[0]?.[0];
   const message = generation?.message as
     | { usage_metadata?: UsageLike; response_metadata?: Record<string, unknown> }
     | undefined;
   const usage = message?.usage_metadata;
   const details = usage?.input_token_details;
   const providerUsage = message?.response_metadata?.usage as ProviderUsage | undefined;
-  // LangChain (output_token_details.reasoning) first; the provider's raw
+  // The canonical output_token_details.reasoning first; the provider's raw
   // completion_tokens_details.reasoning_tokens is the fallback shape.
   const fromMetadata = usage?.output_token_details?.reasoning;
   const fromProvider = providerUsage?.completion_tokens_details?.reasoning_tokens;
@@ -83,13 +82,13 @@ export function extractUsage(output: LLMResult): {
     cost: typeof providerUsage?.cost === "number" ? providerUsage.cost : null,
     raw: {
       usage_metadata: usage ?? null,
-      llmOutput: output.llmOutput ?? null,
+      llmOutput: result.llmOutput ?? null,
       response_metadata: message?.response_metadata ?? null,
     },
   };
 }
 
-export class TurnMeter extends BaseCallbackHandler {
+export class TurnMeter {
   name = "turn-meter";
   calls = 0;
   inputTokens = 0;
@@ -101,7 +100,7 @@ export class TurnMeter extends BaseCallbackHandler {
   costCalls = 0;
   usage: unknown[] = [];
 
-  async handleLLMEnd(output: LLMResult): Promise<void> {
+  async handleLLMEnd(output: unknown): Promise<void> {
     this.calls += 1;
     const usage = extractUsage(output);
     this.inputTokens += usage.inputTokens;
@@ -133,39 +132,6 @@ export class TurnMeter extends BaseCallbackHandler {
   }
 
   handleUsage = (reply: unknown): void => this.record(reply as ModelReply);
-}
-
-// A LangChain callback handler (Harbor's inherited handlers; `TurnMeter`'s legacy path)
-// exposed as an AI SDK usage handler. The synthetic `LLMResult` carries the same message
-// shape the LangChain model path used to produce.
-export function langChainUsage(callback: unknown): { handleUsage(reply: ModelReply): Promise<void> } {
-  return {
-    async handleUsage(reply) {
-      const handler = callback as { handleLLMEnd?: (output: LLMResult) => unknown };
-      if (typeof handler.handleLLMEnd !== "function") return;
-      const message = new AIMessage({
-        content: reply.text,
-        usage_metadata: {
-          input_tokens: reply.usage.inputTokens ?? 0,
-          output_tokens: reply.usage.outputTokens ?? 0,
-          total_tokens: reply.usage.totalTokens ?? 0,
-          input_token_details: {
-            cache_read: reply.usage.inputTokenDetails.cacheReadTokens ?? 0,
-            cache_creation: reply.usage.inputTokenDetails.cacheWriteTokens ?? 0,
-          },
-          output_token_details: {
-            reasoning: reply.usage.outputTokenDetails.reasoningTokens ?? 0,
-          },
-        },
-        response_metadata: { finish_reason: reply.finishReason, usage: reply.rawUsage },
-      });
-      const output = {
-        generations: [[{ text: reply.text, message }]],
-        llmOutput: reply.rawUsage,
-      } as unknown as LLMResult;
-      await handler.handleLLMEnd(output);
-    },
-  };
 }
 
 export function actionName(action: Action): string {

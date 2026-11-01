@@ -1,4 +1,8 @@
+import { statSync, type Stats } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
 import { createInterface, emitKeypressEvents } from "node:readline";
+import { pathToFileURL } from "node:url";
 
 import { loadSettings } from "./config/settings";
 import { createChatModel } from "./llm/client";
@@ -46,6 +50,20 @@ function parseArgs(argv: readonly string[]): CliArgs {
     }
   }
   return args;
+}
+
+export function resolveCliDir(dir: string): string {
+  const expanded =
+    dir === "~" ? homedir() : dir.startsWith("~/") ? resolve(homedir(), dir.slice(2)) : dir;
+  const full = resolve(expanded);
+  let stat: Stats;
+  try {
+    stat = statSync(full);
+  } catch {
+    throw new Error(`workspace not found: ${full}`);
+  }
+  if (!stat.isDirectory()) throw new Error(`workspace is not a directory: ${full}`);
+  return full;
 }
 
 function actionName(action: Action): string {
@@ -120,13 +138,14 @@ async function runPlain(args: CliArgs, deps: SessionTurnDeps, workspace: Workspa
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
+  const root = resolveCliDir(args.dir);
   const settings = loadSettings();
   const modelName = args.model ?? settings.model;
   const model = createChatModel({
     ...settings,
     model: modelName,
   });
-  const workspace = fsWorkspace(args.dir, {
+  const workspace = fsWorkspace(root, {
     runTimeoutMs: settings.runTimeoutMs,
     checkpoints: true,
   });
@@ -144,7 +163,21 @@ async function main(): Promise<void> {
 
   const telemetry = memoryTelemetry();
 
+  // The session intro probe is lazy and cached: one shell + tree walk per session, not per line.
+  const sessionProbe = (() => {
+    let probed = false;
+    let cached: ReturnType<typeof probeSession>;
+    return (): ReturnType<typeof probeSession> => {
+      if (!probed) {
+        cached = probeSession(workspace);
+        probed = true;
+      }
+      return cached;
+    };
+  })();
+
   const deps: SessionTurnDeps = {
+    sessionProbe,
     sessionAgent: {
       ...createSessionAgentDeps(model, { settings }),
       telemetry: telemetry.sink,
@@ -152,7 +185,7 @@ async function main(): Promise<void> {
     task: {
       propose,
       workspace,
-      maxTurns: args.maxTurns ?? settings.maxTurns,
+      ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
       probe: probeSession,
       telemetry: telemetry.sink,
       ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
@@ -160,7 +193,7 @@ async function main(): Promise<void> {
     general: {
       propose: modelGeneralProposer(model, { settings }),
       workspace,
-      maxTurns: args.maxTurns ?? settings.maxTurns,
+      maxTurns: args.maxTurns ?? settings.generalMaxTurns,
       telemetry: telemetry.sink,
     },
     telemetry: telemetry.sink,
@@ -182,7 +215,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+const entry = process.argv[1];
+if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}

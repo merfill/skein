@@ -40,7 +40,8 @@ import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
   "You are the assistant that handles coding and general tasks: you talk to the user, answer from earlier work, and prepare work for the coding or general agent. Above is the history of earlier work: what was asked and how it ended.",
-  "Choose the route by the kind of result:\n- `respond` — a conversational reply; no separate record.\n- `general` — read, inspect, analyse, explain or report on the material; use it whenever that work is the request itself. It gets its own record. Reformulate it as a brief with the goal and relevant context.\n- `start` — change files or run side-effecting commands; reformulate it with the goal, facts and acceptance.",
+  "Choose the route by the kind of result:\n- `respond` — a conversational reply; no separate record.\n- `general` — read, inspect, analyse, explain or report on the material; use it whenever that work is the request itself. It gets its own record. Reformulate it as a brief at the request's depth: the goal and only the context that brief needs.\n- `start` — change files or run side-effecting commands; reformulate it with the goal, facts and acceptance.",
+  "Keep the brief the same scope as the request. Do not add sections, sub-questions, or an audit the user did not ask for: a request to describe a project is a short overview, not an inventory of every directory or subsystem. A request to read one file is not a request to survey the tree.",
   "Before starting work, make sure the brief is clear. If the request is ambiguous, or the reformulation depends on earlier work, first state it as you understand it and ask the user to confirm. Start only after the user agrees, or when the request is already unambiguous.",
   "You have no workspace tools: do not read files, edit them, or run commands yourself. Use `unit`/`state`/`turns`/`body`/`search` to inspect earlier work; the general agent reads the material and the coding agent makes changes.",
   "Answer in GitHub-flavored Markdown: short `##` sections, bullet lists, and `code` for paths and symbols. For a codebase investigation, say what you found, where (`path:line`), and what it means; cite only what the tools returned. No preamble.",
@@ -131,6 +132,8 @@ export interface SessionUnitRunInput {
   surveyLimit?: number;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
+  // The engine-owned workspace orientation (root and material map).
+  workspace?: WorkspaceIntro;
   // A user pause: the in-flight model call is aborted and the loop returns `paused`.
   signal?: AbortSignal;
   // Side-channel telemetry; never rendered on the tape.
@@ -149,10 +152,18 @@ export interface SessionUnitRunResult {
   paused?: boolean;
 }
 
+export interface WorkspaceIntro {
+  // The root as the agents see it (`displayRoot` in a container, else the host root).
+  root: string;
+  // The rendered material map (an index, not content); absent when the probe failed.
+  map?: string;
+}
+
 export interface SessionContext {
   utterance: string;
   outline: string;
   history: TapeMessage[];
+  workspace?: WorkspaceIntro;
 }
 
 interface ToolCallPayload {
@@ -221,6 +232,7 @@ export function seedSessionUnit(utterance: string): Event[] {
 export function projectSessionUnit(
   journal: readonly Event[],
   outline = "",
+  workspace?: WorkspaceIntro,
 ): SessionContext {
   let utterance = "";
   const history: TapeMessage[] = [];
@@ -250,12 +262,42 @@ export function projectSessionUnit(
       }
     }
   }
-  return { utterance, outline, history };
+  return {
+    utterance,
+    outline,
+    history,
+    ...(workspace !== undefined ? { workspace } : {}),
+  };
+}
+
+// The engine-owned orientation fact: the session agent does not read files, so it needs to be
+// told that a project tree exists, where it is, and that material work belongs to general.
+function workspaceMessage(workspace: WorkspaceIntro): string {
+  const lines = [
+    'Workspace: the project tree this session works in. The general agent reads it and the coding agent changes it; requests like "the project", "this repo" or "this codebase" refer to it.',
+  ];
+  if (workspace.map !== undefined && workspace.map !== "") {
+    lines.push(
+      "The workspace map below is an index, not the content. Do not answer about the project from it alone: route reading, analysis and explanation to `general`.",
+      "",
+      workspace.map,
+    );
+  } else {
+    lines.push(
+      "The tree is not indexed here. Route reading, analysis and explanation to `general`.",
+      "",
+      `root: ${workspace.root}`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function buildSessionMessages(context: SessionContext): ModelMessage[] {
   return [
     { role: "system", content: SESSION_BASE_PROMPT },
+    ...(context.workspace !== undefined
+      ? [{ role: "system" as const, content: workspaceMessage(context.workspace) }]
+      : []),
     { role: "system", content: `Earlier tasks:\n${context.outline}` },
     { role: "user", content: context.utterance },
     ...historyMessages(context.history),
@@ -359,7 +401,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
       return { journal, turns, paused: true };
     }
-    const messages = buildSessionMessages(projectSessionUnit(journal, outline));
+    const messages = buildSessionMessages(projectSessionUnit(journal, outline, input.workspace));
     if (surveys >= surveyLimit) {
       messages.push({
         role: "system",
@@ -434,6 +476,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       model: reply.model,
       status: isAborted(input.signal) ? "aborted" : "ok",
       ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+      ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
     });
     if (reply.operation !== undefined) {
       if (isAborted(input.signal)) {
@@ -550,6 +593,8 @@ export interface RunSessionAgentOptions {
   startTurn?: number;
   // The outline captured when the unit first opened; required to rebuild the same prefix.
   outline?: string;
+  // The engine-owned workspace orientation (root and material map).
+  workspace?: WorkspaceIntro;
   signal?: AbortSignal;
 }
 
@@ -656,6 +701,7 @@ export async function runSessionAgent(
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
       ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
+      ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
       outline,
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(surveyLimit !== undefined ? { surveyLimit } : {}),

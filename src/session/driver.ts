@@ -1,5 +1,6 @@
 import type { Event } from "../ir/events";
 import { fold } from "../ir/graph";
+import type { SessionProbe } from "../ir/session";
 import { runAgent, type AgentDeps, type AgentResult } from "../loop/graph";
 import type { Workspace } from "../tools/workspace";
 import { applyReaction } from "./apply";
@@ -9,6 +10,8 @@ import type { ProgressSink } from "./progress";
 import { runGeneralAgent, type GeneralDeps, type GeneralResult } from "./general";
 import { runRequestObserver } from "./observer";
 import {
+  abandonUnit,
+  attentionOf,
   popUnit,
   recordReaction,
   recordReport,
@@ -20,8 +23,10 @@ import {
   runSessionAgent,
   type RunSessionAgentResult,
   type SessionAgentDeps,
+  type WorkspaceIntro,
 } from "./session_agent";
 import { unitOutline } from "./session_outline";
+import { generalFactsText, probeText } from "./session_workspace";
 import type {
   NoDecisionReason,
   SessionOperation,
@@ -37,9 +42,20 @@ export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
   general?: GeneralDeps;
+  // A lazy, session-scoped probe: the session agent gets the workspace map as an intro.
+  sessionProbe?: () => SessionProbe | undefined;
   // The driver records pause/resume/cancel here; the loops receive their own copy.
   telemetry?: TelemetrySink;
   onProgress?: ProgressSink;
+}
+
+function workspaceIntro(deps: SessionTurnDeps): WorkspaceIntro {
+  const probe = deps.sessionProbe?.();
+  const map = probe?.material !== undefined ? probeText(probe, "material") : undefined;
+  return {
+    root: workspaceRoot(deps.task.workspace),
+    ...(map !== undefined && map !== "" ? { map } : {}),
+  };
 }
 
 export interface SessionTurnOptions {
@@ -112,6 +128,20 @@ function syncUnit(session: SessionState, unitId: string, result: AgentResult): v
   unit.turn = result.turns;
 }
 
+// A run that ends done without reaching its terminal closure (turn cap, observer halt,
+// no_decision, llm_error) is not "suspended": it will not resume on its own. Mark it
+// abandoned so the session view and history stop showing it as an open unit.
+function settleAttention(
+  session: SessionState,
+  unitId: string,
+  done: boolean,
+  paused: boolean | undefined,
+): void {
+  if (!done || paused === true) return;
+  if (attentionOf(session, unitId) === "completed") return;
+  abandonUnit(session, unitId, unitOf(session, unitId).turn);
+}
+
 function requestText(journal: readonly Event[]): string {
   for (const event of journal) {
     if (event.type !== "add_node" || event.node.kind !== "request") continue;
@@ -169,6 +199,47 @@ function snapshotFor(deps: SessionTurnDeps, unitId: string): string | undefined 
     return deps.task.workspace.checkpoint?.(`task-start:${unitId}`);
   } catch {
     return undefined;
+  }
+}
+
+function generalWorkspace(deps: SessionTurnDeps): Workspace {
+  return deps.general?.workspace ?? deps.task.workspace;
+}
+
+function workspaceRoot(workspace: Workspace): string {
+  return workspace.displayRoot !== undefined && workspace.displayRoot !== ""
+    ? workspace.displayRoot
+    : workspace.root;
+}
+
+function generalSnapshotFor(deps: SessionTurnDeps, unitId: string): string | undefined {
+  try {
+    return generalWorkspace(deps).checkpoint?.(`general-start:${unitId}`);
+  } catch {
+    return undefined;
+  }
+}
+
+// The general unit is read-only by contract. If a command changed the tree anyway, put only
+// those paths back and record the fact; unchanged paths are left untouched.
+function restoreGeneral(deps: SessionTurnDeps, session: SessionState, unitId: string): void {
+  const unit = session.units.get(unitId);
+  if (unit === undefined) return;
+  const checkpoint = unit.checkpoint;
+  if (checkpoint === undefined) return;
+  const workspace = generalWorkspace(deps);
+  if (workspace.restoreChanged === undefined) return;
+  try {
+    const changed = workspace.restoreChanged(checkpoint);
+    if (changed.length > 0) {
+      unit.journal.push({ type: "rollback", checkpoint, reason: "general-read-only" });
+    }
+  } catch (error) {
+    unit.journal.push({
+      type: "rollback",
+      checkpoint,
+      reason: `general-read-only restore failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 }
 
@@ -283,13 +354,24 @@ async function dispatch(
   if (applied.operation.kind === "general") {
     if (deps.general === undefined) return result;
     const unitId = nextGeneralId(session);
-    const run = await runGeneralAgent(deps.general, {
-      request: { id: unitId, text: pending.text },
-      session,
-      open: true,
-      ...(signal !== undefined ? { signal } : {}),
-    });
+    const snapshot = generalSnapshotFor(deps, unitId);
+    let run: GeneralResult;
+    let paused = false;
+    try {
+      run = await runGeneralAgent(deps.general, {
+        request: { id: unitId, text: pending.text },
+        session,
+        open: true,
+        workspace: generalFactsText(deps.sessionProbe?.(), workspaceRoot(generalWorkspace(deps))),
+        ...(snapshot !== undefined ? { snapshot } : {}),
+        ...(signal !== undefined ? { signal } : {}),
+      });
+      paused = run.paused === true;
+    } finally {
+      if (!paused) restoreGeneral(deps, session, unitId);
+    }
     syncUnit(session, unitId, run);
+    settleAttention(session, unitId, run.done, run.paused);
     result.general = { unitId, result: run };
     if (run.paused === true) {
       result.paused = {
@@ -314,6 +396,7 @@ async function dispatch(
     ...(signal !== undefined ? { signal } : {}),
   });
   syncUnit(session, unitId, run);
+  settleAttention(session, unitId, run.done, run.paused);
   result.task = { unitId, result: run };
 
   if (run.paused === true) {
@@ -334,6 +417,7 @@ export async function runSessionTurn(
   const turn = options.turn ?? session.utteranceSeq;
   const interpretation = await runSessionAgent(deps.sessionAgent, session, utterance, {
     turn,
+    workspace: workspaceIntro(deps),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   session.utteranceSeq = turn + 1;
@@ -407,6 +491,7 @@ async function resumeObserver(
         stopReason: "observer_halt",
         turns: taskUnit.turn,
       };
+      settleAttention(session, taskUnitId, true, false);
       const result = makeResult(session, paused.utteranceTurn);
       result.task = { unitId: taskUnitId, result: run };
       return result;
@@ -428,6 +513,7 @@ async function resumeObserver(
     ...(signal !== undefined ? { signal } : {}),
   });
   syncUnit(session, taskUnitId, run);
+  settleAttention(session, taskUnitId, run.done, run.paused);
   const result = makeResult(session, paused.utteranceTurn);
   result.task = { unitId: taskUnitId, result: run };
   if (run.paused === true) {
@@ -470,6 +556,7 @@ export async function resumeTurn(
     const interpretation = await runSessionAgent(deps.sessionAgent, session, paused.utterance, {
       turn: paused.utteranceTurn,
       unitId: paused.unitId,
+      workspace: workspaceIntro(deps),
       ...(paused.startTurn !== undefined ? { startTurn: paused.startTurn } : {}),
       ...(paused.outline !== undefined ? { outline: paused.outline } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
@@ -498,15 +585,24 @@ export async function resumeTurn(
   if (paused.agent === "general") {
     if (deps.general === undefined) return { session, turn: paused.utteranceTurn, paused };
     const unit = unitOf(session, paused.unitId);
-    const run = await runGeneralAgent(deps.general, {
-      request: { id: paused.unitId, text: requestText(unit.journal) },
-      seed: unit.journal,
-      startTurn: unit.turn,
-      session,
-      open: false,
-      ...(options.signal !== undefined ? { signal: options.signal } : {}),
-    });
+    let run: GeneralResult;
+    let stillPaused = false;
+    try {
+      run = await runGeneralAgent(deps.general, {
+        request: { id: paused.unitId, text: requestText(unit.journal) },
+        seed: unit.journal,
+        startTurn: unit.turn,
+        session,
+        open: false,
+        workspace: generalFactsText(deps.sessionProbe?.(), workspaceRoot(generalWorkspace(deps))),
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      });
+      stillPaused = run.paused === true;
+    } finally {
+      if (!stillPaused) restoreGeneral(deps, session, paused.unitId);
+    }
     syncUnit(session, paused.unitId, run);
+    settleAttention(session, paused.unitId, run.done, run.paused);
     const result = makeResult(session, paused.utteranceTurn);
     result.general = { unitId: paused.unitId, result: run };
     if (run.paused === true) {
@@ -574,15 +670,33 @@ export function cancelTurn(
     popUnit(session);
   }
   if (paused.agent === "session" || paused.agent === "general") {
+    let rollback: "ok" | "unavailable" | "error" = "unavailable";
+    let warning: string | undefined;
+    if (paused.agent === "general") {
+      const unit = unitOf(session, paused.unitId);
+      const checkpoint = unit.checkpoint;
+      if (checkpoint !== undefined && workspace.restoreChanged !== undefined) {
+        try {
+          const changed = workspace.restoreChanged(checkpoint);
+          if (changed.length > 0) {
+            unit.journal.push({ type: "rollback", checkpoint, reason: "general-read-only" });
+          }
+          rollback = "ok";
+        } catch (error) {
+          rollback = "error";
+          warning = `rollback failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    }
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     telemetry?.record({
       type: "cancel",
       sessionId: LOCAL_SESSION_ID,
       unitId: paused.unitId,
       at: Date.now(),
-      rollback: "unavailable",
+      rollback,
     });
-    return { session };
+    return { session, ...(warning !== undefined ? { warning } : {}) };
   }
 
   const taskUnitId = paused.agent === "observer" ? paused.taskUnitId : paused.unitId;

@@ -39,7 +39,8 @@ export async function runRepl(
     for (const line of lines) output(line);
   };
   const cancel = (state: PausedState): void => {
-    print(renderCancel(cancelTurn(deps.task.workspace, session, state, deps.telemetry)));
+    const workspace = state.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
+    print(renderCancel(cancelTurn(workspace, session, state, deps.telemetry)));
     paused = undefined;
     options.onPauseChanged?.(false);
   };

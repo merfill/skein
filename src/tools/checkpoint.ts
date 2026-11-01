@@ -1,3 +1,4 @@
+import { SKIP_DIRS } from "./skip_dirs";
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -146,6 +147,10 @@ export interface Checkpoint {
   // Put the named workspace paths back as they were at `token` (a file created since is
   // removed, a deleted one restored). Returns the resulting versions. Throws on a foreign id.
   restore(token: string, paths: readonly string[]): { path: string; version: string }[];
+  // Restore only the paths that changed since `token`: modified files get their old content,
+  // created paths are removed, deleted paths are restored. Content and mode are compared;
+  // mtime alone does not count as a change. Unchanged paths are left untouched.
+  restoreChanged(token: string): { path: string; version: string }[];
   // Restore the whole tree: every snapshot path is put back and every current path absent
   // from the snapshot is removed. Used for a task rollback on cancel.
   restoreTree(token: string): { path: string; version: string }[];
@@ -243,8 +248,8 @@ export class HostBackend implements CheckpointBackend {
         return;
       }
       for (const entry of entries) {
-        // `.skein` holds the harness's own files; `.env` carries secrets and never enters a snapshot.
-        if (entry.name === ".skein" || entry.name === ".env" || entry.name.startsWith(".env.")) continue;
+        // VCS/build/cache dirs are not workspace source; `.env` carries secrets and never enters a snapshot.
+        if (SKIP_DIRS.has(entry.name) || entry.name === ".env" || entry.name.startsWith(".env.")) continue;
         const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
         const full = join(this.root, path);
         try {
@@ -428,15 +433,31 @@ interface CachedFile {
   value: string;
 }
 
+// The content key of a file entry (`hash-mode-mtime`): mtime is not part of the comparison.
+function contentKey(value: string): string {
+  const cut = value.indexOf("-");
+  return cut < 0 ? value : value.slice(0, cut);
+}
+
+// Same kind, mode and content; mtime is deliberately ignored so a `touch` is not a change.
+function sameContent(left: CheckpointEntry, right: CheckpointEntry): boolean {
+  if (left.kind !== right.kind) return false;
+  if ((left.mode ?? 0) !== (right.mode ?? 0)) return false;
+  return left.kind === "file"
+    ? contentKey(left.value) === contentKey(right.value)
+    : left.value === right.value;
+}
+
 export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpoint {
   const dir = backend.dir;
   const runId = randomUUID();
   const snapshots: SnapshotRecord[] = [];
+  const entriesById: CheckpointEntry[][] = [];
   let lastHash: string | undefined;
   let previousEntries: readonly CheckpointEntry[] | undefined;
   const signatureCache = new Map<string, CachedFile>();
 
-  const snapshot = (label?: string): SnapshotRecord => {
+  const collect = (): CheckpointEntry[] => {
     const scan = backend.scan();
     const missing: string[] = [];
     const signatures = new Map<string, string>();
@@ -468,7 +489,11 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
       signatureCache.set(entry.path, { signature, value });
       entries.push({ ...entry, value });
     }
+    return entries;
+  };
 
+  const snapshot = (label?: string): SnapshotRecord => {
+    const entries = collect();
     const hash = manifestHash(entries);
     const previous = snapshots.at(-1);
     if (lastHash === hash && previous !== undefined) return previous;
@@ -490,6 +515,7 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
       paths: entries.map((entry) => entry.path),
     };
     snapshots.push(record);
+    entriesById.push(entries);
     lastHash = hash;
     previousEntries = entries;
     return record;
@@ -497,13 +523,18 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
 
   const checkpoint = (label?: string): string => `${runId}:${snapshot(label).id}`;
 
-  const restore = (token: string, paths: readonly string[]): { path: string; version: string }[] => {
+  const idOf = (token: string): number => {
     const split = token.indexOf(":");
     const run = split >= 0 ? token.slice(0, split) : "";
     const id = Number(split >= 0 ? token.slice(split + 1) : token);
     if (run !== runId || !Number.isInteger(id) || id < 0 || id >= snapshots.length) {
       throw new Error(`unknown checkpoint ${token}`);
     }
+    return id;
+  };
+
+  const restore = (token: string, paths: readonly string[]): { path: string; version: string }[] => {
+    const id = idOf(token);
     const tree = `trees/${id}`;
     const restored: { path: string; version: string }[] = [];
     for (const path of paths) {
@@ -517,19 +548,31 @@ export function createCheckpointWithBackend(backend: CheckpointBackend): Checkpo
     return restored;
   };
 
-  const restoreTree = (token: string): { path: string; version: string }[] => {
-    const split = token.indexOf(":");
-    const run = split >= 0 ? token.slice(0, split) : "";
-    const id = Number(split >= 0 ? token.slice(split + 1) : token);
-    if (run !== runId || !Number.isInteger(id) || id < 0 || id >= snapshots.length) {
-      throw new Error(`unknown checkpoint ${token}`);
+  const restoreChanged = (token: string): { path: string; version: string }[] => {
+    const base = entriesById[idOf(token)];
+    if (base === undefined) throw new Error(`unknown checkpoint ${token}`);
+    const current = collect();
+    const previous = new Map(base.map((entry) => [entry.path, entry]));
+    const present = new Set(current.map((entry) => entry.path));
+    const changed: string[] = [];
+    for (const entry of current) {
+      const before = previous.get(entry.path);
+      if (before === undefined || !sameContent(before, entry)) changed.push(entry.path);
     }
+    for (const entry of base) {
+      if (!present.has(entry.path)) changed.push(entry.path);
+    }
+    return changed.length === 0 ? [] : restore(token, [...new Set(changed)].sort());
+  };
+
+  const restoreTree = (token: string): { path: string; version: string }[] => {
+    const id = idOf(token);
     const paths = new Set(snapshots[id]?.paths ?? []);
     for (const entry of backend.scan()) paths.add(entry.path);
     return restore(token, [...paths].sort());
   };
 
-  return { dir, runId, snapshots, snapshot, checkpoint, restore, restoreTree };
+  return { dir, runId, snapshots, snapshot, checkpoint, restore, restoreChanged, restoreTree };
 }
 
 export function createCheckpoint(root: string): Checkpoint {
