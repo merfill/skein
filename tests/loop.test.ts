@@ -421,8 +421,8 @@ describe("executeAction", () => {
   it("reads a byte-bounded window and says where to continue", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-read-"));
     tempDirs.push(root);
-    // Long lines so the whole file far exceeds 8K: the first read is a byte-bounded prefix
-    // and reports where to continue (there is no line cap).
+    // Long lines so the whole file far exceeds READ_LIMIT: the first read is a byte-bounded
+    // prefix and reports where to continue (there is no line cap).
     const lines = Array.from(
       { length: 400 },
       (_, index) => `line ${index + 1} ${"x".repeat(200)}`,

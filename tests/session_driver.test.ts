@@ -152,7 +152,7 @@ describe("session driver: one utterance turn", () => {
     }
   });
 
-  it("orients the session agent with the workspace root and map", async () => {
+  it("orients the session agent with the workspace root only", async () => {
     const session = createSession();
     const made = makeWorkspace();
     let seen: ModelMessage[] = [];
@@ -182,8 +182,9 @@ describe("session driver: one utterance turn", () => {
     const text = String(intro?.content);
     expect(text).toContain("this session works in");
     expect(text).toContain(made.root);
-    expect(text).toContain("Workspace map");
-    expect(text).toContain("README.md");
+    expect(text).toContain("The tree is not indexed here");
+    expect(text).not.toContain("Workspace map");
+    expect(text).not.toContain("README.md");
   });
 
   it("keeps the task isolated: it sees only the reformulated request", async () => {

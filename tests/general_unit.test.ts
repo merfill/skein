@@ -171,7 +171,7 @@ describe("general unit", () => {
     ).toBe(true);
   });
 
-  it("bounds a large tool result in the rebuilt history and points at recall", async () => {
+  it("keeps a read result whole in the rebuilt history", async () => {
     const session = createSession();
     const ws = workspace();
     ws.write("big.txt", `${"x".repeat(6000)}\nTAIL-MARKER\n`);
@@ -200,6 +200,43 @@ describe("general unit", () => {
       },
     };
     await runSessionTurn(turnDeps, session, "read big");
+
+    const toolMessage = captured.find((message) => message.role === "tool");
+    const text = JSON.stringify(toolMessage);
+    expect(text.length).toBeGreaterThan(6000);
+    expect(text).not.toContain("recall obs:");
+    expect(text).toContain("TAIL-MARKER");
+  });
+
+  it("bounds a large non-read tool result in the rebuilt history and points at recall", async () => {
+    const session = createSession();
+    const ws = workspace();
+    ws.write("big.txt", `${"x".repeat(6000)}\nTAIL-MARKER\n`);
+    let captured: ModelMessage[] = [];
+    let calls = 0;
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "cat big" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
+      general: {
+        propose: async (messages): Promise<Proposals> => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              thought: "",
+              actions: [{ operator: "apply", action: { tool: "bash", command: "cat big.txt" } }],
+            };
+          }
+          captured = messages;
+          return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+        },
+        workspace: ws,
+        maxTurns: 3,
+      },
+    };
+    await runSessionTurn(turnDeps, session, "cat big");
 
     const toolMessage = captured.find((message) => message.role === "tool");
     const text = JSON.stringify(toolMessage);

@@ -34,18 +34,18 @@ export interface ExecOutcome {
   stopReason: string | null;
 }
 
-// Per-tool inline budgets (docs/ir_semantics.md §7). The `read` window is small (8K) so one
-// read does not flood the tape with a window the model must hold in reasoning; a larger body
-// is paged with explicit `start`/`end` or pulled by `recall` (which keeps a big budget).
+// Per-tool inline budgets (docs/ir_semantics.md §7). The `read` window holds a whole small file
+// (README-scale docs) so the model does not page what it can read at once; a larger body is
+// paged with explicit `start`/`end` or pulled by `recall` (which keeps a big budget).
 // `grep`/`list`/`run` are small too, because they are pointers, not content. A body still over
 // its cap keeps its head (inspection) or tail (command) and is spilled behind
 // `outputRef`/`errorRef`.
-export const READ_LIMIT = 8192;
+export const READ_LIMIT = 32 * 1024;
 const GREP_LIMIT = 8192;
 const LIST_LIMIT = 8192;
 const RUN_LIMIT = 8192;
 // `recall` is the deliberate way to pull a large fragment of a stored body back (the `read`
-// window is small now), so it keeps a big budget of its own rather than sharing `READ_LIMIT`.
+// window is bounded), so it keeps a big budget of its own rather than sharing `READ_LIMIT`.
 export const QUERY_BODY_LIMIT = 65536;
 // The read window leaves room for its `continue from` trailer, so window + trailer still
 // fit the budget and the shown body is never cut a second time.

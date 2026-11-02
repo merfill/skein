@@ -26,7 +26,7 @@ import {
   type WorkspaceIntro,
 } from "./session_agent";
 import { unitOutline } from "./session_outline";
-import { generalFactsText, probeText } from "./session_workspace";
+import { generalFactsText } from "./session_workspace";
 import type {
   NoDecisionReason,
   SessionOperation,
@@ -42,7 +42,8 @@ export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
   general?: GeneralDeps;
-  // A lazy, session-scoped probe: the session agent gets the workspace map as an intro.
+  // A lazy, session-scoped probe: the general unit gets the workspace facts. The session
+  // agent gets only the root, so the brief cannot copy a directory or file list.
   sessionProbe?: () => SessionProbe | undefined;
   // The driver records pause/resume/cancel here; the loops receive their own copy.
   telemetry?: TelemetrySink;
@@ -50,12 +51,7 @@ export interface SessionTurnDeps {
 }
 
 function workspaceIntro(deps: SessionTurnDeps): WorkspaceIntro {
-  const probe = deps.sessionProbe?.();
-  const map = probe?.material !== undefined ? probeText(probe, "material") : undefined;
-  return {
-    root: workspaceRoot(deps.task.workspace),
-    ...(map !== undefined && map !== "" ? { map } : {}),
-  };
+  return { root: workspaceRoot(deps.task.workspace) };
 }
 
 export interface SessionTurnOptions {

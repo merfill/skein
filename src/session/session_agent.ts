@@ -284,7 +284,7 @@ function workspaceMessage(workspace: WorkspaceIntro): string {
     );
   } else {
     lines.push(
-      "The tree is not indexed here. Route reading, analysis and explanation to `general`.",
+      "The tree is not indexed here. Route reading, analysis and explanation to `general`; do not enumerate directories or files in the brief.",
       "",
       `root: ${workspace.root}`,
     );

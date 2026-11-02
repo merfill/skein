@@ -461,7 +461,7 @@ tree stays complete.
 the tape; its meaning lives in the `why` fields.
 
 **Working with data.** A result body is bounded by the tool itself, with a **per-tool** budget:
-the `read` window is 8K (bounded by bytes, no line cap), while `grep`/`list`/`bash` are kept
+the `read` window is 32K (bounded by bytes, no line cap), while `grep`/`list`/`bash` are kept
 small (8K) because they are pointers, not content; a larger fragment of a file comes back as a
 `read` window or via `recall` (a 64K budget). `grep` and `search` return **plain text with line
 numbers** (`path:line:match`, context `path-line-text`, like `grep -n`), not JSON: there is no

@@ -411,7 +411,7 @@ limits, and the projection does not cut it (`docs/tools.md`).
 | `MAX_GREP_MATCHES` | 100 | maximum `grep` matches per window; continuation via `next`/`from` |
 | `GREP_BEFORE_DEFAULT` / `GREP_AFTER_DEFAULT` | 3 / 3 | `grep` context lines around each match |
 | `MAX_LIST_FILES` | 200 | maximum files per `list` window |
-| `READ_LIMIT` | 8192 | byte cap (8K) for a `read` window (bounded by bytes, no line cap; leaves room for the `continue from` trailer); a larger body is read as the next window or via `recall` |
+| `READ_LIMIT` | 32768 | byte cap (32K) for a `read` window (bounded by bytes, no line cap; leaves room for the `continue from` trailer); a larger body is read as the next window or via `recall` |
 | `GREP_LIMIT` / `LIST_LIMIT` | 8192 | small byte cap (8K) for a `grep`/`list` result: a localization pointer, not content; excess `grep` matches / `list` entries are dropped whole (for `grep`, a `continue from` trailer) |
 | `RUN_LIMIT` | 8192 | small byte cap (8K) for `run`; the tail is shown, the full stream stays behind `outputRef`/`errorRef` (stdout/stderr separate) |
 | `QUERY_BODY_LIMIT` | 65536 | cap for a `recall` body window; the window is shrunk by lines so the JSON-escaped result stays valid |

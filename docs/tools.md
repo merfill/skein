@@ -151,7 +151,7 @@ content. The model asks for 120 lines — it sees ~8.
 - `read { path, start?, end? }`:
   - without `start/end` — from the start of the file;
   - with `start/end` — a window of lines (1-based, `end` inclusive).
-- The window is bounded by the **8K byte cap** (`READ_LIMIT`), declared in the tool
+- The window is bounded by the **32K byte cap** (`READ_LIMIT`), declared in the tool
   description: the model knows the limit in advance (there is no separate line cap). A body
   longer than the window comes back as the next `read` window or via `recall` (budget
   `QUERY_BODY_LIMIT` = 64K).
@@ -223,7 +223,7 @@ content. The model asks for 120 lines — it sees ~8.
 **Folded into `docs/ir_semantics.md` §7 and `docs/projection.md`.** The `lastResult`/`calls`/
 `shown` blocks are gone: the context is a **message tape** rebuilt from the tree each turn. A
 result is addressed by id with `recall`/`search`; a body is shown whole up to its **per-tool**
-limit — `read` window 8K (`recall` 64K), `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
+limit — `read` window 32K (`recall` 64K), `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
 **tail**; only a body beyond that is bounded (with an omission note), behind `outputRef`. A refused structural move is a
 transient `tool` reason on the next turn; a command's non-execution is an observation. There is
 no per-file read cap: distinct windows are new knowledge, only an identical window is a repeat.

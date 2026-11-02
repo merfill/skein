@@ -9,7 +9,9 @@
 - **General:** бриф session-агента ограничен глубиной запроса (без инвентаризации и
   аудита, которых не просили); у general свои `general_bash`/`general_stop` (read-only,
   Markdown-отчёт), facts из probe, snapshot при входе и `restoreChanged` при выходе.
-  История tool-результатов ограничена 2k (голова + 400 хвоста, `recall obs:…`); после
+  Session-агент больше не получает карту дерева (только root), поэтому бриф не перечисляет
+  каталоги и файлы. `read` отдаёт до 32K, и его результат хранится в истории general целиком;
+  остальные tool-результаты — 2k (голова + 400 хвоста, `recall obs:…`). После
   `max_turns` — один финальный вызов без инструментов с запретом домысливать. Промпт
   требует общего вывода, ясного академического языка и отсутствия лишних деталей.
 - **Task loop:** LangGraph удалён. `src/loop/graph.ts` — обычный `while`, `src/loop/state.ts` —
@@ -234,6 +236,68 @@
 Виды работы внутри `task` (`orientation`, `localization`, `research`, `patch`, `recovery`,
 `construction`, `verification`, `end`) — это острова, а не типы unit'ов; новый «тип задачи»
 не требует нового unit'а, а другого маршрута по островам.
+
+## Наблюдатель для general — что попробовать
+
+Сейчас `RequestObserver` подключён только к `task` (`src/loop/graph.ts`): триггеры
+`state_cycle`/`state_long`/`budget`, task-лента, решение `hint`/`memo`/`halt`, запись в
+журнал task. У general наблюдателя нет — только `generalMaxTurns` и финальный вызов без
+инструментов. Идея: тот же механизм раз в N шагов смотрит ленту general и, если нужно,
+вставляет system-сообщение; но для general есть отдельные проблемы.
+
+**Что не подходит как есть:**
+- `detectTriggers` (`src/session/triggers.ts`) заточен под task: `currentMove`/`moveIsland`/
+  `stateEntries`. У general один `move` со state `general`, острова нет: `state_cycle` не
+  срабатывает, `state_long` меряет ходы в move (дефолт 20 при `generalMaxTurns=9`), `budget`
+  требует явного `maxTurns`.
+- `alreadyFired` делает триггер one-shot на anchor. Для «каждые N шагов» нужен интервальный
+  триггер (epoch/шаг), а не один раз за состояние.
+- `defaultObserverTools` (`outline`/`state`/`turns`/`attempt`/`body`/`rendered`) — task-модель;
+  general-лента собирается в `historyOf`/`messagesOf` (`src/session/general.ts`), там нет
+  task-`outline`/`state`.
+- `applyReaction` кладёт `hint`/`memo` в журнал, и task рендерит их через `advisoriesOf` в
+  `project`; `runGeneralAgent.messagesOf` их не рендерит.
+- `halt` для task завершает run (`observer_halt`). Для general это нарушило бы инвариант
+  «state closed only by the doxa's `stop`»: нужен либо только `hint`/`memo`, либо `halt` →
+  финальный вызов без инструментов, после которого doxa сама зовёт `general_stop`.
+- Пауза/возобновление: observer-unit живёт в session (стек, `observerDepth`); в
+  `resumeTurn` general-ветка observer не умеет. Нужно либо поддержать, либо не давать
+  general-observer паузить run.
+- Стоимость: observer — отдельный model call. «Каждые N шагов» должны быть ограничены
+  (`surveyLimit`, `maxTurns`) и не запускаться на каждом ходу.
+
+**Минимальный срез, который стоит попробовать:**
+1. **Триггер `general_steps`.** Каждые N `apply`-действий (или ходов) в открытом general-unit;
+   N=3–5, настройка. Детерминированный триггер пишется в session (`recordTrigger`), не зависит
+   от модели. Считать действия, а не только ходы: проблема — именно число инспекций.
+2. **General-observer tools:** `general_brief` (запрос/бриф), `general_actions`
+   (action→observation с id), `general_render` (тот же `messagesOf` без system-хвоста),
+   `general_body` (полное тело observation по id). Read-only, `surveyLimit` 2–3.
+3. **Решение:** сначала только `continue`/`hint`; `memo`/`halt` — после проверки. `hint`
+   обязан ссылаться на id действий/наблюдений, иначе это не факт, а мнение.
+4. **Вставка:** `hint` — узел `hint` в журнале general (как task) и transient system-turn в
+   `messagesOf` на следующем ходу; `memo` — до конца unit. Task-`project`/`buildMessages` не
+   трогать.
+5. **Инварианты:** observer не закрывает general; закрытие — только `general_stop`;
+   `project` остаётся детерминированным; hint не попадает в task-ленту.
+6. **Тесты:** фейковый observer — (a) `continue` → новых system-сообщений нет; (b) `hint` →
+   следующий turn видит `Tape-agent hint: …`; (c) триггер ровно каждые N действий;
+   (d) если включаем `halt` — финальный turn без инструментов, затем `general_stop`.
+   Offline; live — только с go-ahead.
+
+**Открытые вопросы:**
+- Что считать шагом: ход general, `apply`-действие или новый observation? «Каждые 5 шагов» —
+  от чего?
+- Наблюдатель видит только бриф или и исходную реплику пользователя? Сейчас general-unit
+  знает только бриф; исходная реплика есть у session/driver.
+- Нужен ли `halt` для general, или достаточно `hint` «достаточно, отвечай»?
+- Держать observer-журнал в session (как task) или это side-channel без unit? В TUI observer
+  показывается кратко в статусе.
+- Как observer понимает «надо поправить» без task-specific эвристик: повторные чтения,
+  отсутствие нового знания, выход за бриф, преждевременная глубина? Промпт observer должен
+  быть общим, решение — по ленте, не по имени задачи.
+- Стоимость: один observer call каждые N шагов; сравнить на live с текущим `maxTurns` +
+  финальным вызовом.
 
 ## Оставшиеся вопросы
 

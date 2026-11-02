@@ -111,7 +111,7 @@ describe("apply: read", () => {
   });
 
   it("OP-AP-READ-8 a window over the byte budget is bounded and continues via the trailer", () => {
-    // ~160 KB in 2000 lines, well over READ_LIMIT (8 KB).
+    // ~160 KB in 2000 lines, well over READ_LIMIT (32 KB).
     const lines = Array.from({ length: 2000 }, (_, i) => `line ${i + 1} ${"x".repeat(70)}`);
     const { ws } = makeWorkspace({ "src/huge.txt": `${lines.join("\n")}\n` });
     const first = exec(read("src/huge.txt"), [request()], ws);

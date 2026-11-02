@@ -101,8 +101,9 @@ function requestOf(state: State): string {
   return typeof payload?.text === "string" ? payload.text : (state.nodes.get(root)?.label ?? "");
 }
 
-// The general history is rebuilt every turn, so a full tool result is resent each time. Keep
-// a bounded head and point at the stored observation; `recall` retrieves the full body.
+// The general history is rebuilt every turn, so a full tool result is resent each time. A
+// `read` result is already bounded by READ_LIMIT and is kept whole; other results keep a
+// bounded head and point at the stored observation (`recall` retrieves the full body).
 const TOOL_RESULT_LIMIT = 2000;
 const TOOL_RESULT_TAIL = 400;
 
@@ -135,7 +136,7 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
       const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
       const text = result !== undefined ? observationText(result) : action.label;
       const bounded =
-        text.length <= TOOL_RESULT_LIMIT
+        call?.name === "read" || text.length <= TOOL_RESULT_LIMIT
           ? text
           : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}${
               resultId !== undefined ? `\n…[truncated; recall ${resultId}]` : "\n…[truncated]"
