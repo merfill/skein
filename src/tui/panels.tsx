@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import stringWidth from "string-width";
 
 import type { PausedState } from "../session/driver";
@@ -13,6 +13,8 @@ import type { HeaderView } from "./view_model";
 function T(props: React.ComponentProps<typeof Text>) {
   return React.createElement(Text, { ...props, color: props.color ?? theme.text });
 }
+
+const SPINNER = ["·", "•", "●", "•"] as const;
 
 export function HeaderBar(props: {
   workspace: string;
@@ -38,6 +40,28 @@ export function HeaderBar(props: {
           {totals.totalTasks} tasks · {totals.totalTurns}t · {totals.modelCalls}c
         </T>
       </T>
+    </Box>
+  );
+}
+
+export function ActivityBar(props: {
+  running: boolean;
+  paused: boolean;
+  text: string;
+  color: string;
+}) {
+  const { running, paused, text, color } = props;
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => setFrame((value) => (value + 1) % SPINNER.length), 120);
+    return () => clearInterval(timer);
+  }, [running]);
+  const mark = running ? (SPINNER[frame] ?? SPINNER[0]) : paused ? "Ⅱ" : "○";
+  return (
+    <Box paddingX={1} height={1}>
+      <Text color={color}>{mark}</Text>
+      <Text dimColor wrap="truncate-end"> {text}</Text>
     </Box>
   );
 }

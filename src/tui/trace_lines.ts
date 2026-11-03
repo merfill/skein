@@ -8,6 +8,9 @@ const MAX_PREVIEW_LINES = 400;
 const MAX_REASONING_LINES = 200;
 const MAX_DIFF_LINES = 400;
 const MAX_DIFF_CELLS = 160_000;
+// Keep prose near a readable measure instead of wrapping to the full panel on wide terminals.
+const MAX_MARKDOWN_WIDTH = 100;
+const MARKDOWN_INDENT = 2;
 
 const LANGUAGES: Record<string, string> = {
   ts: "typescript",
@@ -254,6 +257,20 @@ function thoughtLines(entry: TraceEntry, width: number): TraceLine[] {
   return out;
 }
 
+function markdownViewLines(text: string, width: number): TraceLine[] {
+  const indentWidth = width > 22 ? MARKDOWN_INDENT : 0;
+  const indent = " ".repeat(indentWidth);
+  const inner = Math.max(20, Math.min(width - indentWidth, MAX_MARKDOWN_WIDTH));
+  return markdownLines(text, inner).map((line) => {
+    const shifted: TraceLine = {
+      ...line,
+      text: `${indent}${line.text}`,
+      ...(line.spans !== undefined ? { spans: [{ text: indent }, ...line.spans] } : {}),
+    };
+    return shifted;
+  });
+}
+
 function assistantLines(entry: TraceEntry, width: number): TraceLine[] {
   if (entry.collapsed === true) {
     const first = entry.text.split("\n")[0] ?? "";
@@ -264,7 +281,7 @@ function assistantLines(entry: TraceEntry, width: number): TraceLine[] {
       }),
     ];
   }
-  return markdownLines(entry.text, width).map((line) => block(entry, line));
+  return markdownViewLines(entry.text, width).map((line) => block(entry, line));
 }
 
 function reportLines(entry: TraceEntry, width: number): TraceLine[] {
@@ -279,7 +296,7 @@ function reportLines(entry: TraceEntry, width: number): TraceLine[] {
       }),
     ];
   }
-  return [header, ...markdownLines(entry.text, width).map((line) => block(entry, line))];
+  return [header, ...markdownViewLines(entry.text, width).map((line) => block(entry, line))];
 }
 
 export interface TraceWindow {

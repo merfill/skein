@@ -21,6 +21,7 @@ import { buildTuiView, type TaskTiming } from "./view_model";
 import { traceLines, traceWindow } from "./trace_lines";
 import { theme } from "./theme";
 import {
+  ActivityBar,
   Composer,
   Footer,
   HeaderBar,
@@ -806,10 +807,12 @@ export function TuiApp(props: TuiAppProps) {
           />
         ) : null}
       </Box>
-      <Box paddingX={1} height={1}>
-        <Text color={activityColor}>{running ? "●" : paused !== undefined ? "Ⅱ" : "○"}</Text>
-        <Text dimColor wrap="truncate-end"> {activity}</Text>
-      </Box>
+      <ActivityBar
+        running={running}
+        paused={paused !== undefined}
+        text={activity}
+        color={activityColor}
+      />
       <Composer
         input={input}
         cursor={cursor}
