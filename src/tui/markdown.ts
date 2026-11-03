@@ -22,7 +22,12 @@ function inlineSpans(tokens: readonly Token[] | undefined, base: Style = {}): Tr
   for (const token of tokens) {
     switch (token.type) {
       case "strong":
-        spans.push(...inlineSpans((token as Tokens.Strong).tokens, merge(base, { bold: true })));
+        spans.push(
+          ...inlineSpans(
+            (token as Tokens.Strong).tokens,
+            merge(base, { bold: true, color: theme.warning }),
+          ),
+        );
         break;
       case "em":
         spans.push(...inlineSpans((token as Tokens.Em).tokens, merge(base, { italic: true })));

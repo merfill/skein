@@ -14,7 +14,7 @@ function T(props: React.ComponentProps<typeof Text>) {
   return React.createElement(Text, { ...props, color: props.color ?? theme.text });
 }
 
-const SPINNER = ["·", "•", "●", "•"] as const;
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 
 export function HeaderBar(props: {
   workspace: string;
@@ -36,8 +36,10 @@ export function HeaderBar(props: {
         <T dimColor>
           {" "}
           · ctx {compactTokens(totals.sessionContextTokens)} · Σ{" "}
-          {compactTokens(totals.tokensIn)}/{compactTokens(totals.tokensOut)} ·{" "}
-          {totals.totalTasks} tasks · {totals.totalTurns}t · {totals.modelCalls}c
+          {compactTokens(totals.tokensIn)} in · {compactTokens(totals.tokensOut)} out ·{" "}
+          {compactTokens(totals.cachedInputTokens)} cache ·{" "}
+          {compactTokens(totals.reasoningTokens)} rsn · {totals.totalTasks} tasks ·{" "}
+          {totals.totalTurns}t · {totals.modelCalls}c
         </T>
       </T>
     </Box>
@@ -60,8 +62,13 @@ export function ActivityBar(props: {
   const mark = running ? (SPINNER[frame] ?? SPINNER[0]) : paused ? "Ⅱ" : "○";
   return (
     <Box paddingX={1} height={1}>
-      <Text color={color}>{mark}</Text>
-      <Text dimColor wrap="truncate-end"> {text}</Text>
+      <Text color={color} bold={running}>
+        {mark}
+      </Text>
+      <Text {...(running ? { color: theme.text, bold: true } : { dimColor: true })} wrap="truncate-end">
+        {" "}
+        {running ? `working · ${text}` : text}
+      </Text>
     </Box>
   );
 }
@@ -72,8 +79,9 @@ export function TracePanel(props: {
   width: number;
   scroll: number;
   focused: boolean;
+  activeId?: string;
 }) {
-  const { lines, rows, width, scroll, focused } = props;
+  const { lines, rows, width, scroll, focused, activeId } = props;
   const view = traceWindow(lines, rows, focused, scroll);
   const { visible, hiddenAbove, hiddenBelow, start } = view;
   return (
@@ -92,8 +100,10 @@ export function TracePanel(props: {
       ) : null}
       {hiddenAbove > 0 ? <T dimColor>↑ {hiddenAbove} more · PgUp</T> : null}
       {visible.map((line, index) => {
+        const active = activeId !== undefined && line.entryId === activeId;
+        const bg = active ? theme.activeBg : line.bg;
         const pad =
-          line.bg !== undefined
+          bg !== undefined
             ? " ".repeat(
                 Math.max(
                   0,
@@ -101,14 +111,15 @@ export function TracePanel(props: {
                 ),
               )
             : "";
+        const base = active ? theme.strong : theme.text;
         return (
           <T
             key={start + index}
-            {...(line.color !== undefined ? { color: line.color } : {})}
+            color={line.color ?? base}
             {...(line.dim === true ? { dimColor: true } : {})}
             {...(line.bold === true ? { bold: true } : {})}
             {...(line.underline === true ? { underline: true } : {})}
-            {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+            {...(bg !== undefined ? { backgroundColor: bg } : {})}
             wrap="truncate-end"
           >
             {line.spans === undefined
@@ -117,13 +128,13 @@ export function TracePanel(props: {
                   ...line.spans.map((span, spanIndex) => (
                     <T
                       key={`${start + index}:${spanIndex}`}
-                      {...(span.color !== undefined ? { color: span.color } : {})}
+                      color={span.color ?? base}
                       {...(span.dim === true ? { dimColor: true } : {})}
                       {...(span.bold === true ? { bold: true } : {})}
                       {...(span.italic === true ? { italic: true } : {})}
                       {...(span.underline === true ? { underline: true } : {})}
                       {...(span.strikethrough === true ? { strikethrough: true } : {})}
-                      {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+                      {...(bg !== undefined ? { backgroundColor: bg } : {})}
                     >
                       {span.text}
                     </T>
@@ -133,7 +144,7 @@ export function TracePanel(props: {
                         <T
                           key={`${start + index}:pad`}
                           dimColor={true}
-                          {...(line.bg !== undefined ? { backgroundColor: line.bg } : {})}
+                          {...(bg !== undefined ? { backgroundColor: bg } : {})}
                         >
                           {pad}
                         </T>,
@@ -150,10 +161,10 @@ export function TracePanel(props: {
 
 function stateRow(state: TaskState, selected: boolean, width: number): string {
   const mark = state.current ? (state.closed ? "✓" : "●") : state.closed ? "✓" : "○";
-  const island = oneLine(state.island, 13).padEnd(13, " ");
-  const range = `t${state.startTurn + 1}–${state.endTurn + 1}`.padEnd(9, " ");
+  const island = oneLine(state.island, 12).padEnd(12, " ");
+  const range = `t${state.startTurn + 1}–${state.endTurn + 1}`.padEnd(8, " ");
   const turns = `${state.turns}t`.padStart(3, " ");
-  const tokens = compactTokens(state.tokensIn + state.tokensOut).padStart(5, " ");
+  const tokens = `${compactTokens(state.contextTokens)}/${compactTokens(state.tokensOut + state.reasoningTokens)}`.padStart(9, " ");
   const time = compactDuration(state.durationMs).padStart(5, " ");
   const text = `${mark} ${island}${range}${turns} ${tokens} ${time}`;
   return oneLine(text, width);
@@ -168,11 +179,13 @@ function detailLines(state: TaskState | undefined, width: number): string[] {
   if (state === undefined) return [];
   const lines: string[] = [
     `${oneLine(state.island, Math.max(8, width - 20))} · ${state.turns}t · ` +
-      `${compactTokens(state.tokensIn + state.tokensOut)} tok · ${compactDuration(state.durationMs)}`,
+      `${compactDuration(state.durationMs)}`,
+    `  in ${compactTokens(state.contextTokens)} · out ${compactTokens(state.tokensOut + state.reasoningTokens)} · ` +
+      `cache ${compactTokens(state.cachedInputTokens)}`,
   ];
   for (const turn of state.turnDetails) {
     const number = `t${turn.turn + 1}`.padEnd(4, " ");
-    const tokens = compactTokens(turn.tokensIn + turn.tokensOut).padStart(5, " ");
+    const tokens = `${compactTokens(turn.tokensIn)}/${compactTokens(turn.tokensOut)}`.padStart(11, " ");
     const time = turnDuration(turn.durationMs).padStart(6, " ");
     lines.push(`  ${number}${tokens}  ${time}`);
   }
@@ -207,7 +220,7 @@ export function TaskPanel(props: {
     );
   }
   const listRows = Math.max(3, Math.min(task.states.length, Math.max(3, Math.floor(rows / 3))));
-  const detailHeight = Math.max(4, rows - listRows - 4);
+  const detailHeight = Math.max(4, rows - listRows - (observer !== undefined ? 6 : 5));
   const stateIndex = Math.min(Math.max(0, selected), Math.max(0, task.states.length - 1));
   const current = task.states[stateIndex];
   const allDetail = detailLines(current, Math.max(20, width - 2));
@@ -232,10 +245,17 @@ export function TaskPanel(props: {
       <T bold wrap="truncate-end">
         {shortId(task.unitId, 8)}
       </T>
+      {observer !== undefined ? (
+        <T dimColor wrap="truncate-end">
+          {`observer · ${observer}`}
+        </T>
+      ) : null}
       <T dimColor wrap="truncate-end">
-        {observer !== undefined
-          ? `observer · ${observer}`
-          : `${paused === true ? "paused" : task.attention} · ${compactDuration(task.elapsedMs)} · ${compactTokens(task.tokensIn + task.tokensOut)} tok · ${task.turns}t`}
+        {`${paused === true ? "paused" : task.attention} · ${compactDuration(task.elapsedMs)} · ${task.turns}t`}
+      </T>
+      <T dimColor wrap="truncate-end">
+        {`in ${compactTokens(task.contextTokens)} · out ${compactTokens(task.tokensOut + task.reasoningTokens)} · ` +
+          `cache ${compactTokens(task.cachedInputTokens)}`}
       </T>
       <T color={theme.state} bold>
         States
@@ -267,7 +287,7 @@ export function TaskPanel(props: {
 function historyRow(task: TaskView, width: number): string {
   const num = `#${task.number}`.padEnd(3, " ");
   const stats =
-    `${task.turns}t ${compactTokens(task.tokensIn + task.tokensOut)} ` +
+    `${task.turns}t ${compactTokens(task.contextTokens)}/${compactTokens(task.tokensOut + task.reasoningTokens)} ` +
     `${compactDuration(task.elapsedMs)} ${task.attention}`;
   const room = Math.max(12, width - num.length - stats.length - 2);
   return `${num}${oneLine(task.request, room).padEnd(room, " ")} ${stats}`;
@@ -292,7 +312,9 @@ export function HistoryOverlay(props: {
     detail.push(...wrap(`#${task.number} ${task.request}`, Math.max(20, width - 4)));
     detail.push(`${task.attention} · ${task.outcome}`);
     detail.push(
-      `${task.turns} turns · ${compactTokens(task.tokensIn)} in / ${compactTokens(task.tokensOut)} out · ` +
+      `${task.turns} turns · ${compactTokens(task.contextTokens)} in / ` +
+        `${compactTokens(task.tokensOut + task.reasoningTokens)} out / ` +
+        `${compactTokens(task.cachedInputTokens)} cache · ` +
         `${compactDuration(task.elapsedMs)} · ${task.toolCalls} actions`,
     );
     for (const state of task.states) {

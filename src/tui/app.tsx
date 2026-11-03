@@ -762,6 +762,8 @@ export function TuiApp(props: TuiAppProps) {
   });
 
   const lines = traceLines(trace, Math.max(20, mainWidth - (focus === "trace" ? 4 : 2)));
+  const activeEntryId =
+    [...trace].reverse().find((entry) => entry.status === "running")?.id ?? trace.at(-1)?.id;
   clickRef.current = (column, row) => {
     if (column > mainWidth) return;
     const view = traceWindow(lines, bodyRows, focus === "trace", traceScroll);
@@ -792,6 +794,7 @@ export function TuiApp(props: TuiAppProps) {
           width={mainWidth}
           scroll={traceScroll}
           focused={focus === "trace"}
+          {...(activeEntryId !== undefined ? { activeId: activeEntryId } : {})}
         />
         {showTask ? <Box width={panelGap} /> : null}
         {showTask ? (

@@ -42,6 +42,6 @@ describe("TUI markdown spans", () => {
     expect(flat.some((span) => span.text === "bold" && span.bold === true)).toBe(true);
     expect(flat.some((span) => span.text === "code" && span.color === theme.code)).toBe(true);
     expect(flat.some((span) => span.text.includes("const") && span.color === theme.syntax.keyword)).toBe(true);
-    expect(flat.some((span) => span.text === "1" && span.color === theme.code)).toBe(true);
+    expect(flat.some((span) => span.text === "1" && span.color === theme.syntax.number)).toBe(true);
   });
 });

@@ -44,6 +44,8 @@ export interface TaskState {
   tokensIn: number;
   tokensOut: number;
   reasoningTokens: number;
+  cachedInputTokens: number;
+  contextTokens: number;
   toolCalls: number;
   durationMs: number;
   turnDetails: TaskTurn[];
@@ -65,6 +67,8 @@ export interface TaskView {
   tokensIn: number;
   tokensOut: number;
   reasoningTokens: number;
+  cachedInputTokens: number;
+  contextTokens: number;
   toolCalls: number;
   startedAt?: number;
   endedAt?: number;
@@ -78,6 +82,8 @@ export interface HeaderView {
   sessionContextTokens: number;
   tokensIn: number;
   tokensOut: number;
+  reasoningTokens: number;
+  cachedInputTokens: number;
 }
 
 export interface TuiView {
@@ -145,10 +151,19 @@ function usageFor(
   startTurn: number,
   endTurn: number,
   agent: "task" | "general",
-): { input: number; output: number; reasoning: number; toolCalls: number } {
+): {
+  input: number;
+  output: number;
+  reasoning: number;
+  cached: number;
+  context: number;
+  toolCalls: number;
+} {
   let input = 0;
   let output = 0;
   let reasoning = 0;
+  let cached = 0;
+  let context = 0;
   let toolCalls = 0;
   for (const event of events) {
     if (event.type === "session" || event.unitId !== unitId) continue;
@@ -157,6 +172,8 @@ function usageFor(
       input += event.usage?.inputTokens ?? 0;
       output += event.usage?.outputTokens ?? 0;
       reasoning += event.usage?.reasoningTokens ?? 0;
+      cached += event.usage?.cachedInputTokens ?? 0;
+      if (event.usage?.inputTokens !== undefined) context = event.usage.inputTokens;
     } else if (event.type === "tool_call" && event.agent === agent) {
       if (event.turn < startTurn || event.turn > endTurn) continue;
       if (event.tool === "stop" || event.tool === "decline" || event.tool.startsWith("state:")) {
@@ -165,7 +182,7 @@ function usageFor(
       toolCalls += 1;
     }
   }
-  return { input, output, reasoning, toolCalls };
+  return { input, output, reasoning, cached, context, toolCalls };
 }
 
 function turnDetailsFor(
@@ -255,6 +272,8 @@ function buildTask(
       tokensIn: usage.input,
       tokensOut: usage.output,
       reasoningTokens: usage.reasoning,
+      cachedInputTokens: usage.cached,
+      contextTokens: usage.context,
       toolCalls: usage.toolCalls,
       durationMs: turnDetails.reduce((sum, turn) => sum + turn.durationMs, 0),
       turnDetails,
@@ -270,6 +289,9 @@ function buildTask(
   const tokensIn = states.reduce((sum, item) => sum + item.tokensIn, 0);
   const tokensOut = states.reduce((sum, item) => sum + item.tokensOut, 0);
   const reasoningTokens = states.reduce((sum, item) => sum + item.reasoningTokens, 0);
+  const cachedInputTokens = states.reduce((sum, item) => sum + item.cachedInputTokens, 0);
+  const contextTokens =
+    [...states].reverse().find((item) => item.contextTokens > 0)?.contextTokens ?? 0;
   const toolCalls = states.reduce((sum, item) => sum + item.toolCalls, 0);
   const startedAt = timing?.startedAt;
   const endedAt = timing?.endedAt;
@@ -290,6 +312,8 @@ function buildTask(
     tokensIn,
     tokensOut,
     reasoningTokens,
+    cachedInputTokens,
+    contextTokens,
     toolCalls,
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {}),
@@ -347,6 +371,8 @@ export function buildTuiView(
     sessionContextTokens,
     tokensIn: usage.inputTokens,
     tokensOut: usage.outputTokens,
+    reasoningTokens: usage.reasoningTokens,
+    cachedInputTokens: usage.cachedInputTokens,
   };
 
   return {

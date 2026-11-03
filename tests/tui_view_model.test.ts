@@ -65,7 +65,12 @@ function telemetry(): MetricEvent[] {
       startedAt: 0,
       endedAt: 1,
       status: "ok",
-      usage: { inputTokens: 100, outputTokens: 10, reasoningTokens: 3 },
+      usage: {
+        inputTokens: 100,
+        outputTokens: 10,
+        reasoningTokens: 3,
+        cachedInputTokens: 40,
+      },
     },
     {
       type: "model_call",
@@ -77,7 +82,7 @@ function telemetry(): MetricEvent[] {
       startedAt: 2,
       endedAt: 3,
       status: "ok",
-      usage: { inputTokens: 200, outputTokens: 20 },
+      usage: { inputTokens: 200, outputTokens: 20, cachedInputTokens: 150 },
     },
     {
       type: "tool_call",
@@ -105,6 +110,9 @@ describe("TUI view model", () => {
     expect(view.header.totalTasks).toBe(1);
     expect(view.header.totalTurns).toBe(6);
     expect(view.header.tokensIn).toBe(300);
+    expect(view.header.tokensOut).toBe(30);
+    expect(view.header.reasoningTokens).toBe(3);
+    expect(view.header.cachedInputTokens).toBe(190);
     expect(view.header.sessionContextTokens).toBe(0);
     expect(view.current?.unitId).toBe("r1");
     expect(view.current?.request).toBe("fix the report");
@@ -118,6 +126,9 @@ describe("TUI view model", () => {
       turns: 3,
       tokensIn: 100,
       tokensOut: 10,
+      reasoningTokens: 3,
+      cachedInputTokens: 40,
+      contextTokens: 100,
       toolCalls: 1,
       closed: true,
       stopWhy: "target named",
@@ -129,6 +140,9 @@ describe("TUI view model", () => {
       turns: 3,
       tokensIn: 200,
       tokensOut: 20,
+      reasoningTokens: 0,
+      cachedInputTokens: 150,
+      contextTokens: 200,
       closed: false,
       current: true,
     });
@@ -145,6 +159,8 @@ describe("TUI view model", () => {
       tokensOut: 20,
       durationMs: 1,
     });
+    expect(view.current?.contextTokens).toBe(200);
+    expect((view.current?.tokensOut ?? 0) + (view.current?.reasoningTokens ?? 0)).toBe(33);
     expect(patch?.durationMs).toBe(1);
     expect(view.current?.outcome).toBe("open at patch");
     expect(view.current?.elapsedMs).toBe(6_000);
