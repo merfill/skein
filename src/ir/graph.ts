@@ -16,7 +16,7 @@ export interface RejectionRecord {
 export interface State {
   nodes: Map<string, Node>;
   edges: Map<string, Edge>;
-  // Ordered children of plan/alternatives containers, from `item` event order.
+  // Ordered children of the request (`move`) and of a state's turns container (`turn`).
   children: Map<string, string[]>;
   rejections: RejectionRecord[];
   // The node in focus when each node was added, keyed by node id; derived during
@@ -61,18 +61,10 @@ export function currentVersion(state: State, ref: string): string | undefined {
   return state.mutated.get(ref) ?? state.observed.get(ref);
 }
 
-export function planOf(state: State, goalId: string): string | undefined {
+// The turns container of a state (`turns` relation, move → turns), if any.
+export function turnsOf(state: State, moveId: string): string | undefined {
   for (const edge of state.edges.values()) {
-    if (edge.kind === "plan" && edge.from === goalId) return edge.to;
-  }
-  return undefined;
-}
-
-// The item that owns a node as one of its alternatives (`alts` edge), if any. An action or
-// sub-goal belongs to exactly one item (docs/ir_revision.md §2.2).
-export function itemOf(state: State, nodeId: string): string | undefined {
-  for (const edge of state.edges.values()) {
-    if (edge.kind === "alts" && edge.to === nodeId) return edge.from;
+    if (edge.kind === "turns" && edge.from === moveId) return edge.to;
   }
   return undefined;
 }
@@ -88,7 +80,7 @@ export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefi
 
 // The `stop` node a state is closed by (`stop` relation, move → stop), if any. This is a
 // control fact (the arm is done), not truth. The closure (and its `why`) lives on the state's
-// `move`; it is not a plan item (docs/ir_semantics.md §2.2).
+// `move`; it is not a turn (docs/ir_semantics.md §2.2).
 export function stopOf(state: State, moveId: string): string | undefined {
   for (const edge of state.edges.values()) {
     if (edge.kind === "stop" && edge.from === moveId) return edge.to;
@@ -109,16 +101,8 @@ export function unactionableOf(state: State, requestId: string): string | undefi
   return undefined;
 }
 
-// An action bypassed by a newer alternative of its own item (a revised step).
-export function actionSuperseded(state: State, actionId: string): boolean {
-  const item = itemOf(state, actionId);
-  if (item === undefined) return false;
-  const current = lastChild(state, item);
-  return current !== undefined && current !== actionId;
-}
-
-// The current option of a container: the LAST child (order = append order). There is no
-// `chosen` edge — the last item added is the current one (docs/plans/request_goal_plan.md).
+// The last child of a container: the LAST appended node (order = append order). Used for the
+// request's current state (`move`) and the focused state's latest turn.
 export function lastChild(state: State, containerId: string): string | undefined {
   const ids = state.children.get(containerId);
   return ids !== undefined && ids.length > 0 ? ids[ids.length - 1] : undefined;
@@ -210,9 +194,8 @@ function applyEvent(state: State, event: Event): void {
     }
     case "add_edge": {
       state.edges.set(event.edge.id, event.edge);
-      // Ordered children: a request's states (`move`), a plan's items (`items`) and an
-      // item's alternatives (`alts`).
-      if (event.edge.kind === "move" || event.edge.kind === "items" || event.edge.kind === "alts") {
+      // Ordered children: a request's states (`move`) and a state's turns (`turn`).
+      if (event.edge.kind === "move" || event.edge.kind === "turn") {
         const list = state.children.get(event.edge.from);
         if (list) list.push(event.edge.to);
         else state.children.set(event.edge.from, [event.edge.to]);

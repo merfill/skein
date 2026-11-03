@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Event } from "../src/ir/events";
 import { fold, type State } from "../src/ir/graph";
+import { ISLANDS } from "../src/ir/islands";
 import { project, type TapeMessage } from "../src/ir/project";
 import { focusEvents } from "../src/ir/traversal";
 import type { Edge, EdgeKind, Node, NodeKind, Provenance } from "../src/ir/types";
@@ -51,26 +52,14 @@ function stopNode(id: string, why: string, seq: number, onId: string): Event[] {
   ];
 }
 
-function plan(id: string, moveId: string, itemIds: string[], seq: number): Event[] {
+function turns(id: string, moveId: string, actionIds: string[], seq: number): Event[] {
   return [
-    { type: "add_node", node: workNode(id, "plan", `plan for ${moveId}`, seq) },
-    { type: "add_edge", edge: edge(`hp:${id}`, moveId, id, "plan", llm) },
-    ...itemIds.map(
-      (itemId, index): Event => ({
+    { type: "add_node", node: workNode(id, "turns", `turns for ${moveId}`, seq) },
+    { type: "add_edge", edge: edge(`ht:${id}`, moveId, id, "turns", llm) },
+    ...actionIds.map(
+      (actionId, index): Event => ({
         type: "add_edge",
-        edge: edge(`it:${id}:${index}`, id, itemId, "items", llm),
-      }),
-    ),
-  ];
-}
-
-function item(id: string, seq: number, alts: string[]): Event[] {
-  return [
-    { type: "add_node", node: workNode(id, "item", "step", seq) },
-    ...alts.map(
-      (alt, index): Event => ({
-        type: "add_edge",
-        edge: edge(`al:${id}:${index}`, id, alt, "alts", llm),
+        edge: edge(`tr:${id}:${index}`, id, actionId, "turn", llm),
       }),
     ),
   ];
@@ -116,15 +105,15 @@ describe("the tape: request and state", () => {
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 1, output: "boom" }, "make test"),
       result("eo", "a1", "o1"),
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    // The request leads the tape; then the state's entry (`Start state`, instruction, goal),
-    // then each plan item as a native call + tool result.
+    // The request leads the tape; then the state's entry (`Start state`, instruction, hint,
+    // goal + criterion), then each plan item as a native call + tool result.
     expect(roles(context.history)).toEqual([
       "user",
+      "system",
       "system",
       "system",
       "user",
@@ -132,11 +121,14 @@ describe("the tape: request and state", () => {
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toBe(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green",
+    expect(context.history[3]?.text).toBe(ISLANDS.orientation.hint);
+    expect(context.history[4]?.text).toContain(
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
     );
-    expect(context.history[4]?.text).toBe("[a1] make test");
-    expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
+    expect(context.history[4]?.text).toContain("Your earlier guess (may be wrong): green");
+    expect(context.history[4]?.text).toContain("Done when: \"");
+    expect(context.history[5]?.text).toBe("[a1] make test");
+    expect(context.history[6]?.text).toBe("[o1] exit 1\nboom");
   });
 
   it("decline renders a single assistant refusal", () => {
@@ -162,22 +154,21 @@ describe("the tape: commands and their outcomes", () => {
       action("a2", "read src/a.ts", 5),
       observation("o2", 6, { ref: "file:src/a.ts", version: "v1", output: "source", start: 1, end: 1, total: 1 }, "read src/a.ts"),
       result("e2", "a2", "o2"),
-      ...plan("p1", "m1", ["i1", "i2"], 7),
-      ...item("i1", 8, ["a1"]),
-      ...item("i2", 9, ["a2"]),
+      ...turns("p1", "m1", ["a1", "a2"], 7),
     ]);
     const context = project(focused(state));
     expect(roles(context.history)).toEqual([
       "user",
       "system",
       "system",
+      "system",
       "user",
       "assistant",
       "tool",
       "assistant",
       "tool",
     ]);
-    expect(context.history[7]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
+    expect(context.history[8]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
   });
 
   it("renders an edit's mutate (no observation) as a mutated file", () => {
@@ -187,11 +178,10 @@ describe("the tape: commands and their outcomes", () => {
       action("a1", "edit src/a.ts", 3),
       { type: "add_edge", edge: edge("em", "a1", "file:src/a.ts", "mutates", llm) },
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-      ...plan("p1", "m1", ["i1"], 4),
-      ...item("i1", 5, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 4),
     ]);
     const context = project(focused(state));
-    expect(context.history[5]?.text).toBe("[a1] mutated src/a.ts");
+    expect(context.history[6]?.text).toBe("[a1] mutated src/a.ts");
   });
 
   it("renders a refused command as an observation with the reason", () => {
@@ -201,14 +191,13 @@ describe("the tape: commands and their outcomes", () => {
       action("a1", "read src/a.ts", 3),
       observation("o1", 4, { failed: true, refused: true, output: "repeated_action: o0 already has it" }),
       result("e1", "a1", "o1"),
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
     ]);
     const context = project(focused(state));
-    expect(context.history[5]?.text).toBe("[o1] repeated_action: o0 already has it");
+    expect(context.history[6]?.text).toBe("[o1] repeated_action: o0 already has it");
   });
 
-  it("marks an alternative with its previous attempt and reason", () => {
+  it("renders each turn in order without an alternative marker", () => {
     const state = fold([
       request("do it", 0),
       ...moved("m1", "orientation", "green", 1),
@@ -218,15 +207,14 @@ describe("the tape: commands and their outcomes", () => {
       action("a2", "run two", 5),
       observation("o2", 6, { command: "run two", exitCode: 0 }, "run two"),
       result("e2", "a2", "o2"),
-      ...plan("p1", "m1", ["i1"], 7),
-      ...item("i1", 8, ["a1", "a2"]),
+      ...turns("p1", "m1", ["a1", "a2"], 7),
     ]);
     const context = project(focused(state));
-    const marker = context.history[6]?.text ?? "";
-    expect(marker).toContain('alternative to step "step"');
-    expect(marker).toContain('previous attempt: "run one"');
-    expect(marker).toContain("exit 1");
-    expect(marker).toContain("[a2] run two");
+    const assistant = context.history
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.text);
+    expect(assistant).toEqual(["[a1] run one", "[a2] run two"]);
+    expect(context.history.map((message) => message.text).join("\n")).not.toContain("alternative");
   });
 });
 
@@ -238,8 +226,7 @@ describe("the tape: the compaction of a finished state", () => {
       action("a1", "grep x", 3),
       observation("o1", 4, { ref: "file:src/a.ts", version: "v1", output: "FOUND-BODY" }, "grep x"),
       result("e1", "a1", "o1"),
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
       ...stopNode("s1", "named the line", 7, "m1"),
       ...moved("m2", "patch", "fix it", 8),
     ]);
@@ -249,7 +236,7 @@ describe("the tape: the compaction of a finished state", () => {
     expect(body).not.toContain("FOUND-BODY");
     // ...only its closure marker remains, in the finished state's triple.
     expect(body).toContain("Finish state Localization — named the line");
-    expect(context.situation).toBe("plan");
+    expect(context.situation).toBe("working");
   });
 });
 
@@ -261,8 +248,7 @@ describe("the tape: edge cases", () => {
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
       ...stopNode("s1", "all green", 7, "m1"),
     ]);
     const context = project(focused(state));
@@ -278,8 +264,8 @@ describe("the tape: edge cases", () => {
       ...moved("m1", "orientation", "map", 1),
     ]);
     const context = project(focused(state));
-    expect(context.situation).toBe("plan");
-    expect(roles(context.history)).toEqual(["user", "system", "system", "user"]);
+    expect(context.situation).toBe("working");
+    expect(roles(context.history)).toEqual(["user", "system", "system", "system", "user"]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
   });
 });
@@ -298,13 +284,20 @@ describe("the tape: recall and determinism", () => {
       },
       observation("o1", 4, { output: "the stored body" }, "recall"),
       result("e1", "a1", "o1"),
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
     ]);
     const context = project(focused(state));
-    expect(roles(context.history)).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
-    expect(context.history[4]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
-    expect(context.history[5]?.text).toBe("[o1] the stored body");
+    expect(roles(context.history)).toEqual([
+      "user",
+      "system",
+      "system",
+      "system",
+      "user",
+      "assistant",
+      "tool",
+    ]);
+    expect(context.history[5]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
+    expect(context.history[6]?.text).toBe("[o1] the stored body");
   });
 
   it("is deterministic: same events, same tape", () => {
@@ -320,7 +313,6 @@ function parentEvents(): Event[] {
     action("a1", "make test", 3),
     observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
     result("e1", "a1", "o1"),
-    ...plan("p1", "m1", ["i1"], 5),
-    ...item("i1", 6, ["a1"]),
+    ...turns("p1", "m1", ["a1"], 5),
   ];
 }

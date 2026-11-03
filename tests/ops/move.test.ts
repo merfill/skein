@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { planOf } from "../../src/ir/graph";
+import { turnsOf } from "../../src/ir/graph";
 import { currentMove, isMoveFinished, moveIsland } from "../../src/ir/traversal";
 import {
   DEFAULT_FILES,
@@ -17,7 +17,7 @@ import {
 afterEach(cleanupWorkspaces);
 
 describe("move", () => {
-  it("OP-MV-1 opens a state as a flat child of the request, descends into it, with no plan yet", () => {
+  it("OP-MV-1 opens a state as a flat child of the request, descends into it, with no turns yet", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const { state } = exec(move("orientation", "map the repo"), [request()], ws);
     const moveNode = currentMove(state);
@@ -30,9 +30,9 @@ describe("move", () => {
         (edge) => edge.kind === "move" && edge.from === "r1" && edge.to === moveNode,
       ),
     ).toBe(true);
-    // The state IS its goal: the `what` rides the move; there is no plan until the first apply.
+    // The state IS its goal: the `what` rides the move; there are no turns until the first apply.
     expect((state.nodes.get(moveNode as string)?.payload as { what?: string }).what).toBe("map the repo");
-    expect(planOf(state, moveNode as string)).toBeUndefined();
+    expect(turnsOf(state, moveNode as string)).toBeUndefined();
   });
 
   it("OP-MV-2 a move after a finished state is a sibling, not a child", () => {

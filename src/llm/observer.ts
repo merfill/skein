@@ -48,18 +48,13 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   },
   {
     name: "state",
-    description: "Return one state's structure, plan and closure. Call with { id }.",
+    description: "Return one state's structure, turns and closure. Call with { id }.",
     schema: stateSchema,
   },
   {
     name: "turns",
     description: "Return a state's action→observation turns. Call with { id, from?, to? }.",
     schema: turnsSchema,
-  },
-  {
-    name: "attempt",
-    description: "Return a plan item's alternatives, results and status. Call with { id }.",
-    schema: stateSchema,
   },
   {
     name: "body",

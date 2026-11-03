@@ -9,9 +9,7 @@ import {
   NODE_INSTRUCTIONS,
   PROMPT_BLOCKS,
   REQUEST_INSTRUCTION,
-  planInstruction,
   transitionInstruction,
-  turnInstruction,
 } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
@@ -40,6 +38,11 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toContain("Recovery");
     expect(BASE_PROMPT).toContain("Construction");
     expect(BASE_PROMPT).toContain("Verification");
+  });
+
+  it("forbids reconstructing upstream from memory while keeping a fetched reference a lead", () => {
+    expect(BASE_PROMPT).toContain("Do not reconstruct an external or upstream version from memory.");
+    expect(BASE_PROMPT).toContain("treat it as a lead to verify, not as the oracle");
   });
 
   it("states the state-change mechanism, the States and conditioned Transitions once in the base", () => {
@@ -127,6 +130,12 @@ describe("system prompt: tool contract", () => {
     expect(bash?.function.description).toMatch(/stdout and stderr are captured separately/i);
   });
 
+  it("makes bash the fallback, not the first choice", () => {
+    const bash = PROPOSAL_TOOLS.find((tool) => tool.function.name === "bash");
+    expect(bash?.function.description).toMatch(/prefer the dedicated tools/i);
+    expect(bash?.function.description).toMatch(/use bash only when those cannot do the job/i);
+  });
+
   it("scopes the tool contract to the state's work", () => {
     // `bash` carries no state-specific read-only rule: inspection states get the global
     // description, so the state's own instruction decides what the work needs.
@@ -161,15 +170,9 @@ describe("system prompt: tool contract", () => {
     expect(toolDescriptionsFor("recovery").write ?? "").not.toMatch(/script/i);
   });
 
-  it("keeps `stop` generic: a stop tool with a bounded, detailed why", () => {
-    const stop = PROPOSAL_TOOLS.find((tool) => tool.function.name === "stop");
-    expect(stop?.function.description).toMatch(/stop/i);
-    expect(stop?.function.description).toMatch(/why/i);
-    expect(stop?.function.description).toMatch(/this state's criterion holds/i);
-    expect(stop?.function.description).toMatch(/50 words/i);
-    expect(stop?.function.description).not.toMatch(/localization|patch/i);
-    const required = (stop?.function.parameters as { required?: string[] }).required ?? [];
-    expect(required).toContain("why");
+  it("offers no `stop` tool: the doxa closes a state with text", () => {
+    expect(PROPOSAL_TOOLS.some((tool) => tool.function.name === "stop")).toBe(false);
+    expect(BASE_PROMPT).toMatch(/reply with text only, no tool calls/i);
   });
 
   it("numbers the base blocks B1..B4 in system-prompt order and names the request prompt", () => {
@@ -231,7 +234,6 @@ describe("tool surface: no drift to a removed tool", () => {
         "recall",
         "bash",
         "search",
-        "stop",
         "write",
       ].sort(),
     );
@@ -325,37 +327,18 @@ describe("context format: tape", () => {
     const result = Array.isArray(tool.content) ? tool.content[0] : undefined;
     expect(result).toMatchObject({ type: "tool-result", toolCallId: "c1" });
     expect((result as { output?: { value?: string } }).output?.value).toContain("boom");
-    // A hand-built context without an island still gets the generic per-turn tail.
-    expect(messages.at(-1)).toMatchObject({ role: "system" });
-    expect(String((messages.at(-1) as { content: string }).content)).toContain(
-      "Done when its goal holds.",
-    );
-    expect(messages).toHaveLength(6);
+    // No per-turn tail: the tape ends with the last tool result.
+    expect(messages.at(-1)).toMatchObject({ role: "tool" });
+    expect(messages).toHaveLength(5);
   });
 
-  it("appends the focused state's per-turn tail last on plan and working, never storing it", () => {
-    for (const situation of ["plan", "working"] as const) {
+  it("appends nothing on plan and working: the state's hint and criterion live in its header", () => {
+    for (const situation of ["working"] as const) {
       const withIsland: Context = { ...context, situation, island: "localization" };
       const messages = buildMessages(withIsland);
-      const expected =
-        situation === "plan"
-          ? planInstruction("localization")
-          : turnInstruction("localization");
-      expect(messages.at(-1)).toMatchObject({ role: "system", content: expected });
-      expect(String((messages.at(-1) as { content: string }).content)).toContain(
-        ISLANDS.localization.hint,
-      );
-      expect(String((messages.at(-1) as { content: string }).content)).not.toContain("what:");
-      expect(String((messages.at(-1) as { content: string }).content)).toContain(
-        "Done when:",
-      );
-      expect(String((messages.at(-1) as { content: string }).content)).toContain(
-        "When it holds, `stop` — and nothing else.",
-      );
-      // The tail is derived: the projected history itself carries no extra message, so the
-      // next turn's tape is rebuilt without it.
+      expect(messages).toHaveLength(withIsland.history.length + 2);
       expect(withIsland.history.at(-1)).toMatchObject({ role: "tool" });
-      expect(messages).toHaveLength(withIsland.history.length + 3);
+      expect(messages.at(-1)).toMatchObject({ role: "tool" });
     }
   });
 

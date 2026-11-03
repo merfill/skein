@@ -7,15 +7,14 @@ export const SPACES = ["work", "artifact"] as const;
 export const WORK_KINDS = [
   "request",
   "move",
-  "plan",
-  "item",
+  "turns",
   "action",
   "observation",
   "stop",
   "unactionable",
   "constraint",
   // An engine-owned fact about the session (e.g. the environment probe). It hangs off no
-  // plan or state; the projection renders it where the current state needs it.
+  // turns container or state; the projection renders it where the current state needs it.
   "fact",
   // A tape-agent advisory: a state-scoped `hint` or a unit-scoped `memo`, rendered as a
   // `system` turn. Neither counts as task knowledge.
@@ -73,16 +72,15 @@ export interface MovePayload {
 }
 
 // Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):
-// a request's states hang off it via `move`; a state's plan hangs off the `move` via `plan`;
-// plan items hang off a plan via `items`; an item's alternatives hang off the item via
-// `alts`; a state's (the terminal move's) closure hangs off it via `stop`.
+// a request's states hang off it via `move`; a state's turns container hangs off the `move`
+// via `turns`; each turn (action) hangs off the container via `turn`; a state's (the terminal
+// move's) closure hangs off it via `stop`.
 export const EDGE_KINDS = [
   "move",
   "unactionable",
-  "plan",
+  "turns",
+  "turn",
   "stop",
-  "items",
-  "alts",
   "result",
   "mutates",
 ] as const;

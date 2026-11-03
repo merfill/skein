@@ -11,11 +11,11 @@ import {
 
 function journal(): Event[] {
   let seq = 0;
-  const add = (id: string, kind: "request" | "move" | "plan" | "item" | "action" | "observation", label: string, payload?: unknown): Event => ({
+  const add = (id: string, kind: "request" | "move" | "turns" | "action" | "observation", label: string, payload?: unknown): Event => ({
     type: "add_node",
     node: { id, space: "work", kind, label, ...(payload !== undefined ? { payload } : {}), seq: seq++ },
   });
-  const edge = (id: string, from: string, to: string, kind: "move" | "plan" | "items" | "alts" | "result"): Event => ({
+  const edge = (id: string, from: string, to: string, kind: "move" | "turns" | "turn" | "result"): Event => ({
     type: "add_edge",
     edge: { id, from, to, kind, provenance: { kind: "llm" } },
   });
@@ -23,12 +23,10 @@ function journal(): Event[] {
     add("req", "request", "fix the parser"),
     add("m1", "move", "patch", { state: "patch", what: "fix it", turn: 1 }),
     edge("e:m1", "req", "m1", "move"),
-    add("p1", "plan", "plan"),
-    edge("e:p1", "m1", "p1", "plan"),
-    add("i1", "item", "edit parser.c"),
-    edge("e:i1", "p1", "i1", "items"),
+    add("p1", "turns", "turns"),
+    edge("e:p1", "m1", "p1", "turns"),
     add("a1", "action", "edit parser.c", { command: "edit", reasoning: "the tokenizer drops the last token" }),
-    edge("e:a1", "i1", "a1", "alts"),
+    edge("e:a1", "p1", "a1", "turn"),
     add("o1", "observation", "edited", {
       output: "line one\nneedle is here\nline three",
       exitCode: 0,
@@ -44,17 +42,17 @@ function ready() {
 }
 
 describe("session memory: L2, turns, body, search", () => {
-  it("shows a state's plan with the result id and alternatives", () => {
+  it("shows a state's turns with the result id", () => {
     const detail = stateDetail(ready(), "r1", "m1");
     expect(detail).toContain("state m1: patch");
     expect(detail).toContain('what: fix it');
     expect(detail).toContain("closure: open");
-    expect(detail).toContain("- i1: edit parser.c [succeeded] -> o1: exit 0 (alternatives: 1)");
+    expect(detail).toContain("- a1: edit parser.c [succeeded] -> o1: exit 0");
   });
 
   it("shows the turns with the task agent's reasoning", () => {
     const turns = stateTurnHistory(ready(), "r1", "m1");
-    expect(turns).toContain("- edit parser.c: edit parser.c [succeeded] -> o1: exit 0");
+    expect(turns).toContain("- a1: edit parser.c [succeeded] -> o1: exit 0");
     expect(turns).toContain("reasoning: the tokenizer drops the last token");
   });
 

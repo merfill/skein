@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { project } from "../src/ir/project";
-import { transitionInstruction, turnInstruction } from "../src/loop/prompt/blocks";
+import { transitionInstruction } from "../src/loop/prompt/blocks";
 import { buildMessages } from "../src/loop/propose";
 import type { Action } from "../src/llm/schemas";
 import {
@@ -70,7 +70,7 @@ describe("routing: the corrective Localization ↔ Research edges", () => {
 
     const moved = exec(correction, events, ws);
     const next = project(moved.state);
-    expect(next.situation).toBe("plan");
+    expect(next.situation).toBe("working");
     expect(next.island).toBe("research");
     expect(next.history.some((m) => m.text === "Start state Localization")).toBe(true);
     expect(next.history.some((m) => m.text.startsWith("Finish state Localization"))).toBe(true);
@@ -84,7 +84,7 @@ describe("routing: the corrective Localization ↔ Research edges", () => {
     expect(classification(correction, events).accept).toBe(true);
 
     const next = project(exec(correction, events, ws).state);
-    expect(next.situation).toBe("plan");
+    expect(next.situation).toBe("working");
     expect(next.island).toBe("localization");
     expect(next.history.some((m) => m.text.startsWith("Finish state Research"))).toBe(true);
   });
@@ -98,8 +98,13 @@ describe("routing: the corrective Localization ↔ Research edges", () => {
   });
 
   it("the corrective text stays off the in-state conduct", () => {
-    expect(turnInstruction("localization")).not.toContain("Choose Research");
-    expect(turnInstruction("research")).not.toContain("Choose Localization");
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const opened = execAll(withGoal("the object", "true", "localization"), [request()], ws);
+    const stateText = project(opened.state)
+      .history.map((message) => message.text)
+      .join("\n");
+    expect(stateText).not.toContain("Choose Research");
+    expect(stateText).not.toContain("Choose Localization");
     expect(transitionInstruction("localization")).toContain("not a code defect to locate");
     expect(transitionInstruction("research")).toContain("a code defect to locate");
   });

@@ -113,23 +113,19 @@ function createTaskProposer(): Proposer {
       return { thought: "", actions: [move("end", "finish")] };
     }
 
-    if (context.situation === "plan") {
-      if (request.includes("src/app.txt")) {
+    if (context.situation === "working") {
+      if (!request.includes("src/app.txt")) {
+        return { thought: "", actions: [{ operator: "stop", why: "nothing to do" }] };
+      }
+      if (phase === 0) {
         phase = 1;
         return { thought: "", actions: [read("src/app.txt")] };
       }
-      return { thought: "", actions: [{ operator: "stop", why: "nothing to do" }] };
-    }
-
-    if (context.situation === "working") {
-      if (request.includes("src/app.txt")) {
-        if (phase === 1) {
-          phase = 2;
-          return { thought: "", actions: [write("src/app.txt", `${ruleOf(request)}\n`)] };
-        }
-        return { thought: "", actions: [{ operator: "stop", why: "rule applied" }] };
+      if (phase === 1) {
+        phase = 2;
+        return { thought: "", actions: [write("src/app.txt", `${ruleOf(request)}\n`)] };
       }
-      return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+      return { thought: "", actions: [{ operator: "stop", why: "rule applied" }] };
     }
 
     if (context.situation === "transition") {

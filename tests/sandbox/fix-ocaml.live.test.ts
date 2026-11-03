@@ -4,8 +4,7 @@ import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import type { Proposals } from "../../src/llm/schemas";
-import { invokeTools } from "../../src/llm/structured";
-import { buildMessages, promptText } from "../../src/loop/propose";
+import { promptText, propose as proposeModel } from "../../src/loop/propose";
 import { runSandbox } from "./run";
 import { BUG, FIX_OCAML_REQUEST, fixOcamlGc } from "./specs/fix-ocaml-gc";
 import { cleanupSandboxes } from "./workspace";
@@ -29,8 +28,8 @@ describe.skipIf(!settings.live)("fix-ocaml-gc sandbox (live model)", () => {
       const trajectory: { turn: number; action: string; chars: number }[] = [];
 
       const propose = async (context: Context): Promise<Proposals> => {
-        const proposal = await invokeTools(model, buildMessages(context), { settings, rebuild });
-        const a = proposal.actions[0]!;
+        const proposal = await proposeModel(model, context, { settings, rebuild });
+        const a = proposal.actions[0] ?? { operator: "stop" as const, why: proposal.thought };
         const label =
           a.operator === "apply" ? `apply:${a.action.tool}` : a.operator;
         trajectory.push({ turn: trajectory.length, action: label, chars: promptText(context).length });

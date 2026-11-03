@@ -6,7 +6,6 @@ import {
   observationBody,
   outline,
   renderedState,
-  stateAttempt,
   stateOutline,
   stateTurns,
 } from "../src/session/outline";
@@ -47,9 +46,6 @@ describe("observer fixtures: entry cycle", () => {
     expect(stateOutline(state, verification.id)).toContain("verification");
     expect(stateOutline(state, verification.id)).toContain("entries: 2");
     expect(stateTurns(state, verification.id)).toContain("echo verify");
-    const item = [...state.nodes.values()].find((node) => node.kind === "item");
-    if (item === undefined) throw new Error("expected an item");
-    expect(stateAttempt(state, item.id)).toContain("[succeeded]");
     const observation = [...state.nodes.values()].find((node) => node.kind === "observation");
     if (observation === undefined) throw new Error("expected an observation");
     expect(observationBody(state, observation.id)).not.toBe("");
@@ -75,7 +71,7 @@ describe("observer fixtures: long state", () => {
     const move = [...state.nodes.values()].find((node) => node.kind === "move");
     if (move === undefined) throw new Error("expected a move");
     expect(stateTurns(state, move.id).split("\n")).toHaveLength(21);
-    expect(outline(state)).toContain("items=21");
+    expect(outline(state)).toContain("turns=21");
     expect(outline(state, scenario.turn)).toContain("entries=1 turns=21");
     expect(stateOutline(state, move.id, scenario.turn)).toContain("turns: 21");
     expect(renderedState(state, move.id, scenario.events)).toContain("echo 1");

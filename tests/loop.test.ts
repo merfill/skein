@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
 import { childrenOf, currentFocus, currentVersion, fold, lastChild } from "../src/ir/graph";
-import { cursorOf, focusEvents, itemFulfilled } from "../src/ir/traversal";
+import type { IslandId } from "../src/ir/islands";
+import { focusEvents } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
 import type { Action, Proposals } from "../src/llm/schemas";
@@ -287,18 +288,16 @@ describe("executeAction", () => {
       0,
     );
     const state = fold(outcome.events, root);
-    // The plan hangs directly off the move (there is no goal node); its first item carries the
-    // action that seeded it.
-    const planEdges = [...state.edges.values()].filter(
-      (edge) => edge.kind === "plan" && edge.from === "m1",
+    // The turns container hangs directly off the move (there is no goal node); the action that
+    // seeded it is its first turn.
+    const turnEdges = [...state.edges.values()].filter(
+      (edge) => edge.kind === "turns" && edge.from === "m1",
     );
-    expect(planEdges).toHaveLength(1);
-    const items = childrenOf(state, planEdges[0]?.to as string);
-    expect(items).toHaveLength(1);
-    const alts = childrenOf(state, items[0] as string);
-    expect(alts).toHaveLength(1);
-    expect(state.nodes.get(alts[0] as string)?.kind).toBe("action");
-    // The move is still the focus: the plan (not a goal) hangs off it.
+    expect(turnEdges).toHaveLength(1);
+    const actions = childrenOf(state, turnEdges[0]?.to as string);
+    expect(actions).toHaveLength(1);
+    expect(state.nodes.get(actions[0] as string)?.kind).toBe("action");
+    // The move is still the focus: the turns (not a goal) hang off it.
     expect(currentFocus(state)).toBe("m1");
   });
 
@@ -455,16 +454,15 @@ describe("executeAction", () => {
     expect(next.turn.text).toMatch(/continue from \d+/);
   });
 
-  it("branches the current plan item when the action differs, so the plan never blocks", () => {
+  it("appends every action as the next turn, even when it differs from the previous one", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
       ...open(),
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 1 } },
-      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "turns", label: "turns", seq: 1 } },
+      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "turns", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "cat HACKING.adoc", payload: { command: "cat HACKING.adoc" }, seq: 2 } },
-      { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "items", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "it", from: "p1", to: "a1", kind: "turn", provenance: { kind: "llm" } } },
     ]);
-    expect(itemFulfilled(root, "a1")).toBe(false);
     const outcome = executeAction(
       { operator: "apply", action: { tool: "bash", command: "ls" } },
       root,
@@ -472,8 +470,9 @@ describe("executeAction", () => {
       0,
     );
     const state = fold(outcome.events, root);
-    expect(itemFulfilled(state, "a1")).toBe(true);
-    expect(cursorOf(state, "m1")).toBe(1);
+    const actions = childrenOf(state, "p1");
+    expect(actions).toHaveLength(2);
+    expect(state.nodes.get(actions[1] as string)?.kind).toBe("action");
   });
 
   it("grep returns a plain-text window with context", () => {
@@ -657,11 +656,20 @@ describe("the message tape", () => {
     // instruction and the state's own goal (the request leads the tape); the first apply seeds
     // the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
-    expect(roles[2]).toEqual(["user", "system", "system", "user", "assistant", "tool"]);
+    expect(roles[1]).toEqual(["user", "system", "system", "system", "user"]);
+    expect(roles[2]).toEqual([
+      "user",
+      "system",
+      "system",
+      "system",
+      "user",
+      "assistant",
+      "tool",
+    ]);
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
+      "system",
       "system",
       "system",
       "user",
@@ -741,6 +749,82 @@ describe("the message tape", () => {
     // tree's history, not a bounded working set).
     const tape = contexts.at(-1)?.history.map((message) => message.text).join("\n") ?? "";
     expect(tape).toContain("sumTo");
+  });
+});
+
+describe("text stop", () => {
+  const NEXT: Partial<Record<IslandId, IslandId>> = {
+    orientation: "localization",
+    localization: "patch",
+    patch: "verification",
+    verification: "end",
+  };
+
+  it("closes each state with a text reply and ends the request at End", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    const situations: string[] = [];
+    const propose = async (context: Context): Promise<Proposals> => {
+      situations.push(context.situation);
+      if (context.situation === "request") {
+        return proposal({ operator: "move", state: "orientation", what: "green" });
+      }
+      if (context.situation === "transition") {
+        const next = context.island !== undefined ? NEXT[context.island] : undefined;
+        if (next === undefined) throw new Error(`no next state from ${context.island ?? "?"}`);
+        return proposal({ operator: "move", state: next, what: "next" });
+      }
+      return { thought: `finished ${context.island ?? "state"}`, actions: [] };
+    };
+
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 20 },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("request_addressed");
+    expect(situations).toEqual([
+      "request",
+      "working",
+      "transition",
+      "working",
+      "transition",
+      "working",
+      "transition",
+      "working",
+      "transition",
+      "terminal",
+    ]);
+    const stops = result.events
+      .filter((event) => event.type === "add_node" && event.node.kind === "stop")
+      .map((event) => (event as { node: { label: string } }).node.label);
+    expect(stops).toEqual([
+      "finished orientation",
+      "finished localization",
+      "finished patch",
+      "finished verification",
+      "finished end",
+    ]);
+  });
+
+  it("does not close on a text reply at a transition", async () => {
+    const workspace = fsWorkspace(setup("off-by-one"));
+    let index = 0;
+    const propose = async (): Promise<Proposals> => {
+      index += 1;
+      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 2) return { thought: "mapped", actions: [] };
+      return { thought: "I think we are done", actions: [] };
+    };
+    const result = await runAgent(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "green" } },
+    );
+    expect(result.stopReason).toBe("no_decision");
+    const stops = result.events
+      .filter((event) => event.type === "add_node" && event.node.kind === "stop")
+      .map((event) => (event as { node: { label: string } }).node.label);
+    expect(stops).toEqual(["mapped"]);
   });
 });
 
@@ -1016,12 +1100,10 @@ describe("runAgent", () => {
         },
       },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
-      { type: "add_edge", edge: { id: "e1", from: "m1", to: "p1", kind: "plan", provenance: { kind: "llm" } } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 4 } },
-      { type: "add_edge", edge: { id: "e2", from: "p1", to: "i1", kind: "items", provenance: { kind: "llm" } } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "turns", label: "turns", seq: 3 } },
+      { type: "add_edge", edge: { id: "e1", from: "m1", to: "p1", kind: "turns", provenance: { kind: "llm" } } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "run build", payload: { command: "run build" }, seq: 5 } },
-      { type: "add_edge", edge: { id: "e3", from: "i1", to: "a1", kind: "alts", provenance: { kind: "llm" } } },
+      { type: "add_edge", edge: { id: "e3", from: "p1", to: "a1", kind: "turn", provenance: { kind: "llm" } } },
     ]);
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");

@@ -55,11 +55,12 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The state entry is the `Start state` marker, the brief, the island instruction and the
-    // state's own goal as a `user` turn. The per-turn tail is appended by `buildMessages`, not
-    // projected into the tape.
+    // The state entry is the `Start state` marker, the island instruction, the per-turn conduct
+    // hint, and the state's own goal + criterion as a `user` turn. Nothing is appended after
+    // the tape: the whole context is the projection.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
+      ["system", null, false],
       ["system", null, false],
       ["system", null, false],
       ["user", null, false],
@@ -70,8 +71,13 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
     expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toBe(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it",
+    expect(ctx.history[3]?.text).toBe(ISLANDS.orientation.hint);
+    expect(ctx.history[4]?.text).toContain(
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    );
+    expect(ctx.history[4]?.text).toContain("Your earlier guess (may be wrong): do it");
+    expect(ctx.history[4]?.text).toContain(
+      `Done when: "${ISLANDS.orientation.criterion}".`,
     );
   });
 
@@ -93,18 +99,17 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
   });
 
-  it("plan / item / file nodes contribute structure, not messages", () => {
+  it("turn / file nodes contribute structure, not messages", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const res = exec(read("src/sum.mjs"), first.events, w);
-    // The op added plan?/item/file nodes...
     const added = res.outcome.events
       .filter((e) => e.type === "add_node")
       .map((e) => e.node.kind);
-    expect(added).toContain("item");
+    expect(added).toContain("action");
     expect(added).toContain("file");
-    // ...but the tape has exactly one assistant.tool_calls per move (goal + seed + read),
-    // never a message tagged `item`/`file`/`plan`.
+    // ...but the tape has exactly one assistant.tool_calls per turn, never a message tagged
+    // `action`/`file`.
     expect(new Set(project(res.state).history.map((m) => m.role))).toEqual(
       new Set(["user", "assistant", "system", "tool"]),
     );
@@ -191,17 +196,16 @@ describe("hop 2 — TapeMessage -> provider wire role/format", () => {
     expect(() => buildMessages(ctx)).toThrow(/without a callId/);
   });
 
-  it("is the base + one system per constraint, then the tape and the per-turn tail", async () => {
+  it("is the base + one system per constraint, then the tape (no per-turn tail)", async () => {
     const context: Context = {
       history: [{ role: "user", text: "fix" }],
       situation: "working",
       constraints: [{ id: "k1", forbid: ["secret"] }],
     };
     const msgs = await wire(buildMessages(context));
-    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user", "system"]);
+    expect(msgs.map((m) => m.role)).toEqual(["system", "system", "user"]);
     expect(msgs[0]?.content).toBe(BASE_PROMPT);
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
-    expect(String(msgs[3]?.content)).toContain("Done when its goal holds.");
   });
 });

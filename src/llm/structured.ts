@@ -534,15 +534,12 @@ export async function invokeTools(
       if (options.allowText === true) return { ...proposal, actions: [] };
       throw new Error("model returned no tool call");
     }
-    const stopAvailable = allowed === undefined || allowed.has("stop");
     repair = {
       role: "user",
       content:
         options.allowText === true
-          ? "You did not produce an answer. Answer with text, or call a tool if you need more information."
-          : stopAvailable
-            ? "You did not call a tool. If the state's goal is met, call `stop` now with the result in `why`; otherwise call one or more of the provided tools."
-            : "You did not call a tool. Call one or more of the provided tools.",
+          ? "You did not produce an answer. Answer with text if the state's criterion holds, or call a tool if you need more information."
+          : "You did not call a tool. Call one or more of the provided tools.",
     };
   }
 }

@@ -2,6 +2,7 @@ import type { Event } from "../../src/ir/events";
 import type { State } from "../../src/ir/graph";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
+import { probeSession } from "../../src/loop/probe";
 import type { Proposer } from "../../src/loop/propose";
 import type { ObserverDeps } from "../../src/session/observer";
 import type { Workspace } from "../../src/tools/workspace";
@@ -42,6 +43,9 @@ export async function runSandbox(
       propose,
       workspace,
       maxTurns: options.maxTurns ?? 24,
+      // The probe is a session fact in production; record it here too so Orientation sees
+      // the workspace map (root, repo status, entries) instead of re-listing the tree.
+      probe: (target) => probeSession(target),
       ...(options.observer !== undefined ? { observer: options.observer } : {}),
     },
     {

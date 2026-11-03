@@ -13,12 +13,14 @@ import { z } from "zod";
 
 import { TurnMeter } from "../bench/metrics";
 import { loadSettings } from "../src/config/settings";
+import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { GENERAL_TOOLS } from "../src/llm/general";
 import { invokeStructured, invokeTools, type ToolsOptions } from "../src/llm/structured";
 import { modelCall } from "../src/llm/schemas";
 import { proposalTools, toolNamesFor, toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
+import { propose } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
 
 // Structured output is plain JSON: the schema is in the prompt and the reply is parsed
@@ -240,8 +242,9 @@ describe("tool calling", () => {
       GENERAL_TOOLS,
     );
     expect(Object.keys(general).sort()).toEqual(["grep", "list", "read", "recall", "shell"]);
+    // `stop` is engine-owned now: naming it in the surface binds no tool.
     const task = proposalTools(new Set(["read", "bash", "stop"]));
-    expect(Object.keys(task).sort()).toEqual(["bash", "read", "stop"]);
+    expect(Object.keys(task).sort()).toEqual(["bash", "read"]);
   });
 
   it("maps the general-only tool", () => {
@@ -272,6 +275,31 @@ describe("tool calling", () => {
     const model = mockModel(() => textReply("## Answer\n\nDone."));
     await expect(
       agent(model, [{ role: "user", content: "go" }], { allowedTools: ["read"] }),
+    ).rejects.toThrow("model returned no tool call");
+  });
+
+  it("propose accepts a text stop only inside an open state or at End", async () => {
+    const base: Context = { history: [], situation: "working", constraints: [] };
+    const working = await propose(mockModel(() => textReply("state done")), base, {
+      settings: offline,
+    });
+    expect(working.thought).toBe("state done");
+    expect(working.actions).toEqual([]);
+
+    const terminal = await propose(
+      mockModel(() => textReply("final answer")),
+      { ...base, situation: "terminal", island: "end" },
+      { settings: offline },
+    );
+    expect(terminal.thought).toBe("final answer");
+    expect(terminal.actions).toEqual([]);
+
+    await expect(
+      propose(
+        mockModel(() => textReply("not a move")),
+        { ...base, situation: "request" },
+        { settings: offline },
+      ),
     ).rejects.toThrow("model returned no tool call");
   });
 
@@ -487,7 +515,6 @@ describe("tool surface (toolNamesFor)", () => {
       "write",
       "webfetch",
       "apply_patch",
-      "stop",
     ]);
     expect(toolNamesFor(frontier({ move: true, decline: true }))).toEqual([
       "move",
@@ -504,7 +531,7 @@ describe("tool surface (toolNamesFor)", () => {
         decline: false,
         applies: ["read", "grep", "list", "bash", "webfetch"],
       }),
-    ).toEqual(["recall", "search", "read", "grep", "list", "bash", "webfetch", "stop"]);
+    ).toEqual(["recall", "search", "read", "grep", "list", "bash", "webfetch"]);
   });
 });
 

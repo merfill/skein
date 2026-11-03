@@ -71,7 +71,6 @@ const moveParams = z.object({
   what: z.string().optional(),
   done: z.string().optional(),
 });
-const stopParams = z.object({ why: z.string() });
 const declineParams = z.object({ why: z.string().optional() });
 
 // The descriptions carry the operation, its required fields and the refusals to avoid;
@@ -122,7 +121,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "bash",
     description:
-      "Executes a given bash command. command is required and runs from the WORKSPACE ROOT; workdir runs it in a subdirectory; timeout (milliseconds) caps it. Blocks until the command exits or the engine's cap elapses; returns exit 0/non-zero. stdout and stderr are captured separately. The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id. Re-running an identical command when nothing has been modified is refused as a repeat.",
+      "Executes a given bash command. Prefer the dedicated tools: read, grep and list to inspect; edit, write and apply_patch to change files. Use bash only when those cannot do the job — running builds, tests, or other shell operations. command is required and runs from the WORKSPACE ROOT; workdir runs it in a subdirectory; timeout (milliseconds) caps it. Blocks until the command exits or the engine's cap elapses; returns exit 0/non-zero. stdout and stderr are captured separately. The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id. Re-running an identical command when nothing has been modified is refused as a repeat.",
     schema: bashParams,
   },
   {
@@ -142,12 +141,6 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
     description:
       "Apply a unified diff to the workspace (patch, optional strip; default patch -p1). Refused if the patch does not apply cleanly. Records the edited files.",
     schema: patchParams,
-  },
-  {
-    name: "stop",
-    description:
-      `Call \`stop\` when this state's criterion holds. why = where and why you stopped, with the reasoning and the detail the state after it needs — up to ~50 words.`,
-    schema: stopParams,
   },
   {
     name: "decline",
@@ -318,6 +311,9 @@ export const APPLY_TOOL_NAMES = new Set([
 // (docs/ir_semantics.md §2.6). `recall`/`search` are read-only and always available. The apply
 // vocabulary is the frontier's `applies` (the focused island's tools): when omitted, the full
 // registry is bound (direct `invokeTools` callers, tests).
+// `stop` is engine-owned: the doxa closes a state with a text reply (no tool call), and the
+// engine records the same `stop` relation. The frontier still marks `stop` so `classify` and
+// recorded journals keep their meaning, but there is no tool for it on the surface.
 export function toolNamesFor(frontier: {
   move: boolean;
   apply: boolean;
@@ -327,11 +323,10 @@ export function toolNamesFor(frontier: {
 }): string[] {
   const names = new Set<string>();
   if (frontier.move) names.add("move");
-  if (frontier.stop) names.add("stop");
   if (frontier.decline) names.add("decline");
   if (frontier.apply) {
     // Recall/search read stored results into the open state's tape; they are offered only
-    // while a state is open (with the apply surface and `stop`).
+    // while a state is open (with the apply surface).
     names.add("recall");
     names.add("search");
     for (const name of frontier.applies ?? APPLY_TOOL_NAMES) names.add(name);

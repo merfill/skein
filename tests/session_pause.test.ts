@@ -54,12 +54,13 @@ function pausingProposer(controller: AbortController): Proposer {
     if (context.situation === "request") {
       return { thought: "", actions: [move("construction", "edit the file")] };
     }
-    if (context.situation === "plan") {
-      return { thought: "", actions: [read("src/app.txt")] };
-    }
     if (context.situation === "working") {
       if (phase === 0) {
         phase = 1;
+        return { thought: "", actions: [read("src/app.txt")] };
+      }
+      if (phase === 1) {
+        phase = 2;
         return { thought: "", actions: [write("src/app.txt", "new")] };
       }
       controller.abort();
@@ -262,11 +263,13 @@ const COMPLETE: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
     return { thought: "", actions: [move("construction", "edit the file")] };
   }
-  if (context.situation === "plan") {
-    return { thought: "", actions: [read("src/app.txt")] };
-  }
   if (context.situation === "working") {
-    return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+    const hasTurn = context.history.some(
+      (message) => message.role === "assistant" && (message.call !== undefined || message.calls !== undefined),
+    );
+    return hasTurn
+      ? { thought: "", actions: [{ operator: "stop", why: "done" }] }
+      : { thought: "", actions: [read("src/app.txt")] };
   }
   if (context.situation === "transition") {
     return { thought: "", actions: [move("end", "finish")] };

@@ -2,8 +2,8 @@ import type { Event } from "../ir/events";
 import {
   childrenOf,
   fold,
-  planOf,
   stopOf,
+  turnsOf,
   type State,
 } from "../ir/graph";
 import { currentMove } from "../ir/traversal";
@@ -126,21 +126,19 @@ function movePayload(state: State, moveId: string): { state?: string; what?: str
 }
 
 function actionsOf(state: State, moveId: string): TaskAction[] {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return [];
+  const turns = turnsOf(state, moveId);
+  if (turns === undefined) return [];
   const actions: TaskAction[] = [];
-  for (const itemId of childrenOf(state, plan)) {
-    for (const altId of childrenOf(state, itemId)) {
-      const node = state.nodes.get(altId);
-      if (node === undefined || node.kind !== "action") continue;
-      const payload = node.payload as { turn?: unknown; tool?: unknown } | undefined;
-      actions.push({
-        id: altId,
-        label: node.label,
-        turn: typeof payload?.turn === "number" ? payload.turn : 0,
-        ...(typeof payload?.tool === "string" ? { tool: payload.tool } : {}),
-      });
-    }
+  for (const actionId of childrenOf(state, turns)) {
+    const node = state.nodes.get(actionId);
+    if (node === undefined || node.kind !== "action") continue;
+    const payload = node.payload as { turn?: unknown; tool?: unknown } | undefined;
+    actions.push({
+      id: actionId,
+      label: node.label,
+      turn: typeof payload?.turn === "number" ? payload.turn : 0,
+      ...(typeof payload?.tool === "string" ? { tool: payload.tool } : {}),
+    });
   }
   return actions;
 }

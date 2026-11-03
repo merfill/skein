@@ -61,7 +61,6 @@ const settings = { ...loadSettings(), streaming: false };
 describe("observer model: tools and mapping", () => {
   it("exposes the read-only survey and decision tools", () => {
     expect(Object.keys(observerTools()).sort()).toEqual([
-      "attempt",
       "body",
       "halt",
       "hint",

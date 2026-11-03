@@ -7,7 +7,7 @@ import {
 } from "../session/telemetry";
 import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
 import type { Event } from "../ir/events";
-import { actionExecuted, childrenOf, currentVersion, fold, lastChild, planOf, type State } from "../ir/graph";
+import { actionExecuted, childrenOf, currentVersion, fold, lastChild, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
 import { project } from "../ir/project";
 import { SESSION_PROBE_ID, type SessionProbe } from "../ir/session";
@@ -296,7 +296,18 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     // The pause already ended the graph in `propose`; nothing is executed.
     if (state.paused === true) return {};
     const proposals = state.proposals;
-    if (!proposals || proposals.actions.length === 0) {
+    // A text reply is the doxa's closure: the engine records it as the state's `stop` (the
+    // same relation the removed `stop` tool produced). It is only legal where a text reply is
+    // a move: inside an open state (working) or at End. Elsewhere a text reply is a
+    // protocol miss, handled by the no-proposal counter below after the tool repair.
+    const situation = state.context?.situation;
+    const closesOnText = situation === "working" || situation === "terminal";
+    const thought = proposals?.thought.trim() ?? "";
+    const actions: Action[] =
+      proposals !== null && proposals.actions.length === 0 && thought !== "" && closesOnText
+        ? [{ operator: "stop", why: thought }]
+        : (proposals?.actions ?? []);
+    if (proposals === null || actions.length === 0) {
       const noProposal = state.noProposal + 1;
       return {
         turn: state.turn + 1,
@@ -309,7 +320,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     }
     // The batch is a single doxa move: one thought, N calls. The engine decides and runs
     // each call in order against the state the previous calls left; a terminal move
-    // (create_goal/stop/decline) ends the batch (the rest of the message is dropped).
+    // (move/stop/decline) ends the batch (the rest of the message is dropped).
     const events: Event[] = [];
     const recent: LoopState["recent"] = [];
     let rejection: LoopState["rejection"] = null;
@@ -327,7 +338,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
         stopReason: null,
       });
     };
-    for (const action of proposals.actions) {
+    for (const action of actions) {
       // A pause before this action drops the proposal and stops at the last committed step.
       if (isAborted(deps.signal)) {
         emitPaused();

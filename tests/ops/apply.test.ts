@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import { childrenOf, currentVersion, lastChild, planOf } from "../../src/ir/graph";
+import { childrenOf, currentVersion, turnsOf } from "../../src/ir/graph";
 import { currentMove } from "../../src/ir/traversal";
 import type { Action } from "../../src/llm/schemas";
 import { READ_LIMIT } from "../../src/tools";
@@ -32,18 +32,18 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-describe("apply: the first plan item", () => {
-  it("OP-CG-1 the state's first apply creates the plan and its first item", () => {
+describe("apply: the first turn", () => {
+  it("OP-CG-1 the state's first apply creates turns and its first turn", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const moved = exec(move("localization", "find the bug"), [request()], ws);
     const moveId = currentMove(moved.state)!;
-    expect(planOf(moved.state, moveId)).toBeUndefined();
+    expect(turnsOf(moved.state, moveId)).toBeUndefined();
     const { state } = exec(run("make test"), moved.events, ws);
-    const plan = planOf(state, moveId)!;
-    expect(plan).toBeDefined();
-    const items = childrenOf(state, plan);
-    expect(items).toHaveLength(1);
-    const actionId = lastChild(state, items[0]!)!;
+    const turns = turnsOf(state, moveId)!;
+    expect(turns).toBeDefined();
+    const actions = childrenOf(state, turns);
+    expect(actions).toHaveLength(1);
+    const actionId = actions[0]!;
     const action = state.nodes.get(actionId);
     expect(action?.kind).toBe("action");
     const payload = action?.payload as

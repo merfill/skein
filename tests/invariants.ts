@@ -13,11 +13,10 @@ export function achievedWithoutCheck(events: readonly Event[]): string[] {
   return violations;
 }
 
-/** Invariant: structural edges (`plan`, `items`, `alts`, `unactionable`) form a DAG — no
- * cycles. */
+/** Invariant: structural edges (`turns`, `turn`, `unactionable`) form a DAG — no cycles. */
 export function structuralCycle(events: readonly Event[]): boolean {
   const state = fold(events);
-  const kinds = new Set(["plan", "items", "alts", "unactionable"]);
+  const kinds = new Set(["turns", "turn", "unactionable"]);
   const adjacency = new Map<string, string[]>();
   for (const edge of state.edges.values()) {
     if (!kinds.has(edge.kind)) continue;

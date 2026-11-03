@@ -41,25 +41,15 @@ function move(id: string, state: string, what: string, seq: number): Event {
   return { type: "add_node", node: workNode(id, "move", state, seq, { state, what }) };
 }
 
-// A plan (`plan` relation from its state) with the given item ids, in order (`items`).
-function plan(id: string, moveId: string, itemIds: string[], seq: number): Event[] {
+// A state's turns container (`turns` relation from its state) with the given actions, in
+// order (`turn`).
+function turns(id: string, moveId: string, actionIds: string[], seq: number): Event[] {
   const events: Event[] = [
-    { type: "add_node", node: workNode(id, "plan", `plan for ${moveId}`, seq) },
-    { type: "add_edge", edge: edge(`hp:${id}`, moveId, id, "plan", llm) },
+    { type: "add_node", node: workNode(id, "turns", `turns for ${moveId}`, seq) },
+    { type: "add_edge", edge: edge(`ht:${id}`, moveId, id, "turns", llm) },
   ];
-  itemIds.forEach((item, index) => {
-    events.push({ type: "add_edge", edge: edge(`it:${id}:${index}`, id, item, "items", llm) });
-  });
-  return events;
-}
-
-// A plan item (`item` node) whose ordered alternatives (actions) hang off it via `alts`.
-function item(id: string, moveId: string, seq: number, alts: string[]): Event[] {
-  const events: Event[] = [
-    { type: "add_node", node: workNode(id, "item", `item for ${moveId}`, seq) },
-  ];
-  alts.forEach((alt, index) => {
-    events.push({ type: "add_edge", edge: edge(`al:${id}:${index}`, id, alt, "alts", llm) });
+  actionIds.forEach((action, index) => {
+    events.push({ type: "add_edge", edge: edge(`tr:${id}:${index}`, id, action, "turn", llm) });
   });
   return events;
 }
@@ -134,15 +124,15 @@ describe("fold", () => {
     expect(actionExecuted(state, "a1")).toBe(true);
   });
 
-  it("keeps plan item order from the items edge order", () => {
+  it("keeps turn order from the turn edge order", () => {
     const state = fold([
       request("r1", "do it", 0),
       move("m1", "orientation", "green", 1),
-      { type: "add_node", node: workNode("i1", "item", "one", 2) },
-      { type: "add_node", node: workNode("i2", "item", "two", 3) },
-      ...plan("p1", "m1", ["i2", "i1"], 4),
+      { type: "add_node", node: workNode("a1", "action", "one", 2) },
+      { type: "add_node", node: workNode("a2", "action", "two", 3) },
+      ...turns("p1", "m1", ["a2", "a1"], 4),
     ]);
-    expect(childrenOf(state, "p1")).toEqual(["i2", "i1"]);
+    expect(childrenOf(state, "p1")).toEqual(["a2", "a1"]);
   });
 });
 
@@ -168,8 +158,7 @@ describe("projection (the message tape)", () => {
       { type: "add_node", node: workNode("a1", "action", "make test", 3, { command: "make test" }) },
       { type: "add_node", node: workNode("o1", "observation", "make test", 4, { command: "make test", exitCode: 1, output: "boom" }) },
       { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", "m1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
     ]);
     const context = project(fold(focusEvents(state), state));
     expect(context.situation).toBe("working");
@@ -177,14 +166,16 @@ describe("projection (the message tape)", () => {
       "user",
       "system",
       "system",
+      "system",
       "user",
       "assistant",
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toBe(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green",
+    expect(context.history[4]?.text).toContain(
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
     );
+    expect(context.history[4]?.text).toContain("Your earlier guess (may be wrong): green");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
     expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);
@@ -208,8 +199,7 @@ describe("projection (the message tape)", () => {
       { type: "add_node", node: workNode("a1", "action", "grep p", 3, { command: "grep p" }) },
       { type: "add_node", node: workNode("o1", "observation", "p at line 3", 4, { command: "grep p", output: "p at line 3" }) },
       { type: "add_edge", edge: edge("eo", "a1", "o1", "result", { kind: "llm" }) },
-      ...plan("p1", "m1", ["i1"], 5),
-      ...item("i1", "m1", 6, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 5),
       { type: "add_node", node: workNode("s1", "stop", "named the line", 7, { why: "named the line" }) },
       { type: "add_edge", edge: edge("es", "m1", "s1", "stop", llm) },
       move("m2", "patch", "apply the fix", 8),
@@ -222,10 +212,10 @@ describe("projection (the message tape)", () => {
     expect(texts.some((text) => text.includes("grep p"))).toBe(false);
     // ...only its closure marker remains, in the finished state's triple.
     expect(texts.some((text) => text.includes("Finish state Localization"))).toBe(true);
-    expect(context.situation).toBe("plan");
+    expect(context.situation).toBe("working");
   });
 
-  it("marks an alternative command with its previous attempt", () => {
+  it("renders every turn in order without an alternative marker", () => {
     const state = fold([
       request("r1", "do it", 0),
       move("m1", "orientation", "green", 1),
@@ -236,14 +226,14 @@ describe("projection (the message tape)", () => {
       { type: "add_node", node: workNode("a2", "action", "run two", 5, { command: "run two" }) },
       { type: "add_node", node: workNode("o2", "observation", "run two", 6, { command: "run two", exitCode: 0 }) },
       { type: "add_edge", edge: edge("e2", "a2", "o2", "result", { kind: "llm" }) },
-      ...plan("p1", "m1", ["i1"], 7),
-      ...item("i1", "m1", 8, ["a1", "a2"]),
+      ...turns("p1", "m1", ["a1", "a2"], 7),
     ]);
     const context = project(fold(focusEvents(state), state));
-    const call = context.history.find((message) => message.text.includes("run two"));
-    expect(call?.text).toContain("alternative to step");
-    expect(call?.text).toContain("previous attempt");
-    expect(call?.text).toContain("run one");
+    const assistant = context.history
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.text);
+    expect(assistant).toEqual(["[a1] run one", "[a2] run two"]);
+    expect(context.history.map((message) => message.text).join("\n")).not.toContain("alternative");
   });
 
   it("reports the frontier at the current point", () => {
@@ -254,8 +244,7 @@ describe("projection (the message tape)", () => {
       { type: "add_node", node: workNode("a1", "action", "run build", 2) },
       { type: "add_node", node: workNode("o1", "observation", "done", 3) },
       { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "grep", pattern: "x" }) },
-      ...plan("p1", "m1", ["i1"], 4),
-      ...item("i1", "m1", 5, ["a1"]),
+      ...turns("p1", "m1", ["a1"], 4),
     ]);
     const app = applicable(state, "m1");
     // An open state always offers apply and stop (no criterion gate).

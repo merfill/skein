@@ -28,17 +28,17 @@ Before `project`, the engine reconciles active `ref`s with the filesystem
 
 ## 2. Nodes and relations
 
-**Nodes** (`src/ir/types.ts`). Work space: `request`, `move`, `plan`, `item`, `action`,
+**Nodes** (`src/ir/types.ts`). Work space: `request`, `move`, `turns`, `action`,
 `observation`, `stop`, `unactionable`, `constraint`, `fact`. Artifact space: `file` (also
 reserved `symbol`/`test`, not produced).
 
 - `request.payload = { text }` — raw motivation, the root. Walked as a sequence of states;
-  declined (`unactionable`) if not actionable; no plan, no `stop`;
+  declined (`unactionable`) if not actionable; no turns, no `stop`;
 - `move.payload = { state, what }` — the declared state (island of work); `what` is the doxa's
   unverified note about the concrete subject (not the state's goal — a state IS its own goal, so
-  the plan hangs directly off the `move`); a flat child of the request;
-- `plan`/`item` — containers; the order of children is the order of relation addition, and
-  the **last** child is the current item/alternative;
+  the turns hang directly off the `move`); a flat child of the request;
+- `turns` — the state's monotone list of actions; the order of children is the order of
+  relation addition, and the **last** child is the latest action;
 - `action.payload` carries the command (and, for an edit, `find`/`replace`; for a run, a
   `signature`), so a repeat can be recognized;
 - `observation.payload` for a read carries `{ ref, version, start, end, total, output? }`; for
@@ -56,8 +56,8 @@ reserved `symbol`/`test`, not produced).
   closed states and the request turn carry none.
 
 **Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`
-(request → unactionable), `plan` (move → plan), `stop` (move → stop), `items` (plan → item),
-`alts` (item → action), `result` (action → observation), `mutates` (action → file).
+(request → unactionable), `turns` (move → turns), `turn` (turns → action), `stop` (move → stop),
+`result` (action → observation), `mutates` (action → file).
 
 ## 3. Events (closed vocabulary)
 
@@ -77,9 +77,8 @@ Nodes do not change; `fold` computes the facts and `graph.ts` reads them:
 - **`hasStopped`/`stopOf`** — a `stop` relation (on a `move`); **`unactionableOf`**;
   **`currentMove`** — the last `move` child of the request; **`isMoveFinished`** — a stopped
   `move` (the terminal state included);
-- **`lastChild`** — the current item/alternative; **`itemFulfilled`** — its current
-  alternative is an executed, succeeded action (actions only); **`cursorOf`** — the first
-  unfulfilled item; the stack is a fold of `descend`/`return`.
+- **`lastChild`** — the last appended child (the current state or latest turn); **`turnsOf`** —
+  the state's turns container; the stack is a fold of `descend`/`return`.
 
 There are **no truth predicates** on nodes. A run's exit code is a fact the model reads; the
 state closes only through the doxa's `stop`.
@@ -90,10 +89,9 @@ state closes only through the doxa's `stop`.
 
 - **`move`** `{ state, what }` — declares the state to work in (the automaton's transition);
   `what` is an optional, unverified note about the concrete subject (not the state's goal); a
-  state IS its own goal, so the plan hangs directly off the `move` and the first `apply` seeds it.
+  state IS its own goal, so the turns hang directly off the `move` and the first `apply` seeds them.
   Legal at a fresh request or at a finished state; the states are flat children of the request.
-- **`apply`** `{ action }` — the command runs; placement by the outcome of the current item
-  (`OP-AP-PLACE`): a success → a new plan item, otherwise → a new alternative; non-execution
+- **`apply`** `{ action }` — the command runs and appends the next turn; non-execution
   (repeat/stale/forbidden/empty) is an observation with a reason.
 - **`stop`** `{ why? }` — a `stop` node hung off the focus state's `move` via the `stop`
   relation (at the terminal state it ends the request); there is no `stop` on the request.
@@ -120,14 +118,14 @@ the terminal state is stopped (`request_addressed`), or on `no_progress` / the b
 
 `Context` (`src/ir/project.ts`) is `{ history, situation, applicable, constraints, ... }`: the
 tape of `user`/`assistant`/`tool` turns (rebuilt from the tree), the current situation
-(`request`/`plan`/`working`/`transition`/`terminal`), the admissible moves, and the constraints. `src/loop/propose.ts`
+(`request`/`working`/`transition`/`terminal`), the admissible moves, and the constraints. `src/loop/propose.ts`
 assembles the model messages: the base prompt, the constraints, the history, and — appended last
 (temporary) — the current situation's instruction. A state is a decision, not a tool call: it is
 rendered as a `Start state <label>` marker (an `assistant` turn), the state's `instruction` (a
-`system` turn) and — while open — its goal (`Goal:`, `user`) with the doxa's unverified guess
-when set; a finished state collapses to `Start state
+`system` turn) and — while open — its goal (`Goal:`, `user`) with the doxa's unverified guess and `Done when`; its turns follow;
+a finished state collapses to `Start state
 <label>` / `Finish state <label> — <why>` (the `stop` reason, read from the `move.stop`
-relation) — its brief, instruction, goal and plan turns leave the tape. The request is
+relation) — its brief, instruction, goal and turn messages leave the tape. The request is
 the second message of the tape (right after the base prompt), on every turn. The `tool` messages
 carry the bounded inline body (an inspection result's head, a command's tail, when large); the
 full body is addressed by id via `recall`/`search`. A structural move refused by `classify`

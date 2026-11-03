@@ -4,6 +4,94 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-03 — IR: плоские ходы вместо plan/item/alts
+
+- **Схема:** `request --move--> move --turns--> turns --turn--> action`; у действия —
+  `result`/`mutates` как раньше. Внутри state — монотонный список ходов, без `item` и
+  альтернатив.
+- **Удалено:** `firstUnfulfilledItem`, `itemFulfilled`, `cursorOf`, `planExhausted`, `itemOf`,
+  `actionSuperseded`, `altMarker`/`attemptReason`, `stateAttempt`/observer-tool `attempt`.
+- **Переименовано:** `planOf`→`turnsOf`, `ensurePlan`→`ensureTurns`, `placeMove`→`appendTurn`,
+  `renderPlan`→`renderTurns`; `NodeKind` `plan`/`item`→`turns`, `EdgeKind`
+  `plan`/`items`/`alts`→`turns`/`turn`.
+- **Ситуации:** `plan`/`working` слиты в `working`; открытое состояние ничего не дописывает в
+  `buildMessages`.
+- **Потребители:** tools/project/attempts, session outline/memory/general, TUI view-model.
+- **Промпт:** B2 явно запрещает реконструировать external/upstream по памяти (reference —
+  зацепка, не оракул); Localization hint сравнивает sibling условно, с fallback на инвариант
+  из материала.
+- **Проверки:** typecheck чистый; офлайн **583 passed, 40 skipped**; sandbox offline 7 passed.
+- **Live (`live-trace`, 6+5 grace):** Orientation — t0 `move`, t1 текстовый stop;
+  Localization — t2 `move`, t3 `read`, t4 текстовый stop; Patch — t5 `move`, t6 `read`,
+  t7 `recall`, t8 `read`, t9–t10 `bash`, затем `max_turns`. Ошибок нет, `stop`-тула нет;
+  повторный `read` на t6→t7 — просто следующий ход, без alternative-маркера. `fixed=false`
+  из-за cap, не регрессия; трейс `bench/runs/sandbox-live-2026-11-03T13-27-31-502Z-fix-ocaml-gc`.
+- **Live K=3 (`live-trace`, 6 ходов):** во всех трёх Orientation — t0 `move`, t1 текстовый
+  stop; дальше маршрут нестабилен: r1 → Research, r2 → Localization, r3 →
+  Localization→Research. Все `max_turns` на 6, ошибок/отказов нет; 0.22–0.30₽/прогон
+  (~0.75₽). Отдельный сигнал: r1 ушёл в Research вместо Localization.
+- **Live K=3, maxTurns=40 (`live-trace`):** завершены 2 из 3 (третий прерван). Оба
+  `fixed=true`, `max_turns` на 45 (40+5 grace), 45 ходов, 0 отказов, `stop`-тула нет;
+  r1: O→L→P→V→L→P→V, r2: O→L→P→V→P. Токены/стоимость: 294k/22.9k in/out, cache 83%,
+  2.56₽; 331.9k/17.3k, cache 88%, 1.97₽.
+- **Real sandbox K=3, `fix-ocaml-gc`, `--turns 20`, net off:** reward **1/3**; Localization
+  закрылась во всех трёх (t11 / t17 / t15). Два прогона упёрлись в `max_turns` (20+5 grace)
+  в Patch/Verification. Стоимость 1.247 / 1.574 / 1.563₽ (mean 1.461₽); in 181k / 312k / 284k,
+  cache hit 77 / 86 / 84%. 20+grace мало для reward, но не для закрытия Localization.
+- **Real sandbox K=3, `fix-code-vulnerability`, `--turns 20`, net off:** **3/3 reward=1**;
+  Localization закрылась на **t7 во всех трёх** (6 ходов). Turns 25/21/20; cost
+  0.803 / 0.747 / 0.749₽ (mean 0.766₽); in 144k / 109k / 118k, cache 80 / 74 / 77%.
+  Patch доминирует по стоимости. Для сравнения opencode net-off (matrix 2026-10-24-fix-code):
+  8/14/9 шагов, cost ~0.34/0.52/0.27₽, fresh 8.4–13.5k, cache 92–94%, out 1.2–3.0k.
+  Наш разрыв — fresh input (28k vs 10.9k), число шагов (22 vs 10.3) и visible output
+  (3.55k vs 1.91k); reasoning сопоставим (0.85k vs 0.79k). Исторический Skein net-off:
+  21–26 ходов, ~0.750₽.
+- **Real sandbox K=3, `fix-git`, `--turns 20`, net off:** 3/3 reward=1, но маршрут у всех
+  **O→Research→Recovery→End**, не Localization — fix-git с текущим промптом не проверяет L.
+  Turns 17/20/20; cost 0.689/1.158/0.893₽ (mean 0.913); in 71k/113k/118k, cache 71/74/77%.
+  Opencode net-off: 8–10 шагов, ~0.204₽; исторический Skein: 19–22 хода, ~0.744₽
+  (документированный O→L→P→V).
+- **Real sandbox K=3, `custom-memory-heap-crash`, `--turns 20`, net off:** reward **1/3**;
+  L закрылась t17 / t11 / t8, но все три упёрлись в `max_turns` на 25 (run2/run3 — в
+  Patch/Construction). Cost 1.541 / 1.532 / 1.632₽ (mean 1.568₽); in 266k / 231k / 168k,
+  fresh 34k / 42k / 41k, cache 87 / 82 / 76%, out 12.5k / 10.7k / 12.6k.
+  Opencode net-off: 27 / 20 / 18 steps, cost ~1.401 / 1.377 / 2.132₽ (mean 1.637₽),
+  fresh 36.4k, cache 93.6%. Cost parity/чуть дешевле; reward ограничен 25-turn cap.
+- **Открыто:** старые журналы с `plan/items/alts` не читаются (bench/replay работают с
+  Context/actions, не с IR); `docs/{walkthrough,concepts,ir_operations}.md` ещё упоминают
+  plan/item и требуют отдельного прохода.
+
+## 2026-11-03 — Task: text stop, без динамического хвоста
+
+- **`stop` tool убран** с поверхности задачи; оператор `stop` в IR остаётся. Непустой текст без
+  tool call в `working`/`terminal` синтезирует `stop` (`why` = текст) в `executeNode`;
+  на `request`/`transition` tool обязателен (`move`/`decline`).
+- **Хвост убран:** `buildMessages` больше не добавляет `turnInstruction`/`planInstruction`.
+  `hint` и `Done when` рендерятся в шапке открытого state (`renderState`); правило про
+  сохранность материала перенесено в B2. В шапке теперь и явное «критерий выполнен → ответь
+  текстом, без tool call».
+- **Sandbox probe:** `runSandbox` теперь прокидывает `probeSession`, поэтому Orientation
+  видит карту workspace (root/repo/entries), а не вынужден делать `list`/`git status`.
+  Это была причина трёх ходов в первом live-trace.
+- **Промпт:** B1 — критерий выполнен → ответ текстом без tool call; B2 — dedicated tools
+  first, `bash` только когда они не могут; обновлены `end`/orientation/localization.
+- **Файлы:** `src/llm/{tools,structured}.ts`, `src/loop/{propose,graph}.ts`,
+  `src/ir/{project,islands,traversal}.ts`, `src/loop/prompt/{blocks,index}.ts`.
+- **Тесты:** `tests/loop.test.ts` (+text stop, terminal, transition), обновлены
+  surface/projection/tape/messages/prompt.
+- **Проверки:** typecheck чистый; офлайн **583 passed, 40 skipped**; sandbox offline
+  (`fix-ocaml.test.ts`, `metrics.test.ts`) — 7 passed; `bench/rollout --dry` ок.
+- **Live (`live-trace`, 6 ходов, после probe):** Orientation — t0 `move`, t1 текстовый stop
+  (2 шага); Localization — t2 `move`, t3 `read`, t4 текстовый stop; t5 `move` Research.
+  `max_turns` на 6 — ожидаемый cap; `stop` в tools нет. Первые 3 шага в Orientation были
+  из-за отсутствия `probe` (нет карты workspace) — исправлено.
+- **Reasoning:** `stop`-узел теперь хранит `payload.reasoning`; `live-trace` пишет
+  `reasoning.ndjson` и печатает скрытое reasoning рядом с action.
+- **Открыто:** текст без tool call в `working` может закрыть state преждевременно; повторный
+  текст на `transition` даёт `llm_error` (repair в `invokeTools`); длинный текст
+  промежуточного state целиком попадает в `Finish`-строку (t4 в live — ~1.2k симв.);
+  стоит просить 1–2 предложения для не-End state.
+
 ## 2026-11-03 — TUI: @-файлы и слэш-команды
 
 - **`@`:** меню файлов над композером (`workspace.listFiles`, `SKIP_DIRS`), фильтр по

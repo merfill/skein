@@ -1,7 +1,7 @@
 # Skein — tools and the calling contract (proposal)
 
 > **Note (IR revision folded).** The tool input shapes below still hold, but the effects
-> changed: `stop` records a relation on the state's `move` (it no longer appends a plan item),
+> changed: `stop` records a relation on the state's `move` (it no longer appends a turn),
 > and the context is a message tape (`docs/ir_semantics.md` §7, `docs/projection.md`). The
 > as-built is `docs/ir.md`.
 
@@ -47,8 +47,8 @@ operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the I
 
 | Operator | Purpose |
 |---|---|
-| `move` | declare the state (island of work) to work in AND its goal `what` — the automaton's transition; the plan hangs off the `move` |
-| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch`; the first `apply` after a `move` seeds the state's plan |
+| `move` | declare the state (island of work) to work in AND its goal `what` — the automaton's transition; the turns hang off the `move` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch`; the first `apply` after a `move` seeds the state's turns |
 | `stop` | the sole closure: the tool description is state-agnostic; the state's hint defines what `why` must contain; the engine accepts it on an open state (no criterion gate) |
 | `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
 | `recall` / `search` | read / search a stored result by id (does not change state) |
@@ -63,8 +63,8 @@ operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the I
   the terminal `end` state (which has no goal).
 
 Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
-focus becomes a `move` node and the plan hangs directly off it. The next move is the state's
-**first plan item** — an ordinary tool call (`apply`), not a dedicated operator. A `bash` item
+focus becomes a `move` node and the turns hang directly off it. The next move is the state's
+**first turn** — an ordinary tool call (`apply`), not a dedicated operator. A `bash` turn
 runs **from the workspace root** and takes a `cd <dir> &&` prefix in a subdirectory
 (`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is stated in the request
 instruction and in the `move` `description`. The states are **flat children of the request**
@@ -108,7 +108,7 @@ The doxa's terminal move and the sole closure. The tool description is **state-a
 `Call stop to stop. why = a detailed account of why you are stopping — up to ~50 words.` The
 state's hint on the tape says what the `why` must contain — it must satisfy the `Done when`
 declared in the state's `Start state`. On an open state it finishes that state: the engine hangs
-a `stop` node off the state's `move` (a `stop` relation, not a plan item; `hasStopped` is the
+a `stop` node off the state's `move` (a `stop` relation, not a turn; `hasStopped` is the
 derived fact); the next decision is the transition. On the **terminal move** (`end`, which has no
 `what`) it hangs the `stop` node off the `move` and ends the request.
 There is **no criterion gate**: `stop` is accepted on an open state (cycle / premature-stop
@@ -309,9 +309,9 @@ agent's default reflex ("look at the diff").
 
 1. `request.text` is **raw motivation**, not a ready-made task. The first move is
    `move { state, what }` (declare the state to start in AND its goal); the next call is
-   the state's first plan item — an ordinary tool call (`apply`).
+   the state's first turn — an ordinary tool call (`apply`).
 2. If the request names a **verification command** — take it verbatim as the first
-   plan item — but the engine runs it from the **workspace root**, not a
+   turn — but the engine runs it from the **workspace root**, not a
    project subdirectory. A named command is authoritative; its working directory is
    resolved from the tree. If the project lives in a subdirectory, the literal command
    must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
@@ -327,10 +327,10 @@ agent's default reflex ("look at the diff").
    the compiler crashes during bootstrap; verify with
    `make -C testsuite one DIR=tests/basic`". Correct:
    - move: `move { state: "reproduction", what: "fix the GC regression so the basic
-     testsuite passes" }`, then the first plan item
+     testsuite passes" }`, then the first turn
      `bash { command: "cd ocaml && make -C testsuite one DIR=tests/basic" }` (the project is
      in a subdirectory, so the literal command carries the `cd` prefix);
-   - a plan of **commands**: `reproduce` and `locate` are plain **actions** (run the command,
+   - a list of **turns**: `reproduce` and `locate` are plain **actions** (run the command,
      read/grep/diff); `fix` is a state of its own, and the state is closed by
      the doxa's `stop` once the work is done (there is no separate `verify`, no `complete`
      and no criterion check), not a list of bare commands.
@@ -401,5 +401,5 @@ capability gap; **not part of the current implementation**.
 5. **Later:** `web_fetch`/`websearch` (docs, error analysis) and LSP operations
    `symbol` (definition/references/rename) — heavy, a separate stage.
 
-**Non-goals (deliberately):** VCS (`git`), a `todo` tool (the plan lives in the IR),
+**Non-goals (deliberately):** VCS (`git`), a `todo` tool (the turns live in the IR),
 browser/screenshots, subagents, MCP — outside the current design.

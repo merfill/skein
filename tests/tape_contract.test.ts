@@ -7,12 +7,7 @@ import { project, type Context } from "../src/ir/project";
 import type { Action } from "../src/llm/schemas";
 import { modelCall } from "../src/llm/schemas";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import {
-  NODE_INSTRUCTIONS,
-  REQUEST_INSTRUCTION,
-  planInstruction,
-  turnInstruction,
-} from "../src/loop/prompt";
+import { NODE_INSTRUCTIONS, REQUEST_INSTRUCTION } from "../src/loop/prompt";
 import type { Workspace } from "../src/tools/workspace";
 import {
   DEFAULT_FILES,
@@ -54,22 +49,18 @@ afterEach(cleanupWorkspaces);
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
   // Strip the leading system prefix (base + one message per constraint) and the appended
-  // situation prompt: `request`/`transition` a system turn, `plan`/`working` the per-turn tail,
-  // `terminal` the End instruction. A state's entry (Start marker, brief, instruction) is on
-  // the tape and must stay.
+  // situation prompt: `request`/`transition` a system turn, `terminal` the End instruction.
+  // `plan`/`working` append nothing — the state's hint and criterion are in its entry, which
+  // is on the tape and must stay.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
   const appended =
     context.situation === "request"
       ? REQUEST_INSTRUCTION
-      : context.situation === "plan"
-        ? planInstruction(context.island, context.done)
-        : context.situation === "working"
-          ? turnInstruction(context.island, context.done)
-          : context.situation === "terminal"
-            ? NODE_INSTRUCTIONS.terminal
-            : undefined;
+      : context.situation === "terminal"
+        ? NODE_INSTRUCTIONS.terminal
+        : undefined;
   if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "system") end -= 1;
   return all.slice(start, end);
@@ -103,7 +94,11 @@ const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
   { role: "system", content: ISLANDS.orientation.instruction },
-  { role: "user", content: "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it" },
+  { role: "system", content: ISLANDS.orientation.hint },
+  {
+    role: "user",
+    content: `Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
+  },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -121,13 +116,17 @@ describe("move: before [request] -> delta -> after", () => {
 
     expect(before.situation).toBe("request");
     expect(await tapeOf(before)).toEqual([REQ]);
-    expect(kinds(res)).toEqual(["action", "plan", "item", "observation"]);
+    expect(kinds(res)).toEqual(["action", "turns", "observation"]);
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
       { role: "system", content: "Start state Orientation" },
       { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "user", content: "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green" },
+      { role: "system", content: ISLANDS.orientation.hint },
+      {
+        role: "user",
+        content: `Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
+      },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -178,7 +177,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
   it("read success appends one call/result pair", async () => {
     const s = goalStep(read("src/sum.mjs"), ws());
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
-    expect(s.nodes).toEqual(["action", "item", "file", "observation"]);
+    expect(s.nodes).toEqual(["action", "file", "observation"]);
     expect(await tapeOf(s.after)).toEqual([
       ...GOAL_PREFIX,
       { role: "assistant", call: { name: "read", args: { filePath: "src/sum.mjs" } } },
@@ -195,7 +194,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
   it("read missing / escape: a fail observation, still a tool turn", async () => {
     const missing = goalStep(read("nope.txt"), ws());
     expect(await tapeOf(missing.before)).toEqual(GOAL_PREFIX);
-    expect(kinds(missing.res)).toEqual(["action", "item", "observation"]);
+    expect(kinds(missing.res)).toEqual(["action", "observation"]);
     expect((await tapeOf(missing.after)).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[obs:\d+\] read failed: nope\.txt does not exist$/),
@@ -239,7 +238,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
   it("grep hits and no-match", async () => {
     const s = goalStep(grep("sum", "src"), ws());
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
-    expect(s.nodes).toEqual(["action", "item", "observation"]);
+    expect(s.nodes).toEqual(["action", "observation"]);
     expect((await tapeOf(s.after)).at(-1)?.content).toMatch(
       /^\[obs:\d+\] src\/sum\.mjs:1:export function sum\(a, b\) \{/,
     );
@@ -287,7 +286,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
   it("edit success: no observation node, the action answers itself", async () => {
     const s = goalStep(edit("src/sum.mjs", "return a - b;", "return a + b;"), ws());
     expect(await tapeOf(s.before)).toEqual(GOAL_PREFIX);
-    expect(s.nodes).toEqual(["action", "item", "file"]);
+    expect(s.nodes).toEqual(["action", "file"]);
     expect(await tapeOf(s.after)).toEqual([
       ...GOAL_PREFIX,
       {
@@ -304,7 +303,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
 
   it("edit not found: the current content is materialized in the tool result", async () => {
     const s = goalStep(edit("src/sum.mjs", "NOPE", "x"), ws());
-    expect(s.nodes).toEqual(["action", "item", "observation"]);
+    expect(s.nodes).toEqual(["action", "observation"]);
     const after = (await tapeOf(s.after)).at(-1)?.content ?? "";
     expect(after).toMatch(/edit failed: find not found in src\/sum\.mjs/);
     expect(after).toContain("return a - b;");
@@ -312,7 +311,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
 
   it("write create / unread overwrite", async () => {
     const create = goalStep(write("new.txt", "hi"), ws());
-    expect(kinds(create.res)).toEqual(["action", "item", "file"]);
+    expect(kinds(create.res)).toEqual(["action", "file"]);
     expect((await tapeOf(create.after)).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[w:action:\d+\] mutated new\.txt$/),
@@ -337,7 +336,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
     };
     const first = opened(ok);
     const res = exec(fetchUrl("http://x/y.c"), first.events, ok, 1);
-    expect(kinds(res)).toEqual(["action", "item", "file", "observation"]);
+    expect(kinds(res)).toEqual(["action", "file", "observation"]);
     expect((await tapeOf(project(res.state))).slice(-2)).toEqual([
       { role: "assistant", call: { name: "webfetch", args: { url: "http://x/y.c" } } },
       {
@@ -361,7 +360,7 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
     const ok = { ...base, applyPatch: (p: string) => { base.write("patched.txt", p); } };
     const first = opened(ok);
     const res = exec(patch("--- a/x\n+++ b/x\n"), first.events, ok);
-    expect(kinds(res)).toEqual(["action", "item", "file", "observation"]);
+    expect(kinds(res)).toEqual(["action", "file", "observation"]);
     expect((await tapeOf(project(res.state))).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[obs:\d+\] applied patch: patched\.txt$/),
@@ -380,7 +379,7 @@ describe("apply — bash outcomes: before GOAL_PREFIX -> delta -> after", () => 
   it("exit 0 and exit 3", async () => {
     const ok = goalStep(run("echo hi"), ws());
     expect(await tapeOf(ok.before)).toEqual(GOAL_PREFIX);
-    expect(kinds(ok.res)).toEqual(["action", "item", "observation"]);
+    expect(kinds(ok.res)).toEqual(["action", "observation"]);
     expect((await tapeOf(ok.after)).at(-1)?.content).toMatch(/^\[obs:\d+\] exit 0\nhi\n$/);
     const bad = goalStep(run("exit 3"), ws());
     expect((await tapeOf(bad.after)).at(-1)?.content).toMatch(/^\[obs:\d+\] exit 3$/);
@@ -389,7 +388,7 @@ describe("apply — bash outcomes: before GOAL_PREFIX -> delta -> after", () => 
   it("timeout: no exit code, the command label is shown", async () => {
     const w = makeWorkspace(DEFAULT_FILES, { runTimeoutMs: 120 }).ws;
     const s = goalStep(run("sleep 5"), w);
-    expect(s.nodes).toEqual(["action", "item", "observation"]);
+    expect(s.nodes).toEqual(["action", "observation"]);
     expect((await tapeOf(s.after)).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[obs:\d+\] sleep 5$/),
@@ -495,12 +494,10 @@ describe("crash (mock node) and prefix", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix" }, seq: 0 } },
       { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "orientation", payload: { state: "orientation", what: "green", call: { name: "move", args: { state: "orientation", what: "green" } } }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: llm } },
-      { type: "add_node", node: { id: "p1", space: "work", kind: "plan", label: "plan", seq: 3 } },
-      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "plan", provenance: llm } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 4 } },
-      { type: "add_edge", edge: { id: "it", from: "p1", to: "i1", kind: "items", provenance: llm } },
+      { type: "add_node", node: { id: "p1", space: "work", kind: "turns", label: "turns", seq: 3 } },
+      { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "turns", provenance: llm } },
       { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "crash", payload: { command: "crash", call: { name: "bash", args: { command: "crash" } } }, seq: 5 } },
-      { type: "add_edge", edge: { id: "al", from: "i1", to: "a1", kind: "alts", provenance: llm } },
+      { type: "add_edge", edge: { id: "al", from: "p1", to: "a1", kind: "turn", provenance: llm } },
       { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "crash", payload: { command: "crash", signal: "SIGSEGV", core: "core.1", backtrace: "#0 boom" }, seq: 6 } },
       { type: "add_edge", edge: { id: "ro", from: "a1", to: "o1", kind: "result", provenance: llm } },
     ];

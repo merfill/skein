@@ -46,22 +46,19 @@ function generate(seed: number): Event[] {
     const id = `m${moves++}`;
     addNode(id, "move", { state: "patch", what: id, call: { name: "move", args: { state: "patch", what: id } } });
 
-    // A plan of 1..3 items; each item holds command alternatives.
+    // A monotone list of 1..3 turns.
     if (depth > 0 && chance(0.6)) {
-      const plan = `p${id}`;
-      addNode(plan, "plan");
-      addEdge(id, plan, "plan");
+      const turns = `t${id}`;
+      addNode(turns, "turns");
+      addEdge(id, turns, "turns");
       const count = 1 + Math.floor(rng() * 3);
       for (let i = 0; i < count; i += 1) {
-        const item = `i${next()}`;
-        addNode(item, "item");
-        addEdge(plan, item, "items");
         const action = `a${next()}`;
         addNode(action, "action", {
           command: "make test",
           call: { name: "bash", args: { command: "make test" } },
         });
-        addEdge(item, action, "alts");
+        addEdge(turns, action, "turn");
       }
     }
 

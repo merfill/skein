@@ -27,14 +27,14 @@ a projection, not an accumulating transcript. The same events always give the sa
 | Turn | Messages |
 |---|---|
 | `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, and — while the state is open — its goal as a `user` turn (`Goal: <island.what>`), with the doxa's unverified note (`Your earlier guess (may be wrong): <move.what>`) when set. The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
-| `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's plan and its first item |
+| `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's turns and its first action |
 | `stop` | the state's closure, rendered as a `system` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
-Every plan item is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
-state's plan. A command that ran and mutated a file (an edit) has no observation, so its `tool`
+Every turn is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
+state's turns. A command that ran and mutated a file (an edit) has no observation, so its `tool`
 message reads `mutated <path>`. An open state is `Start state <label>` / `instruction` / goal
-(`user`) / plan; a closed one is only `Start state <label>` / `Finish state <label>`. The
+(`user`) + `Done when` / turns; a closed one is only `Start state <label>` / `Finish state <label>`. The
 `Finish state` marker carries **only** the label
 and the `stop` reason — never the list of changed files: a state that runs a build mutates
 thousands of artifacts.
@@ -54,9 +54,9 @@ thousands of artifacts.
   entries (full paths for small materials), file count. Environment, extensions, configs, build commands and build state
   are **not** shown in Orientation; a declared command is never presented as the acceptance;
 - its states (`move` children) render in order: an **open** state (the current one) renders its
-  `Start state` marker, brief, `instruction` (`system`), goal (`user`) and plan items; a state
+  `Start state` marker, brief, `instruction` (`system`), conduct hint, goal + `Done when` (`user`) and turns; a state
   **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
-  No brief, instruction, goal, plan turns or separate `stop` message remain;
+  No brief, instruction, goal, turn messages or separate `stop` message remain;
 - the doxa's `move.what` is an unverified guess shown on the open state's `Goal:` turn
   (`Your earlier guess (may be wrong): …`); the request's presumptions are not carried into the
   state as facts;
@@ -67,7 +67,6 @@ thousands of artifacts.
 
 ## 4. Markers and addresses
 
-- an alternative command carries `alternative to step "…" (previous attempt: "…" — reason)`,
   so the model sees what already failed;
 - each `assistant`/`tool` message is prefixed with the node id (`[id] …`), so any result can
   be addressed by id with `recall`/`search`.
@@ -84,7 +83,7 @@ identifier, not by path:
 - read a fragment — `recall { id, start, end }`;
 - search the body — `search { id, pattern }`.
 
-A `recall`/`search` leaves a node (an `action` + its `observation` under the state's plan), so
+A `recall`/`search` leaves a node (an `action` + its `observation` among the state's turns), so
 the fetched window stays on the state's tape like any step and elides with the state on `stop`.
 A refused structural move creates no node: its reason arrives as a transient `tool` message
 (`rejected <move>: <reason>`) on the next turn.
@@ -97,15 +96,14 @@ The system part is assembled per situation, not as a monolith:
   set with its transitions. It is stable, so it is a good cache prefix. The
   tool names/parameters/descriptions are **not** here: they ship in the request's `tools` field;
 - the **tool surface** offered in that field is bound from `Context.applicable`: on a
-  `request`/`transition` only `move` is offered, while a state is open the apply tools and `stop`
-  are offered (`recall`/`search` always), so a move the engine would refuse cannot be called at all;
-- the **turn's tail** is appended last each turn (temporary, never stored):
-  `request` (choose the first state, or `decline`; `what`/`done` — **from the request**), `plan`
-  (`planInstruction`: "Call a tool…" + the per-turn tail), `working` (`turnInstruction`: the
-  per-turn tail — conduct → done criterion → closure; rebuilt on the next turn),
-  `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the `Finish
-  state <label>` line of the just-finished state; the `next` neighbours are listed; choose the
-  next state or End), `terminal` ("This is End." + the hint);
+  `request`/`transition` only `move` is offered, while a state is open the apply tools are
+  offered (`recall`/`search` always); `stop` is engine-owned (the doxa closes a state with text);
+- the **situation prompt** is appended last only for `request`, `transition` and `terminal`
+  (temporary, never stored). An open state appends nothing: its hint and `Done when` live in the
+  state entry. `request` (choose the first state, or `decline`; `what`/`done` — **from the
+  request**), `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
+  `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
+  the next state or End), `terminal` ("This is End." + the text completion rule);
 - the **constraints** are added as separate `system` messages.
 
 The exact base/situation boundary is the subject of the following stage (the composite system

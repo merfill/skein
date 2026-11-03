@@ -32,9 +32,9 @@ export interface Island {
   criterion: string;
   // How to act in this state — the engine's instruction, rendered once when the state is entered.
   instruction: string;
-  // The per-turn hint for an open state: what to do or avoid in THIS state. `turnInstruction`
-  // places it after the state's criterion and before the shared closure rule. It is not the
-  // state's goal (`what`) and not the one-time `instruction`.
+  // The conduct hint for an open state: what to do or avoid in THIS state. The projection
+  // renders it in the state's entry (after `instruction`, before the goal/criterion). It is not
+  // the state's goal (`what`) and not the one-time `instruction`.
   hint: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
@@ -75,7 +75,7 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Read the workspace map: root, repository status, top-level entries. The request is only " +
       "the source of the acceptance — name it as the request declares it; do not restate, " +
       "interpret, or solve the task. This state only reads the map: do not create or modify " +
-      "files. If the map and the request already name those, `stop` now. Do not list inside the " +
+      "files. If the map and the request already name those, reply with the result as text now. Do not list inside the " +
       "entries, verify build targets or paths, read file contents, or inspect history or data " +
       "formats — those belong to the next state.",
     hint:
@@ -117,10 +117,11 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Start from the workspace map (filesystem facts) and the environment (available tools). " +
       "Think about what the code is supposed to do from the filenames and the directory " +
       "structure: list the relevant directories and choose the candidate files by name — the " +
-      "implementation and the definitions or headers it uses — then inspect those. Compare the " +
-      "target with the sibling that performs the same traversal or operation — the neighbouring " +
-      "loop or function — and use its pattern as the reference. A suspected cause is enough to " +
-      "stop — do not look for a different bug.",
+      "implementation and the definitions or headers it uses — then inspect those. If a sibling " +
+      "performs the same traversal or operation — the neighbouring loop or function — compare " +
+      "against it and use its pattern as the reference. If there is no sibling, derive the " +
+      "invariant from the material's contract or behaviour. A suspected cause is enough — " +
+      "reply with the result then; do not look for a different bug.",
     applies: INSPECT,
     next: [
       {
@@ -283,8 +284,8 @@ export const ISLANDS: Record<IslandId, Island> = {
     criterion: "",
     instruction: "The work is done; complete the request.",
     hint:
-      "Call `stop` when the request is complete; the finished state's check is the verification — " +
-      "do not re-verify here.",
+      "Reply with the final result as text when the request is complete; the finished state's " +
+      "check is the verification — do not re-verify here.",
     applies: [],
     next: [],
   },
@@ -303,8 +304,8 @@ export function stateDescription(island: Island, what?: string, done?: string): 
   return lines.join("\n");
 }
 
-// The terminal state: reaching it is the sign of the end; it carries no goal and accepts
-// `stop` directly (docs/plans/archive/state_protocol_plan.md §2, §6.7).
+// The terminal state: reaching it is the sign of the end; it carries no goal and is closed
+// directly by the doxa's text reply (recorded as `stop`; docs/plans/archive/state_protocol_plan.md §2, §6.7).
 export const TERMINAL_ISLAND: IslandId = "end";
 
 export function isTerminalIsland(value: string): boolean {

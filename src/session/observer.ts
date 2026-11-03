@@ -12,15 +12,15 @@ import type { State } from "../ir/graph";
 import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
-import { outline, observationBody, renderedState, stateAttempt, stateOutline, stateTurns } from "./outline";
+import { outline, observationBody, renderedState, stateOutline, stateTurns } from "./outline";
 import type { ProgressSink } from "./progress";
 import type { Reaction, Trigger } from "./types";
 
 export const OBSERVER_BASE_PROMPT = [
-  "A coding agent is working on the user's request. Its work is recorded as an IR: the request, states, plans, actions and observations. Sometimes the agent gets stuck and cannot finish the request.",
+  "A coding agent is working on the user's request. Its work is recorded as an IR: the request, states, turns, actions and observations. Sometimes the agent gets stuck and cannot finish the request.",
   "You are the advisor. Read the agent's history and give it one short, concrete hint that helps it solve the request. You do not edit the work yourself.",
   "The engine has already shown you the request outline and the state where the problem was noticed. The engine brings you here when: the agent has entered the same state for the third time; the agent has spent more than 20 turns in one state; or the run is close to its turn limit.",
-  "Start with the outline and the anchor state. If they are not enough, inspect the state's turns, a plan item's attempts, an observation body, or the rendered tape. Inspect at most three items; then decide.",
+  "Start with the outline and the anchor state. If they are not enough, inspect the state's turns, an observation body, or the rendered tape. Inspect at most three items; then decide.",
   "A hint is a delta, not a summary: name the problem and one concrete next step, cite 1–2 evidence ids, do not repeat the state's goal or the history, and do not prescribe commands that the evidence does not name. Keep it under about 60 words.",
   "When you know what to change, use a decision tool. The tool descriptions explain each choice. If you have inspected enough, decide instead of inspecting more.",
 ].join("\n\n");
@@ -43,7 +43,6 @@ export interface ObserverTools {
   outline(state: State, turn?: number): string;
   state(state: State, anchor: string, turn?: number): string;
   turns?(state: State, stateId: string, range?: { from?: number; to?: number }): string;
-  attempt?(state: State, itemId: string): string;
   body?(state: State, obsId: string): string;
   rendered?(state: State, stateId: string, events?: readonly Event[]): string;
 }
@@ -52,7 +51,6 @@ export const defaultObserverTools: ObserverTools = {
   outline: (state, turn) => outline(state, turn),
   state: (state, anchor, turn) => stateOutline(state, anchor, turn),
   turns: (state, stateId, range) => stateTurns(state, stateId, range),
-  attempt: (state, itemId) => stateAttempt(state, itemId),
   body: (state, obsId) => observationBody(state, obsId),
   rendered: (state, stateId, events) => renderedState(state, stateId, events),
 };
@@ -263,14 +261,6 @@ function executeTool(
             ...(typeof args.to === "number" ? { to: args.to } : {}),
           })
         : "tool unavailable: turns";
-    }
-    case "attempt": {
-      const id = stringArg(args, "id") ?? stringArg(args, "item");
-      return id === undefined
-        ? "missing argument: id"
-        : tools.attempt !== undefined
-          ? tools.attempt(state, id)
-          : "tool unavailable: attempt";
     }
     case "body": {
       const id = stringArg(args, "id");

@@ -3,9 +3,8 @@ import {
   actionSucceeded,
   childrenOf,
   fold,
-  lastChild,
-  planOf,
   stopOf,
+  turnsOf,
   type State,
 } from "../ir/graph";
 import { observationText } from "../ir/project";
@@ -76,7 +75,7 @@ function resultSummary(state: State, actionId: string): string {
   return ` -> ${id}${summary !== "" ? `: ${summary}` : ""}`;
 }
 
-// L2: the state's plan items, the current action, its outcome and the number of alternatives.
+// L2: the state's turns, each action's outcome and result.
 export function stateDetail(session: SessionState, unitId: string, moveId: string): string {
   const state = unitState(session, unitId);
   const node = state.nodes.get(moveId);
@@ -89,24 +88,18 @@ export function stateDetail(session: SessionState, unitId: string, moveId: strin
     `state ${moveId}: ${island}`,
     `what: ${payload?.what ?? ""}`,
     `closure: ${closed ? `closed (${stop !== undefined ? labelOf(state, stop) : ""})` : "open"}`,
-    "plan:",
+    "turns:",
   ];
 
-  const plan = planOf(state, moveId);
-  const items = plan !== undefined ? childrenOf(state, plan) : [];
-  if (items.length === 0) {
+  const turns = turnsOf(state, moveId);
+  const actions = turns !== undefined ? childrenOf(state, turns) : [];
+  if (actions.length === 0) {
     lines.push("(empty)");
     return lines.join("\n");
   }
-  for (const item of items) {
-    const alternatives = childrenOf(state, item);
-    const current = lastChild(state, item);
-    if (current === undefined) {
-      lines.push(`- ${item}: (no alternatives)`);
-      continue;
-    }
+  for (const action of actions) {
     lines.push(
-      `- ${item}: ${labelOf(state, current)} [${statusOf(state, current)}]${resultSummary(state, current)} (alternatives: ${alternatives.length})`,
+      `- ${action}: ${labelOf(state, action)} [${statusOf(state, action)}]${resultSummary(state, action)}`,
     );
   }
   return lines.join("\n");
@@ -121,24 +114,23 @@ export function stateTurnHistory(
   range: TurnRange = {},
 ): string {
   const state = unitState(session, unitId);
-  const plan = planOf(state, moveId);
-  const items = plan !== undefined ? childrenOf(state, plan) : [];
-  const turns: string[] = [];
-  for (const item of items) {
-    for (const action of childrenOf(state, item)) {
-      const node = state.nodes.get(action);
-      const reasoning = (node?.payload as { reasoning?: unknown } | undefined)?.reasoning;
-      let line = `- ${labelOf(state, item)}: ${labelOf(state, action)} [${statusOf(state, action)}]${resultSummary(state, action)}`;
-      if (typeof reasoning === "string" && reasoning.trim() !== "") {
-        line += `\n  reasoning: ${clip(reasoning.replace(/\s+/g, " ").trim(), REASONING_LIMIT)}`;
-      }
-      turns.push(line);
+  const turns = turnsOf(state, moveId);
+  const actions = turns !== undefined ? childrenOf(state, turns) : [];
+  const history: string[] = [];
+  for (const action of actions) {
+    const node = state.nodes.get(action);
+    if (node === undefined || node.kind !== "action") continue;
+    const reasoning = (node.payload as { reasoning?: unknown } | undefined)?.reasoning;
+    let line = `- ${action}: ${labelOf(state, action)} [${statusOf(state, action)}]${resultSummary(state, action)}`;
+    if (typeof reasoning === "string" && reasoning.trim() !== "") {
+      line += `\n  reasoning: ${clip(reasoning.replace(/\s+/g, " ").trim(), REASONING_LIMIT)}`;
     }
+    history.push(line);
   }
-  if (turns.length === 0) return "no turns";
+  if (history.length === 0) return "no turns";
   const from = Math.max(0, range.from ?? 0);
-  const to = range.to !== undefined ? Math.max(from, range.to) + 1 : turns.length;
-  return turns.slice(from, to).join("\n");
+  const to = range.to !== undefined ? Math.max(from, range.to) + 1 : history.length;
+  return history.slice(from, to).join("\n");
 }
 
 function windowText(text: string, window: BodyWindow = {}): string {

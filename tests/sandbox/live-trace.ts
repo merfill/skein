@@ -6,7 +6,7 @@ import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import { createObserverDeps } from "../../src/llm/observer";
-import type { Proposals } from "../../src/llm/schemas";
+import type { Action, Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
 import { runSandbox } from "./run";
@@ -55,8 +55,16 @@ async function main(): Promise<void> {
     );
     const before = snapshot(meter);
     const proposal = await proposeModel(model, context, { settings, rebuild, usageHandlers: [meter] });
+    if (proposal.reasoning !== undefined && proposal.reasoning !== "") {
+      writeFileSync(
+        join(dir, "reasoning.ndjson"),
+        `${JSON.stringify({ turn, reasoning: proposal.reasoning })}\n`,
+        { flag: "a" },
+      );
+    }
     const usage = delta(snapshot(meter), before);
-    const action = proposal.actions[0]!;
+    // A text reply closes the state; account it as the `stop` the engine records.
+    const action: Action = proposal.actions[0] ?? { operator: "stop", why: proposal.thought };
     const tool = action.operator === "apply" ? action.action.tool : action.operator;
     turns.push({ turn, operator: action.operator, tool, chars, refused: false, ...usage });
     const tools = context.history
@@ -65,7 +73,16 @@ async function main(): Promise<void> {
       .map((message) => brief(message.text, 100));
     console.info(`\n=== turn ${turn} ===`);
     console.info(`thought: ${proposal.thought}`);
-    console.info(`action:  ${JSON.stringify(proposal.actions[0]!)}`);
+    console.info(
+      `action:  ${
+        proposal.actions.length > 0
+          ? JSON.stringify(proposal.actions[0])
+          : `(text stop) ${proposal.thought}`
+      }`,
+    );
+    if (proposal.reasoning !== undefined && proposal.reasoning !== "") {
+      console.info(`reason:  ${proposal.reasoning.replace(/\n/g, " ⏎ ").slice(0, 2000)}`);
+    }
     console.info(`tokens:  in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} cacheR=${usage.cacheRead} cacheW=${usage.cacheWrite} llm=${usage.llmCalls} chars=${chars}`);
     console.info(`history=${context.history.length} situation=${context.situation}`);
     console.info(`last tools:\n  ${tools.join("\n  ") || "(none)"}`);
@@ -79,7 +96,10 @@ async function main(): Promise<void> {
   });
   const source = workspace.read("ocaml/runtime/shared_heap.c") ?? "";
   const fixed = !source.includes("RLE-SWEEP-BUG");
-  console.info(`\n=== result ===\nstop=${result.stopReason} turns=${result.turns} fixed=${fixed}`);
+  console.info(
+    `\n=== result ===\nstop=${result.stopReason} turns=${result.turns} fixed=${fixed}` +
+      (result.stopText !== null && result.stopText !== undefined ? `\n${result.stopText}` : ""),
+  );
 
   // Mark refusals on their turn (a refusal is a proposed tool call the engine rejected).
   const refused = new Set(
@@ -105,7 +125,19 @@ async function main(): Promise<void> {
     console.info(`  ${tool.padEnd(12)} calls=${b.calls} in=${b.input} out=${b.output} reason=${b.reasoning}`);
   }
 
-  writeFileSync(join(dir, "result.json"), JSON.stringify({ stopReason: result.stopReason, turns: result.turns, events: result.events }, null, 2));
+  writeFileSync(
+    join(dir, "result.json"),
+    JSON.stringify(
+      {
+        stopReason: result.stopReason,
+        ...(result.stopText !== null && result.stopText !== undefined ? { stopText: result.stopText } : {}),
+        turns: result.turns,
+        events: result.events,
+      },
+      null,
+      2,
+    ),
+  );
   console.info(`trace: ${dir}`);
 }
 

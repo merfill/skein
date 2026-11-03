@@ -7,7 +7,7 @@ import type { ModelMessage } from "ai";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../src/ir/events";
-import { childrenOf, fold, planOf, stopOf } from "../src/ir/graph";
+import { childrenOf, fold, stopOf, turnsOf } from "../src/ir/graph";
 import { runSessionTurn, type SessionTurnDeps } from "../src/session/driver";
 import { attentionOf, createSession } from "../src/session/session";
 import { sessionOutline } from "../src/session/session_outline";
@@ -100,9 +100,9 @@ describe("general unit", () => {
       (id) => state.nodes.get(id)?.kind === "move",
     );
     expect(move).toBeDefined();
-    const plan = planOf(state, move as string);
-    expect(plan).toBeDefined();
-    expect(childrenOf(state, plan as string)).toHaveLength(1);
+    const turns = turnsOf(state, move as string);
+    expect(turns).toBeDefined();
+    expect(childrenOf(state, turns as string)).toHaveLength(1);
     expect(stopOf(state, move as string)).toBeDefined();
 
     const outline = sessionOutline(session);

@@ -9,12 +9,11 @@ import {
   currentFocus,
   currentVersion,
   fold,
-  itemOf,
-  planOf,
+  turnsOf,
   type State,
 } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
-import { firstUnfulfilledItem, moveIsland } from "../ir/traversal";
+import { moveIsland } from "../ir/traversal";
 import type { EdgeKind, MovePayload, Provenance, WitnessEntry } from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
@@ -736,27 +735,23 @@ export function executeAction(
     });
   };
 
-  const ensurePlan = (moveId: string): string => {
-    const existing = planOf(state, moveId);
+  const ensureTurns = (moveId: string): string => {
+    const existing = turnsOf(state, moveId);
     if (existing !== undefined) return existing;
-    const planSeq = next();
-    const planId = `w:plan:${planSeq}`;
+    const turnsSeq = next();
+    const turnsId = `w:turns:${turnsSeq}`;
     events.push({
       type: "add_node",
-      node: { id: planId, space: "work", kind: "plan", label: `plan for ${moveId}`, seq: planSeq },
+      node: {
+        id: turnsId,
+        space: "work",
+        kind: "turns",
+        label: `turns for ${moveId}`,
+        seq: turnsSeq,
+      },
     });
-    addEdge({ kind: "llm" }, moveId, planId, "plan");
-    return planId;
-  };
-
-  const buildItem = (moveId: string): string => {
-    const itemSeq = next();
-    const itemId = `w:item:${itemSeq}`;
-    events.push({
-      type: "add_node",
-      node: { id: itemId, space: "work", kind: "item", label: `item for ${moveId}`, seq: itemSeq },
-    });
-    return itemId;
+    addEdge({ kind: "llm" }, moveId, turnsId, "turns");
+    return turnsId;
   };
 
   const buildActionItem = (command: string, label?: string, extra?: Record<string, unknown>): string => {
@@ -778,7 +773,7 @@ export function executeAction(
 
   // A state: the doxa declared the island of work it will work in AND the state's goal text
   // (`what`). The states are the request's flat children (`move` edges); a new move is a
-  // sibling of the previous state (docs/ir_semantics.md §4.1). The plan hangs directly off
+  // sibling of the previous state (docs/ir_semantics.md §4.1). The turns container hangs directly off
   // the `move` — there is no goal node (docs/plans/archive/goal_into_move_plan.md) — and is seeded
   // by the first `apply`.
   const buildMove = (
@@ -804,20 +799,11 @@ export function executeAction(
     return id;
   };
 
-  // Place a command under the focused state (docs/ir_semantics.md §2.7): as a new alternative
-  // of the current (first unfulfilled) item, or as a new plan item when the plan is
-  // exhausted — and, on the very first `apply` of a state, it creates the plan and its first
-  // item.
-  const placeMove = (moveId: string, nodeId: string): void => {
-    const item = firstUnfulfilledItem(state, moveId);
-    if (item !== undefined) {
-      addEdge({ kind: "llm" }, item, nodeId, "alts");
-      return;
-    }
-    const planId = ensurePlan(moveId);
-    const itemId = buildItem(moveId);
-    addEdge({ kind: "llm" }, planId, itemId, "items");
-    addEdge({ kind: "llm" }, itemId, nodeId, "alts");
+  // Append a command to the focused state's monotone turns (docs/ir_semantics.md §2.7): the
+  // first `apply` creates the container, every later one is just the next turn.
+  const appendTurn = (moveId: string, nodeId: string): void => {
+    const turnsId = ensureTurns(moveId);
+    addEdge({ kind: "llm" }, turnsId, nodeId, "turn");
   };
 
   // One plain foreground shell command: recorded as an observation with its exit code,
@@ -974,7 +960,7 @@ export function executeAction(
     case "recall":
     case "search": {
       // A recall/search reads a stored body and now leaves a node (an action + its observation,
-      // placed under the state's plan like any step), so the fetched window stays on the state's
+      // placed under the state's turns like any turn), so the fetched window stays on the state's
       // tape until the state is stopped — no transient pair and no working-set TTL
       // (docs/ir_semantics.md §7).
       const focus = currentFocus(state);
@@ -984,7 +970,7 @@ export function executeAction(
       );
       const command = action.operator === "recall" ? recallCall(action) : searchCall(action);
       const actionId = buildActionItem(command, command, { call: modelCall(action) });
-      placeMove(focus, actionId);
+      appendTurn(focus, actionId);
       const observationSeq = next();
       const observationId = `obs:${observationSeq}`;
       events.push({
@@ -1005,8 +991,8 @@ export function executeAction(
     case "move": {
       // Declare the state: a `move` node (carrying the state's goal text) hung off the
       // request as a flat child (`move` relation). The states are siblings, never nested;
-      // the focus descends into the new state (docs/ir_semantics.md §4.1). The plan is left
-      // empty — the next turn's first `apply` seeds it (docs/plans/archive/goal_into_move_plan.md).
+      // the focus descends into the new state (docs/ir_semantics.md §4.1). The turns are left
+      // empty — the next turn's first `apply` seeds them (docs/plans/archive/goal_into_move_plan.md).
       const root = state.rootId;
       if (root === undefined) return fail("move failed: no request");
       // A Patch may change files in ways its call records cannot reverse (`bash`, `write`,
@@ -1071,7 +1057,7 @@ export function executeAction(
     case "stop": {
       // The doxa's closure. On an open state a `stop` node hung off the `move` via the `stop`
       // relation records the closure; the engine returns to the state and the doxa makes the
-      // transition decision. On the terminal state (`finish`, which has no plan) the `stop`
+      // transition decision. On the terminal state (`finish`, which has no turns) the `stop`
       // ends the request (docs/ir_semantics.md §4.4).
       const focus = currentFocus(state);
       if (focus === undefined) return fail("not admissible here");
@@ -1089,7 +1075,14 @@ export function executeAction(
           space: "work",
           kind: "stop",
           label: action.why ?? "stop",
-          ...(action.why !== undefined ? { payload: { why: action.why } } : {}),
+          ...(action.why !== undefined || reasoning !== undefined
+            ? {
+                payload: {
+                  ...(action.why !== undefined ? { why: action.why } : {}),
+                  ...(reasoning !== undefined ? { reasoning } : {}),
+                },
+              }
+            : {}),
           seq,
         },
       });
@@ -1115,13 +1108,13 @@ export function executeAction(
       const focus = currentFocus(state);
       if (focus === undefined) return fail("apply failed: no current state");
       const command = commandOf(apply);
-      // Every attempt leaves an action node (docs/ir_revision.md §4); it is placed by the
-      // outcome of the current item (new alternative, or a new plan item when exhausted).
+      // Every action leaves a turn node (docs/ir_revision.md §4); it is appended to the
+      // state's monotone turns list.
       const actionId = buildActionItem(command, command, {
         ...actionExtra(apply),
         call: modelCall(action),
       });
-      placeMove(focus, actionId);
+      appendTurn(focus, actionId);
       const failed = (text: string): ExecOutcome => {
         const seq = next();
         const id = `obs:${seq}`;

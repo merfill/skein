@@ -1,8 +1,8 @@
 import {
   childrenOf,
   currentFocus,
-  planOf,
   stopOf,
+  turnsOf,
   unactionableOf,
   type State,
 } from "./graph";
@@ -22,12 +22,12 @@ import type { Node } from "./types";
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
 // (docs/ir_semantics.md §7). The request is the only `user` turn; a state renders as
-// `Start state` / instruction markers and, while open, its plan's call/observation pairs. Once
+// `Start state` / instruction markers and, while open, its turns' call/observation pairs. Once
 // the state is stopped its turns are elided and the `Finish state` marker carries the stop
 // reason read from the `move.stop` relation (docs/plans/archive/goal_into_move_plan.md). There
 // is no goal node: the state IS its goal.
 
-export type Situation = "request" | "plan" | "working" | "transition" | "terminal";
+export type Situation = "request" | "working" | "transition" | "terminal";
 
 // A native tool call the model made, carried so `buildMessages` can emit
 // `assistant.tool_calls` / `tool` messages rather than a flat text tape (docs/ir_semantics §7).
@@ -56,9 +56,8 @@ export interface TapeMessage {
 export interface Context {
   // The history tape (user / assistant / tool), rebuilt from the tree.
   history: TapeMessage[];
-  // Which node instruction applies now: a fresh request, a state awaiting its first plan
-  // item, a state being worked, a finished state awaiting the transition, or the terminal
-  // state.
+  // Which node instruction applies now: a fresh request, an open state being worked, a
+  // finished state awaiting the transition, or the terminal state.
   situation: Situation;
   // The island of the focused state, when there is one (an authored label, §2.5).
   island?: IslandId;
@@ -152,33 +151,6 @@ function actionResultText(state: State, actionId: string): string {
   return "no result";
 }
 
-// A one-line reason for the previous attempt at a step, for the alternative marker.
-function attemptReason(state: State, altId: string): string {
-  const result = resultChild(state, altId);
-  if (result === undefined) {
-    return mutatedPaths(state, altId).length > 0 ? "ok" : "no result";
-  }
-  const payload = payloadOf(state, result.id) ?? {};
-  if (typeof payload.exitCode === "number") return payload.exitCode === 0 ? "ok" : `exit ${payload.exitCode}`;
-  if (payload.failed === true || payload.refused === true) {
-    // The reason stays a line: a failed edit's observation can carry a whole file body ("copy
-    // `find` verbatim"), and the marker must not inline it — the body is already a `tool`
-    // result in the tape and addressable by id. Inlining it here tripled the context (a run
-    // spent ~47% of its input on duplicated `edit failed` bodies; docs/projection.md §5).
-    const full = typeof payload.output === "string" && payload.output !== "" ? payload.output : result.label;
-    const firstLine = full.split("\n", 1)[0] ?? full;
-    const clipped = firstLine.length > 200 ? `${firstLine.slice(0, 200)}…` : firstLine;
-    return `${clipped} (see [${result.id}])`;
-  }
-  return "ok";
-}
-
-function altMarker(state: State, itemId: string, prevId: string): string {
-  const label = state.nodes.get(itemId)?.label ?? "step";
-  const prev = state.nodes.get(prevId);
-  return `alternative to step "${label}" (previous attempt: "${prev?.label ?? "?"}" — ${attemptReason(state, prevId)})`;
-}
-
 // The native tool call a node recorded at write time (`payload.call`), if any. Nodes written
 // before the field existed fall back to text rendering.
 export function asCall(node: Node | undefined): { name: string; args: Record<string, unknown> } | undefined {
@@ -199,17 +171,13 @@ function closureLine(state: State, moveId: string): string {
   return `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
 }
 
-// The plan's action nodes, in plan order (docs/ir_semantics §2.3).
+// The state's action nodes, in turn order (docs/ir_semantics §2.3).
 export function actionsOfMove(state: State, moveId: string): string[] {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return [];
-  const actions: string[] = [];
-  for (const itemId of childrenOf(state, plan)) {
-    for (const altId of childrenOf(state, itemId)) {
-      if (state.nodes.get(altId)?.kind === "action") actions.push(altId);
-    }
-  }
-  return actions;
+  const turns = turnsOf(state, moveId);
+  if (turns === undefined) return [];
+  return childrenOf(state, turns).filter(
+    (id) => state.nodes.get(id)?.kind === "action",
+  );
 }
 
 // The last failing run of a state: the `bash` observation with the newest non-zero exit code.
@@ -272,9 +240,9 @@ function stateBrief(state: State, island: IslandId): string {
 
 // Render a state: its boundaries. A state is a decision, not a tool call, so it is two markers:
 // `Start state <label>` and — once closed — `Finish state <label>` (the `stop` reason). A closed
-// state is exactly that pair: no brief, instruction, goal, or plan. An open state carries the
-// focused brief, the instruction, its goal as a `user` turn, and its plan; `buildMessages`
-// appends the per-turn tail (docs/ir_semantics §7).
+// state is exactly that pair: no brief, instruction, goal, or turns. An open state carries the
+// focused brief, the instruction, its goal as a `user` turn, and its turns; `buildMessages`
+// appends only the situation prompt (docs/ir_semantics §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
@@ -289,30 +257,52 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const focused = moveId === currentMove(state);
   const brief = focused && island !== undefined ? stateBrief(state, island) : "";
   if (brief !== "") out.push({ role: "system", text: brief });
-  if (island !== undefined) out.push({ role: "system", text: ISLANDS[island].instruction });
+  if (island !== undefined) {
+    out.push({ role: "system", text: ISLANDS[island].instruction });
+    // The per-turn conduct used to ride the last message (the tail). It now lives in the
+    // state's own entry, so the projection carries the whole context and nothing is appended.
+    if (ISLANDS[island].hint !== "") {
+      out.push({ role: "system", text: ISLANDS[island].hint });
+    }
+  }
 
   const payload = movePayload(state, moveId);
   const goal = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
   // The doxa's `what` is an unverified guess about the concrete subject, not the goal: it is
   // shown as advice only, never as the state's own goal (docs/ir_semantics.md §7).
   const guess = island !== undefined ? payload?.what : undefined;
+  const done = typeof payload?.done === "string" ? payload.done : undefined;
+  const criterion =
+    done !== undefined && done !== ""
+      ? done
+      : island !== undefined
+        ? ISLANDS[island].criterion
+        : "";
   const lines: string[] = [];
   if (goal !== "") lines.push(`Goal: ${goal}`);
   if (typeof guess === "string" && guess !== "") {
     lines.push(`Your earlier guess (may be wrong): ${guess}`);
   }
+  // The state IS its goal: its criterion rides the state entry, not a per-turn tail. The
+  // state prompt says how to close it: a text reply with no tool call, which the engine
+  // records as the `stop` relation.
+  if (criterion !== "") {
+    lines.push(
+      `Done when: "${criterion.replace(/\.\s*$/, "")}". When it holds, reply with the result as text only — no tool call.`,
+    );
+  }
   if (lines.length > 0) out.push({ role: "user", text: lines.join("\n\n") });
-  renderPlan(state, moveId, out);
+  renderTurns(state, moveId, out);
 }
 
-// Render a state's plan: its items and their current alternatives in order (the plan hangs
-// directly off the `move` — there is no goal node, docs/plans/archive/goal_into_move_plan.md). Calls
-// a single doxa move made together (`payload.turn`) render as ONE assistant `tool_calls`
-// message followed by their results, in order; a lone call keeps the plain `call` shape
+// Render a state's turns: its actions in append order (the turns container hangs directly off
+// the `move` — there is no goal node, docs/plans/archive/goal_into_move_plan.md). Calls a
+// single doxa move made together (`payload.turn`) render as ONE assistant `tool_calls` message
+// followed by their results, in order; a lone call keeps the plain `call` shape
 // (docs/ir_semantics §7).
-function renderPlan(state: State, moveId: string, out: TapeMessage[]): void {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return;
+function renderTurns(state: State, moveId: string, out: TapeMessage[]): void {
+  const turns = turnsOf(state, moveId);
+  if (turns === undefined) return;
   let pending: { id: string; name: string; args: Record<string, unknown>; text: string }[] = [];
   let pendingTurn: number | undefined;
   // The reasoning of the batch being assembled (one per turn); shown on its assistant message.
@@ -337,45 +327,39 @@ function renderPlan(state: State, moveId: string, out: TapeMessage[]): void {
     pendingTurn = undefined;
     pendingReasoning = undefined;
   };
-  childrenOf(state, plan).forEach((itemId) => {
-    const alts = childrenOf(state, itemId);
-    alts.forEach((altId, index) => {
-      const alt = state.nodes.get(altId);
-      if (alt === undefined) return;
-      if (alt.kind === "action") {
-        const resultId = resultChild(state, altId)?.id ?? altId;
-        const call = asCall(alt);
-        const text = `[${resultId}] ${actionResultText(state, altId)}`;
-        const marker = index > 0 ? `${altMarker(state, itemId, alts[index - 1] as string)}\n` : "";
-        const rawReasoning = nodePayload(alt)?.reasoning;
-        const reasoning = typeof rawReasoning === "string" && rawReasoning !== "" ? rawReasoning : undefined;
-        if (call === undefined) {
-          // A legacy node (no recorded call) carries the rendered label and marker as text.
-          flush();
-          out.push({ role: "assistant", text: `${marker}[${altId}] ${alt.label}` });
-          out.push({ role: "tool", text });
-          return;
-        }
-        const turn = nodePayload(alt)?.turn;
-        if (typeof turn !== "number") {
-          // No turn stamp: render as its own single call (the pre-batch shape).
-          flush();
-          out.push({
-            role: "assistant",
-            text: "",
-            call: { id: altId, ...call },
-            ...(reasoning !== undefined ? { reasoning } : {}),
-          });
-          out.push({ role: "tool", text, callId: altId });
-          return;
-        }
-        if (pending.length > 0 && pendingTurn !== turn) flush();
-        pendingTurn = turn;
-        if (reasoning !== undefined) pendingReasoning = reasoning;
-        pending.push({ id: altId, name: call.name, args: call.args, text });
-      }
-    });
-  });
+  for (const actionId of childrenOf(state, turns)) {
+    const action = state.nodes.get(actionId);
+    if (action === undefined || action.kind !== "action") continue;
+    const resultId = resultChild(state, actionId)?.id ?? actionId;
+    const call = asCall(action);
+    const text = `[${resultId}] ${actionResultText(state, actionId)}`;
+    const rawReasoning = nodePayload(action)?.reasoning;
+    const reasoning = typeof rawReasoning === "string" && rawReasoning !== "" ? rawReasoning : undefined;
+    if (call === undefined) {
+      // A legacy node (no recorded call) carries its rendered label as text.
+      flush();
+      out.push({ role: "assistant", text: `[${actionId}] ${action.label}` });
+      out.push({ role: "tool", text });
+      continue;
+    }
+    const turn = nodePayload(action)?.turn;
+    if (typeof turn !== "number") {
+      // No turn stamp: render as its own single call (the pre-batch shape).
+      flush();
+      out.push({
+        role: "assistant",
+        text: "",
+        call: { id: actionId, ...call },
+        ...(reasoning !== undefined ? { reasoning } : {}),
+      });
+      out.push({ role: "tool", text, callId: actionId });
+      continue;
+    }
+    if (pending.length > 0 && pendingTurn !== turn) flush();
+    pendingTurn = turn;
+    if (reasoning !== undefined) pendingReasoning = reasoning;
+    pending.push({ id: actionId, name: call.name, args: call.args, text });
+  }
   flush();
 }
 
@@ -400,16 +384,14 @@ export function situationOf(state: State): Situation {
   const island = moveIsland(state, focus as string);
   if (island !== undefined && isTerminalIsland(island)) return "terminal";
   if (isMoveFinished(state, focus as string)) return "transition";
-  // An open state: "plan" until the first `apply` seeds the plan, then "working".
-  return planOf(state, focus as string) !== undefined ? "working" : "plan";
+  return "working";
 }
 
 // The observation step: right after a tool result inside an open state, the doxa must read the
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
 // the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
-// surface has no write tool (Localization) is told to `stop`, never to edit. The state's `Now:`
-// directive rides the state description on the tape.
+// surface has no write tool (Localization) is told to reply with its result, never to edit.
 // The island of the focused state (the current `move`), when it has one. An authored label
 // (docs/ir_semantics.md §2.5), never a gate.
 export function islandOf(state: State): IslandId | undefined {

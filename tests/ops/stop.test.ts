@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Context } from "../../src/ir/project";
-import { childrenOf, fold, hasStopped, planOf } from "../../src/ir/graph";
+import { childrenOf, fold, hasStopped, turnsOf } from "../../src/ir/graph";
 import { currentMove } from "../../src/ir/traversal";
 import { runAgent } from "../../src/loop/graph";
 import type { Action, Proposals } from "../../src/llm/schemas";
@@ -36,7 +36,7 @@ describe("stop", () => {
     expect(verdict.accept).toBe(true);
   });
 
-  it("OP-ST-2 records the closure on the state via a `stop` relation, not as a plan item", () => {
+  it("OP-ST-2 records the closure on the state via a `stop` relation, not as a turn", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll(withGoal("make true pass", "true"), [request()], ws);
     const moveId = currentMove(opened.state)!;
@@ -48,9 +48,9 @@ describe("stop", () => {
     expect(outcome.done).toBe(false);
     const after = fold(outcome.events, opened.state);
     expect(hasStopped(after, moveId)).toBe(true);
-    // The closure lives on the state (`stop` relation), not among the plan items.
-    const plan = planOf(after, moveId)!;
-    const items = childrenOf(after, plan);
+    // The closure lives on the state (`stop` relation), not among the turns.
+    const turns = turnsOf(after, moveId)!;
+    const items = childrenOf(after, turns);
     expect(items.every((id) => after.nodes.get(id)?.kind !== "stop")).toBe(true);
   });
 

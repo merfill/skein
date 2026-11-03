@@ -1,21 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Event } from "../../src/ir/events";
-import {
-  actionSuperseded,
-  childrenOf,
-  currentFocus,
-  fold,
-  lastChild,
-  planOf,
-} from "../../src/ir/graph";
-import {
-  currentMove,
-  cursorOf,
-  focusEvents,
-  itemFulfilled,
-  applicable,
-} from "../../src/ir/traversal";
+import { childrenOf, currentFocus, fold, turnsOf } from "../../src/ir/graph";
+import { currentMove, focusEvents, applicable } from "../../src/ir/traversal";
 import { project, situationOf } from "../../src/ir/project";
 import { classify } from "../../src/loop/classify";
 import {
@@ -123,89 +110,68 @@ describe("traversal and containers", () => {
     ]);
   });
 
-  it("TR-5 chooses the container by node: request -> move, move -> plan", () => {
+  it("TR-5 chooses the container by node: request -> move, move -> turns", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll(withGoal("do it", "true"), [request()], ws);
     const moveId = currentMove(opened.state)!;
-    expect(planOf(opened.state, moveId)).toBeDefined();
+    expect(turnsOf(opened.state, moveId)).toBeDefined();
   });
 
-  it("TR-6 tracks item order and the cursor over items", () => {
+  it("TR-6 keeps turns in append order", () => {
     const events: Event[] = [
       request(),
       moveNode("m", "patch", 1),
-      { type: "add_node", node: { id: "p", space: "work", kind: "plan", label: "plan", seq: 2 } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step one", seq: 3 } },
-      { type: "add_node", node: { id: "i2", space: "work", kind: "item", label: "step two", seq: 4 } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 5 } },
-      { type: "add_node", node: { id: "a2", space: "work", kind: "action", label: "echo done", payload: { command: "echo done" }, seq: 6 } },
+      { type: "add_node", node: { id: "p", space: "work", kind: "turns", label: "turns", seq: 2 } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: "make test", payload: { command: "make test" }, seq: 3 } },
+      { type: "add_node", node: { id: "a2", space: "work", kind: "action", label: "echo done", payload: { command: "echo done" }, seq: 4 } },
       edge("em", "r1", "m", "move"),
-      edge("e1", "m", "p", "plan"),
-      edge("e2", "p", "i1", "items"),
-      edge("e3", "p", "i2", "items"),
-      edge("e4", "i1", "a1", "alts"),
-      edge("e5", "i2", "a2", "alts"),
+      edge("e1", "m", "p", "turns"),
+      edge("e2", "p", "a1", "turn"),
+      edge("e3", "p", "a2", "turn"),
     ];
     const state = fold(events);
-    expect(childrenOf(state, "p")).toEqual(["i1", "i2"]);
-    expect(cursorOf(state, "m")).toBe(0);
-
-    // Executing the first item's current action advances the cursor.
-    const executed = fold([
-      ...events,
-      { type: "add_node", node: { id: "o1", space: "work", kind: "observation", label: "make test", payload: { command: "make test", exitCode: 0 }, seq: 7 } },
-      edge("e6", "a1", "o1", "result"),
-    ]);
-    expect(itemFulfilled(executed, "i1")).toBe(true);
-    expect(cursorOf(executed, "m")).toBe(1);
+    expect(childrenOf(state, "p")).toEqual(["a1", "a2"]);
   });
 
-  // A state whose current item is a command, unexecuted, so placement appends to it.
-  function moveWithItem(command: string): Event[] {
+  // A state whose turns already hold one command.
+  function moveWithTurns(command: string): Event[] {
     return [
       request(),
       moveNode("m1", "patch", 1),
-      { type: "add_node", node: { id: "p", space: "work", kind: "plan", label: "plan", seq: 2 } },
-      { type: "add_node", node: { id: "i1", space: "work", kind: "item", label: "step", seq: 3 } },
-      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: command, payload: { command }, seq: 4 } },
+      { type: "add_node", node: { id: "p", space: "work", kind: "turns", label: "turns", seq: 2 } },
+      { type: "add_node", node: { id: "a1", space: "work", kind: "action", label: command, payload: { command }, seq: 3 } },
       edge("em", "r1", "m1", "move"),
-      edge("e1", "m1", "p", "plan"),
-      edge("e2", "p", "i1", "items"),
-      edge("e3", "i1", "a1", "alts"),
+      edge("e1", "m1", "p", "turns"),
+      edge("e2", "p", "a1", "turn"),
       { type: "descend", node: "m1" },
     ];
   }
 
-  it("OP-AP-PLACE-1 places a command as a new alternative of the current item", () => {
+  it("OP-AP-PLACE-1 appends the command as the next turn", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const ran = exec(run("echo other"), moveWithItem("echo hi"), ws);
-    const alts = childrenOf(ran.state, "i1");
-    expect(alts).toHaveLength(2); // the planned action + the executed one
-    expect(alts[0]).toBe("a1");
-    expect(actionSuperseded(ran.state, "a1")).toBe(true);
-    // `echo` succeeded, so the item is fulfilled and the cursor advances.
-    expect(itemFulfilled(ran.state, "i1")).toBe(true);
-    expect(cursorOf(ran.state, "m1")).toBe(1);
+    const ran = exec(run("echo other"), moveWithTurns("echo hi"), ws);
+    const turns = turnsOf(ran.state, "m1")!;
+    const actions = childrenOf(ran.state, turns);
+    expect(actions).toHaveLength(2); // the planned turn + the executed one
+    expect(actions[0]).toBe("a1");
   });
 
-  it("OP-AP-PLACE-2 appends a new plan item when the plan is already carried out", () => {
+  it("OP-AP-PLACE-2 keeps appending after a carried-out turn", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const first = exec(run("echo hi"), moveWithItem("echo hi"), ws);
-    expect(cursorOf(first.state, "m1")).toBe(1);
+    const first = exec(run("echo hi"), moveWithTurns("echo hi"), ws);
     const next = exec(run("echo next"), first.events, ws);
-    const plan = planOf(next.state, "m1")!;
-    expect(childrenOf(next.state, plan)).toHaveLength(2);
+    const turns = turnsOf(next.state, "m1")!;
+    expect(childrenOf(next.state, turns)).toHaveLength(3);
   });
 
-  it("TR-9 renders an alternative command as its own native call/result pair", () => {
+  it("TR-9 renders a command as its own native call/result pair", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const ran = exec(run("echo other"), moveWithItem("echo hi"), ws);
+    const ran = exec(run("echo other"), moveWithTurns("echo hi"), ws);
     const context = project(ran.state);
     const call = context.history.find(
       (message) => message.call?.name === "bash" && (message.call.args as { command?: string }).command === "echo other",
     );
     expect(call?.role).toBe("assistant");
-    expect(lastChild(ran.state, "i1")).toBeDefined();
     expect(context.history.some((message) => message.role === "tool" && message.callId === call?.call?.id)).toBe(true);
   });
 });

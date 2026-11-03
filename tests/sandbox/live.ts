@@ -6,7 +6,7 @@ import { loadSettings } from "../../src/config/settings";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import { createObserverDeps } from "../../src/llm/observer";
-import type { Proposals } from "../../src/llm/schemas";
+import type { Action, Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { runTask } from "./harness";
 import { delta, snapshot, summarize, type MetricsSummary, type TurnMetric } from "./metrics";
@@ -143,8 +143,13 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
       console.info(`[${task.id}] t${turn} actions=${JSON.stringify(proposal.actions).slice(0, 1200)}`);
     }
     const usage = delta(snapshot(meter), before);
-    const action = proposal.actions[0]!;
-    const tools = proposal.actions.map((a) => (a.operator === "apply" ? a.action.tool : a.operator));
+    // A text reply closes the state; account it as the `stop` the engine records.
+    const actions: Action[] =
+      proposal.actions.length > 0
+        ? proposal.actions
+        : [{ operator: "stop", why: proposal.thought }];
+    const action = actions[0]!;
+    const tools = actions.map((a) => (a.operator === "apply" ? a.action.tool : a.operator));
     const tool = tools[0] ?? (action.operator === "apply" ? action.action.tool : action.operator);
     turns.push({ turn, operator: action.operator, tool, tools, chars, refused: false, ...usage });
     if (options.quiet !== true) {

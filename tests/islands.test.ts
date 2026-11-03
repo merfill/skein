@@ -98,13 +98,13 @@ describe("islands: the doxa authors the state at move", () => {
     expect(() => toProposal("move", { state: "atlantis" }, "")).toThrow();
   });
 
-  it("runs any tool as the state's first plan item", () => {
+  it("runs any tool as the state's first turn", () => {
     const { ws } = makeWorkspace({ "a.txt": "hello world\n" });
     const res = execAll([move("localization", "read a"), read("a.txt")], [request()], ws);
     const kinds = res.outcome.events
       .filter((event) => event.type === "add_node")
       .map((event) => (event as { node: { kind: string } }).node.kind);
-    expect(kinds).toEqual(["action", "plan", "item", "file", "observation"]);
+    expect(kinds).toEqual(["action", "turns", "file", "observation"]);
     const observation = res.outcome.events.find(
       (event) => event.type === "add_node" && (event as { node: { kind: string } }).node.kind === "observation",
     );
@@ -120,15 +120,20 @@ describe("islands: the projection highlights the state", () => {
     expect(context.situation).toBe("working");
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
-    // The entry is a `Start state` marker, the island instruction and the state's own goal as
-    // a `user` turn.
+    // The entry is a `Start state` marker, the island instruction + conduct hint, and the
+    // state's own goal + criterion as a `user` turn.
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
     expect(start).toBe("Start state Orientation");
+    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.hint)).toBe(true);
     expect(
       context.history.some(
         (m) =>
           m.role === "user" &&
-          m.text === "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): recon",
+          m.text.startsWith(
+            "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+          ) &&
+          m.text.includes("Your earlier guess (may be wrong): recon") &&
+          m.text.includes(`Done when: "${ISLANDS.orientation.criterion}".`),
       ),
     ).toBe(true);
     const messages = buildMessages(context);

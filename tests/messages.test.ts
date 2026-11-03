@@ -37,22 +37,18 @@ function journal(): Event[] {
     { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 } },
     node("m1", "move", "orientation", 1, { state: "orientation", what: "green", call: { name: "move", args: { state: "orientation", what: "green" } } }),
     edge("em", "r1", "m1", "move"),
-    node("p1", "plan", "plan", 2),
-    edge("hp", "m1", "p1", "plan"),
-    edge("it1", "p1", "i1", "items"),
-    edge("it2", "p1", "i2", "items"),
-    node("i1", "item", "step", 3),
+    node("p1", "turns", "turns", 2),
+    edge("hp", "m1", "p1", "turns"),
     node("a1", "action", "ls", 4, { command: "ls", call: { name: "bash", args: { command: "ls" } } }),
-    edge("al1", "i1", "a1", "alts"),
+    edge("tr1", "p1", "a1", "turn"),
     node("o1", "observation", "ls", 5, { command: "ls", exitCode: 0, output: "ocaml\n" }),
     edge("ro1", "a1", "o1", "result"),
-    node("i2", "item", "step", 6),
     node("a2", "action", "edit ocaml/x.c", 7, { command: "edit ocaml/x.c", call: { name: "edit", args: { filePath: "ocaml/x.c", oldString: "a", newString: "b" } } }),
-    edge("al2", "i2", "a2", "alts"),
+    edge("tr2", "p1", "a2", "turn"),
     node("o2", "observation", "edit failed", 8, { failed: true, output: BIG }),
     edge("ro2", "a2", "o2", "result"),
     node("a3", "action", "read ocaml/x.c", 9, { command: "read ocaml/x.c", call: { name: "read", args: { filePath: "ocaml/x.c" } } }),
-    edge("al3", "i2", "a3", "alts"),
+    edge("tr3", "p1", "a3", "turn"),
     node("o3", "observation", "read", 10, { ref: "file:ocaml/x.c", version: "v1", bytes: 40, start: 1, end: 3, total: 100, output: "int x;\nint y;\n" }),
     edge("ro3", "a3", "o3", "result"),
   ];
@@ -69,18 +65,20 @@ describe("message wrappers: the wire JSON of the tape", () => {
       "user", // the request (leads the tape)
       "system", // the `Start state` marker
       "system", // the island instruction
-      "user", // the state's own goal
+      "system", // the per-turn conduct hint
+      "user", // the state's own goal + criterion
       "assistant", "tool", // the first plan item (ls)
       "assistant", "tool", // edit
       "assistant", "tool", // read
-      "system", // the per-turn tail
     ]);
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
     expect(userTexts).toHaveLength(2);
     expect(userTexts[0]).toContain("fix the bug");
-    expect(userTexts[1]).toBe(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green",
+    expect(userTexts[1]).toContain(
+      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
     );
+    expect(userTexts[1]).toContain("Your earlier guess (may be wrong): green");
+    expect(userTexts[1]).toContain("Done when: \"");
     const start = msgs.find((m) => m.role === "system" && String(m.content).includes("Start state"));
     expect(String(start?.content)).toBe("Start state Orientation");
     // A native call keeps its content empty (the call is in `tool_calls`).
@@ -91,26 +89,26 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(msgs[2]?.tool_calls).toBeUndefined();
 
     // The state's first plan item is an ordinary `bash` call + its observation.
-    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("bash");
-    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a1");
-    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a1" });
-    expect(String(msgs[6]?.content)).toContain("[o1] exit 0");
+    expect(msgs[6]?.tool_calls?.[0]?.function.name).toBe("bash");
+    expect(msgs[6]?.tool_calls?.[0]?.id).toBe("a1");
+    expect(msgs[7]).toMatchObject({ role: "tool", tool_call_id: "a1" });
+    expect(String(msgs[7]?.content)).toContain("[o1] exit 0");
 
     // A plain command move is its own tool call.
-    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("edit");
-    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a2");
-    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a2" });
-    expect(String(msgs[8]?.content)).toContain("edit failed: find not found");
+    expect(msgs[8]?.tool_calls?.[0]?.function.name).toBe("edit");
+    expect(msgs[8]?.tool_calls?.[0]?.id).toBe("a2");
+    expect(msgs[9]).toMatchObject({ role: "tool", tool_call_id: "a2" });
+    expect(String(msgs[9]?.content)).toContain("edit failed: find not found");
 
     // The alternative is a plain native call: no marker, and the failure body rides only in
     // its own `tool` result (never duplicated into an assistant message).
-    expect(msgs[9]?.tool_calls?.[0]?.function.name).toBe("read");
-    expect(msgs[9]?.tool_calls?.[0]?.id).toBe("a3");
+    expect(msgs[10]?.tool_calls?.[0]?.function.name).toBe("read");
+    expect(msgs[10]?.tool_calls?.[0]?.id).toBe("a3");
     const tape = msgs.slice(2);
     const tapeText = tape.map((m) => String(m.content)).join("\n");
     expect(tapeText).not.toContain("alternative to step");
     expect(tapeText.split("--- current content of ocaml/x.c").length - 1).toBe(1);
-    expect(msgs[10]).toMatchObject({ role: "tool", tool_call_id: "a3" });
+    expect(msgs[11]).toMatchObject({ role: "tool", tool_call_id: "a3" });
   });
 
   it("a refused structural move is an assistant call + a tool reason", async () => {
@@ -170,17 +168,15 @@ describe("message wrappers: the wire JSON of the tape", () => {
         call: { name: "move", args: { state: "localization", what: "find the failure" } },
       }),
       edge("em", "r1", "m1", "move"),
-      node("p1", "plan", "plan", 2),
-      edge("hp", "m1", "p1", "plan"),
-      edge("it1", "p1", "i1", "items"),
-      node("i1", "item", "step", 3),
+      node("p1", "turns", "turns", 2),
+      edge("hp", "m1", "p1", "turns"),
       node("a1", "action", "grep", 4, {
         command: "grep",
         turn: 0,
         reasoning: "the tail advance looks wrong",
         call: { name: "grep", args: { pattern: "sweep" } },
       }),
-      edge("al1", "i1", "a1", "alts"),
+      edge("tr1", "p1", "a1", "turn"),
       node("o1", "observation", "grep", 5, { command: "grep", exitCode: 0, output: "x\n" }),
       edge("ro1", "a1", "o1", "result"),
     ];

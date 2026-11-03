@@ -1,4 +1,4 @@
-import { childrenOf, fold, planOf, stopOf, unactionableOf, type State } from "../ir/graph";
+import { childrenOf, fold, stopOf, turnsOf, unactionableOf, type State } from "../ir/graph";
 import { currentMove, isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
 import {
   attentionOf,
@@ -180,17 +180,15 @@ function generalActionText(state: State, actionId: string): string | undefined {
 function generalEnding(state: State, unit: Unit): string {
   const move = currentMove(state);
   if (move === undefined) return "open";
-  const plan = planOf(state, move);
+  const turns = turnsOf(state, move);
   const actions: string[] = [];
   const seen = new Set<string>();
-  if (plan !== undefined) {
-    for (const itemId of childrenOf(state, plan)) {
-      for (const actionId of childrenOf(state, itemId)) {
-        const text = generalActionText(state, actionId);
-        if (text !== undefined && !seen.has(text)) {
-          seen.add(text);
-          actions.push(text);
-        }
+  if (turns !== undefined) {
+    for (const actionId of childrenOf(state, turns)) {
+      const text = generalActionText(state, actionId);
+      if (text !== undefined && !seen.has(text)) {
+        seen.add(text);
+        actions.push(text);
       }
     }
   }

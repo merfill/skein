@@ -5,7 +5,6 @@ import {
   observationBody,
   outline,
   renderedState,
-  stateAttempt,
   stateOutline,
   stateTurns,
 } from "../src/session/outline";
@@ -33,10 +32,10 @@ describe("outline: the deterministic survey", () => {
     expect(text).toContain("orientation");
     expect(text).toContain('what="find the failure"');
     expect(text).toContain("open");
-    expect(text).toContain("items=1");
+    expect(text).toContain("turns=1");
   });
 
-  it("summarizes a state's plan and transitions", () => {
+  it("summarizes a state's turns and transitions", () => {
     const state = orientationState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
@@ -45,7 +44,7 @@ describe("outline: the deterministic survey", () => {
     expect(text).toContain("what: find the failure");
     expect(text).toContain("closure: open");
     expect(text).toContain("next:");
-    expect(text).toContain("plan:");
+    expect(text).toContain("turns:");
     expect(text).toContain("echo hi");
   });
 
@@ -65,15 +64,14 @@ describe("outline: the deterministic survey", () => {
     expect(stateTurns(state, "missing")).toBe("unknown state: missing");
   });
 
-  it("lists an item's alternatives with status and result", () => {
+  it("lists a turn with its status and result", () => {
     const state = orientationState();
-    const item = [...state.nodes.values()].find((node) => node.kind === "item");
-    if (item === undefined) throw new Error("expected a plan item");
-    const text = stateAttempt(state, item.id);
-    expect(text).toContain(`item ${item.id}:`);
+    const moveId = currentMove(state);
+    if (moveId === undefined) throw new Error("expected a move");
+    const text = stateTurns(state, moveId);
     expect(text).toContain("echo hi");
     expect(text).toContain("[succeeded]");
-    expect(stateAttempt(state, "missing")).toBe("unknown item: missing");
+    expect(text).toContain("-> obs:");
   });
 
   it("returns an observation body", () => {

@@ -8,9 +8,7 @@ import {
   BASE_PROMPT,
   NODE_INSTRUCTIONS,
   REQUEST_INSTRUCTION,
-  planInstruction,
   transitionInstruction,
-  turnInstruction,
 } from "./prompt";
 
 export type Proposer = (
@@ -87,9 +85,11 @@ export function historyMessages(history: readonly TapeMessage[]): ModelMessage[]
 }
 
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
-// the tape itself, then the situation's prompt (the request/transition instruction, the open
-// state's per-turn tail, or the terminal instruction). The base prompt carries the contract and
-// the tape carries the state (docs/ir_semantics §7).
+// the tape itself, then the situation's prompt (the request/transition instruction or the
+// terminal instruction). An open state carries its hint and criterion in the tape itself (at
+// its `Start state` entry), so nothing is appended per turn: the projection is the whole
+// context. The base prompt carries the contract and the tape carries the state
+// (docs/ir_semantics §7).
 export function buildMessages(context: Context): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "system", content: BASE_PROMPT }];
   for (const constraint of context.constraints) {
@@ -99,23 +99,12 @@ export function buildMessages(context: Context): ModelMessage[] {
     });
   }
   messages.push(...historyMessages(context.history));
-  // Each situation appends its own last message. An open state gets the per-turn tail (conduct,
-  // criterion, closure): never stored, so the next turn rebuilds without it. The
-  // transition one is a `system` turn: it is the engine's rule for choosing the next state, not
-  // a user request. The tape already ends with the finished state's `Finish` line, so the rule
-  // follows it as another system turn (docs/ir_semantics §7).
+  // The transition rule is a `system` turn: it is the engine's rule for choosing the next
+  // state, not a user request. The tape already ends with the finished state's `Finish` line,
+  // so the rule follows it as another system turn (docs/ir_semantics §7). An open state's
+  // situation appends nothing: its hint and criterion live in the state header.
   if (context.situation === "request") {
     messages.push({ role: "system", content: REQUEST_INSTRUCTION });
-  } else if (context.situation === "plan") {
-    messages.push({
-      role: "system",
-      content: planInstruction(context.island, context.done),
-    });
-  } else if (context.situation === "working") {
-    messages.push({
-      role: "system",
-      content: turnInstruction(context.island, context.done),
-    });
   } else if (context.situation === "transition") {
     messages.push({ role: "system", content: transitionInstruction(context.island) });
   } else if (context.situation === "terminal") {
@@ -157,8 +146,13 @@ export async function propose(
 ): Promise<Proposals> {
   const allowedTools =
     context.applicable !== undefined ? toolNamesFor(context.applicable) : undefined;
+  // A text reply is the state's closure. It is accepted only where the engine can record it:
+  // inside an open state or at End. At the request and at a transition the doxa must still
+  // choose a state (`move`/`decline`), so a text reply gets the tool repair.
+  const closesOnText = context.situation === "working" || context.situation === "terminal";
   return invokeTools(model, buildMessages(context), {
     ...options,
+    allowText: options.allowText ?? closesOnText,
     ...(allowedTools !== undefined ? { allowedTools } : {}),
     toolDescriptions: toolDescriptionsFor(context.island),
   });

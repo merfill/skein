@@ -175,7 +175,8 @@ export async function runScenario(name: string, options: RunOptions = {}): Promi
     const proposal = await proposeModel(model, context);
     turns.push({
       turn: turns.length,
-      action: proposal.actions[0]!,
+      // A text reply is the state's closure; record it as the `stop` the engine will write.
+      action: proposal.actions[0] ?? { operator: "stop", why: proposal.thought },
       contextChars,
       context,
     });

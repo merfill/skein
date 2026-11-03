@@ -23,9 +23,9 @@ const TRANSITIONS = (() => {
 
 // The states, rendered from the island list (single source): each is a goal (`what`) and the
 // knowledge that closes it (`done`). The base prompt carries the whole set, once.
-// The states are the map: each is its kind of work (`what`). The stop criterion is NOT here —
-// it is delivered per turn in the focused state's hint (see `turnInstruction`), so it appears
-// once, at the highest recency, and never duplicates the map.
+// The states are the map: each is its kind of work (`what`). The criterion is NOT here — it
+// rides the focused state's own entry (`Start state` / hint / goal / `Done when`), so it
+// appears once and never duplicates the map.
 const STATES = ISLAND_ORDER.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 
 // The states a request can start in, shown in the request hint. There is no START node in the
@@ -55,9 +55,9 @@ You are a software engineering agent with access to the user's filesystem. You s
 
 ## How you work
 
-You solve a task by moving between states; you are in exactly one state at a time, and the state is its goal — one step of the work with its own stop criterion. Work the state until its criterion holds, then call \`stop\`: it ends the state and records its result as the \`Finish\` line. After a state is stopped, choose the next state and call \`move\` to enter it.
+You solve a task by moving between states; you are in exactly one state at a time, and the state is its goal — one step of the work with its own stop criterion. Work the state until its criterion holds, then reply with text only, no tool calls: the engine records that reply as the state's result on the \`Finish\` line. After a state is finished, choose the next state and call \`move\` to enter it.
 
-Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result.`,
+Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result. A reply with no tool call ends the state, so give it only when the state's criterion holds — otherwise call a tool.`,
   },
   {
     id: "B2",
@@ -67,7 +67,13 @@ Follow the project. Mimic its style, structure, naming, typing and architectural
 
 Work only the state's goal: plan the step, make small changes, and debug from evidence. Do not do another state's work or expand the scope.
 
+Prefer the dedicated tools: \`read\`, \`grep\` and \`list\` to inspect, \`edit\`, \`write\` and \`apply_patch\` to change files. Use \`bash\` only for work they cannot do — running builds, tests, or other shell operations.
+
 Work from the material in this workspace. The result must come from that material or from the request's specification. Do not invent values or fabricate results to fit a count, a form, or an expected answer. Acceptance is decided by the material or the specification, not by your own output.
+
+Do not reconstruct an external or upstream version from memory. If a reference is available — on disk or fetched — treat it as a lead to verify, not as the oracle.
+
+Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.
 
 The workspace map and the environment are engine-recorded facts: they are already read — do not re-probe, re-list, or re-derive them. If a block is marked partial, only the unlisted facts are unknown.
 
@@ -138,7 +144,7 @@ function transitionRule(island?: IslandId): string[] {
 // The transition prompt (`transition`): the finished-state scenario: the tape above carries the
 // record (each finished state is a `Start state` / `Finish state` pair) and the user's request.
 // The hint names the states reachable from the focused one; the next state's OWN goal stands
-// as-is (never carried from the `Finish` line). Dynamic, like `turnInstruction`.
+// as-is (never carried from the `Finish` line).
 export function transitionInstruction(island?: IslandId): string {
   const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
   const candidates = [...new Set<IslandId>(targets)];
@@ -181,48 +187,8 @@ export const BASE_PROMPT = assemble(BASE_BLOCKS);
 // `move`'s `what` (never the whole task). Rendered per turn (never stored).
 export const REQUEST_INSTRUCTION = assemble(REQUEST_BLOCKS);
 
-// The plan prompt: the state's first step. The per-turn tail below follows it.
-const MOVE_INSTRUCTION =
-  "Call a tool — the action that advances the goal above. If the state's goal already holds " +
-  "from its entry and the request, `stop` now. Work on the material without consuming it: copy " +
-  "raw artifacts before any command that may checkpoint, delete, or rewrite them.";
-
-// The per-turn tail of an open state, appended last on `plan`/`working`: conduct (the state's
-// own hint), the done criterion, then the closure. The state's goal is the hand-written one on
-// the tape; the doxa's `what` is only a guess and never enters the tail. Blocks are separated by
-// blank lines. Rendered per turn (never stored), so the next turn's tape is rebuilt without it.
-function stateTail(island?: IslandId, done?: string): string {
-  const criterion =
-    done !== undefined && done !== ""
-      ? done
-      : island !== undefined
-        ? ISLANDS[island].criterion
-        : "";
-  const lead =
-    criterion !== ""
-      ? `Done when: "${criterion.replace(/\.\s*$/, "")}".`
-      : `Done when its goal holds.`;
-  const conduct = island !== undefined ? ISLANDS[island].hint : "";
-  return [
-    conduct,
-    lead,
-    "When it holds, `stop` — and nothing else. Do not over-work the state, and do not do another state's work. Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
-  ]
-    .filter((part) => part !== "")
-    .join("\n\n");
-}
-
-export function turnInstruction(island?: IslandId, done?: string): string {
-  return stateTail(island, done);
-}
-
-export function planInstruction(island?: IslandId, done?: string): string {
-  if (island === undefined) return MOVE_INSTRUCTION;
-  return `${MOVE_INSTRUCTION}\n\n${stateTail(island, done)}`;
-}
-
 export const NODE_INSTRUCTIONS = {
-  terminal: `This is End. ${ISLANDS[TERMINAL_ISLAND].hint}`,
+  terminal: `This is End. Reply with the final result as text only, with no tool calls; that completes the request.`,
 };
 
 export const PROMPT_BLOCKS: readonly PromptBlock[] = [...BASE_BLOCKS, ...REQUEST_BLOCKS];

@@ -4,9 +4,8 @@ import {
   actionSucceeded,
   childrenOf,
   fold,
-  lastChild,
-  planOf,
   stopOf,
+  turnsOf,
   type State,
 } from "../ir/graph";
 import { ISLANDS } from "../ir/islands";
@@ -44,18 +43,18 @@ export function outline(state: State, turn?: number): string {
   for (const move of moves) {
     const island = moveIsland(state, move) ?? "unknown";
     const payload = movePayload(state, move);
-    const plan = planOf(state, move);
-    const items = plan !== undefined ? childrenOf(state, plan).length : 0;
+    const turnsId = turnsOf(state, move);
+    const turnsCount = turnsId !== undefined ? childrenOf(state, turnsId).length : 0;
     const closed = isMoveFinished(state, move);
     const stop = stopOf(state, move);
     const outcome = closed ? `closed: ${stop !== undefined ? labelOf(state, stop) : ""}` : "open";
     const entries = state.stateEntries.get(island) ?? 0;
-    const turns =
+    const liveTurns =
       move === current && turn !== undefined && payload?.turn !== undefined
         ? ` turns=${turn - payload.turn}`
         : "";
     lines.push(
-      `${move} ${island} what="${payload?.what ?? ""}" ${outcome} items=${items} entries=${entries}${turns}`,
+      `${move} ${island} what="${payload?.what ?? ""}" ${outcome} turns=${turnsCount} entries=${entries}${liveTurns}`,
     );
   }
   return lines.join("\n");
@@ -77,41 +76,23 @@ export function stateTurns(
 ): string {
   const node = state.nodes.get(anchor);
   if (node === undefined || node.kind !== "move") return `unknown state: ${anchor}`;
-  const plan = planOf(state, anchor);
-  const items = plan !== undefined ? childrenOf(state, plan) : [];
+  const turns = turnsOf(state, anchor);
+  const actions = turns !== undefined ? childrenOf(state, turns) : [];
   const lines: string[] = [];
-  for (const item of items) {
-    for (const action of childrenOf(state, item)) {
-      lines.push(
-        `- ${labelOf(state, item)}: ${labelOf(state, action)}${resultSummary(state, action)}`,
-      );
-    }
+  for (const actionId of actions) {
+    const action = state.nodes.get(actionId);
+    if (action === undefined || action.kind !== "action") continue;
+    const status = actionSucceeded(state, actionId)
+      ? "succeeded"
+      : actionExecuted(state, actionId)
+        ? "executed"
+        : "not executed";
+    lines.push(`- ${actionId}: ${action.label} [${status}]${resultSummary(state, actionId)}`);
   }
   if (lines.length === 0) return "no turns";
   const from = Math.max(0, range?.from ?? 0);
   const to = range?.to !== undefined ? Math.max(from, range.to) + 1 : lines.length;
   return lines.slice(from, to).join("\n");
-}
-
-export function stateAttempt(state: State, itemId: string): string {
-  const item = state.nodes.get(itemId);
-  if (item === undefined || item.kind !== "item") return `unknown item: ${itemId}`;
-  const alternatives = childrenOf(state, itemId);
-  const lines = [`item ${itemId}: ${item.label}`];
-  if (alternatives.length === 0) {
-    lines.push("- (no alternatives)");
-    return lines.join("\n");
-  }
-  for (const action of alternatives) {
-    const status = actionSucceeded(state, action) ? "succeeded" : actionExecuted(state, action) ? "executed" : "not executed";
-    const resultId = resultOf(state, action);
-    const result =
-      resultId !== undefined
-        ? ` -> ${resultId}: ${observationText(state.nodes.get(resultId)!).split("\n", 1)[0] ?? ""}`
-        : "";
-    lines.push(`- ${action}: ${labelOf(state, action)} [${status}]${result}`);
-  }
-  return clip(lines.join("\n"));
 }
 
 export function observationBody(state: State, obsId: string): string {
@@ -161,12 +142,12 @@ export function stateOutline(state: State, anchor: string, turn?: number): strin
   if (node === undefined || node.kind !== "move") return `unknown state: ${anchor}`;
   const island = moveIsland(state, anchor) ?? "unknown";
   const payload = movePayload(state, anchor);
-  const plan = planOf(state, anchor);
-  const items = plan !== undefined ? childrenOf(state, plan) : [];
+  const turnsId = turnsOf(state, anchor);
+  const actions = turnsId !== undefined ? childrenOf(state, turnsId) : [];
   const closed = isMoveFinished(state, anchor);
   const stop = stopOf(state, anchor);
   const entries = state.stateEntries.get(island) ?? 0;
-  const turns =
+  const liveTurns =
     !closed && turn !== undefined && payload?.turn !== undefined
       ? [`turns: ${turn - payload.turn}`]
       : [];
@@ -175,19 +156,19 @@ export function stateOutline(state: State, anchor: string, turn?: number): strin
     `what: ${payload?.what ?? ""}`,
     ...(payload?.done !== undefined && payload.done !== "" ? [`done: ${payload.done}`] : []),
     `entries: ${entries}`,
-    ...turns,
+    ...liveTurns,
     `closure: ${closed ? `closed (${stop !== undefined ? labelOf(state, stop) : ""})` : "open"}`,
     `next: ${ISLANDS[island as keyof typeof ISLANDS]?.next.map((edge) => edge.to).join(", ") ?? ""}`,
-    "plan:",
+    "turns:",
   ];
-  if (items.length === 0) {
+  if (actions.length === 0) {
     lines.push(closed ? "- (empty)" : "- (empty — the first apply seeds it)");
     return lines.join("\n");
   }
-  for (const item of items) {
-    const current = lastChild(state, item);
-    const action = current !== undefined ? labelOf(state, current) : "";
-    lines.push(`- ${item}: ${action}`);
+  for (const action of actions) {
+    const node = state.nodes.get(action);
+    if (node === undefined || node.kind !== "action") continue;
+    lines.push(`- ${action}: ${node.label}`);
   }
   return lines.join("\n");
 }

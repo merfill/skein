@@ -2,7 +2,7 @@ import type { ModelMessage } from "ai";
 
 import { isAborted } from "../abort";
 import type { Event } from "../ir/events";
-import { childrenOf, currentFocus, fold, planOf, type State } from "../ir/graph";
+import { childrenOf, currentFocus, fold, turnsOf, type State } from "../ir/graph";
 import { GENERAL_STATE } from "../ir/islands";
 import { observationText, type TapeMessage } from "../ir/project";
 import type { Action, Proposals } from "../llm/schemas";
@@ -110,46 +110,44 @@ const TOOL_RESULT_TAIL = 400;
 
 function historyOf(state: State, moveId: string): TapeMessage[] {
   const history: TapeMessage[] = [{ role: "user", text: requestOf(state) }];
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return history;
-  for (const itemId of childrenOf(state, plan)) {
-    for (const actionId of childrenOf(state, itemId)) {
-      const action = state.nodes.get(actionId);
-      if (action === undefined || action.kind !== "action") continue;
-      const payload = action.payload as
-        | { call?: { name?: unknown; args?: unknown }; reasoning?: unknown }
-        | undefined;
-      const reasoning =
-        typeof payload?.reasoning === "string" && payload.reasoning !== ""
-          ? { reasoning: payload.reasoning }
-          : {};
-      const call =
-        typeof payload?.call?.name === "string"
-          ? {
-              id: actionId,
-              name: payload.call.name,
-              args:
-                payload.call.args !== null && typeof payload.call.args === "object"
-                  ? (payload.call.args as Record<string, unknown>)
-                  : {},
-            }
-          : undefined;
-      if (call !== undefined) {
-        history.push({ role: "assistant", text: "", call, ...reasoning });
-      } else {
-        history.push({ role: "assistant", text: action.label, ...reasoning });
-      }
-      const resultId = resultOf(state, actionId);
-      const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
-      const text = result !== undefined ? observationText(result) : action.label;
-      const bounded =
-        call?.name === "read" || text.length <= TOOL_RESULT_LIMIT
-          ? text
-          : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}${
-              resultId !== undefined ? `\n…[truncated; recall ${resultId}]` : "\n…[truncated]"
-            }\n${text.slice(-TOOL_RESULT_TAIL)}`;
-      history.push({ role: "tool", text: bounded, callId: actionId });
+  const turns = turnsOf(state, moveId);
+  if (turns === undefined) return history;
+  for (const actionId of childrenOf(state, turns)) {
+    const action = state.nodes.get(actionId);
+    if (action === undefined || action.kind !== "action") continue;
+    const payload = action.payload as
+      | { call?: { name?: unknown; args?: unknown }; reasoning?: unknown }
+      | undefined;
+    const reasoning =
+      typeof payload?.reasoning === "string" && payload.reasoning !== ""
+        ? { reasoning: payload.reasoning }
+        : {};
+    const call =
+      typeof payload?.call?.name === "string"
+        ? {
+            id: actionId,
+            name: payload.call.name,
+            args:
+              payload.call.args !== null && typeof payload.call.args === "object"
+                ? (payload.call.args as Record<string, unknown>)
+                : {},
+          }
+        : undefined;
+    if (call !== undefined) {
+      history.push({ role: "assistant", text: "", call, ...reasoning });
+    } else {
+      history.push({ role: "assistant", text: action.label, ...reasoning });
     }
+    const resultId = resultOf(state, actionId);
+    const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
+    const text = result !== undefined ? observationText(result) : action.label;
+    const bounded =
+      call?.name === "read" || text.length <= TOOL_RESULT_LIMIT
+        ? text
+        : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}${
+            resultId !== undefined ? `\n…[truncated; recall ${resultId}]` : "\n…[truncated]"
+          }\n${text.slice(-TOOL_RESULT_TAIL)}`;
+    history.push({ role: "tool", text: bounded, callId: actionId });
   }
   return history;
 }

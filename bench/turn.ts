@@ -87,7 +87,6 @@ function frontierFor(situation: Situation, island?: IslandId) {
   switch (situation) {
     case "request":
       return { move: true, apply: false, stop: false, decline: true };
-    case "plan":
     case "working":
       return {
         move: false,

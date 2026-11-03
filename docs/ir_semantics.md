@@ -26,13 +26,14 @@ that pins the invariant the change preserves. Without step 1, step 2 is not done
 `recall`/`search` are read-only addresses, not moves. A request is walked as a
 **state machine over islands**: the doxa `move`s to a state (an island of work), declaring the
 island (`state`) — a state **is** its own goal — and, optionally, a note about the concrete
-subject (`what`, a guess that may be wrong); then it works the state with `apply` (the first
-`apply` seeds the plan), and `stop`s it — which forces the next transition decision. The states
+subject (`what`, a guess that may be wrong); then it works the state with `apply`, and closes it
+with a text reply (recorded as `stop`) — which forces the next transition decision. The states
 are the request's **flat children** (the `move` relation), each carrying its own `what` note;
-the plan hangs directly off the `move`. A state closes **only** through
-`stop`. A plan holds **items**; an item holds **actions** (alternatives), never goals. The
-context is a **message tape** rebuilt from the tree. The doxa proposes; the logos executes and
-records. (docs/plans/archive/goal_into_move_plan.md.)
+the turns hang directly off the `move`. A state closes **only** through the doxa's closure
+(recorded as `stop`). The state's turns are a **monotone list of actions**, each with its
+observation or mutation; there are no items or alternatives. The context is a **message tape**
+rebuilt from the tree. The doxa proposes; the logos executes and records.
+(docs/plans/archive/goal_into_move_plan.md.)
 
 ---
 
@@ -49,8 +50,8 @@ Everything the system does is described **as an operation on the IR tree**:
 This applies to the doxa's moves and to the logos's reactions alike. New behavior is a new
 operation described by this template, never an edit of state around the journal.
 
-The tree is not a given but the trace of operations. It branches where the agent picks an
-approach (alternative commands) and deepens where a state is worked by a plan.
+The tree is not a given but the trace of operations. It deepens where a state is worked: every
+tool call appends one turn (an action and its outcome) to the state's monotone list.
 
 ---
 
@@ -90,15 +91,14 @@ Nodes fall into two spaces.
 | kind | meaning |
 |---|---|
 | `request` | the user's request: raw motivation (the root); walked as a sequence of states |
-| `move` | the doxa's declaration of the state it will work in; carries `state` (the island) and an optional `what` note (the doxa's guess about the concrete subject, not the state's goal); a child of the request; owns the plan |
-| `plan` | a state's plan: an ordered list of items (≥1) |
-| `item` | a plan item: an ordered list of alternatives (≥1) |
-| `action` | a command; an alternative of an item (never a state) |
+| `move` | the doxa's declaration of the state it will work in; carries `state` (the island) and an optional `what` note (the doxa's guess about the concrete subject, not the state's goal); a child of the request; owns the turns |
+| `turns` | a state's turns: an ordered list of actions (≥1) |
+| `action` | a command; one turn of the open state (never a state) |
 | `observation` | a command's result (a read window, run output + exit code) |
 | `stop` | the mark that a state is closed |
 | `unactionable` | the mark that the request has no actionable task |
 | `constraint` | a restriction (payload `forbid`: regex paths) |
-| `fact` | an engine-owned session fact (e.g. the environment probe; payload — the environment); no edges and no plan parent, projected on the tape |
+| `fact` | an engine-owned session fact (e.g. the environment probe; payload — the environment); no edges and no turns parent, projected on the tape |
 
 **The artifact space** — what exists besides the work:
 
@@ -115,10 +115,9 @@ plays for its owner. Each node kind has a fixed set of admissible relations:
 |---|---|---|---|
 | `request` | `move` | `move` | 0 or more, in order (the LAST is the current state) |
 | `request` | `unactionable` | `unactionable` | 0 or 1 |
-| `move` | `plan` | `plan` | 0 or 1 (seeded by the first `apply`) |
+| `move` | `turns` | `turns` | 0 or 1 (seeded by the first `apply`) |
 | `move` | `stop` | `stop` | 0 or 1 (the state's closure) |
-| `plan` | `items` | `item` | 1 or more, in order |
-| `item` | `alts` | `action` | 1 or more, in order |
+| `turns` | `turn` | `action` | 1 or more, in order |
 | `action` | `result` | `observation` | 0 or 1 |
 | `action` | `mutates` | `file` | 0 or more |
 
@@ -132,19 +131,19 @@ one. Two consequences:
 ### 2.3 The general shape
 
 ```
-request --move--> move --plan--> plan --items--> item --alts--> action
+request --move--> move --turns--> turns --turn--> action
 ```
 
 Rules that follow:
 
-- a plan item is **always** a list of alternatives with at least one element; with no
-  branching the element is exactly one and it is a command (`action`);
-- a state appears in only one way: the work hangs off the `move` (`move.plan`). A state is
-  never an item's alternative, and the request has no goal of its own;
+- the turns container is **always** a monotone list with at least one action; each action is
+  one turn, carrying its `result` observation or `mutates` files;
+- a state appears in only one way: the work hangs off the `move` (`move.turns`). A state is
+  never a turn, and the request has no goal of its own;
 - **`what`.** A `move` carries `what` — the doxa's note about the concrete subject, a guess
   that may be wrong. The state's goal is the island's own definition; the move records which
-  state was entered. The plan is a separate `plan` node, seeded by the first `apply` with one
-  item whose sole alternative is that first action.
+  state was entered. The turns container is a separate `turns` node, seeded by the first
+  `apply` with its first action; every later `apply` appends the next turn.
 
 ### 2.4 The current node
 
@@ -156,23 +155,21 @@ relative to it. The focus is the top of the **traversal stack** (§2.6).
 Nodes have **no stored status**; nodes are not edited, and there is no `stateOf`. The facts a
 decision needs are read from nodes/relations:
 
-- an action is **executed** ⇔ it has a produced child (`result`/`mutates`); otherwise the
-  item is only planned;
+- an action is **executed** ⇔ it has a produced child (`result`/`mutates`); otherwise it is
+  only proposed;
 - an action **succeeded** ⇔ it mutated a file, or its result observation is not a failure
   (a `failed` reason, or a non-zero `exitCode`; a missing `exitCode` is a timeout — no
   verdict);
 - a state is **closed** ⇔ its `move` has a `stop` relation to a `stop` node; otherwise open;
 - a `move` is **finished** ⇔ it has a `stop` relation to a `stop` node (the terminal state has
-  no plan but is closed the same way); otherwise open;
+  no turns but is closed the same way); otherwise open;
 - the request is **finished** ⇔ it has an `unactionable` node, or its current (last) `move` is
   the terminal state and is finished; the request is never closed by `stop`;
 - **`movesOf(request)`** — the `move` children in order; **`currentMove(request)`** — the last;
-  **`planOf(move)`** — the state's plan via `plan`; **`unactionableOf(request)`** — the node via
-  `unactionable`; **`stopOf(move)`** — the stop node via `stop`;
-- **`lastChild(container)`** — the current item/alternative (the last child);
-- an item is **fulfilled** ⇔ its current (last) alternative is an executed, succeeded action;
-  the **cursor** is the first unfulfilled item. (An item's alternatives are actions only; a
-  nested state alternative no longer exists.)
+  **`turnsOf(move)`** — the state's turns container via `turns`; **`unactionableOf(request)`** —
+  the node via `unactionable`; **`stopOf(move)`** — the stop node via `stop`;
+- **`lastChild(container)`** — the last appended child (the current state or the latest turn);
+- the state's turns are read in append order; there is no cursor and no fulfillment predicate.
 
 There are **no truth predicates** (`achieved`/`refuted`/`abandoned`) and **no criterion**.
 A run by itself settles nothing: a state is closed only by the doxa's `stop`. These are
@@ -192,17 +189,16 @@ Traversal is the deterministic part of the logos. It does **not** choose what to
 computes the *admissible* moves at the current point; the doxa chooses among them.
 
 **The stack** `S = [R, M]`: the root request and the current `move` (the state in focus, which
-is its own goal). **The cursor** is the index of the first unfulfilled item of the `move`'s
-plan. Neither is stored: the stack is a fold of the focus events (`descend`/`return`, journal
-append-only); the cursor is computed from the plan.
+is its own goal). The stack is not stored: it is a fold of the focus events
+(`descend`/`return`, journal append-only). The state's turns are the ordered children of its
+`turns` node.
 
 Deterministic movement:
 
 - **descend** `R → M` — on `move`, push the `move`; focus → `M`. The states are **flat**
   children of the request: a new `move` after a finished state is a new child (a sibling of the
   previous state), never nested under it;
-- **advance** — executing an action item changes nothing about the stack; the cursor moves on
-  its own;
+- **append** — executing an action changes nothing about the stack; it appends the next turn;
 - **return** `M → R` — when the next `move` is emitted, the finished state is left behind (a
   sibling is pushed in its place).
 
@@ -214,10 +210,9 @@ projection and `classify`.
 | Focus | Admissible | Meaning |
 |---|---|---|
 | request with no `move` yet | `move`, `decline` | choose the first state (or decline) |
-| an open state (no plan yet: `plan`) | `apply`, `stop` | give the first plan item — the first `apply` seeds the plan |
-| an open state (plan has items: `working`) | `apply`, `stop` | continue the work; `stop` closes the state |
+| an open state (`working`) | `apply` | append the next turn (the first `apply` seeds the turns) |
 | a finished state (`transition`) | `move` | the forced transition decision |
-| the terminal state (`end`, `terminal`) | `stop` | the request is complete |
+| the terminal state (`end`, `terminal`) | none | a text reply completes the request |
 
 ### 2.7 How a command enters the tree
 
@@ -225,21 +220,15 @@ projection and `classify`.
 observation; the doxa reads the observation and chooses the next move; the logos only places
 the incoming move.
 
-The **outcome of the current item** is read from its current alternative, which is always a
-**command**: its observation carries a result (**success**), or a reason (**failure**: the tool
-could not run, the admissibility check failed it, or the run returned a non-zero code, or a
-timeout — **no verdict**).
+Every `apply` is a **turn**: the logos runs the command, records its outcome as an observation
+(a result, a reason, or a timeout — no verdict), and appends the action to the state's turns in
+order. There is no cursor and no retry grouping: a failed turn is followed by whatever the doxa
+proposes next, and both turns stay on the tape.
 
-**Where the next move goes** (the logos places it by that outcome; the doxa chooses the
-command):
-
-- after **success** — as a **new plan item**;
-- **otherwise** — as a **new alternative of the current item**.
-
-Bootstrap: `move` declares the state and its goal; the first `apply` seeds the state's plan
-with one item and runs its action at once (the logos); the state is born with its first item
-executed. Every attempt leaves new nodes; an existing node is neither reused nor edited — the
-journal stays monotone.
+Bootstrap: `move` declares the state and its goal; the first `apply` creates the turns container
+and appends its first action at once (the logos); the state is born with its first turn. Every
+call leaves new nodes; an existing node is neither reused nor edited — the journal stays
+monotone.
 
 **Structural moves.** `move`, `stop` and `decline` are not a command execution
 but a change of the tree. If such a move is inadmissible, it is **refused**: no node is created,
@@ -293,12 +282,13 @@ note about the concrete subject (a guess that may be wrong, not the state's goal
 
 **Action.** Create a `move` node `M` with payload `{ state, what }`; link it as the
 request's newest `move` child (`R.move += M`); emit `descend` `R → M`. Focus moves to `M`. The
-move declares the state; the plan hangs directly off `M`. The move is legal at a
+move declares the state; the turns hang directly off `M`. The move is legal at a
 **fresh request** (no `move` yet) or at a **finished state** (a `move` with a `stop`). It is
 refused while a state is still open (`state_open`) or with a bad state name (`empty_state`).
 
-**Focus.** The focus becomes `M`; the next admissible moves are `apply` (the first call seeds
-the plan) and `stop`; at the terminal state (`end`, no plan) only `stop`.
+**Focus.** The focus becomes `M`; the next admissible move is `apply` (the first call seeds the
+turns); at the terminal state (`end`, no turns) the doxa replies with text to complete the
+request.
 
 ### 4.2 `apply`
 
@@ -309,20 +299,20 @@ Runs one command in the current state.
 
 **Action.** The command runs; the outcome is recorded as `A.result = observation` (read,
 grep, list, run) or `A.mutates += file` (an edit) — or, when it did not run, an observation
-with a reason. Placement is by the outcome of the current item (§2.7). The **first** `apply` in
-an open state seeds the state's plan: it creates the `plan` and its first `item`, of which the
-command is the sole alternative. Focus does not move. `apply` is admissible only inside an open
-state; elsewhere it is refused (`no_state`).
+with a reason. The action is appended to the state's turns (§2.7). The **first** `apply` in an
+open state creates the `turns` container and its first `turn`. Focus does not move. `apply` is
+admissible only inside an open state; elsewhere it is refused (`no_state`).
 
 ### 4.3 `stop`
 
-Closes a state — the only way to finish it.
+Closes a state — the only way to finish it. The doxa produces it as a **text reply with no tool
+call**; the engine records the same `stop` relation (the reply is the reason).
 
 **Input.** `{ why? }` — the reason.
 
 **Action.** If the focus is an open **state** (a `move` not yet stopped), create a `stop` node
 `S` and link `M.stop = S`: the state is finished; the next decision is the transition (§4.1).
-If the focus is the **terminal state** (`end`, which has no plan), the same `stop` ends the
+If the focus is the **terminal state** (`end`, which has no turns), the same closure ends the
 request (`request_addressed`). There is **no criterion gate**: the doxa closes the state while
 working. `stop` at the request (or at an already-finished state) is refused (`not_addressed`).
 
@@ -332,7 +322,7 @@ Finishes a request whose intent is not actionable, inventing no state.
 
 **Input.** `{ why? }` — the reason. **Applies to.** A fresh request.
 
-**Action.** Create an `unactionable` node `U`; link `R.unactionable = U`. No `move` or plan is
+**Action.** Create an `unactionable` node `U`; link `R.unactionable = U`. No `move` or turns are
 created. Focus ends the run (`request_unactionable`). On a `move` — `not_request`; on an
 already interpreted request — `interpreted`; on an already declined one — `repeated_action`.
 
@@ -435,8 +425,8 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   the files to pre-patch; the current implementation renders **no** separate "Previous failed
   attempt" block (see `tests/revert.test.ts`). `stop` still closes only by the doxa;
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
-  observation); the **first** `apply` after a `move` seeds the state's plan (a `plan` + one
-  `item`), so the first plan item is an ordinary tool call;
+  observation); the **first** `apply` after a `move` seeds the state's turns (a `turns` node +
+  its first `turn`), so the first turn is an ordinary tool call;
 - `stop` — the state's closure renders as a `Finish state <label> — <why>` marker (a `system`
   turn), read from the `move.stop` relation; it adds no tool call. At the terminal state `stop`
   ends the request;
@@ -445,16 +435,15 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   with the reason (`rejected <move>: <reason>`, next turn; no node). A `recall`/`search` is a
   regular step: an `action` + its `observation` on the state's tape (see above).
 
-So an **open state** is `Start state <label>` / `instruction` (`system`) / goal (`user`) and its
-plan (the `apply` calls and their results); a **closed state** is only `Start state <label>` /
-`Finish state <label> — <why>`. Alternative commands carry a
-marker (`alternative to step "…" (previous attempt: "…" — reason)`), where `reason` is **one
-line** referencing the observation (`see [obsId]`), never an inlined body. Each `apply` result
-exposes the node id (`[id] …`) so it can be addressed by id with `recall`/`search`.
+So an **open state** is `Start state <label>` / `instruction` (`system`) / conduct hint /
+goal + criterion (`user`) and its turns (the `apply` calls and their results, in append order);
+a **closed state** is only `Start state <label>` / `Finish state <label> — <why>`. There is no
+alternative marker: every call is its own turn. Each `apply` result exposes the node id
+(`[id] …`) so it can be addressed by id with `recall`/`search`.
 
 **The tape is not monotone.** A finished state — the current one awaiting the transition, or one
 already left behind — collapses to `Start state <label>` / `Finish state <label> — <why>`; its
-brief, instruction, goal and plan turns leave the tape. Only the view goes, not the data: the
+brief, instruction, goal and turn messages leave the tape. Only the view goes, not the data: the
 tree stays complete.
 
 **The doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
@@ -477,18 +466,16 @@ nonzero exit.
 **The system part** is assembled per situation, not as a monolith: the base prompt holds only
 what is true on any turn (the role, the principles, the contract, the state set and its
 transitions); appended last each turn (temporary, never stored) is the current situation's
-instruction per situation: `request` (choose the first state, or `decline`; `what`/`done` — from the
-request), `plan` (`planInstruction`: "Call a tool…" + the per-turn tail), `working`
-(`turnInstruction`: the per-turn tail — conduct → done criterion → closure; never
-stored, rebuilt on the next turn), `transition` (`transitionInstruction(island)`: the source of
-`what`/`done` is the `Finish state <label>` line of the just-finished state; the `next`
-neighbours are listed; choose the next state), `terminal` ("This is End." + the terminal
-state's hint). The tool names/parameters/descriptions
-are **not** in the prompt — they ship in the request's `tools` field, and that field is **bound
-from `Context.applicable`**: on a `request`/`transition` only `move` is offered (plus read-only
-`recall`/`search`), while a state is open the apply tools and `stop` are offered, so a move the
-engine would refuse cannot be called at all (the `propose` path passes `toolNamesFor(applicable)`
-as `allowedTools`).
+instruction: `request` (choose the first state, or `decline`; `what`/`done` — from the request),
+`transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
+`Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
+the next state), `terminal` ("This is End." + the text completion rule). An open state appends
+nothing: its hint and `Done when` criterion live in its `Start state` entry. The tool
+names/parameters/descriptions are **not** in the prompt — they ship in the request's `tools`
+field, and that field is **bound from `Context.applicable`**: on a `request`/`transition` only
+`move` is offered (plus read-only `recall`/`search`), while a state is open the apply tools are
+offered. `stop` is engine-owned: the doxa closes a state with a text reply, so no `stop` tool is
+offered.
 
 ---
 
@@ -500,9 +487,9 @@ as `allowedTools`).
 4. The doxa only proposes; the logos decides.
 5. A command's exit code is ordinary output, not a closure verdict.
 6. Every `move` is a child of the request and carries its own note (`what`); the state's goal
-   is the island's; the plan hangs off the `move`; every action is an alternative of exactly one item. A state is never an item's
-   alternative, and the request has no goal of its own.
-7. `stop` is a relation on the `move`, never a plan item.
+   is the island's; the turns hang off the `move`; every action is exactly one turn of that
+   state. A state is never a turn, and the request has no goal of its own.
+7. `stop` is a relation on the `move`, never a turn.
 8. A closed state's turns leave the tape: only `Start state <label>` / `Finish state <label> —
    <why>` remains (§7).
 9. A `move`'s `state` is the doxa's authored label: it never gates a `move` and never closes a
@@ -519,8 +506,8 @@ as `allowedTools`).
 ### 9.1 Open
 
 - The exact boundary of the base prompt and the node prompts (§7) — the next stage.
-- Re-formulate "the first unfulfilled item" once the item shape is settled in detail.
-- The alternative marker is simplified; revisit if it proves too little.
+- The turns list removed the item/alternative layer; revisit only if a future feature needs
+  explicit retry grouping.
 
 ### 9.2 Non-goals
 

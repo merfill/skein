@@ -61,7 +61,7 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "state",
     description:
-      "Return a state's plan: items, the current action, its result id and outcome (L2). Call with { unit, id }; unit is a task id (e.g. r1).",
+      "Return a state's turns: each action, its result id and outcome (L2). Call with { unit, id }; unit is a task id (e.g. r1).",
     schema: stateSchema,
   },
   {

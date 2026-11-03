@@ -1,11 +1,8 @@
 import type { Event } from "./events";
 import {
   actionExecuted,
-  actionSucceeded,
-  childrenOf,
   hasStopped,
   lastChild,
-  planOf,
   unactionableOf,
   type State,
 } from "./graph";
@@ -38,8 +35,8 @@ export function moveIsland(state: State, id: string): IslandId | undefined {
 }
 
 // Is the state of this `move` finished? A state (including the terminal End state, which
-// has no plan) is finished when it is stopped — the doxa's `stop` is the only closure
-// (docs/ir_semantics.md §2.5).
+// has no turns) is finished when the doxa closes it — by a text reply, which the engine records
+// as the `stop` relation (docs/ir_semantics.md §2.5).
 export function isMoveFinished(state: State, id: string): boolean {
   return hasStopped(state, id);
 }
@@ -50,34 +47,6 @@ export function isFinished(state: State, id: string): boolean {
   if (node?.kind === "action") return actionExecuted(state, id);
   if (node?.kind === "move") return isMoveFinished(state, id);
   return hasStopped(state, id);
-}
-
-// An item is fulfilled when its current (last) alternative is an executed, succeeded
-// action. An item's alternatives are actions only (no sub-goal) (docs/ir_semantics.md §2.5).
-export function itemFulfilled(state: State, itemId: string): boolean {
-  const current = lastChild(state, itemId);
-  if (current === undefined) return false;
-  const option = state.nodes.get(current);
-  if (option?.kind === "action") return actionSucceeded(state, current);
-  return false;
-}
-
-export function cursorOf(state: State, moveId: string): number | undefined {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return undefined;
-  const items = childrenOf(state, plan);
-  const index = items.findIndex((id) => !itemFulfilled(state, id));
-  return index === -1 ? items.length : index;
-}
-
-export function firstUnfulfilledItem(state: State, moveId: string): string | undefined {
-  const plan = planOf(state, moveId);
-  if (plan === undefined) return undefined;
-  return childrenOf(state, plan).find((id) => !itemFulfilled(state, id));
-}
-
-export function planExhausted(state: State, moveId: string): boolean {
-  return firstUnfulfilledItem(state, moveId) === undefined;
 }
 
 // The path from the root the focus should sit on: the request and its current state (`move`),
@@ -116,7 +85,7 @@ export interface Applicable {
   focus?: string;
   // Declare the state to work in (a fresh request, or a finished state — the transition).
   move: boolean;
-  // Work the open state: the first `apply` seeds the plan, later ones extend it.
+  // Work the open state: the first `apply` seeds the turns, later ones extend them.
   apply: boolean;
   // The apply-tools admissible in the focused state (the island's `applies`); empty unless
   // `apply`. The model surface is bound from this (src/llm/tools.ts:toolNamesFor).
@@ -151,7 +120,7 @@ export function applicable(state: State, focusId: string | undefined): Applicabl
 
   if (node?.kind === "move") {
     if (isTerminalIsland(moveIsland(state, focusId) ?? "")) {
-      // The terminal state: it accepts `stop` directly (no plan); once stopped the request
+      // The terminal state: it accepts `stop` directly (no turns); once stopped the request
       // is finished and the run ends.
       return isMoveFinished(state, focusId)
         ? { ...none, focus: focusId, return: true }
@@ -161,7 +130,7 @@ export function applicable(state: State, focusId: string | undefined): Applicabl
       // A finished state: the forced transition decision.
       return { ...none, focus: focusId, move: true };
     }
-    // An open state: work it (the first `apply` seeds the plan) or stop it.
+    // An open state: work it (the first `apply` seeds the turns) or stop it.
     const island = moveIsland(state, focusId);
     return {
       ...none,
