@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadSettings } from "../src/config/settings";
 import type { Event } from "../src/ir/events";
 import { childrenOf, currentFocus, currentVersion, fold, lastChild } from "../src/ir/graph";
-import type { IslandId } from "../src/ir/islands";
+import type { IslandId, LiveIslandId } from "../src/ir/islands";
 import { focusEvents } from "../src/ir/traversal";
 import { project, type Context } from "../src/ir/project";
 import { reasoningBody, reasoningOffBody } from "../src/llm/client";
@@ -753,7 +753,7 @@ describe("the message tape", () => {
 });
 
 describe("text stop", () => {
-  const NEXT: Partial<Record<IslandId, IslandId>> = {
+  const NEXT: Partial<Record<IslandId, LiveIslandId>> = {
     orientation: "localization",
     localization: "patch",
     patch: "verification",

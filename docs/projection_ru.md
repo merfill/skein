@@ -47,10 +47,11 @@
   после запроса; проекция выбирает нужный блок для **текущего** состояния.
   Orientation получает `Workspace` — карту workspace (`root`, `cwd` если shell стартует не в
   root, repo, entries/paths); Localization
-  и Research получают ту же карту как `Orientation result` (Research — плюс `Probe` с
-  interpreters/tools); Patch получает её же как `Workspace`; Recovery/Construction/Verification —
-  `Probe` (environment) отдельным заголовком. Блок идёт отдельным `system`-ходом перед
-  инструкцией. Закрытые состояния блоков не несут; на request-ходу их нет;
+  и Research получают ту же карту плюс environment; Patch получает карту; Construction и
+  Verification — environment. Environment — короткий список фактов (`Workspace root`,
+  `Network is available`, interpreters, package managers, build/test tools), не инвентарь
+  стоковых утилит. Блок идёт отдельным `system`-ходом перед инструкцией. Закрытые состояния
+  блоков не несут; на request-ходу их нет;
 - карта workspace детерминирована: `root`, `cwd` (если отличается), repo-статус, top-level
   entries (для маленьких материалов — paths), число файлов. Environment, расширения, конфиги, команды сборки и build
   state в Orientation **не** показываются; объявленная команда не выдаётся за acceptance;

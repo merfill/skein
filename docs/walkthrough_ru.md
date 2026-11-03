@@ -31,7 +31,8 @@
 наблюдаемому признаку видно, что цель достигнута) и способ действовать (какие инструменты
 доступны и как себя вести). Модель входит в состояние ходом `move`, работает в нём и закрывает
 его ходом `stop`, когда критерий выполнен. Набор состояний фиксирован: Orientation,
-Localization, Research, Patch, Recovery, Construction, Verification, End. Текущее состояние
+Localization, Research, Patch, Construction, Verification, End. (`Recovery` — legacy-имя: его
+работа теперь входит в Research, а старые журналы его ещё рендерят.) Текущее состояние
 задаёт, что видно в ленте: его цель, сведения о материале, инструкцию и план. Когда состояние закрыто,
 лента оставляет от него только `Start`/`Finish`, а фокус переходит к следующему.
 
@@ -97,7 +98,7 @@ system   <подсказка хода: hint → Done when → требовани
 system   Start state Localization
 system   Orientation result: root /app, entries ...
 system   Find the target in the material ...
-user     Goal: find the target in the material
+user     Goal: find the defect in existing code, files, or history
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
@@ -162,14 +163,16 @@ move { state, what?, done? }
 
 | Остров | Цель (`island.what`) | Критерий (кратко) | Сведения о материале | `next` |
 |---|---|---|---|---|
-| **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace` | L, R, C |
-| **Localization** | найти цель в материале | цель и координаты; сиблинги исключены; предполагаемая причина (unverified) | `Orientation result` | P, R¹ |
-| **Research** | объяснить ситуацию и установить метод | ситуация объяснена; метод назван | `Orientation result` + `Probe` | Recovery, C, L¹ |
-| **Patch** | внести названное изменение в артефакт | полное изменение (найденный артефакт + остальные нужные файлы); форма результата проверена | `Workspace` | V |
-| **Recovery** | восстановить требуемый output из материала | output есть в объявленной форме, выведен из материала, совпадает с его содержанием | `Probe` | End, R |
-| **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | `Probe` | End, R |
-| **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | `Probe` | End, P, L |
+| **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace map` | L, R, C |
+| **Localization** | найти дефект в существующем коде, файлах или истории | цель и координаты; сиблинги исключены; предполагаемая причина (unverified) | `Workspace map` + environment | P, R¹ |
+| **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | `Workspace map` + environment | End, L¹ |
+| **Patch** | внести названное изменение в артефакт | полное изменение (найденный артефакт + остальные нужные файлы); форма результата проверена | `Workspace map` | V |
+| **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | environment | End, R |
+| **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | environment | End, P, L |
 | **End** | завершить запрос | проверка сделана в закрытом состоянии; не перепроверять | — | — |
+
+Legacy-остров `recovery` всё ещё рендерится для журналов до слияния; живой целью `move` он не
+является.
 
 ¹ Коррекционные рёбра. `Localization → Research` выбирают, если работа оказалась ситуацией, а
 не дефектом кода; `Research → Localization` — если ситуация оказалась дефектом кода. Так
@@ -182,10 +185,12 @@ move { state, what?, done? }
 ### 2.2 Маршруты
 
 - **Repair:** `O → L → P → V → End`.
-- **Recovery:** `O → R → Recovery → End`.
-- **Construction:** `O → C → End` (спека полная) или `O → R → C → End` (источник надо понять).
+- **Recovery:** `O → R → End` (реконструкцию делает Research; отдельного Recovery нет).
+- **Construction:** `O → C → End`; неудачный Construction может уйти в `R` при провале метода.
+- **Hybrid:** `O → R → P → V → End` для задачи, где сначала добывается секрет, а потом меняется
+  артефакт (`git-leak-recovery`); шаг `R → P` — явный `move`, а не подсказанное ребро.
 - **Коррекционные:** `V → P/L` при провале; `L ↔ R` при неверной стартовой классификации;
-  `R/C → R` при провале метода.
+  `C → R` при провале метода.
 
 У запроса нет своего `stop`. Он интерпретируется один раз (`move` или `decline`), а прогон
 завершается, когда закрыто терминальное состояние `End`.
@@ -194,9 +199,9 @@ move { state, what?, done? }
 
 ### 3.1 Сведения о материале
 
-Сведения о материале зависят от острова: `Workspace` (Orientation, Patch), `Orientation result`
-(Localization, Research; Research дополнительно получает `Probe`), `Probe` (Recovery,
-Construction, Verification). Это уже записанные факты; перепроверять их не нужно.
+Сведения о материале зависят от острова: `Workspace map` (Orientation, Patch),
+`Workspace map` + environment (Localization, Research), environment (Construction, Verification).
+Legacy Recovery тоже получает environment. Это уже записанные факты; перепроверять их не нужно.
 
 ### 3.2 Рассуждения
 
@@ -287,7 +292,7 @@ Localization:
 system   Start state Localization
 system   Orientation result: root /app; entries ...; acceptance: make test
 system   Find the target ... (инструкция состояния)
-user     Goal: find the target in the material
+user     Goal: find the defect in existing code, files, or history
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...

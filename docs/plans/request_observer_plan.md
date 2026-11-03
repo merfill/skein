@@ -136,7 +136,7 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
   2. check request closure (`request_addressed`);
   3. `detectTriggers`; if there is a trigger and the observer unit budget is not exhausted — push
      the observer unit, `runRequestObserver`, pop; apply `hint`/`memo`/`halt`;
-  4. check `max_turns`; if the current island is `end|patch|recovery|construction`, allow
+  4. check `max_turns`; if the current island is `end|research|patch|construction`, allow
      another `G` turns once (`SKEIN_GRACE_TURNS`); otherwise finish; on `halt` —
      `done`/`observer_halt`.
 - `LoopState` gains `session`; `AgentResult` returns the session.
@@ -179,7 +179,7 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 - **Detector:** `state_cycle` on the third entry; `state_long` beyond 20 turns; `budget`
   within K turns, not at the hard limit and not at a terminal state; identical events →
   identical triggers.
-- **Grace:** in `patch|recovery|construction|end` at `max_turns`, `G` more turns
+- **Grace:** in `patch|research|construction|end` at `max_turns`, `G` more turns
   (`SKEIN_GRACE_TURNS`, default 5) once; in other states the run ends immediately.
 - **Observer unit:** the seeded call and result have matching ids and `origin: "engine"`; a replay
   reads them from the journal; observer tools are read-only (they do not write to the task journal);
@@ -202,7 +202,7 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 - `nudge`/`no_progress` are absent; `max_turns` and normal closure are preserved.
 - The budget trigger fires before `max_turns` and is suppressed near the terminal state;
   without a observer unit reaction, `max_turns` still ends the run, except for one grace window
-  (`SKEIN_GRACE_TURNS`, default 5) in `patch|recovery|construction|end`.
+  (`SKEIN_GRACE_TURNS`, default 5) in `patch|research|construction|end`.
 - The same journal/session gives the same trigger and the same observer context (the LLM reply is
   replayed from the recorded journal).
 - No live/bench run was made.

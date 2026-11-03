@@ -144,46 +144,53 @@ describe("environment probe", () => {
 
   it("selects a different subset for the states that need tools", () => {
     const research = environmentBrief(environment, "research");
-    expect(research).toContain("Environment");
-    expect(research).not.toContain("root:");
-    expect(research).not.toContain("version-control tools");
-    expect(research).toContain("interpreters:");
-    expect(research).toContain("tools:");
-    expect(research).toContain("sqlite3");
-    expect(research).toContain("missing:");
-    expect(research).toContain("7z");
+    expect(research).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
+    expect(research).toContain("Available package managers: npm 10.2.0.");
+    expect(research).not.toContain("Environment");
+    expect(research).not.toContain("Workspace root:");
+    expect(research).not.toContain("Version-control tools:");
+    expect(research).not.toContain("tools:");
+    expect(research).not.toContain("sqlite3");
+    expect(research).not.toContain("missing:");
+    expect(research).not.toContain("7z");
 
     const recovery = environmentBrief(environment, "recovery");
-    expect(recovery).toContain("root: /app");
-    expect(recovery).toContain("tools:");
-    expect(recovery).not.toContain("version-control tools");
+    expect(recovery).toContain("Workspace root: /app.");
+    expect(recovery).toContain("Installed interpreters:");
+    expect(recovery).not.toContain("Version-control tools:");
 
     // Patch edits an existing artifact: it gets the material map, not the toolchain.
     expect(environmentBrief(environment, "patch")).toBe("");
 
     const construction = environmentBrief(environment, "construction");
-    expect(construction).toContain("build tools:");
-    expect(construction).toContain("test tools:");
-    expect(construction).toContain("package managers:");
+    expect(construction).toContain("Build tools:");
+    expect(construction).toContain("Test tools:");
+    expect(construction).toContain("Available package managers:");
 
     const verification = environmentBrief(environment, "verification");
-    expect(verification).toContain("build tools:");
-    expect(verification).toContain("test tools:");
-    expect(verification).not.toContain("interpreters:");
+    expect(verification).toContain("Build tools:");
+    expect(verification).toContain("Test tools:");
+    expect(verification).not.toContain("Installed interpreters:");
 
     const localization = environmentBrief(environment, "localization");
-    expect(localization).toContain("Environment");
-    expect(localization).toContain("version-control tools: git 2.39.2");
-    expect(localization).toContain("interpreters:");
-    expect(localization).toContain("tools: jq");
-    expect(localization).not.toContain("root:");
+    expect(localization).toContain("Version-control tools: git 2.39.2.");
+    expect(localization).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
+    expect(localization).not.toContain("tools: jq");
+    expect(localization).not.toContain("Workspace root:");
     expect(environmentBrief(environment, "end")).toBe("");
   });
 
   it("shows the agent's network policy with the environment", () => {
-    expect(environmentBrief({ ...environment, network: "off" }, "construction")).toContain("network: off");
+    expect(environmentBrief({ ...environment, network: "off" }, "construction")).toContain("Network is available: no");
     expect(environmentBrief({ ...environment, network: "off" }, "construction")).toContain("package installs");
-    expect(environmentBrief({ ...environment, network: "on" }, "construction")).toContain("network: on");
+    expect(environmentBrief({ ...environment, network: "on" }, "construction")).toContain("Network is available: yes.");
+  });
+
+  it("states the Research environment as explicit facts", () => {
+    expect(environmentBrief({ ...environment, network: "on" }, "research")).toContain("Network is available: yes.");
+    const off = environmentBrief({ ...environment, network: "off" }, "research");
+    expect(off).toContain("Network is available: no");
+    expect(off).toContain("package installs");
   });
 
   it("marks a timed-out probe as partial", () => {
@@ -195,8 +202,8 @@ describe("environment probe", () => {
   it("keeps the environment probe separate from the Orientation result", () => {
     const probe: SessionProbe = { environment, material };
     expect(probeBrief(probe, "orientation")).toBe("");
-    expect(probeBrief(probe, "research")).toContain("Environment");
-    expect(probeBrief(probe, "localization")).toContain("Environment");
+    expect(probeBrief(probe, "research")).toContain("Installed interpreters:");
+    expect(probeBrief(probe, "localization")).toContain("Version-control tools:");
   });
 });
 
@@ -325,25 +332,25 @@ describe("session probe projection", () => {
       (message) => message.role === "system" && message.text.includes("Workspace map"),
     );
     expect(localizationBrief?.text).toContain("Workspace map");
-    expect(localizationBrief?.text).toContain("Environment");
-    expect(localizationBrief?.text).toContain("interpreters:");
+    expect(localizationBrief?.text).toContain("Version-control tools: git 2.39.2.");
+    expect(localizationBrief?.text).toContain("Installed interpreters:");
 
     const research = project(fold([request(), probeEvent(probe), ...move("research")]));
     const researchBrief = research.history.find(
       (message) => message.role === "system" && message.text.includes("Workspace map"),
     );
     expect(researchBrief?.text).toContain("Workspace map");
-    expect(researchBrief?.text).toContain("Environment");
-    expect(researchBrief?.text).toContain("interpreters:");
+    expect(researchBrief?.text).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
+    expect(researchBrief?.text).not.toContain("Environment");
   });
 
   it("gives other states the probe only, not the Orientation result", () => {
     const probe: SessionProbe = { environment, material };
     const recovery = project(fold([request(), probeEvent(probe), ...move("recovery")]));
     const brief = recovery.history.find(
-      (message) => message.role === "system" && message.text.startsWith("Environment"),
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
-    expect(brief?.text).toContain("Environment");
+    expect(brief?.text).toContain("Installed interpreters:");
     expect(brief?.text).not.toContain("Workspace map");
   });
 

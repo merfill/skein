@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import { fold } from "../../src/ir/graph";
-import type { IslandId } from "../../src/ir/islands";
+import type { LiveIslandId } from "../../src/ir/islands";
 import { project, type Context, type ProjectOptions } from "../../src/ir/project";
 import { focusEvents } from "../../src/ir/traversal";
 import { createChatModel } from "../../src/llm/client";
@@ -42,7 +42,7 @@ function projectAt(events: readonly Event[], options: ProjectOptions = {}): Cont
 }
 
 // A declared state whose goal's seed command already ran.
-function stateIn(state: IslandId, command = "true"): Event[] {
+function stateIn(state: LiveIslandId, command = "true"): Event[] {
   const { ws } = makeWorkspace(DEFAULT_FILES);
   return execAll([move(state, "the goal"), run(command)], [request("Fix the failing test.")], ws)
     .events;

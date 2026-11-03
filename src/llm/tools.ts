@@ -1,7 +1,7 @@
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
-import { ISLAND_IDS, type IslandId } from "../ir/islands";
+import { LIVE_ISLAND_IDS, type IslandId } from "../ir/islands";
 import { actionSchema, applySchema, type Action, type Apply, type Proposal } from "./schemas";
 
 // Structured output via native tool calls (docs/testing_ru.md §8.1). The provider does
@@ -67,7 +67,7 @@ const patchParams = z.object({
 // Only `state` is required: `what` falls back to the island's goal and `done` to its criterion
 // when omitted.
 const moveParams = z.object({
-  state: z.enum(ISLAND_IDS),
+  state: z.enum(LIVE_ISLAND_IDS),
   what: z.string().optional(),
   done: z.string().optional(),
 });
@@ -175,6 +175,9 @@ const PATCH_BASH_SUFFIX =
 const RECOVERY_BASH_SUFFIX =
   "This state reconstructs data from the material: you may create and modify files (the output, " +
   "working copies); keep the material read-only; do not edit the material.";
+const RESEARCH_BASH_SUFFIX =
+  "This state may reconstruct the result from the material: you may create and modify the output " +
+  "and working copies; keep the material read-only; do not build the next state's artifact.";
 const CONSTRUCTION_BASH_SUFFIX =
   "This state builds a new artifact: write only the artifact and its acceptance check; do not " +
   "modify the material or unrelated files.";
@@ -190,6 +193,7 @@ export function bashDescriptionFor(island?: IslandId): string {
   const base = baseDescription("bash");
   if (island === "patch") return `${PATCH_BASH_SUFFIX} ${base}`;
   if (island === "recovery") return `${RECOVERY_BASH_SUFFIX} ${base}`;
+  if (island === "research") return `${RESEARCH_BASH_SUFFIX} ${base}`;
   if (island === "construction") return `${CONSTRUCTION_BASH_SUFFIX} ${base}`;
   return base;
 }
@@ -215,6 +219,9 @@ const PATCH_APPLY_PATCH_SUFFIX =
 const RECOVERY_WRITE_SUFFIX =
   "This state reconstructs data from the material: write the required output or working copies; " +
   "do not overwrite the material.";
+const RESEARCH_WRITE_SUFFIX =
+  "This state may reconstruct the result from the material: write the required output or working " +
+  "copies; do not overwrite the material; do not build the next state's artifact.";
 const CONSTRUCTION_EDIT_SUFFIX =
   "This state builds a new artifact: edit only the artifact you are building; do not modify the " +
   "material or unrelated files.";
@@ -247,6 +254,8 @@ export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
     descriptions.apply_patch = `${PATCH_APPLY_PATCH_SUFFIX} ${baseDescription("apply_patch")}`;
   } else if (island === "recovery") {
     descriptions.write = `${RECOVERY_WRITE_SUFFIX} ${baseDescription("write")}`;
+  } else if (island === "research") {
+    descriptions.write = `${RESEARCH_WRITE_SUFFIX} ${baseDescription("write")}`;
   } else if (island === "construction") {
     descriptions.edit = `${CONSTRUCTION_EDIT_SUFFIX} ${baseDescription("edit")}`;
     descriptions.write = `${CONSTRUCTION_WRITE_SUFFIX} ${baseDescription("write")}`;

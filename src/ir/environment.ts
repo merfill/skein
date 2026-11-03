@@ -41,29 +41,15 @@ export interface EnvironmentFact {
 }
 
 // Orientation establishes the inputs and the acceptance, not the toolchain: it gets no
-// environment block. Research probes the source, so it gets the interpreters and the tools
-// used to inspect/decode/verify it.
-const ORIENTATION_GROUPS: readonly EnvironmentGroup[] = [];
-// Localization walks the material with the shell and its search tools: it needs the VCS
-// tools, the core text tools, and interpreters for a search script.
-const LOCALIZATION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "core", "interpreters"];
-const RESEARCH_GROUPS: readonly EnvironmentGroup[] = [
-  "interpreters",
-  "core",
-  "crypto",
-  "data",
-  "archive",
-  "net",
-  "pkg",
-];
-// Recovery writes the output and scratch copies, so it uses the same tool surface as Research
-// and also needs the workspace root.
-const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
+// environment block. Localization needs the VCS tools and the interpreters that can run a search
+// script; Research needs the interpreters and package managers that can produce the result;
 // Construction and Verification run the project's build and its declared check.
+const ORIENTATION_GROUPS: readonly EnvironmentGroup[] = [];
+const LOCALIZATION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "interpreters"];
+const RESEARCH_GROUPS: readonly EnvironmentGroup[] = ["interpreters", "pkg"];
+const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
 const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["build", "compilers", "test", "interpreters", "pkg"];
 const VERIFICATION_GROUPS: readonly EnvironmentGroup[] = ["build", "test", "pkg"];
-
-const TOOL_GROUPS: ReadonlySet<EnvironmentGroup> = new Set(["core", "crypto", "data", "archive", "net"]);
 
 function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
   // The request turn has no island and carries no probe block; the first state that opens it
@@ -83,55 +69,42 @@ function toolLine(tool: EnvironmentTool): string {
   return tool.version !== undefined && tool.version !== "" ? `${tool.name} ${tool.version}` : tool.name;
 }
 
-// A compact Markdown brief for an explicit set of groups, or "" when it has nothing to say.
-// Only facts: no recommendation about which language to use.
+// A compact brief for an explicit set of groups, or "" when it has nothing to say. Only
+// decision-relevant facts: the workspace root, the network policy, and the named groups. The
+// stock shell utilities (core/crypto/data/archive/net) are not an inventory worth printing:
+// listing them reads as a recommendation about the method.
 export function environmentGroupsBrief(
   fact: EnvironmentFact,
   groups: readonly EnvironmentGroup[],
   options: { showRoot?: boolean } = {},
 ): string {
   if (groups.length === 0) return "";
-  const found = fact.found.filter((tool) => groups.includes(tool.group));
-  const missing = fact.missing.filter((tool) => groups.includes(tool.group));
-  const partial = fact.partial === true ? " (partial; the probe hit its time budget)" : "";
-  const lines: string[] = [`Environment${partial}`];
-  const showRoot = options.showRoot === true;
-  if (showRoot && fact.root !== "") lines.push(`root: ${fact.root}`);
+  const lines: string[] = [];
+  if (options.showRoot === true && fact.root !== "") lines.push(`Workspace root: ${fact.root}.`);
   if (fact.network !== undefined) {
     lines.push(
       fact.network === "off"
-        ? "network: off — no external downloads; package installs that need the network will fail"
-        : "network: on",
+        ? "Network is available: no — no external downloads; package installs that need the network will fail."
+        : "Network is available: yes.",
     );
   }
-
-  const tools = found.filter((tool) => TOOL_GROUPS.has(tool.group)).sort((a, b) => a.name.localeCompare(b.name));
-  for (const group of ["vcs", "build", "compilers", "interpreters", "test", "pkg"] as const) {
-    if (!groups.includes(group)) continue;
-    const inGroup = found.filter((tool) => tool.group === group).sort((a, b) => a.name.localeCompare(b.name));
-    if (inGroup.length === 0) continue;
-    const label =
-      group === "pkg"
-        ? "package managers"
-        : group === "vcs"
-          ? "version-control tools"
-          : group === "build"
-            ? "build tools"
-            : group === "test"
-              ? "test tools"
-              : group;
-    lines.push(`${label}: ${inGroup.map(toolLine).join(", ")}`);
-  }
-  if (tools.length > 0) lines.push(`tools: ${tools.map(toolLine).join(", ")}`);
-  if (missing.length > 0) {
-    const shown = missing.slice(0, 12).map((tool) => tool.name);
-    const more = missing.length > shown.length ? `, … (+${missing.length - shown.length} more)` : "";
-    lines.push(`missing: ${shown.join(", ")}${more}`);
-  }
-  return lines.length > 1 ? lines.join("\n") : "";
+  const named = (group: EnvironmentGroup, label: string): void => {
+    const inGroup = fact.found
+      .filter((tool) => tool.group === group)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (inGroup.length > 0) lines.push(`${label}: ${inGroup.map(toolLine).join(", ")}.`);
+  };
+  if (groups.includes("vcs")) named("vcs", "Version-control tools");
+  if (groups.includes("build")) named("build", "Build tools");
+  if (groups.includes("compilers")) named("compilers", "Compilers");
+  if (groups.includes("interpreters")) named("interpreters", "Installed interpreters");
+  if (groups.includes("test")) named("test", "Test tools");
+  if (groups.includes("pkg")) named("pkg", "Available package managers");
+  if (fact.partial === true) lines.push("The environment scan was partial (time budget).");
+  return lines.join("\n");
 }
 
-// A compact Markdown brief for the state, or "" when it has nothing to say.
+// A compact brief for the state, or "" when it has nothing to say.
 export function environmentBrief(fact: EnvironmentFact, island?: IslandId): string {
   const groups = groupsFor(island);
   if (groups.length === 0) return "";

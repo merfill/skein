@@ -35,7 +35,7 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toContain("exactly one state");
     expect(BASE_PROMPT).toContain("Orientation");
     expect(BASE_PROMPT).toContain("Research");
-    expect(BASE_PROMPT).toContain("Recovery");
+    expect(BASE_PROMPT).not.toContain("Recovery");
     expect(BASE_PROMPT).toContain("Construction");
     expect(BASE_PROMPT).toContain("Verification");
   });
@@ -56,8 +56,8 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
     expect(BASE_PROMPT).toMatch(/- Localization → Research — the work is a situation, not a code defect to locate/);
     expect(BASE_PROMPT).toMatch(/- Research → Localization — the work is a code defect to locate/);
-    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation: not an error in code and not a fully specified new artifact/);
-    expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request fully specifies the new artifact — it can be written now/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation — the required result must be recovered or derived from the material or the specification/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request is to build a new artifact from a specification/);
     expect(BASE_PROMPT).toMatch(/End is terminal/);
   });
 
@@ -75,8 +75,8 @@ describe("system prompt: base + node assembly", () => {
     expect(fromOrientation).toContain("Localization"); // a reachable candidate
     expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
     expect(fromOrientation).not.toContain("Patch"); // only the focused state's `next` targets
-    expect(fromOrientation).toContain("find an error in existing code or files");
-    expect(fromOrientation).toContain("Otherwise move to Research");
+    expect(fromOrientation).toContain("fix an error in existing code, files, or history");
+    expect(fromOrientation).toContain("Move to Research when the request is a situation");
     expect(fromOrientation).toContain("Next states: Localization, Research, Construction.");
     expect(fromOrientation).toContain("Construction");
     expect(fromOrientation).toMatch(/`what`.*`done`/i);
@@ -97,7 +97,9 @@ describe("system prompt: base + node assembly", () => {
     );
     const fromResearch = transitionInstruction("research");
     expect(fromResearch).toContain("Finish state Research");
+    expect(fromResearch).toMatch(/Choose End when the required result exists/);
     expect(fromResearch).toMatch(/Choose Localization when the work is a code defect to locate/);
+    expect(fromResearch).not.toContain("Construction");
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
     expect(fromRecovery).toMatch(/matches what the material contains/);
@@ -140,9 +142,11 @@ describe("system prompt: tool contract", () => {
     // `bash` carries no state-specific read-only rule: inspection states get the global
     // description, so the state's own instruction decides what the work needs.
     const research = toolDescriptionsFor("research");
-    expect(research.bash).not.toMatch(/Inspection only/);
-    expect(research.bash).not.toMatch(/read-only commands/i);
-    expect(research.write).toBeUndefined();
+    expect(research.bash).toMatch(/may reconstruct the result/i);
+    expect(research.bash).toMatch(/keep the material read-only/i);
+    expect(research.write).toMatch(/may reconstruct the result/i);
+    expect(research.write).toMatch(/do not overwrite the material/i);
+    expect(research.edit).toBeUndefined();
 
     const recovery = toolDescriptionsFor("recovery");
     expect(recovery.bash).toMatch(/you may create and modify files/i);

@@ -26,12 +26,13 @@ tape, and a focus change changes the view without rewriting history. Whatever le
 in the journal and is fetched by `id`.
 
 **What a state is.** The agent's work is split into states. A state is not a step or a command
-but a state of knowledge: for example, "find the target in the material" or "check the change
+but a state of knowledge: for example, "find the defect in existing code, files, or history" or "check the change
 against the acceptance". Every state has a goal (what should be known), a criterion (the
 observable sign that the goal is reached) and a way to act (which tools are available and how to
 behave). The model enters a state with a `move`, works in it and closes it with a `stop` when the
-criterion holds. The set of states is fixed: Orientation, Localization, Research, Patch, Recovery,
-Construction, Verification, End. The current state determines what the tape shows: its goal, its
+criterion holds. The set of states is fixed: Orientation, Localization, Research, Patch,
+Construction, Verification, End. (Recovery is a legacy name: its work is now part of Research, and
+old journals still render it.) The current state determines what the tape shows: its goal, its
 material information, its instruction and its plan. Once a state is closed, the tape keeps only
 `Start`/`Finish` from it, and the focus moves to the next state.
 
@@ -97,7 +98,7 @@ An example of an open Localization after two calls:
 system   Start state Localization
 system   Orientation result: root /app, entries ...
 system   Find the target in the material ...
-user     Goal: find the target in the material
+user     Goal: find the defect in existing code, files, or history
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
@@ -165,14 +166,16 @@ work.
 
 | Island | Goal (`island.what`) | Criterion (briefly) | Material information | `next` |
 |---|---|---|---|---|
-| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace` | L, R, C |
-| **Localization** | find the target in the material | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Orientation result` | P, R¹ |
-| **Research** | explain the situation and establish the method | situation explained; method named | `Orientation result` + `Probe` | Recovery, C, L¹ |
-| **Patch** | make the named change to the artifact | complete change (located artifact + every other file the task needs); result form checked | `Workspace` | V |
-| **Recovery** | recover the required output from the material | output exists in its declared form, derived from the material, matches what it contains | `Probe` | End, R |
-| **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | `Probe` | End, R |
-| **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | `Probe` | End, P, L |
+| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace map` | L, R, C |
+| **Localization** | find the defect in existing code, files, or history | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Workspace map` + environment | P, R¹ |
+| **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | `Workspace map` + environment | End, L¹ |
+| **Patch** | make the named change to the artifact | complete change (located artifact + every other file the task needs); result form checked | `Workspace map` | V |
+| **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | environment | End, R |
+| **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | environment | End, P, L |
 | **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
+
+The legacy `recovery` island is still rendered for journals written before the merge; it is not a
+live `move` target.
 
 ¹ Corrective edges. `Localization → Research` is chosen when the work turns out to be a
 situation, not a code defect; `Research → Localization` when the situation turns out to be a code
@@ -185,9 +188,11 @@ Neither the instruction nor the hint replaces the goal: the goal is `island.what
 ### 2.2 Routes
 
 - **Repair:** `O → L → P → V → End`.
-- **Recovery:** `O → R → Recovery → End`.
-- **Construction:** `O → C → End` (full spec) or `O → R → C → End` (the source must be understood).
-- **Corrective:** `V → P/L` on failure; `L ↔ R` on a wrong start classification; `R/C → R` on a
+- **Recovery:** `O → R → End` (Research does the reconstruction; there is no separate Recovery).
+- **Construction:** `O → C → End`; a failed Construction may move to `R` on a method failure.
+- **Hybrid:** `O → R → P → V → End` for a task that recovers a secret and then changes an artifact
+  (`git-leak-recovery`); the `R → P` step is an explicit `move`, not a prompted edge.
+- **Corrective:** `V → P/L` on failure; `L ↔ R` on a wrong start classification; `C → R` on a
   method failure.
 
 The request has no `stop` of its own. It is interpreted once (`move` or `decline`), and the run
@@ -197,9 +202,10 @@ ends when the terminal `End` state is closed.
 
 ### 3.1 Material information
 
-The material information depends on the island: `Workspace` (Orientation, Patch), `Orientation result`
-(Localization, Research; Research also gets `Probe`), `Probe` (Recovery, Construction,
-Verification). These are already recorded facts; there is no need to re-probe them.
+The material information depends on the island: `Workspace map` (Orientation, Patch),
+`Workspace map` + environment (Localization, Research), and the environment (Construction,
+Verification). The legacy Recovery gets the environment too. These are already recorded facts;
+there is no need to re-probe them.
 
 ### 3.2 Reasoning
 
@@ -290,7 +296,7 @@ trace and the open Localization:
 system   Start state Localization
 system   Orientation result: root /app; entries ...; acceptance: make test
 system   Find the target ... (state instruction)
-user     Goal: find the target in the material
+user     Goal: find the defect in existing code, files, or history
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...

@@ -307,6 +307,16 @@ Beyond Tier 0, the current line adds:
   `docs/plans/general_unit_plan.md`; tests — `tests/general_unit.test.ts`; offline
   **524 passed, 40 skipped**.
 
+- **Research = Research + Recovery (2026-11-03).** The `recovery` island is merged into
+  `research`: one state derives the required result from the material or the specification, writes
+  the output and verifies it (read-only on a copy); `recovery` stays only for old journals. Routes:
+  `O → L` (defect), `O → R` (situation), `O → C` (build); `R → C` is removed, Construction stays
+  separate. The Environment block is now a short fact list (network, interpreters, package
+  managers, build/test tools), not a stock-utility inventory; a closed state's `Finish` line
+  carries `Artifacts:` from explicit `write`/`edit` calls; B2 prefers narrow probes and stopping.
+  K=3, 24 turns, net on: password 3/3 (17, 0.799₽), fix-code 3/3 (23, 0.734₽), db-wal 3/3
+  (24, 0.966₽). Offline 586 passed / 40 skipped.
+
 Verification: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`
 — offline tests; the live gate only when `SKEIN_LIVE=true` and with the owner's explicit
 go-ahead.

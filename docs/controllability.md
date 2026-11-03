@@ -100,7 +100,7 @@ and what a false positive costs.
 - more than 20 turns in one state;
 - reasoning growth or repetition over a window (reasoning chars/tokens per turn and their trend);
 - a premature `stop` when the goal or criterion is not met;
-- turn or token budget burn; in `patch|recovery|construction|end` at `max_turns` the engine
+- turn or token budget burn; in `patch|research|construction|end` at `max_turns` the engine
   deterministically allows a few more turns;
 - a repeated refusal: the model proposes the already rejected thing again;
 - plan oscillation: items are added and removed in a loop;

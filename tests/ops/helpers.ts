@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 
 import type { Event } from "../../src/ir/events";
 import { fold, type State } from "../../src/ir/graph";
-import { ISLANDS, type IslandId } from "../../src/ir/islands";
+import { ISLANDS, type LiveIslandId } from "../../src/ir/islands";
 import type { Action } from "../../src/llm/schemas";
 import { classify, type Classification } from "../../src/loop/classify";
 import { executeAction, type ExecOutcome } from "../../src/tools";
@@ -66,13 +66,13 @@ export function classification(action: Action, events: readonly Event[]): Classi
 }
 
 // Declare a state (the transition) with its goal text; `done` defaults to the island's criterion.
-export function move(state: IslandId = "orientation", what = "do it"): Action {
+export function move(state: LiveIslandId = "orientation", what = "do it"): Action {
   return { operator: "move", state, what, done: ISLANDS[state].criterion };
 }
 
 // A state plus its first plan item, as one turn pair (the move, then the first `apply` that
 // seeds the plan).
-export function withGoal(what: string, command?: string, state: IslandId = "orientation"): Action[] {
+export function withGoal(what: string, command?: string, state: LiveIslandId = "orientation"): Action[] {
   return [move(state, what), run(command ?? "true")];
 }
 

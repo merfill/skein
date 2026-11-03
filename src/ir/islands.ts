@@ -19,6 +19,20 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
+// The islands a live `move` may target. `recovery` stays in `ISLANDS` so journals written
+// before the Research/Recovery merge still render, but it is no longer reachable.
+export const LIVE_ISLAND_IDS = [
+  "orientation",
+  "localization",
+  "research",
+  "patch",
+  "construction",
+  "verification",
+  "end",
+] as const;
+
+export type LiveIslandId = (typeof LIVE_ISLAND_IDS)[number];
+
 // A general-unit work segment is not a coding island; it is one generic state in the IR.
 export const GENERAL_STATE = "general" as const;
 export type StateId = IslandId | typeof GENERAL_STATE;
@@ -86,22 +100,22 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "localization",
-        when: "the request is to find an error in existing code or files",
+        when: "the request is to fix an error in existing code, files, or history — the defect is in an existing artifact",
       },
       {
         to: "research",
-        when: "the request is a situation: not an error in code and not a fully specified new artifact",
+        when: "the request is a situation — the required result must be recovered or derived from the material or the specification",
       },
       {
         to: "construction",
-        when: "the request fully specifies the new artifact — it can be written now",
+        when: "the request is to build a new artifact from a specification",
       },
     ],
   },
   localization: {
     id: "localization",
     label: "Localization",
-    what: "find the target in the material",
+    what: "find the defect in existing code, files, or history",
     criterion: LOCALIZATION_CRITERION,
     instruction:
       "Find the target in the material — the file, record, image, or function — and name its " +
@@ -137,34 +151,27 @@ export const ISLANDS: Record<IslandId, Island> = {
   research: {
     id: "research",
     label: "Research",
-    what: "investigate the situation and establish the method",
+    what: "solve a situation: derive the required result from the material or the specification",
     criterion:
-      "the situation is explained — what happened, what the source does, or what must be built — " +
-      "and the method is named: the steps that will produce the result. The work itself belongs " +
-      "to the productive state.",
+      "the task's required result exists in its declared form, is derived from the material or " +
+      "the specification, and matches what the material or the request contains.",
     instruction:
-      "Explain the situation: what happened, what the source does, or what must be built. Name " +
-      "the method for this work — the steps that will produce the result — but do not carry it " +
-      "out here; the productive state does that. The workspace map and the environment are " +
-      "recorded facts: they are already read — do not re-probe or re-list them. Leave the " +
-      "material as you found it.",
+      "Solve the task from the material. Create the required result in its declared form when " +
+      "the task needs one. Let the material decide — a read-only check on a copy is allowed and " +
+      "preferred over guessing. Keep the material read-only; do not fabricate. The workspace map " +
+      "and the environment are recorded facts: they are already read — do not re-probe or " +
+      "re-list them.",
     hint:
-      "Explain the situation and name the method; do not do the work here — the productive state " +
-      "does that. Identify the source from its content, not from its appearance. Do not change " +
-      "the material; if a tool might change it, work on a copy.\n\n" +
-      "The tape already holds what you observed; the workspace map and the environment are " +
-      "recorded facts. Do not re-read, re-probe, or re-list them.\n\n" +
-      "If the request fully specifies the result and nothing is unknown, do not design it here — " +
-      "that is the next state's work.",
-    applies: INSPECT,
+      "Work from the material, not from its appearance. A read-only check on a copy is allowed " +
+      "and preferred over guessing; let the material confirm the result. Do not overwrite the " +
+      "material. The tape already holds what you observed — do not re-read, re-probe, or " +
+      "re-list it. When the required result exists and matches the material, reply with it as " +
+      "text only.",
+    applies: RECOVER_TOOLS,
     next: [
       {
-        to: "recovery",
-        when: "the hidden, encoded, or deleted data must be reconstructed from the material",
-      },
-      {
-        to: "construction",
-        when: "a new artifact or program must be built from the specification or the material's behaviour",
+        to: "end",
+        when: "the required result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains",
       },
       {
         to: "localization",
@@ -291,7 +298,7 @@ export const ISLANDS: Record<IslandId, Island> = {
   },
 };
 
-export const ISLAND_ORDER: readonly IslandId[] = ISLAND_IDS;
+export const ISLAND_ORDER: readonly IslandId[] = LIVE_ISLAND_IDS;
 
 // The state's description, shown ONCE when the state is entered (a `system` turn on the tape):
 // what the state is and the knowledge that closes it. The doxa's concretized `what`/`done`
@@ -313,5 +320,5 @@ export function isTerminalIsland(value: string): boolean {
 }
 
 export function isIsland(value: string): value is IslandId {
-  return (ISLAND_IDS as readonly string[]).includes(value);
+  return (LIVE_ISLAND_IDS as readonly string[]).includes(value);
 }

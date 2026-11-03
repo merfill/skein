@@ -4,6 +4,39 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-03 — Research = Research + Recovery, маршруты, артефакты, узкие пробы
+
+- **Merge:** `recovery` больше не живое состояние; Research поглотил его. `LIVE_ISLAND_IDS` без
+  `recovery`; `ISLANDS.recovery` остаётся только для старых журналов. `move` не может выбрать
+  recovery (`isIsland` проверяет live-набор), базовый промпт и переходы его не рисуют.
+- **Research:** `what` = `solve a situation: derive the required result from the material or the
+  specification`; criterion — Recovery: `the task's required result exists in its declared form,
+  is derived from the material or the specification, and matches what the material or the request
+  contains`. Убраны `investigate/produce result it yields`, `reconstruct`, ветка Construction и
+  запрет «do not carry it out». Read-only проверка на копии разрешена.
+- **Маршруты:** `O → L` (дефект в существующем артефакте) / `O → R` (ситуация: результат вывести
+  из материала/спеки) / `O → C` (построить новый артефакт). `Research → Construction` удалено —
+  Construction остаётся отдельным. Localization `what` = `find the defect in existing code, files,
+  or history` (было `find the target in the material`), Orientation-правило Localization —
+  «only … the defect is in an existing artifact».
+- **Environment:** без заголовка `Environment`, без `tools:`/`missing`. Только
+  `Workspace root`, `Network is available`, `Version-control tools`, `Build tools`, `Compilers`,
+  `Installed interpreters`, `Test tools`, `Available package managers`. `core/crypto/data/archive/net`
+  не рендерятся; `tools` убран из `PROBE_KINDS`.
+- **Finish-строка:** projection добавляет `Artifacts: <paths>` из явных `write`/`edit` action-нод
+  (не shell/билд-мутации). Закрытое состояние больше не теряет факт артефакта при элизии ходов.
+- **B2:** `inspect narrowly` (targeted `grep`/малое окно, не дамп региона) и `stop, do not re-run
+  a check`.
+- **Результаты (K=3, net on, `--turns 24`):** password **3/3**, 17 ходов, **0.799₽**; fix-code
+  **3/3**, 23, **0.734₽**; db-wal **3/3**, 24, **0.966₽**. Для сравнения password до merge —
+  2/3, 24, 1.412₽. `fix-code` r3 — `max_turns`, reward=1.
+- **Файлы:** `src/ir/{islands,environment,project}.ts`, `src/llm/{tools,schemas}.ts`,
+  `src/loop/{graph,prompt/blocks}.ts`, `src/session/session_workspace.ts`, тесты. Typecheck чистый;
+  офлайн **586 passed / 40 skipped**.
+- **Открыто:** закрытие Verification (`fix-code` r3); остальной Recovery-класс (`crack`, `git-leak`);
+  Hybrid-маршрут `git-leak` требует `R → P`, а этого ребра в `next` нет (движок `move patch`
+  принимает, но prompt его не предлагает); исторические benches не переписаны.
+
 ## 2026-11-03 — IR: плоские ходы вместо plan/item/alts
 
 - **Схема:** `request --move--> move --turns--> turns --turn--> action`; у действия —

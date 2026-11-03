@@ -4,11 +4,15 @@
 > конкретные состояния. Цель документа: так описать предмет, цель и критерий каждого состояния,
 > чтобы они не смешивались друг с другом и не «перетекали» одно в другое.
 >
-> Реализовано в `src/ir/islands.ts`: восемь состояний (`orientation`, `localization`,
-> `research`, `patch`, `recovery`, `construction`, `verification`, `end`). Документ описывает
-> их цели, критерии и маршруты. Live/tape-валидация: первый полный путь на `password-recovery`
-> пройден (v2); остальные классы — впереди. Общие формулировки живут в `islands.ts`, уточнения —
-> в подсказках запроса и перехода (`src/loop/prompt/blocks.ts`).
+> **2026-11-03:** `recovery` слит в `research`; живых состояний семь (`orientation`,
+> `localization`, `research`, `patch`, `construction`, `verification`, `end`). `ISLANDS.recovery`
+> остаётся только для старых журналов и не является целью `move`. Ниже раздел 2.5 сохранён как
+> исторический; актуальное описание — в 2.3.
+>
+> Реализовано в `src/ir/islands.ts`. Документ описывает цели, критерии и маршруты. Live/tape-
+> валидация: `password-recovery`, `fix-code-vulnerability` и `db-wal-recovery` — 3/3 (K=3,
+> 2026-11-03). Общие формулировки живут в `islands.ts`, уточнения — в подсказках запроса и
+> перехода (`src/loop/prompt/blocks.ts`).
 >
 > См. также: `docs/prompt_state_machine_concept_ru.md` (граф состояний; §2.8 — состояние есть
 > утверждение, а не действие), `docs/ir_semantics_ru.md` (§4.1 — состояние есть его цель),
@@ -57,9 +61,10 @@
 - **Localization** — найти артефакт (для дефекта кода — ещё и причину/нарушенный инвариант).
 - **Research** — описать ситуацию и установить метод.
 
-И два «продуктивных» состояния для ситуаций:
+И продуктивные состояния для ситуаций:
 
-- **Recovery** — восстановить скрытые данные из источника, написав и запустив процедуру поиска.
+- **Research** (включает бывший Recovery) — вывести требуемый результат из материала или
+  спецификации и, если нужно, записать output; source-проверка на копии.
 - **Construction** — создать новый артефакт/программу из спецификации или поведения source.
 
 `Patch` остаётся правкой **существующего артефакта**. Он не работает с ситуацией.
@@ -73,14 +78,14 @@ Acceptance — это то, по чему видно, что задача реш
   поведение.
 
 Для `Patch` acceptance обычно внешний (тесты/сборка проекта), поэтому после него идёт
-**Verification**. Для `Recovery` и `Construction` acceptance — та же source-проверка, которой
+**Verification**. Для `Research` и `Construction` acceptance — та же source-проверка, которой
 состояние уже пользуется, поэтому проверка входит **в критерий самого состояния**: оно идёт в
-`End` при успехе и в `Research` при провале метода.
+`End` при успехе и в `Research`/`Construction` при провале метода.
 
 **Source-проверка** (в коде критерий — `matches what the material contains`) — сверка результата
 с тем, что содержит материал: checksum, hash, container metadata, structural invariant или known
 records. Это **не** declared form и **не** «кандидат буквально есть в байтах». Конкретную
-проверку называет `Research`; `Recovery` её применяет.
+проверку называет и применяет `Research`.
 
 Внешний verifier (Harbor/harness) — финальный судья, но он **не является состоянием Skein** и
 модели обычно не виден. Внутри состояния модель делает сильнейшую доступную проверку и честно
@@ -125,7 +130,7 @@ records. Это **не** declared form и **не** «кандидат буква
 - **Вход:** `Orientation result` — карта workspace (root/repo/entries/paths).
 - **Предмет:** цель в существующем материале.
 - **Цель:** найти цель.
-- **`what`:** `find the target in the material`
+- **`what`:** `find the defect in existing code, files, or history`
 - **`done`:** `the target is named — the file, record, image, or function — and a suspected
   cause is named — one exact expression, step, or encoding that conflicts with the source's own
   comment/invariant or with the sibling that performs the same operation`
@@ -148,29 +153,26 @@ records. Это **не** declared form и **не** «кандидат буква
 - **Пример (fix-code-vulnerability):** `bottle.py`, `_hkey`/`_hval`; предполагаемая причина —
   потеряны проверки CRLF/NUL; exact change — Patch.
 
-### 2.3 Research
+### 2.3 Research (включает Recovery)
 
-- **Вход:** `Orientation result` + `Probe` (interpreters/tools).
-- **Предмет:** ситуация, у которой нет одного артефакта-цели.
-- **Цель:** объяснить ситуацию и установить метод.
-- **`what`:** `investigate the situation and establish the method`
-- **`done`:** `the situation is explained — what happened, what the source does, or what must be
-  built — and the method is named: the steps that will produce the result. The work itself
-  belongs to the productive state`
-- **Предположения запроса:** проявление, формат, инструменты — лиды; проверить по материалу.
-- **Границы:** не ищет дефект в коде (его может не быть), не применяет правку (Patch), не
-  восстанавливает и не строит deliverable (Recovery/Construction). Может осматривать артефакты,
-  но результат — описание ситуации и метод, а не указатель. Метод — план, а не его исполнение:
-  парсер/крекер/deliverable не строятся здесь. Источник определяется по содержанию, а не по
-  внешнему виду; открывается только на копии в `/tmp`, если инструмент может его изменить.
-- **Probe (environment subset):** `interpreters`, `tools` (core/crypto/data/archive/net/pkg),
-  `missing` — то, чем можно писать probe. Карта материала (root/VCS/build) сюда не
-  дублируется: она уже в `Finish state`-строке Orientation.
+- **Вход:** `Workspace map` + environment (network/interpreters/package managers).
+- **Предмет:** ситуация, результат которой выводится из материала или спецификации.
+- **Цель:** решить задачу — вывести требуемый результат и, если задача его требует, создать
+  output; для построения нового артефакта по спеке есть Construction.
+- **`what`:** `solve a situation: derive the required result from the material or the specification`
+- **`done`:** `the task's required result exists in its declared form, is derived from the material
+  or the specification, and matches what the material or the request contains`
+- **Метод:** **source-проверка** — сверка с тем, что содержит материал (checksum/hash,
+  header/metadata, known record, integrity check). Read-only проверка на копии разрешена и
+  предпочтительна догадке. Писать output и рабочие копии можно; материал остаётся read-only.
+- **Границы:** не ищет дефект в коде (Localization), не строит новый артефакт по спеке
+  (Construction). Состояние — не ворота: если задача оказалась build-задачей, модель может
+  доделать результат здесь (у Research есть `write`) или перейти дальше; если это дефект кода —
+  уйти в Localization.
 - **Переход:**
-  - → **Recovery**, когда нужно восстановить скрытые/закодированные/удалённые данные;
-  - → **Construction**, когда нужно создать новый артефакт/программу;
-  - → **Localization**, когда выяснилось, что ситуация — это дефект кода для локализации
-    (коррекция неверной стартовой классификации).
+  - → **End**, когда результат есть в объявленной форме и совпадает с материалом/запросом;
+  - → **Localization**, когда выяснилось, что ситуация — это дефект кода (коррекция неверной
+    стартовой классификации).
 - **Пример (password-recovery):** файл удалён; в 4 MiB образе фрагментированный ZIP: local
   header на ~1 MiB, хвост данных на ~3 MiB; кандидат проверяется по CRC32; пароль — 23 символа,
   `8XD…W54`, uppercase/цифры.
@@ -178,12 +180,6 @@ records. Это **не** declared form и **не** «кандидат буква
   фреймами; проверка — SQLite `integrity_check` и конкретные записи.
 - **Пример (crack-7z-hash):** 7z; хэш через `7z2john`; `john` с wordlist; проверка — распаковка
   архива.
-- **Пример (regex-log):** кода нет; нужно синтезировать регулярку; стратегия — line-start
-  lookahead + greedy prefix + один capture.
-- **Пример (cobol-modernization):** семантика `PROCEDURE DIVISION` и формат записей; метод —
-  дифференциальный прогон COBOL vs Python.
-- **Пример (fix-git):** потерянный коммит в reflog/dangling objects; метод — merge и разрешение
-  конфликта.
 
 ### 2.4 Patch
 
@@ -194,47 +190,21 @@ records. Это **не** declared form и **не** «кандидат буква
 - **`done`:** `the change is complete — the located artifact and every other file the task needs
   are created or updated — and the result has the declared form`
 - **Границы:** изменение не ограничивается одним файлом: обязательный файл не откладывается до
-  Verification. Не ищет артефакт (Localization), не описывает ситуацию/метод (Research), не
-  восстанавливает скрытые данные (Recovery), не строит новый артефакт (Construction). Не
-  повторяет откатанную попытку; не фабрикует значения.
+  Verification. Не ищет артефакт (Localization), не выводит результат из материала (Research),
+  не строит новый артефакт (Construction). Не повторяет откатанную попытку; не фабрикует
+  значения.
 - **Переход:** → **Verification**, когда всё изменение, включая остальные нужные файлы,
   применено и форма проверена.
 - **Пример (fix-ocaml-gc):** `p += Whsize_hd(hd)` → `p += wh` в `pool_sweep`.
 - **Пример (fix-git):** merge потерянного коммита в `master` с разрешением конфликта.
-- **Пример (git-leak-recovery):** purge секрета из объектов/reflog после Recovery.
+- **Пример (git-leak-recovery):** purge секрета из объектов/reflog после Research.
 
-### 2.5 Recovery
+### 2.5 Recovery (слит в Research, 2026-11-03)
 
-- **Предмет:** ситуация со скрытыми/закодированными/удалёнными данными.
-- **Цель:** восстановить данные из материала и записать требуемый output.
-- **`what`:** `recover the required output from the material`
-- **`done`:** `the required output exists in its declared form, is derived from the material, and
-  matches what the material contains`
-- **Метод:** **source-проверка** — сверка с тем, что содержит материал: checksum/hash,
-  header/metadata, known record или собственный валидатор формата (archive test, database
-  integrity check). Использовать её, чтобы сузить задачу до одного кандидата. Создавать и менять
-  файлы можно — output, scratch-копии; read-only только сам материал. **Не перебирать кандидатов
-  вручную в диалоге.** Формы кандидата недостаточно: результат должен совпадать с содержанием
-  материала. Если методу нужен отсутствующий в PATH инструмент — **починить окружение**
-  (пакетный менеджер/сеть), а не переписывать стандартный инструмент: отсутствие в PATH не
-  доказывает, что поставить его нельзя.
-- **Probe (environment subset):** `root`, `interpreters`, `tools`, `missing` — язык поиска и
-  инструменты проверки. Карта материала не дублируется.
-- **Границы:** материал — свидетельство, а не объект правки; не синтезировать значения; если
-  deliverable — изменённый артефакт, это Patch. Поиск держится вне ленты: модель видит компактный
-  результат, а не тысячи кандидатов. Кандидат, проходящий форму, но не совпадающий с материалом,
-  отвергается.
-- **Переход:**
-  - → **End**, когда output записан и совпадает с тем, что содержит материал;
-  - → **Research**, когда метод не сработал или результат не совпал с материалом (нет
-    кандидатов, все отвергнуты);
-  - остаться/повторить, когда ошибка исполнения (путь, формат, выбор кандидата);
-- **Пример (password-recovery):** ZIP-структура и central directory/CRC сужают до одного
-  кандидата (`PASSWORD=8XDP5Q2RT9ZK7VB3BV4WW54`).
-- **Пример (db-wal-recovery):** скрипт перебирает декодирования/фреймы, проверяет SQLite
-  integrity, извлекает записи и пишет `recovered.json`.
-- **Пример (crack-7z-hash):** скрипт запускает `john` и извлекает `secret_file.txt`, затем
-  пишет `solution.txt`.
+`recovery` больше не отдельное живое состояние: его цель, критерий, source-проверка и запись
+output перенесены в 2.3 Research. `ISLANDS.recovery` остаётся только для рендеринга старых
+журналов; `move recovery` движок больше не принимает. Старые прогоны, где Recovery был отдельным
+шагом, читаются и отображаются.
 
 ### 2.6 Construction
 
@@ -288,10 +258,10 @@ records. Это **не** declared form и **не** «кандидат буква
 | класс | маршрут |
 |---|---|
 | **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `O → L → P → V → End` |
-| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → Recovery → End` |
-| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → Construction → End` (spec-only) / `O → R → Construction → End` (когда источник надо понять) |
+| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → End` |
+| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → C → End`; провал Construction может уйти в `R` |
 | **History** (fix-git) | `O → L → P → V → End` |
-| **Hybrid** (git-leak-recovery) | `O → R → Recovery → P → V → End` |
+| **Hybrid** (git-leak-recovery) | `O → R → P → V → End` (шаг `R → P` — явный `move`) |
 
 `O` — Orientation, `L` — Localization, `R` — Research, `P` — Patch, `V` — Verification.
 
@@ -301,21 +271,19 @@ records. Это **не** declared form и **не** «кандидат буква
 
 Пояснения:
 
-- **Localization не обязательна для recovery**: Research сам назовёт артефакты, опишет ситуацию
-  и выберет нужный. Маршрут — `O → R → Recovery → End`.
-- **db-wal**: WAL — артефакт, но его проблема — ситуация (кодировка/фреймы), поэтому Research +
-  Recovery; декодирование WAL входит в Recovery как инструментальная операция. Прогон
-  2026-10-29 (K=3, `--turns 32`) показал, что маршрут не единственный: 2/3 решили через
-  `O → L → P → V` (Patch декодирует WAL и пишет `recovered.json`, Verification принимает),
-  1/3 — через `O → R → Recovery`; все три `reward=1`.
-- **git-leak**: Recovery извлекает секрет; Patch делает purge; Verification проверяет и то, и
-  другое. Это две разные операции, поэтому оба состояния.
+- **Localization не обязательна для recovery**: Research сам выведет результат из материала и
+  запишет output. Маршрут — `O → R → End`.
+- **db-wal**: WAL — артефакт, но его проблема — ситуация (кодировка/фреймы); Research декодирует
+  и пишет `recovered.json`, затем `End`. Прогон 2026-11-03 (K=3, `--turns 24`) — 3/3, median
+  24 хода, 0.966₽; маршрут не единственный: часть прогонов решает через `O → L → P → V`.
+- **git-leak**: Research извлекает секрет; Patch делает purge; Verification проверяет и то, и
+  другое. Ребра `R → P` в `next` нет — шаг делается явным `move`; это открытый вопрос (см. §7).
 - **fix-git**: потерянный коммит — артефакт; Localization находит его, Patch делает merge,
   Verification проверяет. Research нужен, только если метод merge/конфликта неочевиден.
 
 ## 4. Циклы и ошибки
 
-- **Recovery/Construction:** acceptance не прошёл:
+- **Research/Construction:** acceptance не прошёл:
   - ошибка метода/source-проверки → **Research** с описанием ошибки;
   - ошибка исполнения (путь, формат, кандидат) → остаться в состоянии, исправить и повторить;
   - не тот объект/источник → **Localization**/Research.
@@ -335,10 +303,10 @@ records. Это **не** declared form и **не** «кандидат буква
 
 ## 5. Acceptance instrument
 
-Когда задача не поставляет acceptance-команду, `Recovery`/`Construction` **сами** пишут и
+Когда задача не поставляет acceptance-команду, `Research`/`Construction` **сами** пишут и
 запускают проверку как часть своей работы:
 
-- Recovery — source-derived: checksum/hash/container metadata/structural invariant/known records;
+- Research — source-derived: checksum/hash/container metadata/structural invariant/known records;
 - Construction — spec/source-derived: тест-харнесс, дифференциальный прогон, `openssl verify`.
 
 Для `Patch` acceptance — отдельная процедура проекта (сборка/тесты), поэтому после него идёт
@@ -362,28 +330,29 @@ source-проверки нет, проверка не выдумывается.
   deliverables are new files». Это и есть ситуации, которым нужен Research/Construction.
 - **Ручной перебор не масштабируется.** В password Skein вручную собрал первую пару фрагментов
   и записал её; проверки CRC не было. Если бы пара была неверной, механизма перебора не было
-  бы. Recovery со скриптом перебирает кандидатов, проверяет source-проверкой и возвращает компактный
+  бы. Research со скриптом перебирает кандидатов, проверяет source-проверкой и возвращает компактный
   результат; тысячи пар не попадают в контекст.
 - **Fake pass — реальный риск.** db-wal синтезировал значения; log-summary объявил артефакт
   готовым без наблюдения; fix-code получил false pass при отсутствующем `report.jsonl`. Поэтому
-  acceptance должен быть явным: для Recovery/Construction — в критерии состояния, для Patch —
+  acceptance должен быть явным: для Research/Construction — в критерии состояния, для Patch —
   в Verification. «Скрипт сработал / файлы написаны» — не acceptance.
 
 ## 7. Открытые вопросы
 
-1. **Реализация:** `research`, `recovery`, `construction` добавлены в `ISLAND_IDS`; обновлены
-   `applies`/`next`, базовый промт, transition-инструкции и описания инструментов. Тесты —
-   `348 passed`. Осталось: tape/live-валидация.
-2. **Граница Construction/Recovery:** log-summary — Construction (видимые данные), db-wal —
-   Recovery (скрытые). Проверить на живых прогонах, нет ли смешения.
+1. **Реализация:** `recovery` слит в `research` (2026-11-03); живой `ISLAND_IDS` без recovery.
+   Обновлены `applies`/`next`, базовый промт, transition-инструкции, Environment, Finish-строка
+   (`Artifacts:`). Тесты — `586 passed / 40 skipped`. Осталось: `crack`/`git-leak`, docs/benches.
+2. **Граница Construction/Research:** log-summary — Construction (видимые данные), db-wal —
+   Research (скрытые). Проверить на живых прогонах, нет ли смешения.
 3. **fix-git:** нужен ли Research для merge/конфликта или достаточно Localization + Patch.
 4. **Можно ли фолдить Verification в Patch**, когда проект уже даёт тесты? Пока нет: это
    отдельная процедура; но вопрос открыт.
 5. **Скрипт-перебор:** общий шаблон (перебор + source-проверка + компактный вывод + negative control)
-   вынести в подсказку Recovery/Construction, не в код движка.
+   вынести в подсказку Research/Construction, не в код движка.
 6. **Внешний verifier:** остаётся вне состояний; при отсутствии независимой проверки — честный
    стоп.
-7. **Валидация:** tape A/B на записанных прогонах + live 5×40. `password-recovery` полный путь
-   пройден (v2, 36 turns/14.3k reasoning/3.33₽); fix-ocaml, db-wal, regex, cobol — впереди.
+7. **Валидация:** 2026-11-03, K=3, `--turns 24`, net on — `password-recovery` 3/3, 17 ходов,
+   0.799₽; `fix-code-vulnerability` 3/3, 23, 0.734₽; `db-wal-recovery` 3/3, 24, 0.966₽.
+   `crack`, `git-leak`, regex, cobol — впереди.
 8. **Полный каталог 13 задач и траектории opencode/Skein** —
    `docs/plans/task_catalog_2026-10-18_ru.md`; здесь только выводы.

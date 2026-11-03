@@ -305,6 +305,16 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   `docs/plans/general_unit_plan_ru.md`; тест — `tests/general_unit.test.ts`; офлайн
   **524 passed, 40 skipped**.
 
+- **Research = Research + Recovery (2026-11-03).** `recovery` слит в `research`: одно состояние
+  выводит требуемый результат из материала или спецификации, пишет output и проверяет его
+  (read-only на копии); `recovery` остаётся только для старых журналов. Маршруты: `O → L`
+  (дефект), `O → R` (ситуация), `O → C` (build); `R → C` удалено, Construction остаётся
+  отдельным. Environment — короткий список фактов (network, interpreters, package managers,
+  build/test tools), не инвентарь утилит; `Finish` закрытого состояния несёт `Artifacts:` из
+  явных `write`/`edit`; B2 предпочитает узкие пробы и остановку. K=3, 24 хода, net on:
+  password 3/3 (17, 0.799₽), fix-code 3/3 (23, 0.734₽), db-wal 3/3 (24, 0.966₽). Офлайн
+  586 passed / 40 skipped.
+
 Проверка: `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
 offline-тесты; live-гейт только при `SKEIN_LIVE=true` и с явного разрешения владельца.
 

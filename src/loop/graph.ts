@@ -70,7 +70,7 @@ function describeTarget(action: Action): string {
   return target.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
-const NEAR_END_ISLANDS = new Set(["end", "patch", "recovery", "construction"]);
+const NEAR_END_ISLANDS = new Set(["end", "research", "patch", "recovery", "construction"]);
 
 function isNearEnd(state: State): boolean {
   const move = currentMove(state);

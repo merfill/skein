@@ -16,6 +16,7 @@ import {
   request,
   run,
   withGoal,
+  write,
 } from "./ops/helpers";
 import { compact, wire } from "./wire";
 
@@ -90,6 +91,18 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(ctx.history[2]?.text).toBe("Finish state Orientation — done");
   });
 
+  it("lists the state's explicit file artifacts on the Finish line, not shell mutations", () => {
+    const w = makeWorkspace(DEFAULT_FILES).ws;
+    const first = execAll(withGoal("do it", "true"), [request()], w);
+    const wrote = exec(write("out/result.txt", "ok"), first.events, w);
+    const ran = exec(run("touch mut.txt"), wrote.events, w);
+    const ctx = project(exec({ operator: "stop", why: "done" }, ran.events, w).state);
+    const finish = ctx.history.find((m) => m.text?.startsWith("Finish state"));
+    expect(finish?.text).toContain("Finish state Orientation — done");
+    expect(finish?.text).toContain("Artifacts: out/result.txt");
+    expect(finish?.text).not.toContain("mut.txt");
+  });
+
   it("unactionable(decline) -> a terminal assistant text", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const ctx = project(exec({ operator: "decline", why: "chat" }, [request()], w).state);
@@ -133,8 +146,8 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
 
     const history = project(step.state).history;
     expect(history.some((m) => m.text.startsWith("Previous failed attempt:"))).toBe(false);
-    expect(history.map((m) => m.text)).toContain("Finish state Patch — changed");
-    expect(history.map((m) => m.text)).toContain("Finish state Verification — still fails");
+    expect(history.some((m) => m.text.includes("Finish state Patch — changed"))).toBe(true);
+    expect(history.some((m) => m.text.includes("Finish state Verification — still fails"))).toBe(true);
   });
 
   it("the first Localization has no failed-attempt block", () => {

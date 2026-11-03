@@ -20,7 +20,6 @@ export const PROBE_KINDS = [
   "build",
   "tests",
   "vcs",
-  "tools",
   "material",
   "all",
 ] as const;
@@ -130,7 +129,6 @@ const PROBE_GROUPS: Record<Exclude<ProbeKind, "environment" | "material" | "all"
   build: ["build", "compilers"],
   tests: ["test"],
   vcs: ["vcs"],
-  tools: ["core", "crypto", "data", "archive", "net"],
 };
 
 function materialText(probe: SessionProbe): string {

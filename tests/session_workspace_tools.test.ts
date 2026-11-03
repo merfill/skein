@@ -59,10 +59,11 @@ describe("probeText: one fact by kind", () => {
   const probe: SessionProbe = { environment, material };
 
   it("filters the environment by group", () => {
-    expect(probeText(probe, "packages")).toContain("package managers: npm 10.0.0");
+    expect(probeText(probe, "packages")).toContain("Available package managers: npm 10.0.0.");
     expect(probeText(probe, "packages")).not.toContain("node");
-    expect(probeText(probe, "interpreters")).toContain("interpreters: node 20.0.0");
-    expect(probeText(probe, "environment")).toContain("root: /app");
+    expect(probeText(probe, "interpreters")).toContain("Installed interpreters: node 20.0.0.");
+    expect(probeText(probe, "environment")).toContain("Workspace root: /app.");
+    expect(probeText(probe, "environment")).not.toContain("grep");
   });
 
   it("returns the workspace map and reports a missing probe", () => {

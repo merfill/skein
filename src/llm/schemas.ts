@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import type { Usage } from "../session/telemetry";
 
-import { ISLAND_IDS } from "../ir/islands";
+import { LIVE_ISLAND_IDS } from "../ir/islands";
 
 export const applySchema = z.discriminatedUnion("tool", [
   z.object({
@@ -74,7 +74,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     // docs/plans/archive/goal_into_move_plan.md). `what` is required except for the terminal
     // End state, which has no turns.
     operator: z.literal("move"),
-    state: z.enum(ISLAND_IDS),
+    state: z.enum(LIVE_ISLAND_IDS),
     what: z.string(),
     done: z.string().optional(),
   }),

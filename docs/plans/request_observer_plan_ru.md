@@ -136,7 +136,7 @@
   2. проверить закрытие запроса (`request_addressed`);
   3. `detectTriggers`; если триггер есть и бюджет observer-unit'а не исчерпан — push observer-unit,
      `runRequestObserver`, pop; применить `hint`/`memo`/`halt`;
-  4. проверить `max_turns`; если текущий остров `end|patch|recovery|construction`,
+  4. проверить `max_turns`; если текущий остров `end|research|patch|construction`,
      один раз дать ещё `G` ходов (`SKEIN_GRACE_TURNS`); иначе завершить; при `halt` —
      `done`/`observer_halt`.
 - `LoopState` получает `session`; `AgentResult` возвращает сессию.
@@ -152,7 +152,7 @@
   481-483`), передачу `stall` (`src/loop/graph.ts:105`), `noProgress`/`stall`-логику
   (`src/loop/graph.ts:84, 206-234`), `LoopState.stall`.
 - `max_turns` остаётся абсолютным предохранителем; бюджетный триггер срабатывает до него.
-- Для `end|patch|recovery|construction` — один раз +`G` ходов при достижении `max_turns`
+- Для `end|research|patch|construction` — один раз +`G` ходов при достижении `max_turns`
   (`SKEIN_GRACE_TURNS`, по умолчанию 5), с жёстким потолком `max_turns + G`.
 - После реализации обновить as-built-описания `ir_semantics`/`projection`.
 
@@ -184,7 +184,7 @@
 - **Детектор:** `state_cycle` — третий вход; `state_long` — больше 20 ходов; `budget` —
   в пределах K, не на жёстком лимите и не у терминала; одинаковые события → одинаковые
   триггеры.
-- **Grace:** в `patch|recovery|construction|end` при `max_turns` даётся `G` ходов
+- **Grace:** в `patch|research|construction|end` при `max_turns` даётся `G` ходов
   (`SKEIN_GRACE_TURNS`, по умолчанию 5) один раз;
   в остальных состояниях прогон завершается сразу.
 - **Мета-unit:** посеянные вызов и результат имеют парные id и `origin: "engine"`; replay
@@ -209,7 +209,7 @@
 - `nudge`/`no_progress` отсутствуют; `max_turns` и штатное закрытие сохранены.
 - Бюджетный триггер срабатывает до `max_turns` и подавляется у терминала; без реакции
   observer-unit'а `max_turns` всё равно завершает прогон, кроме одного grace-окна
-  (`SKEIN_GRACE_TURNS`, по умолчанию 5) в `patch|recovery|construction|end`.
+  (`SKEIN_GRACE_TURNS`, по умолчанию 5) в `patch|research|construction|end`.
 - Одинаковый журнал/сессия дают одинаковый триггер и одинаковый observer-контекст (LLM-ответ
   реплеится из записанного журнала).
 - Live/bench не запускались.

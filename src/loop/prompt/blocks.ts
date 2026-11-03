@@ -69,6 +69,8 @@ Work only the state's goal: plan the step, make small changes, and debug from ev
 
 Prefer the dedicated tools: \`read\`, \`grep\` and \`list\` to inspect, \`edit\`, \`write\` and \`apply_patch\` to change files. Use \`bash\` only for work they cannot do — running builds, tests, or other shell operations.
 
+Inspect narrowly: ask for the smallest result that decides the next step — a targeted \`grep\`, or a small window around a known offset. Do not dump a whole file or binary region; a large output stays on the tape and costs context. When the state's criterion holds, stop: do not re-run a check that already passed or widen the search for its own sake.
+
 Work from the material in this workspace. The result must come from that material or from the request's specification. Do not invent values or fabricate results to fit a count, a form, or an expected answer. Acceptance is decided by the material or the specification, not by your own output.
 
 Do not reconstruct an external or upstream version from memory. If a reference is available — on disk or fetched — treat it as a lead to verify, not as the oracle.
@@ -111,9 +113,9 @@ function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
       return [
-        "Move to Localization when the request is to find an error in existing code or files.",
-        "Move to Construction when the request fully specifies the new artifact — you can write it now.",
-        "Otherwise move to Research.",
+        "Move to Localization only when the request is to fix an error in existing code, files, or history — the defect is in an existing artifact.",
+        "Move to Research when the request is a situation — the required result must be recovered or derived from the material or the specification.",
+        "Move to Construction when the request is to build a new artifact from a specification.",
       ];
     case "localization":
       return [
@@ -122,6 +124,7 @@ function transitionRule(island?: IslandId): string[] {
       ];
     case "research":
       return [
+        "Choose End when the required result exists in its declared form and matches the material or the request.",
         "Choose Localization when the work is a code defect to locate.",
       ];
     case "recovery":

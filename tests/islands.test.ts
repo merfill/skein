@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fold } from "../src/ir/graph";
-import { ISLAND_IDS, ISLANDS, isIsland, stateDescription } from "../src/ir/islands";
+import { ISLAND_IDS, ISLANDS, LIVE_ISLAND_IDS, isIsland, stateDescription } from "../src/ir/islands";
 import { islandOf, project } from "../src/ir/project";
 import { buildMessages } from "../src/loop/propose";
 import { PROPOSAL_TOOLS, toProposal } from "../src/llm/tools";
@@ -41,7 +41,7 @@ describe("islands: the closed vocabulary", () => {
       ISLANDS[id].next.map((edge) => edge.to);
     expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research", "construction"]));
     expect(targets("localization")).toEqual(["patch", "research"]);
-    expect(targets("research")).toEqual(["recovery", "construction", "localization"]);
+    expect(targets("research")).toEqual(["end", "localization"]);
     expect(targets("patch")).toEqual(["verification"]);
     expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
     expect(targets("construction")).toEqual(expect.arrayContaining(["end", "research"]));
@@ -50,12 +50,13 @@ describe("islands: the closed vocabulary", () => {
 
   it("scopes the write-class to the productive states: the island delimits the apply surface", () => {
     const write = new Set(["edit", "write", "apply_patch"]);
-    const productive = new Set(["patch", "recovery", "construction"]);
+    const productive = new Set(["research", "patch", "recovery", "construction"]);
     for (const id of ISLAND_IDS) {
       const hasWrite = ISLANDS[id].applies.some((tool) => write.has(tool));
       expect(hasWrite).toBe(productive.has(id));
     }
-    expect(ISLANDS.research.applies).not.toContain("write");
+    expect(ISLANDS.research.applies).toContain("write");
+    expect(ISLANDS.research.applies).not.toContain("edit");
     expect(ISLANDS.recovery.applies).toContain("write");
     expect(ISLANDS.recovery.applies).not.toContain("edit");
     expect(ISLANDS.recovery.applies).not.toContain("apply_patch");
@@ -77,7 +78,7 @@ describe("islands: the closed vocabulary", () => {
       string,
       { enum?: unknown }
     >;
-    expect(props.state?.enum).toEqual([...ISLAND_IDS]);
+    expect(props.state?.enum).toEqual([...LIVE_ISLAND_IDS]);
   });
 
   it("exposes the goal text as the move `what` parameter", () => {

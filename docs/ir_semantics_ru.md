@@ -241,7 +241,7 @@ append-only). Ходы состояния — упорядоченные дет�
 наблюдение называет существующий результат. Детерминированного `no_progress` больше нет, и
 проекция не несёт мягкого аттрактора. Зацикливание — предмет триггеров `RequestObserver`
 (Tier 4a): `state_cycle` при третьем входе в тот же остров, `state_long` при >20 ходах в
-состоянии, `budget` при приближении к `max_turns`. В `patch|recovery|construction|end` при
+состоянии, `budget` при приближении к `max_turns`. В `patch|research|construction|end` при
 `max_turns` один раз даётся ещё `G` ходов (`SKEIN_GRACE_TURNS`, по умолчанию 5); иначе
 `max_turns` завершает прогон.
 

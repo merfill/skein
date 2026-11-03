@@ -8,6 +8,9 @@
 > Related documents: `docs/states_ru.md` (state goals and criteria),
 > `docs/prompt_state_machine_concept.md` (the state graph), `docs/testing.md`,
 > `docs/ir_semantics.md` §7 (the tape), `AGENTS.md`.
+>
+> **2026-11-03:** `Recovery` is no longer a live state; its work is part of `Research`. The
+> routes and results below were recorded before the merge and are kept as history.
 
 ## 0. Goal
 

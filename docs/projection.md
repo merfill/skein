@@ -47,9 +47,10 @@ thousands of artifacts.
   request; the projection emits the block as a `system` turn before the **current** state's
   instruction. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
   starts outside the root, repo, entries/paths);
-  Localization and Research get the same map as `Orientation result` (Research also gets `Probe`
-  with interpreters/tools); Patch gets it as `Workspace`; Recovery/Construction/Verification get
-  `Probe` (environment) under its own heading. Closed states carry no block; the request turn has none;
+  Localization and Research get the same map plus the environment; Patch gets the map;
+  Construction and Verification get the environment. The environment is a short list of facts
+  (`Workspace root`, `Network is available`, interpreters, package managers, build/test tools),
+  not an inventory of stock utilities. Closed states carry no block; the request turn has none;
 - the workspace map is deterministic: `root`, `cwd` (when it differs), repo status, top-level
   entries (full paths for small materials), file count. Environment, extensions, configs, build commands and build state
   are **not** shown in Orientation; a declared command is never presented as the acceptance;

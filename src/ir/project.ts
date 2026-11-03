@@ -160,15 +160,33 @@ export function asCall(node: Node | undefined): { name: string; args: Record<str
   return { name: call.name, args };
 }
 
+// The files the state wrote with an explicit file tool (`write`/`edit`), not the files a build
+// mutates: those are the task's artifacts, and the next state needs to know they exist. Shell
+// mutations are deliberately excluded — a build can touch thousands of files.
+function artifactsOfMove(state: State, moveId: string): string[] {
+  const seen = new Set<string>();
+  for (const id of actionsOfMove(state, moveId)) {
+    const call = asCall(state.nodes.get(id));
+    if (call === undefined || (call.name !== "write" && call.name !== "edit")) continue;
+    const path = call.args.filePath;
+    if (typeof path === "string" && path !== "") seen.add(path);
+  }
+  return [...seen];
+}
+
 // The closure line a finished state's `move` returns: the engine's mechanical reason (the `stop`
-// payload). The changed files are deliberately NOT listed: a state that runs a build mutates
-// thousands of artifacts.
+// payload), plus the explicit artifacts the state wrote.
 function closureLine(state: State, moveId: string): string {
   const island = moveIsland(state, moveId);
   const label = island !== undefined ? ISLANDS[island].label : "State";
   const stop = stopOf(state, moveId);
   const why = stop !== undefined ? payloadOf(state, stop)?.why : undefined;
-  return `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
+  const line = `Finish state ${label} — ${typeof why === "string" && why !== "" ? why : "done"}`;
+  const artifacts = artifactsOfMove(state, moveId);
+  if (artifacts.length === 0) return line;
+  const shown = artifacts.slice(0, 8);
+  const more = artifacts.length > shown.length ? `, … (+${artifacts.length - shown.length} more)` : "";
+  return `${line}\nArtifacts: ${shown.join(", ")}${more}`;
 }
 
 // The state's action nodes, in turn order (docs/ir_semantics §2.3).
