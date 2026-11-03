@@ -85,19 +85,19 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "respond",
     description:
-      "Answer conversationally: greeting, thanks, confirmation, clarification or a direct factual pointer. Not for analysis or explanation of the material.",
+      "Answer the user from the dialogue and earlier work: greeting, thanks, confirmation, clarification or a direct factual pointer.",
     schema: respondSchema,
   },
   {
     name: "general",
     description:
-      "Read, inspect, analyse, explain or report on the material. Use it whenever that work is the request itself; include the goal and only the context the request needs. Do not turn a short request into a broader assignment or an audit.",
+      "Ask the general agent for an answer that requires investigation. `text` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. The general agent chooses how to work and how much detail to give.",
     schema: generalSchema,
   },
   {
     name: "start",
     description:
-      "Change files or run side-effecting commands. The coding agent sees only your brief, so include the goal, relevant facts and acceptance.",
+      "Change files or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged.",
     schema: startSchema,
   },
 ];

@@ -27,7 +27,7 @@ export interface Settings {
   // non-streaming fallback / A/B arm.
   streaming: boolean;
   maxTurns: number;
-  // The general unit's safety cap: it stops itself with `general_stop`, this only bounds a loop.
+  // The general unit's safety cap: it closes on its text answer, this only bounds a loop.
   generalMaxTurns: number;
   // The request observer's state thresholds: third entry into one island, and the turn
   // limit inside one state.

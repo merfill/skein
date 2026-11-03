@@ -119,6 +119,47 @@ describe("general unit", () => {
     expect(view.header.tokensIn).toBe(150);
   });
 
+  it("closes on a text answer without a stop tool", async () => {
+    const session = createSession();
+    const ws = workspace();
+    let calls = 0;
+    const turnDeps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: async () => ({ operation: { kind: "general", text: "analyse NOTES.md" } }),
+        tools: {} as never,
+      },
+      task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
+      general: {
+        propose: async (): Promise<Proposals> => {
+          calls += 1;
+          if (calls === 1) {
+            return {
+              thought: "",
+              actions: [{ operator: "apply", action: { tool: "read", path: "NOTES.md" } }],
+            };
+          }
+          return {
+            thought: "## Answer\n\nNOTES.md contains alpha and beta.",
+            actions: [],
+          };
+        },
+        workspace: ws,
+        maxTurns: 4,
+      },
+    };
+    const result = await runSessionTurn(turnDeps, session, "analyse NOTES.md");
+
+    expect(result.general?.result.done).toBe(true);
+    expect(result.general?.result.stopReason).toBe("answered");
+    expect(result.general?.result.turns).toBe(2);
+    const stop = result.general?.result.events.find(
+      (event) => event.type === "add_node" && event.node.kind === "stop",
+    );
+    expect(stop?.type === "add_node" ? stop.node.label : "").toBe(
+      "## Answer\n\nNOTES.md contains alpha and beta.",
+    );
+  });
+
   it("writes a final report when the turn limit is reached", async () => {
     const session = createSession();
     const ws = workspace();
@@ -290,6 +331,10 @@ describe("general unit", () => {
     const root = mkdtempSync(join(tmpdir(), "skein-general-"));
     dirs.push(root);
     const ws = fsWorkspace(root);
+    writeFileSync(
+      join(root, "AGENTS.md"),
+      "# Project\n\ndocs/proofwriter.md — ProofWriter collection notes (eval harness).\n",
+    );
     let messages: ModelMessage[] = [];
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
@@ -322,6 +367,8 @@ describe("general unit", () => {
     expect(facts).toContain("Project facts");
     expect(facts).toContain(`project directory: ${root}`);
     expect(facts).toContain("top-level entries: src/ (2 files)");
+    expect(facts).toContain("Project instructions");
+    expect(facts).toContain("ProofWriter collection notes (eval harness)");
   });
 
   it("restores a mutation made during the read-only general unit", async () => {

@@ -148,8 +148,7 @@ function environmentText(probe: SessionProbe, groups: readonly EnvironmentGroup[
 // The general unit's orientation: the deterministic project facts only (directory, version
 // control and the top-level structure). No commits, paths or toolchain — the general agent
 // inspects those itself.
-export function generalFactsText(probe: SessionProbe | undefined, root: string): string {
-  const lines = ["Project facts (engine-recorded; already read)"];
+export function generalFactsText(probe: SessionProbe | undefined, root: string): string {  const lines = ["Project facts (engine-recorded; already read)"];
   const material = probe?.material;
   if (material === undefined) {
     lines.push(`project directory: ${root}`);
@@ -182,6 +181,28 @@ export function generalFactsText(probe: SessionProbe | undefined, root: string):
   }
   lines.push(`files: ${material.files}${material.truncated === true ? " (map truncated)" : ""}`);
   return lines.join("\n");
+}
+
+// The project's agent-facing instruction file. Unlike the material map, it is a glossary and
+// index the worker should have before choosing a directory (opencode injects AGENTS.md the same
+// way). README/ARCHITECTURE stay readable on demand.
+const PROJECT_INSTRUCTIONS_LIMIT = 12_000;
+
+export function projectInstructionsText(workspace: Workspace): string {
+  let content: string;
+  try {
+    if (!workspace.exists("AGENTS.md")) return "";
+    content = workspace.read("AGENTS.md");
+  } catch {
+    return "";
+  }
+  const text = content.trim();
+  if (text === "") return "";
+  const bounded =
+    text.length > PROJECT_INSTRUCTIONS_LIMIT
+      ? `${text.slice(0, PROJECT_INSTRUCTIONS_LIMIT)}\n…[truncated; read AGENTS.md for the rest]`
+      : text;
+  return `Project instructions (engine-recorded; already read)\n\n${bounded}`;
 }
 
 // A probe answer by kind. `environment` and `all` include the root, like the state briefs;

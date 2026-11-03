@@ -15,13 +15,14 @@ import { LOCAL_SESSION_ID, contextSnapshot, type TelemetrySink } from "./telemet
 import type { SessionState } from "./types";
 
 export const GENERAL_BASE_PROMPT = [
-  "You are a general-purpose agent working in a workspace. You answer the request by inspecting the workspace and reporting what you find.",
-  "Gather the data needed to answer the request and stop when you judge it minimally sufficient. Start with the answer: two to four sentences stating the main conclusion plainly. Then give only the evidence the request needs; do not inventory files, commands, or implementation details unless they are the answer, and prefer synthesis over exhaustive detail. Once the conclusion is supported, stop inspecting and write the report. Write in clear academic prose: define a term before using it, avoid unexplained jargon and unnecessary detail, and keep the exposition readable for a reader new to the project. Answer in GitHub-flavored Markdown with `general_stop`; the report is shown to the user as-is.",
+  "You are a general-purpose agent working in a workspace. You answer the user's question from the workspace.",
+  "Answer as briefly as possible and only what the user asked. Before inspecting, decide what the answer must establish; inspect only what that requires, and answer as soon as the question is covered. Write the answer first and plainly, then the evidence it needs. Use clear prose and define terms before using them. Answer in GitHub-flavored Markdown; your final message is shown to the user as-is.",
+  "When you have enough information to answer the user, respond with plain text only. Do not call any tools. Your message will be treated as the final answer.",
 ].join("\n\n");
 
 export type GeneralProposer = (
   messages: ModelMessage[],
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; final?: boolean },
 ) => Promise<Proposals>;
 
 export interface GeneralDeps {
@@ -115,7 +116,13 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
     for (const actionId of childrenOf(state, itemId)) {
       const action = state.nodes.get(actionId);
       if (action === undefined || action.kind !== "action") continue;
-      const payload = action.payload as { call?: { name?: unknown; args?: unknown } } | undefined;
+      const payload = action.payload as
+        | { call?: { name?: unknown; args?: unknown }; reasoning?: unknown }
+        | undefined;
+      const reasoning =
+        typeof payload?.reasoning === "string" && payload.reasoning !== ""
+          ? { reasoning: payload.reasoning }
+          : {};
       const call =
         typeof payload?.call?.name === "string"
           ? {
@@ -128,9 +135,9 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
             }
           : undefined;
       if (call !== undefined) {
-        history.push({ role: "assistant", text: "", call });
+        history.push({ role: "assistant", text: "", call, ...reasoning });
       } else {
-        history.push({ role: "assistant", text: action.label });
+        history.push({ role: "assistant", text: action.label, ...reasoning });
       }
       const resultId = resultOf(state, actionId);
       const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
@@ -259,14 +266,18 @@ export async function runGeneralAgent(
       ...(proposals.reasoning !== undefined ? { reasoning: proposals.reasoning } : {}),
     });
 
-    if (proposals.actions.length === 0) {
+    const actions: Action[] =
+      proposals.actions.length === 0 && proposals.thought.trim() !== ""
+        ? [{ operator: "stop", why: proposals.thought.trim() }]
+        : proposals.actions;
+    if (actions.length === 0) {
       stopReason = "no_decision";
       done = true;
       emit?.({ type: "turn_finished", agent: "general", unitId, turn, stopReason });
       break;
     }
 
-    for (const action of proposals.actions) {
+    for (const action of actions) {
       if (isAborted(input.signal)) {
         paused = true;
         break;
@@ -352,7 +363,7 @@ export async function runGeneralAgent(
       {
         role: "system",
         content:
-          "The turn limit is reached. Write the final answer now from what you have already read. Use only that material: do not invent or extrapolate collection names, datasets, results, paths, or numbers. If something is not established by what you read, say so explicitly instead of guessing. Do not inspect anything else and do not call other tools; call `general_stop` with the complete Markdown report in `report`.",
+          "The turn limit is reached. Write the final answer now as text from what you have already read. Use only that material: do not invent or extrapolate collection names, datasets, results, paths, or numbers. If something is not established by what you read, say so explicitly instead of guessing. Do not inspect anything else; the engine records your text as the answer.",
       },
     ];
     const startedAt = Date.now();
@@ -360,10 +371,10 @@ export async function runGeneralAgent(
     emit?.({ type: "model_call_started", agent: "general", unitId, turn });
     let proposals: Proposals | undefined;
     try {
-      proposals = await deps.propose(
-        messages,
-        input.signal !== undefined ? { signal: input.signal } : undefined,
-      );
+      proposals = await deps.propose(messages, {
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        final: true,
+      });
       const usage = proposals.usage;
       deps.telemetry?.record({
         type: "model_call",

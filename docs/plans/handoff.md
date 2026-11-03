@@ -4,6 +4,38 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-03 — Session/general prompts, text stop, AGENTS.md
+
+- **Session prompt:** `SESSION_BASE_PROMPT` переписан положительно: маршрут по результату
+  (`respond` — ответ из диалога; `general` — ответ требует разведки, ничего не меняется;
+  `start` — изменение workspace/команда). Убраны `request`/`plan`, отрицания и дубли;
+  форматирование и цитаты относятся только к `respond`. Описания `respond`/`general`/`start`
+  приведены в соответствие.
+- **General stop:** `general_stop` убран. `invokeTools` получил `allowText`; general
+  принимает текстовый ответ и переводит его в штатный `stop`-узел (`stop` edge, provenance
+  llm). Task по-прежнему требует tool call.
+- **Reasoning на ленте:** `historyOf` снова кладёт `payload.reasoning` в assistant-сообщение.
+  До этого general не видел своих прошлых рассуждений и каждый ход заново интерпретировал
+  вопрос.
+- **Tool surface:** general получил `grep`/`list`; `general_bash` переименован в `shell` и
+  описан как fallback; `read`/`recall` получили узкие general-описания.
+- **AGENTS.md:** general получает `AGENTS.md` как engine-recorded project instructions
+  (`projectInstructionsText` + `generalContextText`). Это снимает главную причину похода
+  в `tests/`: без глоссария «коллекции» читались как test fixtures; с `AGENTS.md`
+  («ProofWriter collection notes (eval harness)») general сразу идёт в `docs/`/`evals/`.
+- **TUI:** markdown ограничен 100 колонками + отступ; activity-индикатор анимируется
+  (`· • ● •`) только при running.
+
+**Наблюдения live (ankyra, копия в /tmp):**
+- text stop сам по себе (run4) и tool surface как в opencode (run5) не уменьшили ходы
+  (10 + 10); stop-фраза (run6) сократила ответы, но не ходы.
+- после `AGENTS.md` g1 в CLI: первый action — `evals`/`docs`, не `tests`; 9 ходов.
+- g2 напрямую с `AGENTS.md`: 7 ходов, 8 tool calls, 3 465 симв. — сопоставимо с траекторией
+  opencode (`docs` → `reasoning_roadmap` → collection-доки → ответ).
+- `npm run typecheck` чистый; офлайн **560 passed, 40 skipped**.
+- Observer для general не добавляли: систематики нет, term-детур снят; вернуться, если
+  будет стабильно 9–10 ходов или повторные чтения без новых наблюдений.
+
 ## 2026-11-01 — TUI, general, task loop
 
 - **General:** бриф session-агента ограничен глубиной запроса (без инвентаризации и
@@ -102,7 +134,7 @@
 - **Телеметрия:** `src/session/telemetry.ts` — usage, снимки контекста, model/tool calls,
   pause/resume/cancel, `usageTotals`/`unitStats`/`sessionSummary`/`contextTimeline`; CLI пишет
   в in-memory sink. Панели/UI нет.
-- Typecheck чистый; офлайн-набор: **524 passed, 40 skipped**. Live/bench для 4c и TUI не запускались; general-live и session-live пройдены.
+- Typecheck чистый; офлайн-набор: **560 passed, 40 skipped**. Live/bench для 4c и TUI не запускались; general-live и session-live пройдены.
 - **Синтетический live-сценарий пройден:** `read` — один ход; `body` по `obs:reading:1`;
   `respond`; затем `start` с переформулировкой, включающей правило; задача создала
   `Makefile`/тест и `make test` прошёл. `tasks=1, replies=2`.
@@ -238,6 +270,10 @@
 не требует нового unit'а, а другого маршрута по островам.
 
 ## Наблюдатель для general — что попробовать
+
+**2026-11-03:** general закрывается текстом; `general_stop` убран. Причина похода в
+`tests/` — отсутствие `AGENTS.md` в контексте, а не отсутствие observer'а. Observer отложен
+до систематики (стабильно 9–10 ходов / повторные чтения без новых наблюдений).
 
 Сейчас `RequestObserver` подключён только к `task` (`src/loop/graph.ts`): триггеры
 `state_cycle`/`state_long`/`budget`, task-лента, решение `hint`/`memo`/`halt`, запись в

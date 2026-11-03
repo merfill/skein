@@ -235,28 +235,19 @@ describe("tool calling", () => {
 
   it("binds the general-only tools only on the general surface", () => {
     const general = proposalTools(
-      new Set(["read", "recall", "general_bash", "general_stop"]),
+      new Set(["read", "grep", "list", "recall", "shell"]),
       undefined,
       GENERAL_TOOLS,
     );
-    expect(Object.keys(general).sort()).toEqual([
-      "general_bash",
-      "general_stop",
-      "read",
-      "recall",
-    ]);
+    expect(Object.keys(general).sort()).toEqual(["grep", "list", "read", "recall", "shell"]);
     const task = proposalTools(new Set(["read", "bash", "stop"]));
     expect(Object.keys(task).sort()).toEqual(["bash", "read", "stop"]);
   });
 
-  it("maps the general-only tools", () => {
-    expect(toProposal("general_bash", { command: "ls" }, "t").action).toEqual({
+  it("maps the general-only tool", () => {
+    expect(toProposal("shell", { command: "ls" }, "t").action).toEqual({
       operator: "apply",
       action: { tool: "bash", command: "ls" },
-    });
-    expect(toProposal("general_stop", { report: "## Answer\n\nDone." }, "t").action).toEqual({
-      operator: "stop",
-      why: "## Answer\n\nDone.",
     });
   });
 
@@ -265,6 +256,23 @@ describe("tool calling", () => {
     const proposal = await agent(model, [{ role: "user", content: "go" }]);
     expect(proposal.thought).toBe("do it");
     expect(proposal.actions[0]).toEqual({ operator: "apply", action: { tool: "read", path: "a" } });
+  });
+
+  it("accepts a text answer when allowText is set", async () => {
+    const model = mockModel(() => textReply("## Answer\n\nDone."));
+    const proposal = await agent(model, [{ role: "user", content: "go" }], {
+      allowText: true,
+      allowedTools: ["read"],
+    });
+    expect(proposal.thought).toBe("## Answer\n\nDone.");
+    expect(proposal.actions).toEqual([]);
+  });
+
+  it("keeps the tool repair when text is not allowed", async () => {
+    const model = mockModel(() => textReply("## Answer\n\nDone."));
+    await expect(
+      agent(model, [{ role: "user", content: "go" }], { allowedTools: ["read"] }),
+    ).rejects.toThrow("model returned no tool call");
   });
 
   it("invokeTools maps every call of a batch move", async () => {

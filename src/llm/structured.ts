@@ -379,6 +379,9 @@ export interface ToolsOptions {
   toolDescriptions?: Record<string, string>;
   // Tools outside the task registry, bound only when named in `allowedTools` (general unit).
   extraTools?: Record<string, ExtraToolDefinition>;
+  // Accept a text-only reply as the final answer (the general unit). A tool call still wins;
+  // when the agent must answer with text and no tool call follows, `Proposals.thought` carries it.
+  allowText?: boolean;
   // Retries for a THROWN provider call (network/5xx/rate limit): the same request is resent
   // up to this many extra times before the error is given up. Defaults to `settings.llmRetries`.
   retries?: number;
@@ -476,24 +479,25 @@ export async function invokeTools(
       throw error;
     }
     options.onResponse?.(reply);
+    const proposal = {
+      thought: reply.text,
+      ...(settings.reasoningTape && reply.reasoning !== undefined
+        ? { reasoning: reply.reasoning }
+        : {}),
+      ...(usageOf(reply.usage) !== undefined ? { usage: usageOf(reply.usage) } : {}),
+      model: settings.model,
+    };
     // No `tool_choice`: forcing `required` routes the meta-provider to thinking upstreams that
     // either reject it or are rate-limited (docs/state_testing §7). The prompt asks for a call;
-    // a text reply is handled by the one-repair round below.
+    // a text reply is handled by the one-repair round below, or accepted as the answer when
+    // `allowText` is set.
     if (reply.toolCalls.length > 0) {
       try {
         // Every call in the message is a move; the engine decides and runs them in order.
         const actions = reply.toolCalls.map(
           (call) => toProposal(call.toolName, call.input, "").action,
         );
-        return {
-          thought: reply.text,
-          actions,
-          ...(settings.reasoningTape && reply.reasoning !== undefined
-            ? { reasoning: reply.reasoning }
-            : {}),
-          ...(usageOf(reply.usage) !== undefined ? { usage: usageOf(reply.usage) } : {}),
-          model: settings.model,
-        };
+        return { ...proposal, actions };
       } catch (error) {
         if (repair !== undefined) throw error;
         repair = {
@@ -515,19 +519,30 @@ export async function invokeTools(
         repair = {
           role: "user",
           content:
-            "Your last reply was cut off by the length limit — that is excessive reasoning. Call one or more tools now, with minimal reasoning; do not restate analysis.",
+            options.allowText === true
+              ? "Your last reply was cut off by the length limit. Write the answer more concisely in text."
+              : "Your last reply was cut off by the length limit — that is excessive reasoning. Call one or more tools now, with minimal reasoning; do not restate analysis.",
         };
         continue;
       }
+      if (options.allowText !== true) throw new Error("model returned no tool call");
+    }
+    if (options.allowText === true && reply.text.trim() !== "") {
+      return { ...proposal, actions: [] };
+    }
+    if (repair !== undefined) {
+      if (options.allowText === true) return { ...proposal, actions: [] };
       throw new Error("model returned no tool call");
     }
-    if (repair !== undefined) throw new Error("model returned no tool call");
     const stopAvailable = allowed === undefined || allowed.has("stop");
     repair = {
       role: "user",
-      content: stopAvailable
-        ? "You did not call a tool. If the state's goal is met, call `stop` now with the result in `why`; otherwise call one or more of the provided tools."
-        : "You did not call a tool. Call one or more of the provided tools.",
+      content:
+        options.allowText === true
+          ? "You did not produce an answer. Answer with text, or call a tool if you need more information."
+          : stopAvailable
+            ? "You did not call a tool. If the state's goal is met, call `stop` now with the result in `why`; otherwise call one or more of the provided tools."
+            : "You did not call a tool. Call one or more of the provided tools.",
     };
   }
 }

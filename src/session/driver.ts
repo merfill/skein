@@ -26,7 +26,7 @@ import {
   type WorkspaceIntro,
 } from "./session_agent";
 import { unitOutline } from "./session_outline";
-import { generalFactsText } from "./session_workspace";
+import { generalFactsText, projectInstructionsText } from "./session_workspace";
 import type {
   NoDecisionReason,
   SessionOperation,
@@ -202,6 +202,13 @@ function generalWorkspace(deps: SessionTurnDeps): Workspace {
   return deps.general?.workspace ?? deps.task.workspace;
 }
 
+function generalContextText(deps: SessionTurnDeps): string {
+  const workspace = generalWorkspace(deps);
+  const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
+  const instructions = projectInstructionsText(workspace);
+  return instructions === "" ? facts : `${facts}\n\n${instructions}`;
+}
+
 function workspaceRoot(workspace: Workspace): string {
   return workspace.displayRoot !== undefined && workspace.displayRoot !== ""
     ? workspace.displayRoot
@@ -358,7 +365,7 @@ async function dispatch(
         request: { id: unitId, text: pending.text },
         session,
         open: true,
-        workspace: generalFactsText(deps.sessionProbe?.(), workspaceRoot(generalWorkspace(deps))),
+        workspace: generalContextText(deps),
         ...(snapshot !== undefined ? { snapshot } : {}),
         ...(signal !== undefined ? { signal } : {}),
       });
@@ -590,7 +597,7 @@ export async function resumeTurn(
         startTurn: unit.turn,
         session,
         open: false,
-        workspace: generalFactsText(deps.sessionProbe?.(), workspaceRoot(generalWorkspace(deps))),
+        workspace: generalContextText(deps),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       stillPaused = run.paused === true;
