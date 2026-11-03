@@ -52,7 +52,7 @@ it never writes those events into the session journal itself.
 | current task | right, always when width >= 72 | request, attention, wall-clock, states with turn ranges/turns/tokens, selected-state details (`what`, full `stop.why`, actions); a `general` unit is one such state |
 | task history | left overlay (`Ctrl-T`) | read-only task/general list, selected unit details; covers the trace, does not resize it |
 | activity | above composer | the current agent/tool/state/action and whether the run is paused |
-| composer | bottom | multiline input, cursor, `/` text is ordinary content for now |
+| composer | bottom | multiline input, cursor, `@` file picker, `/` command menu |
 | pause / help | overlays | `r`/`c`/`q`, key reference |
 
 There is no unit panel: `reading`, `session` and `observer` units are internal addresses, not
@@ -93,12 +93,20 @@ turn; it is not a context-usage meter.
   `Ctrl-D` exit, `Ctrl-T` task history, `Tab` focus, `?` help.
 - `Up`/`Down` scroll the trace or select a state; `PgUp`/`PgDn` page.
 - A pause opens the `r`/`c`/`q` menu; a second `Ctrl-C` exits without resuming.
+- `@` opens a workspace file picker (`workspace.listFiles`, `SKIP_DIRS`); typing filters,
+  `Up`/`Down` selects, `Enter`/`Tab` inserts `@path` (completion only — no content inlining),
+  `Esc` dismisses.
+- `/` opens the command menu: `new`, `help`, `tasks`, `pause`, `resume`, `cancel`, `quit`,
+  `mouse`, `verbose`, `status`, `clear`. `//` sends a literal leading slash; an unknown
+  command is refused locally, not sent to the model. `/new` starts a fresh in-memory session
+  (telemetry stays cumulative) and is refused while a turn is running or paused.
 
 ## 7. Tests
 
 - `tests/tui_progress.test.ts` — task progress events.
 - `tests/tui_view_model.test.ts` — state ranges, tokens, history, session-only usage.
-- `tests/tui_app.test.tsx` — shell rendering, typing, history overlay.
+- `tests/tui_app.test.tsx` — shell rendering, typing, history overlay, file picker and commands.
+- `tests/tui_completion.test.ts` — mention detection, file/command ranking, range replacement.
 - `tests/tui_markdown.test.ts` — Markdown blocks, spans, syntax colours.
 
 ## 8. Deferred

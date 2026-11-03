@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import stringWidth from "string-width";
 
 import type { PausedState } from "../session/driver";
+import type { CompletionItem } from "./completion";
 import { compactDuration, compactTokens, oneLine, shortId, wrap } from "./format";
 import type { TaskState, TaskView } from "./view_model";
 import { theme } from "./theme";
@@ -473,8 +474,51 @@ export function Footer(props: { paused: boolean; historyOpen: boolean }) {
   return (
     <Box paddingX={1}>
       <T dimColor wrap="truncate-end">
-        Enter send · Ctrl-J newline · Esc pause · Ctrl-C abort/exit · Ctrl-T history · Tab focus · Ctrl-D exit · ? help
+        Enter send · Ctrl-J nl · @ files · / cmd · Esc pause · Ctrl-C abort · Ctrl-T history · ? help
       </T>
+    </Box>
+  );
+}
+
+export function CompletionPanel(props: {
+  kind: "mention" | "command";
+  items: readonly CompletionItem[];
+  selected: number;
+  width: number;
+  bottom: number;
+}) {
+  const { kind, items, width, bottom } = props;
+  const visibleRows = 8;
+  const selected = Math.max(0, Math.min(props.selected, items.length - 1));
+  const start = Math.max(0, Math.min(selected - (visibleRows - 1), items.length - visibleRows));
+  const visible = items.slice(start, start + visibleRows);
+  const boxWidth = Math.max(24, Math.min(width - 2, 72));
+  const textWidth = Math.max(8, boxWidth - 4);
+  return (
+    <Box
+      position="absolute"
+      left={1}
+      bottom={bottom}
+      width={boxWidth}
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.borderFocus}
+      paddingX={1}
+      backgroundColor={theme.panelBg}
+    >
+      <T dimColor>
+        {kind === "mention" ? "@ file" : "/ command"} · {selected + 1}/{items.length}
+      </T>
+      {visible.map((item, offset) => {
+        const index = start + offset;
+        const detail = item.detail !== undefined ? `  ${item.detail}` : "";
+        return (
+          <T key={`${item.value}:${index}`} inverse={index === selected} wrap="truncate-end">
+            {oneLine(`${item.label}${detail}`, textWidth)}
+          </T>
+        );
+      })}
+      <T dimColor>↑/↓ select · Enter accept · Esc close</T>
     </Box>
   );
 }
@@ -517,9 +561,11 @@ export function HelpOverlay(props: { width: number; height: number }) {
   const boxHeight = Math.max(6, Math.min(18, height - 4));
   const lines = [
     "Keys",
-    "  Enter        send the utterance",
+    "  Enter        send the utterance / accept a suggestion",
     "  Ctrl-J       newline",
-    "  Esc          pause / close overlay",
+    "  @            pick a workspace file",
+    "  /            command menu",
+    "  Esc          pause / close overlay / dismiss suggestions",
     "  Ctrl-C       abort the running turn",
     "  Ctrl-T       task history",
     "  Tab          cycle focus (composer / trace / task)",

@@ -285,4 +285,65 @@ describe("TUI app", () => {
     expect(app.lastFrame()).toContain("Task history");
     app.unmount();
   });
+
+  it("opens a file picker for @ and inserts the path", async () => {
+    const telemetry = memoryTelemetry();
+    const turnDeps = deps();
+    turnDeps.task.workspace = {
+      listFiles: () => ["README.md", "src/app.ts", "src/deep/app.test.ts"],
+    } as never;
+    const app = render(
+      <TuiApp deps={turnDeps} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("@ap");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const menu = app.lastFrame() ?? "";
+    expect(menu).toContain("@ file");
+    expect(menu).toContain("src/app.ts");
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(app.lastFrame()).toContain("@src/app.ts");
+    app.unmount();
+  });
+
+  it("runs a slash command and resets the session", async () => {
+    const telemetry = memoryTelemetry();
+    const turnDeps = deps();
+    turnDeps.sessionAgent.agent = async () => ({
+      operation: { kind: "respond", text: "hello-answer" },
+    });
+    const app = render(
+      <TuiApp deps={turnDeps} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("hi");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(app.lastFrame()).toContain("hello-answer");
+    app.stdin.write("/new");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(app.lastFrame()).toContain("/ command");
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("session reset");
+    expect(frame).not.toContain("hello-answer");
+    app.unmount();
+  });
+
+  it("rejects an unknown slash command without sending it", async () => {
+    const telemetry = memoryTelemetry();
+    const app = render(
+      <TuiApp deps={deps()} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("/zzz");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(app.lastFrame()).toContain("unknown command: /zzz");
+    app.unmount();
+  });
 });

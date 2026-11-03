@@ -13,7 +13,11 @@ import {
   type SessionTurnDeps,
   type SessionTurnResult,
 } from "../session/driver";
-import type { MemoryTelemetry } from "../session/telemetry";
+import {
+  sessionSummary,
+  usageTotals,
+  type MemoryTelemetry,
+} from "../session/telemetry";
 import type { ProgressEvent } from "../session/progress";
 import { createSessionLog, type SessionLog } from "../session/session_log";
 import type { SessionState } from "../session/types";
@@ -21,7 +25,18 @@ import { buildTuiView, type TaskTiming } from "./view_model";
 import { traceLines, traceWindow } from "./trace_lines";
 import { theme } from "./theme";
 import {
+  COMMANDS,
+  detectMention,
+  detectSlash,
+  rankCommands,
+  rankFiles,
+  replaceRange,
+  type CompletionItem,
+  type Mention,
+} from "./completion";
+import {
   ActivityBar,
+  CompletionPanel,
   Composer,
   Footer,
   HeaderBar,
@@ -39,6 +54,13 @@ export interface TuiAppProps {
   workspace: string;
   model: string;
   session?: SessionState;
+}
+
+interface CompletionView {
+  kind: "mention" | "command";
+  key: string;
+  items: CompletionItem[];
+  mention?: Mention;
 }
 
 function taskOutcome(events: readonly Event[], stopReason: string | null): string {
@@ -89,6 +111,7 @@ export function TuiApp(props: TuiAppProps) {
   const toggleTopRef = useRef<() => void>(() => {});
   const modelStarts = useRef(new Map<string, number>());
   const logRef = useRef<SessionLog | null>(null);
+  const filesRef = useRef<string[] | null>(null);
 
   const [tick, setTick] = useState(0);
   const [trace, setTrace] = useState<TraceEntry[]>([]);
@@ -106,6 +129,8 @@ export function TuiApp(props: TuiAppProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySelected, setHistorySelected] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [completionSelected, setCompletionSelected] = useState(0);
+  const [completionDismissed, setCompletionDismissed] = useState<string | undefined>();
   const [detailScroll, setDetailScroll] = useState(0);
   const [traceScroll, setTraceScroll] = useState(0);
 
@@ -130,6 +155,53 @@ export function TuiApp(props: TuiAppProps) {
   );
   mouseLayout.current = { mainWidth, gap: panelGap, showTask, bodyRows };
   mouseBlocked.current = helpOpen || historyOpen || paused !== undefined;
+
+  const workspaceFiles = (): string[] => {
+    if (filesRef.current !== null) return filesRef.current;
+    let files: string[] = [];
+    try {
+      const listed = deps.task.workspace?.listFiles;
+      if (typeof listed === "function") files = listed.call(deps.task.workspace);
+    } catch {
+      files = [];
+    }
+    filesRef.current = files;
+    return files;
+  };
+  const mention = focus === "composer" ? detectMention(input, cursor) : undefined;
+  const mentionFiles = mention !== undefined ? rankFiles(workspaceFiles(), mention.query) : [];
+  const slash = focus === "composer" && mention === undefined ? detectSlash(input) : undefined;
+  const commandMatches = slash !== undefined ? rankCommands(slash.query) : [];
+  const completionKey =
+    mention !== undefined && mentionFiles.length > 0
+      ? `mention:${mention.start}:${mention.query}`
+      : slash !== undefined && commandMatches.length > 0
+        ? `slash:${slash.query}`
+        : undefined;
+  let completion: CompletionView | undefined;
+  if (completionKey !== undefined && completionKey !== completionDismissed) {
+    completion =
+      mention !== undefined
+        ? {
+            kind: "mention",
+            key: completionKey,
+            mention,
+            items: mentionFiles.map((file) => ({ label: file, value: file })),
+          }
+        : {
+            kind: "command",
+            key: completionKey,
+            items: commandMatches.map((command) => ({
+              label: `/${command.name}`,
+              detail: command.description,
+              value: command.name,
+            })),
+          };
+  }
+  const completionIndex =
+    completion === undefined
+      ? 0
+      : Math.max(0, Math.min(completionSelected, completion.items.length - 1));
 
   const nextId = (): string => {
     traceSeq.current += 1;
@@ -238,6 +310,17 @@ export function TuiApp(props: TuiAppProps) {
     // A new state means a new detail block; never keep the previous state's scroll.
     setDetailScroll(0);
   }, [stateCount]);
+
+  const mentionActive = mention !== undefined;
+  useEffect(() => {
+    setCompletionSelected(0);
+  }, [mention?.query, slash?.query]);
+
+  useEffect(() => {
+    // The file index is rebuilt the next time a mention opens, so files created by a
+    // finished task show up without keeping a stale tree for the whole session.
+    if (!mentionActive) filesRef.current = null;
+  }, [mentionActive]);
 
   useEffect(() => {
     return () => {
@@ -509,8 +592,24 @@ export function TuiApp(props: TuiAppProps) {
   };
 
   const submit = async (): Promise<void> => {
-    const text = input.trim();
-    if (text === "" || runningRef.current) return;
+    const trimmed = input.trim();
+    if (trimmed === "") return;
+    if (!trimmed.startsWith("//") && trimmed.startsWith("/")) {
+      const [name, ...args] = trimmed.slice(1).split(/\s+/);
+      const spec = COMMANDS.find((command) => command.name === name);
+      if (spec === undefined) {
+        appendNotice(`unknown command: /${name || "?"} · type ? for help`);
+        return;
+      }
+      if (args.length > 0) {
+        appendNotice(`/${spec.name}: no arguments`);
+        return;
+      }
+      runCommand(spec.name);
+      return;
+    }
+    if (runningRef.current) return;
+    const text = trimmed.startsWith("//") ? trimmed.slice(1) : trimmed;
     logRef.current?.write({ type: "user", text });
     setInputHistory((previous) => [...previous, text].slice(-100));
     setHistoryIndex(null);
@@ -578,6 +677,150 @@ export function TuiApp(props: TuiAppProps) {
     appendNotice("cancelled");
     if (result.warning !== undefined) appendNotice(result.warning);
     setTick((value) => value + 1);
+  };
+
+  const resetInput = (): void => {
+    setInput("");
+    setCursor(0);
+    setHistoryIndex(null);
+    setCompletionDismissed(undefined);
+    setCompletionSelected(0);
+  };
+
+  const runCommand = (name: string): void => {
+    resetInput();
+    logRef.current?.write({ type: "command", command: name });
+    switch (name) {
+      case "new":
+        if (runningRef.current) {
+          appendNotice("new: a turn is still running");
+          return;
+        }
+        if (paused !== undefined) {
+          appendNotice("new: cancel or resume the paused turn first");
+          return;
+        }
+        sessionRef.current = createSession();
+        timingsRef.current.clear();
+        liveJournals.current.clear();
+        runningTools.current.clear();
+        modelStarts.current.clear();
+        filesRef.current = null;
+        setTrace([]);
+        setPaused(undefined);
+        setObserverNotice(undefined);
+        setActivity("idle");
+        setHistoryOpen(false);
+        setTraceScroll(0);
+        setDetailScroll(0);
+        deps.task.workspace.clearCheckpoints?.();
+        appendNotice("session reset");
+        setTick((value) => value + 1);
+        return;
+      case "help":
+        setHelpOpen(true);
+        return;
+      case "tasks":
+        setHistoryOpen(true);
+        setHistorySelected(0);
+        return;
+      case "pause":
+        if (!runningRef.current) {
+          appendNotice("pause: nothing is running");
+          return;
+        }
+        abortRef.current?.abort();
+        return;
+      case "resume":
+        if (paused === undefined) {
+          appendNotice("resume: nothing is paused");
+          return;
+        }
+        void resume();
+        return;
+      case "cancel":
+        if (paused === undefined) {
+          appendNotice("cancel: nothing is paused");
+          return;
+        }
+        cancel();
+        return;
+      case "quit":
+        exit();
+        return;
+      case "mouse": {
+        const next = !mouseCapture;
+        setMouseCapture(next);
+        appendNotice(next ? "mouse: capture on (Ctrl-G off)" : "mouse: capture off (Ctrl-G on)");
+        return;
+      }
+      case "verbose": {
+        const collapsible = trace.filter(
+          (entry) => entry.kind === "thought" || entry.kind === "tool",
+        );
+        if (collapsible.length === 0) {
+          appendNotice("verbose: no collapsible blocks");
+          return;
+        }
+        const expand = collapsible.every((entry) => entry.collapsed === true);
+        setTrace((previous) =>
+          previous.map((entry) =>
+            entry.kind === "thought" || entry.kind === "tool"
+              ? { ...entry, collapsed: !expand }
+              : entry,
+          ),
+        );
+        appendNotice(expand ? "blocks expanded" : "blocks collapsed");
+        return;
+      }
+      case "status": {
+        const summary = sessionSummary(telemetry.events);
+        const totals = usageTotals(telemetry.events);
+        const types = Object.entries(summary.unitsByType)
+          .map(([type, count]) => `${type} ${count}`)
+          .join(", ");
+        appendNotice(
+          `session: ${summary.units} units (${types || "none"}) · ` +
+            `${summary.modelCalls} model · ${summary.toolCalls} tool · ` +
+            `${totals.inputTokens} in / ${totals.outputTokens} out`,
+        );
+        return;
+      }
+      case "clear":
+        setTrace([]);
+        setTraceScroll(0);
+        return;
+      default:
+        appendNotice(`unknown command: /${name}`);
+    }
+  };
+
+  const acceptCompletion = (): void => {
+    if (completion === undefined) return;
+    const item = completion.items[completionIndex];
+    if (item === undefined) return;
+    if (completion.kind === "mention" && completion.mention !== undefined) {
+      const next = replaceRange(
+        input,
+        completion.mention.start,
+        completion.mention.end,
+        `@${item.value} `,
+      );
+      setInput(next.input);
+      setCursor(next.cursor);
+      setCompletionDismissed(undefined);
+      setCompletionSelected(0);
+      return;
+    }
+    if (input.trim() === `/${item.value}`) {
+      runCommand(item.value);
+      return;
+    }
+    const next = replaceRange(input, 0, input.length, `/${item.value} `);
+    setInput(next.input);
+    setCursor(next.cursor);
+    setCompletionDismissed(undefined);
+    setCompletionSelected(0);
   };
 
   const insert = (text: string): void => {
@@ -653,6 +896,32 @@ export function TuiApp(props: TuiAppProps) {
         setHistorySelected((index) => Math.min(view.history.length - 1, index + 1));
       }
       return;
+    }
+    if (completion !== undefined) {
+      if (key.escape) {
+        setCompletionDismissed(completion.key);
+        return;
+      }
+      if (key.upArrow) {
+        setCompletionSelected((index) => Math.max(0, index - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setCompletionSelected((index) => Math.min(completion.items.length - 1, index + 1));
+        return;
+      }
+      if (key.pageUp) {
+        setCompletionSelected((index) => Math.max(0, index - 5));
+        return;
+      }
+      if (key.pageDown) {
+        setCompletionSelected((index) => Math.min(completion.items.length - 1, index + 5));
+        return;
+      }
+      if (key.tab || key.return) {
+        acceptCompletion();
+        return;
+      }
     }
     if (key.escape) {
       if (runningRef.current) {
@@ -824,6 +1093,15 @@ export function TuiApp(props: TuiAppProps) {
         focused={focus === "composer"}
       />
       <Footer paused={paused !== undefined} historyOpen={historyOpen} />
+      {completion !== undefined && !helpOpen && !historyOpen && paused === undefined ? (
+        <CompletionPanel
+          kind={completion.kind}
+          items={completion.items}
+          selected={completionIndex}
+          width={columns}
+          bottom={1 + composerHeight}
+        />
+      ) : null}
       {historyOpen ? (
         <HistoryOverlay
           tasks={view.history}
