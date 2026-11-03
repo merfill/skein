@@ -4,6 +4,45 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-03 — TUI: @-файлы и слэш-команды
+
+- **`@`:** меню файлов над композером (`workspace.listFiles`, `SKIP_DIRS`), фильтр по
+  подстроке с приоритетом basename, `↑/↓`, `Enter`/`Tab` вставляют `@path`, `Esc` закрывает.
+  Индекс пересобирается при каждом открытии меню. Вставка — только путь, без содержимого;
+  dot-файлы и пути с пробелами не поддерживаются.
+- **`/`:** меню команд `new`/`help`/`tasks`/`pause`/`resume`/`cancel`/`quit`/`mouse`/
+  `verbose`/`status`/`clear`; `//` — литеральный слэш, неизвестная команда не уходит в модель.
+  `/new` создаёт новую in-memory сессию, чистит trace/паузу/снапшоты; телеметрия кумулятивна;
+  команда запрещена во время run и паузы.
+- **Файлы:** `src/tui/completion.ts`, `CompletionPanel` в `src/tui/panels.tsx`,
+  `src/tui/app.tsx`; тесты `tests/tui_completion.test.ts`, дополнен `tests/tui_app.test.tsx`;
+  `docs/plans/tui_plan*.md`.
+- **Проверки:** typecheck чистый; офлайн **579 passed, 40 skipped**.
+- **Коммит:** `99ea7fc`.
+
+## 2026-11-03 — Палитра/токены TUI, контракт ответа general
+
+- **Палитра:** `src/tui/theme.ts` переведена на точные роли из темы opencode
+  (`packages/tui/src/theme/assets/opencode.json` в апстриме): light/dark, markdown
+  (heading/code/link/strong), syntax. Активный блок — белый фон в light и чуть светлее
+  в dark; markdown-цвета не перекрашиваются. Activity-индикатор — braille + `working ·`.
+- **Markdown:** убран кап 100 колонок и отступ — вывод снова на всю ширину панели
+  (`src/tui/trace_lines.ts`). Узкая мера была компенсацией тёмного фона, а не плотности.
+- **Токены:** header — `ctx` + Σ `in/out/cache/rsn`; панель задачи — `in` = текущий
+  контекст (последний input), `out` = out+reasoning, плюс `cache`; по ходу — только
+  `in/out`. `view_model.ts` собирает `cachedInputTokens` и `contextTokens`.
+- **Многословность general:** причина — не бриф и не «глубина чтения». Сырой бриф
+  «расскажи о проекте» дал 2 хода/2 чтения, но 4083 симв. (контроль с расширенным
+  брифом — 4388). В opencode 1.19.5 для DeepSeek выбирается
+  `packages/opencode/src/session/prompt/default.txt` с жёстким контрактом краткости,
+  которого не было у general. После переноса в `GENERAL_BASE_PROMPT` (без дублей) —
+  1694–2010 симв. / 707–871 out на трёх прогонах. Модельно-специфичные промпты
+  (gpt/claude/gemini/kimi/trinity) отложены: без live-проверки на этих моделях
+  рискованно.
+- **Проверки:** typecheck чистый; офлайн **560 passed, 40 skipped**.
+- **Коммиты:** `9fa9a5f` (палитра/токены), `d196ea1` (контракт general), `014c726`
+  (markdown на всю ширину).
+
 ## 2026-11-03 — Session/general prompts, text stop, AGENTS.md
 
 - **Session prompt:** `SESSION_BASE_PROMPT` переписан положительно: маршрут по результату
@@ -23,8 +62,8 @@
   (`projectInstructionsText` + `generalContextText`). Это снимает главную причину похода
   в `tests/`: без глоссария «коллекции» читались как test fixtures; с `AGENTS.md`
   («ProofWriter collection notes (eval harness)») general сразу идёт в `docs/`/`evals/`.
-- **TUI:** markdown ограничен 100 колонками + отступ; activity-индикатор анимируется
-  (`· • ● •`) только при running.
+- **TUI:** markdown на всю ширину панели (кап 100 и отступ позже убраны); activity-индикатор
+  анимируется (теперь braille `⠋⠙⠹…` + `working ·`) только при running.
 
 **Наблюдения live (ankyra, копия в /tmp):**
 - text stop сам по себе (run4) и tool surface как в opencode (run5) не уменьшили ходы
