@@ -297,6 +297,11 @@ An interpretation that produces neither an operation nor a tool call, or that ex
 safety cap, ends with a `no_decision` event (`empty_reply`/`max_turns`). The unit stays
 suspended; L0 and the terminal view show the reason.
 
+The observer is held to the same rule, but its `no_decision` is recorded on the observer unit and
+stays out of view: it is a fact about the advice, not about the request, and the observer units
+are not part of the session outline. Its purpose is that a trigger followed by nothing can be
+told apart from a trigger whose observer died, in the trace.
+
 The session agent has no workspace read tools (`read`/`grep`/`list`/`probe`). A material
 question goes to the `general` unit, which reads with its own plan actions; a coding change goes
 to `start`. `search` remains the memory tool: it searches the stored bodies of a past unit, not

@@ -191,6 +191,9 @@ SKEIN_LIVE=true npx tsx tests/sandbox/live-trace.ts
 `costRub`, `contextChars` `first/last/peak`; then the same split `byTool` and `byOperator`.
 
 - `llmCalls` — actual model invocations (a completion-cap bump or a repair round adds one).
+  An observer call counts too: it is a real model call and a real cost. Because the observer
+  runs in `progress`, after the turn's delta, its call is charged to the **next** turn; with
+  no next turn (it fired on the last one) it is charged to the last turn.
 - `toolCalls` — one per turn (**no** forced `tool_choice`); a **refused** proposal is still
   a call (`accepted`/`refused` split it). Retries add `llmCalls`, not `toolCalls`.
 - `in` = fresh input + cache read (same convention as `bench/agents_compare.ts`, §6);

@@ -16,6 +16,14 @@ Higher is better, in this order:
 One row per run. The run dir holds the trace (`metrics.json`, `result.json`; opencode also
 writes `opencode.txt`).
 
+> **2026-11-04, observer: `state_long` threshold 13 → 9, state-tape render fix, K=9:**
+> `password-recovery` — **9/9 reward=1**, 13–21 turns (median 17), **0.665–2.259₽**
+> (median **1.433₽**), all `request_addressed`. Versus opencode in the same sandbox
+> (2026-10-18, same model and network): model calls **18 vs 12**, environment actions
+> **12 vs 19**, fresh input **39,062 vs 20,927**, ₽ **1.177 vs 0.953**. The task is solved
+> without a trigger too (13 turns, 0.665₽ — the shortest run), so the threshold is not
+> measured here. See the 2026-11-04 batch below.
+
 > **2026-10-23, restored state layer, reasoning on, net off, K=3:** `fix-ocaml-gc` —
 > **3/3 reward=1**, 25–29 steps, **1.342 / 1.412 / 1.437₽** (median **1.412₽**). L closed at
 > t10 / t8 / t11; median input **163,568** (fresh 51,084 + cache 115,968, 71%) vs opencode
@@ -100,6 +108,77 @@ churns through `bash` and burns reasoning. Offline the gap is even wider: **open
 Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
+
+## Batch 2026-11-04 — `password-recovery`: `state_long` threshold 9, state-tape render fix
+
+`npx tsx tests/sandbox/sandbox-run.ts password-recovery`, official verifier
+(`tests/test.sh`, reward from `/logs/verifier/reward.txt`), model
+`routerai/~deepseek/deepseek-v4-flash-latest`, reasoning `low`. Three batches that day:
+07:53 / 08:38 / 08:41 — `net off`, threshold 13; 12:46 — `net on`, threshold 13; 13:28 —
+`net on`, threshold 9 (final code). All runs carry the state-tape render fix (`write`/`edit`
+are no longer drawn as `-> no result`, they are `-> mutated <path>`).
+
+| run | net | trigger | turns | calls | env | in | fresh | cache | hit | out (vis + rea) | peak | ₽ | reward |
+|---|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| `12-46-55` | on | — | **13** | 13 | 11 | 72,758 | 20,406 | 52,352 | 72% | 4,121 (1,655 + 2,466) | 27,718 | **0.665** | **1** |
+| `13-28-19` | on | `state_long@t12` | 17 | 18 | 12 | 136,750 | 29,742 | 107,008 | 78% | 5,897 (1,769 + 4,128) | 30,414 | **0.972** | **1** |
+| `13-28-23` | on | `state_long@t12` | 16 | 17 | 10 | 153,963 | 40,683 | 113,280 | 74% | 4,855 (1,575 + 3,280) | 40,321 | **1.093** | **1** |
+| `13-28-26` | on | `state_long@t12` | 17 | 18 | 12 | 155,585 | 37,441 | 118,144 | 76% | 8,045 (2,045 + 6,000) | 42,046 | **1.261** | **1** |
+| `08-38-42` | off | — | 15 | 15 | 9 | 125,393 | 23,761 | 101,632 | 81% | 3,774 (1,358 + 2,416) | 36,583 | **1.433** | **1** |
+| `12-46-58` | on | `state_long@t16` | 21 | 22 | 16 | 215,309 | 42,509 | 172,800 | 80% | 9,546 (2,764 + 6,782) | 47,259 | **1.474** | **1** |
+| `08-41-50` | off | — | 17 | 17 | 11 | 116,038 | 18,374 | 97,664 | 84% | 5,736 (2,088 + 3,648) | 31,337 | **1.516** | **1** |
+| `12-46-52` | on | `state_long@t16` | 21 | 23 | 15 | 287,706 | 53,978 | 233,728 | 81% | 12,147 (2,356 + 9,791) | 59,805 | **1.879** | **1** |
+| `07-53-50` | off | `state_long@t16` | 21 | 24 | 20 | 241,586 | 27,314 | 214,272 | 89% | 8,216 (3,218 + 4,998) | 45,764 | **2.259** | **1** |
+| **median** (n=9) | — | — | **17** | **18** | **12** | **153,963** | **29,742** | **113,280** | **80%** | **5,897 (2,045 + 4,128)** | **40,321** | **1.433** | — |
+
+All nine are `reward=1`, `request_addressed`; the fix is the same every time:
+`PASSWORD=8XDP5Q2RT9ZK7VB3BV4WW54` in `/app/recovered_passwords.txt`.
+
+**Versus opencode in the same sandbox.** Five runs
+`bench/runs/sandbox-tasks/2026-10-18T06-54-02-*-password-recovery-opencode-on`, same model,
+same `low` variant, `net on`, 5/5 `reward=1`. The opencode cost is not an estimate: it is the
+sum of the `cost` field in `api-responses.ndjson` (the same provider counter Skein records).
+
+| metric | Skein 04.11 (n=6, net on) | opencode 18.10 (n=5) | ratio |
+|---|---:|---:|---:|
+| model calls | 18 | **12** | 1.50× |
+| steps (as the agent counts them) | 17 | **12** | 1.42× |
+| environment actions | **12** | 19 | 0.63× ¹ |
+| total input | **154,774** | 229,539 | 0.67× |
+| fresh input | 39,062 | **20,927** | 1.87× |
+| cache hit | 77% | **91%** | −14 pp |
+| output | 6,971 | **6,938** | 1.00× |
+| reasoning | 5,064 | **5,033** | 1.01× |
+| ₽ | 1.177 | **0.953** | 1.23× |
+| wall | absent from `metrics.json` ² | **46 s** | — |
+
+¹ "Environment action" is counted differently: for Skein it is `perTurn.operator = apply`
+(6 of 18 calls go to the `move`/`stop` protocol); for opencode it is `metric.toolCalls` (there
+is no protocol layer). Comparing "steps" directly is wrong for a second reason: opencode
+issues 2–3 tools per model call and packs them into one step (verified from `contexts.ndjson`:
+`tools/step = 1.58`), while Skein issues exactly one (`1.00`).
+
+² Skein's `metrics.json` in the current format carries no `elapsedMs`. Indirectly: the
+2026-11-03 matrix batch at the same 17 turns took 79 s.
+
+**What the observer showed.** The `state_long` trigger fired in 6 of 9 runs (t12 at threshold 9,
+t16 at 13). Its usefulness is not measured on this task: the shortest runs (13 and 15 turns,
+0.665 and 1.433₽) had **no trigger at all**, and the agent reached the password before the hint —
+in `13-28-19` and `13-28-23` the `write` sits on the very turn t12 where the trigger fired, in
+`13-28-26` the password is derived at t10 and written at t13. Threshold 9 stands on independent
+evidence: on `cobol` (where a state really is long) it leaves 11–16 turns of headroom against
+7–12 at 13, and the observer tape is half as long (22–33k vs 39–52k chars). See
+`docs/plans/request_observer_plan.md`.
+
+**What these numbers do not show.** `password-recovery` is no longer an observer probe: 9/9 at
+a median of 17 turns is normal, unstuck behaviour. Every action inside a state is a distinct
+command (no thrashing), so `state_long` here measures productivity, not a lost thread. The
+premise "the observer earns its keep when the agent goes off course" is not exercised here.
+
+Traces: `bench/runs/sandbox-tasks/2026-11-04T13-28-19-905Z-password-recovery-LylmU1`,
+`…13-28-23-012Z-…-oEsADx`, `…13-28-26-028Z-…-kQAdAM`, `…12-46-52-381Z-…-E7gYcN`,
+`…12-46-55-435Z-…-FNnOki`, `…12-46-58-538Z-…-Tg95MS`, `…07-53-50-728Z-…-vrw0yM`,
+`…08-38-42-219Z-…-BGngTo`, `…08-41-50-239Z-…-FcdrlN`.
 
 ## Batch 2026-10-23 — restored state layer, reasoning on, net off, K=3
 

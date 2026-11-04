@@ -75,7 +75,7 @@ reproduces all six Skein `costRub` values to < 0.001 ₽. The earlier handoff ra
 | modernize-scientific-stack | 2026-10-24 | see `task_benchmarks.md` §5 |
 | fix-ocaml-gc | 2026-10-24 (net off) | see `task_benchmarks.md` §4 |
 | custom-memory-heap-crash | 2026-10-24 | see `task_benchmarks.md` §12 |
-| password-recovery | 2026-10-24 (K=1) | see `task_benchmarks.md` §13 |
+| password-recovery | 2026-10-24 (K=1); 2026-11-04 Skein K=9 | see `task_benchmarks.md` §13 (current state — §13.6) |
 | crack-7z-hash | 2026-10-24 (K=1, `net on`) | see `task_benchmarks.md` §15 |
 | db-wal-recovery | 2026-10-24 (K=1) | see `task_benchmarks.md` §14 |
 | fix-code-vulnerability | 2026-10-24 | see `task_benchmarks.md` §9 |

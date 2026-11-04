@@ -243,7 +243,7 @@ A repeat action (the same command with the same inputs and an unchanged world) i
 its observation names the existing result. There is no deterministic `no_progress` anymore,
 and the projection carries no soft attractor. Looping is the subject of `RequestObserver`
 triggers (Tier 4a): `state_cycle` on the third entry into the same island, `state_long` beyond
-20 turns in a state, `budget` near `max_turns`. In `patch|research|construction|end` at
+9 turns in a state, `budget` near `max_turns`. In `patch|research|construction|end` at
 `max_turns` the engine allows `G` more turns once (`SKEIN_GRACE_TURNS`, default 5); otherwise
 `max_turns` ends the run.
 

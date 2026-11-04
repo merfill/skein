@@ -3,8 +3,9 @@
 > Russian original — `docs/plans/request_observer_plan_ru.md`.
 >
 > Status: **4a implemented** and verified on synthetic live scenarios (`entry`, `long`);
-> real tasks and threshold calibration remain. Scope — 4a only. Out of scope: session
-> operations and attention statuses (4b), user interruption.
+> real tasks — passed (see "Calibration" below). The `state_long` threshold 13 → 9 and the
+> state tape replacing the survey tools were fixed on 2026-11-04. Scope — 4a only. Out of
+> scope: session operations and attention statuses (4b), user interruption.
 
 ## 1. Goal
 
@@ -30,8 +31,8 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 
 - the session container: session journal, units, stack, `pending`; no session operations;
 - a deterministic trigger detector: `budget`, `state_cycle`, `state_long`;
-- the observer unit: its own journal, its own prompt, read-only outline tools, an engine-seeded
-  survey;
+- the observer unit: its own journal, its own prompt, an engine-seeded state tape, and the
+  decisions `hint`/`memo`/`halt`;
 - the reactions `hint`, `memo`, `halt`; logos checks and applies them;
 - `hint`/`memo` in the task journal, rendered as `system`;
 - removal of `nudge` and terminal `no_progress`; `max_turns` remains the absolute safeguard;
@@ -79,8 +80,8 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
   from `move`; `stateTurns` = the current turn minus `move.turn`.
 - `state_cycle`: the third entry into the same island through `move`; once per current `move`.
   Threshold — `SKEIN_STATE_CYCLE_ENTRIES` (default 3).
-- `state_long`: `stateTurns > 20`; once per current `move`.
-  Threshold — `SKEIN_STATE_LONG_TURNS` (default 20).
+- `state_long`: `stateTurns > 9`; once per current `move`.
+  Threshold — `SKEIN_STATE_LONG_TURNS` (default 9).
 - `budget`: fewer than K turns remain (`SKEIN_BUDGET_TURNS`, default 3). The trigger is
   suppressed when the focus is in a terminal island or the request is already near closure —
   then the engine lets it finish.
@@ -89,20 +90,20 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 ### 4.4. Observer unit
 
 - `src/session/observer.ts`: `runRequestObserver(deps, trigger, taskState) → { journal, decision }`.
-- The seed is recorded in the observer unit journal as ordinary `action`/`observation` nodes with
+- The seed is recorded in the observer unit journal as an ordinary `action`/`observation` pair with
   `payload.origin: "engine"` and a matching `callId`:
   - `system`: the observer prompt and the trigger facts (`kind`, `anchor`, evidence ids);
-  - `assistant`: an `outline` call → `tool` result;
-  - `assistant`: a `state(anchor)` call → `tool` result;
-  - `body(evidence)` when needed.
-- The observer unit model: a separate schema (`src/llm/observer_schemas.ts`), tools `outline`, `state`,
-  `turns`, `attempt`, `body`, `rendered`; the decision is `hint`, `memo` or `halt`.
+  - `assistant`: one `state` call → `tool` result whose body is the **state tape** (`stateTape`):
+    the request, the move list, and every turn of the firing state in order — the agent's
+    reasoning, the action, the observation it produced, each addressed by node id.
+- The observer unit model: tools `hint`, `memo`, `halt` only. It reads the tape it is handed; there
+  are no survey tools, because everything they could disclose is already in the state tape.
 - `buildObserverMessages` reuses `TapeMessage`/`toMessage`; it has its own `OBSERVER_BASE_PROMPT` and
   no task situation tails.
-- Loop: at most M turns (starting at 6), one reaction per run; read-only calls are executed and
-  written to the observer unit journal; a logos refusal is recorded, one retry, then finish without
-  a reaction.
-- Nesting limit: `maxObserverDepth = 1` for 4a; `ObserverDeps.maxDepth` and `observerDepth`
+- Loop: exactly one model call per run, one reaction per run. A reply that is not a decision is
+  repaired once by `modelRequestObserver`; a reply that still decides nothing ends the run with
+  `noDecision: "empty_reply"`, recorded on the observer unit.
+- Nesting limit: `observerDepth < 1`; the depth counter itself is unchanged.
   infrastructure exists; nested runs are future work.
 
 ### 4.5. `hint` and `memo`
@@ -163,8 +164,8 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
    determinism, terminal suppression and `stateEntries`/`stateTurns` counters.
 4. **Observer journal and seed.** `action`/`observation` in the observer journal, `projectObserver`,
    engine-origin, replay tests.
-5. **Observer model and tools.** Schema, `invokeObserverTools` (or generalizing `invokeTools`),
-   `outline`/`state`/`turns`/`attempt`/`body`/`rendered`, bounded loop, refusal/retry.
+5. **Observer model and tools.** `observerTools()` = `hint`/`memo`/`halt`, decision schemas without
+   a `state` field (the engine stamps the trigger's anchor), single call, repair/retry.
 6. **Hint and memo.** Application, rendering, tests for evidence, state closure and memo
    permanence.
 7. **Halt and async `progress`.** `AgentResult.session`, integration tests.
@@ -176,14 +177,14 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 
 - **Session:** the journal only grows; `focus` is the stack top; push/pop do not rewrite units;
   `pending` is not a stack.
-- **Detector:** `state_cycle` on the third entry; `state_long` beyond 20 turns; `budget`
+- **Detector:** `state_cycle` on the third entry; `state_long` beyond 9 turns; `budget`
   within K turns, not at the hard limit and not at a terminal state; identical events →
   identical triggers.
 - **Grace:** in `patch|research|construction|end` at `max_turns`, `G` more turns
   (`SKEIN_GRACE_TURNS`, default 5) once; in other states the run ends immediately.
 - **Observer unit:** the seeded call and result have matching ids and `origin: "engine"`; a replay
-  reads them from the journal; observer tools are read-only (they do not write to the task journal);
-  one reaction per run; a logos refusal does not break the task.
+  reads them from the journal; the observer never writes to the task journal; one reaction per run;
+  a logos refusal does not break the task.
 - **Hint/memo:** both are recorded in the task journal; on the tape they are `system`, not
   `user`; `hint` disappears when its state closes, `memo` remains until the request ends;
   invalid evidence is rejected.
@@ -227,3 +228,33 @@ doxa's `stop`, the journal only grows, the projection is deterministic. At the s
 - Removing nudge/no_progress is rolled back by reverting its commit.
 - New kinds need no migration of existing journals: old events still read, new ones appear only
   in new runs.
+
+## 10. Calibration (2026-11-04)
+
+**`state_long` threshold: 13 → 9.** Measured on recorded runs with the modern IR (a `turns`
+container, 19 runs): at 13 it fires 11/19, at 9 it fires 16/19, and in 15 of 16 cases **before**
+the answer is written. The observer tape is half as long: median 11.5k tokens vs 17.8k. Median
+headroom — 7 turns. On `cobol-modernization` (the only task whose states really are long)
+threshold 9 leaves 11–16 turns of headroom against 7–12 at 13. The `budget` trigger is
+**unchanged** — the owner's decision: its three modern fires all landed in deep states, and the
+single young one gave a genuinely useful early warning.
+
+**The observer tape.** `defaultObserverTools`/`ObserverTools` are removed. The observer receives
+one deterministic state tape (`stateTape`): reasoning → action → observation over every turn of
+the state the trigger fired in, addressed by node id. There are no survey calls — a second model
+turn could only restate the tape.
+
+**Result-render fix.** `write`/`edit` attach `mutates` to `file:<path>` and never create a
+`result` node, so 135/143 `write` and 146/158 `edit` were drawn as `-> no result`.
+`actionResultText` (`src/ir/project.ts`) was introduced and `stateTape`/`observationBody` reuse
+it. Verified: 0 false `no result` out of 272 successful edits.
+
+**What the calibration did not show.** `password-recovery` (9/9, median 17 turns) does not
+measure the observer: the shortest runs had no trigger, the agent derived the answer before the
+hint, and every action inside a state is a distinct command. `state_long` measures productivity
+there, not a lost thread. Testing "the observer earns its keep when the agent goes off course"
+needs a task where the agent actually thrashes; the current registry has none.
+
+**Open defect.** The observer invents numeric offsets that are not in the tape (e.g. `1048671`
+and `3145726` against an actual `3145727`). Logos validates that evidence ids exist, not that
+the quoted content appears. Not fixed.

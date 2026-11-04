@@ -836,6 +836,40 @@ It re-reads 53.3k tokens against 20.3k, with a cache hit of 75% against 90%; rea
 
 `bench/runs/matrix/2026-10-24-password/` — cells under `cells/<agent>-netoff-r1/`.
 
+### 13.6 Current state (2026-11-04) — Skein K=9, 9/9, median 17 turns
+
+The table in §13.3 describes the 2026-10-24 code (Skein 33 turns / 1.938₽). After merging
+Research+Recovery, flat turns and the `state_long` threshold 13 → 9 the picture is different:
+nine `password-recovery` runs on 2026-11-04 — **9/9 reward=1**, all `request_addressed`, median
+**17 turns / 1.433₽**.
+
+| agent | net | K | reward | model calls | environment actions | ₽ | fresh in | total in | cache | out | reasoning |
+|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Skein (2026-11-04) | on | 6 | 6/6 | 18 | **12** | **1.177** | 39,062 | **154,774** | 77% | 6,971 | 5,064 |
+| Skein (2026-11-04) | off | 3 | 3/3 | 17 | 11 | 1.516 | 23,761 | 125,393 | 84% | 5,736 | 3,648 |
+| opencode (2026-10-18) | on | 5 | 5/5 | **12** | 19 | **0.953** | **20,927** | 229,539 | **91%** | **6,938** | **5,033** |
+
+The full table over the nine runs, the per-trigger breakdown and the caveats are in
+`docs/benches/best_bench.md`, "Batch 2026-11-04 — `password-recovery`".
+
+**How to read it.** "Steps" mean different things: opencode issues 2–3 tools per model call and
+packs them into one step (`tools/step = 1.58` from `contexts.ndjson`), Skein issues exactly one
+(`1.00`). So the comparable axes are model calls and environment actions, not "turns". Skein
+does **fewer** environment actions (12 vs 19) but **more** model calls (18 vs 12): 6 of 18 go to
+the `move`/`stop` protocol, which opencode does not have. Skein costs 1.23× more — because of
+fresh input (1.87×) at a worse cache hit (77% vs 91%).
+
+The opencode cost is not an estimate: it is the sum of the `cost` field in `api-responses.ndjson`
+(the same provider counter Skein records).
+
+**The observer is not measured on this task.** The `state_long` trigger fired in 6 of 9 runs,
+but the shortest (13 and 15 turns) had no trigger at all, and the agent derived the password
+before the hint. The task is solved 9/9 at a median of 17 turns — normal, unstuck behaviour;
+every action inside a state is a distinct command.
+
+Traces: `bench/runs/sandbox-tasks/2026-11-04T13-28-*` (threshold 9) and
+`…2026-11-04T12-46-*` / `…T07-53-*` / `…T08-3*` / `…T08-4*` (threshold 13).
+
 ## 14. db-wal-recovery
 
 ### 14.1 The task

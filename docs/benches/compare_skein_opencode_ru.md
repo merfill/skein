@@ -74,7 +74,7 @@ handoff (17.77 / 0.36 / 71.09) отличаются на ~3%; по возмож�
 | modernize-scientific-stack | 2026-10-24 | см. `task_benchmarks_ru.md` §5 |
 | fix-ocaml-gc | 2026-10-24 (net off) | см. `task_benchmarks_ru.md` §4 |
 | custom-memory-heap-crash | 2026-10-24 | см. `task_benchmarks_ru.md` §12 |
-| password-recovery | 2026-10-24 (K=1) | см. `task_benchmarks_ru.md` §13 |
+| password-recovery | 2026-10-24 (K=1); 2026-11-04 Skein K=9 | см. `task_benchmarks_ru.md` §13 (текущее состояние — §13.6) |
 | crack-7z-hash | 2026-10-24 (K=1, `net on`) | см. `task_benchmarks_ru.md` §15 |
 | db-wal-recovery | 2026-10-24 (K=1) | см. `task_benchmarks_ru.md` §14 |
 | fix-code-vulnerability | 2026-10-24 | см. `task_benchmarks_ru.md` §9 |

@@ -56,9 +56,9 @@ it without violating "the doxa proposes".
 ### 1.4. The observer unit as the same IR
 
 The RequestObserver is neither an external supervisor nor a second engine. It is a observer unit: the
-same IR as a task, but with a different root (a trigger and an outline instead of a request), a
-different state vocabulary and read-only outline tools. Its proposals pass the same check by
-logos.
+same IR as a task, but with a different root (a trigger and a state tape instead of a request), a
+different state vocabulary and one deterministic tape instead of survey tools. Its proposals pass
+the same check by logos.
 
 This arrangement preserves the invariants: the journal only grows, the projection is
 deterministic, a state is closed only through `stop`, and there are no stored verdicts or
@@ -97,7 +97,7 @@ and what a false positive costs.
 - a repeated `action→observation` over unchanged material; a special case already exists — the
   read thrash-guard (`OP-AP-READ-6`);
 - a third entry into the same island through `move` (e.g. `P→V→P…`);
-- more than 20 turns in one state;
+- more than 9 turns in one state;
 - reasoning growth or repetition over a window (reasoning chars/tokens per turn and their trend);
 - a premature `stop` when the goal or criterion is not met;
 - turn or token budget burn; in `patch|research|construction|end` at `max_turns` the engine
@@ -130,16 +130,16 @@ level and is not needed on the tape of a single unit.
 By default the observer unit receives:
 
 - `system`: the observer prompt and the trigger (`kind`, `anchor`, `evidence` ids);
-- a **prepared outline**: a deterministic set of read-only calls built by the engine (`outline`,
-  `state(anchor)`, and `body(evidence)` when needed) together with their `tool` results.
+- the **state tape**: one deterministic body built by the engine (`stateTape`) — the request, the
+  move list, and every turn of the state the trigger fired in, in order: what the agent was
+  thinking, what it ran, and the observation it got back, addressed by node id.
 
 The seeded call is not a transient render but an **event in the observer unit journal**: the engine
 records the call itself and its `tool` result with `engine` provenance, so the projection renders
-an ordinary `assistant` call → `tool` result pair and a replay reads the outline from the journal
-instead of re-running it. The exact record shape (a new `kind` or reusing
-`action`/`observation` with `payload.origin`) is an open question. The model spends its first
-turn on the decision, not on "give me the tape". If the data is insufficient, it calls the tools
-itself.
+an ordinary `assistant` call → `tool` result pair and a replay reads the tape from the journal
+instead of re-running it. The model spends its turn on the decision, not on "give me the tape".
+There are no survey tools: everything the observer may read is already in the state tape, so a
+second model turn could only restate it.
 
 The task tape is not replayed wholesale: the observer unit has its own tape, and the observed
 material arrives as call results.
@@ -150,8 +150,8 @@ material arrives as call results.
 |---|---|
 | observer prompt, engine directives | `system` |
 | trigger (engine facts, no task text) | `system` |
-| prepared outline (engine call) and later doxa calls/proposals | `assistant` |
-| observed material (outline, state, turns, body, rendered) | `tool` |
+| prepared state tape (engine call) and later doxa proposals | `assistant` |
+| the state tape body | `tool` |
 | user utterance (session only) | `user` |
 
 For the model it makes no difference who initiated the call: a `tool` result is a `tool` result,
@@ -165,17 +165,15 @@ introduce a cross-cutting "evidence block": the read-only tool contract carries 
 their output is an observation, that is, data, not instructions; logos never elevates observed
 text to a directive.
 
-## 5. Tape/IR agent tools (under discussion)
+## 5. Tape/IR agent tools
 
-- `outline` — the U and S summary; the engine seeds the call at the start of the observer unit;
-- `state(id)` — the structure of a state's prompts/hints: island, instruction/hint/goal, closure,
-  admissible transitions, plan;
-- `turns(state, range)` — `action→observation` turns; the tail plus the evidence turns;
-- `attempt(item)` — alternatives, refusals, result, outcome;
-- `body(obsId)` / `search` — an observation body or window, and addressing by id;
-- `rendered(state)` — the exact render of what the task model saw; needed to diagnose a
-  "projection-induced loop";
-- bounds: read-only; it does not edit task trees; it proposes an operation, logos checks it.
+The observer has no survey tools: it reads the state tape it is handed and answers with one of
+`hint`, `memo`, `halt`. The tools it used to have (`outline`, `state(id)`, `turns`, `body`,
+`rendered`) exist as engine renderers (`src/session/outline.ts`) but are not offered to the model:
+each of them only re-disclosed what `stateTape` already contains, at the price of extra model
+turns.
+
+- bounds: the observer does not edit task trees; it proposes a reaction, logos checks it.
 
 ## 6. Open questions
 
@@ -185,16 +183,18 @@ text to a directive.
 3. When to run the RequestObserver: on every trigger, with a debounce, only on expensive events?
    Pausing the task at a turn boundary and the unit stack are decided (§8); the way to
    pause/resume the loop and the synchrony of the run are open.
-4. How much the engine seeds by default (`outline`+`state`? also `turns`?) and how that relates
-   to the RequestObserver's budget.
+4. How much the engine seeds by default: the state tape is the whole input, so this is settled for
+   `state_long` (every recorded run had 100% of the observation bodies in the firing state); what a
+   `budget` trigger near the end of a state should show is still open.
 5. How the trigger and the reaction land in the journal: an engine event, `record_rejection`, a
    separate node type; how the `engine`/`doxa` provenance is visible on replay.
 6. How to keep a trigger from becoming a verdict or status without breaking the "no verdicts"
    invariant?
-7. How many turns and tokens the RequestObserver adds now that the outline is prepared by the engine,
+7. How many turns and tokens the RequestObserver adds now that the tape is prepared by the engine,
    and when it pays for itself.
-8. Whether to show reasoning in `turns` (useful for diagnosis but noisy).
-9. Whether a separate `rendered(state)` is needed or `turns`+`state` suffice.
+8. Settled: the state tape shows the reasoning, first, before the action it preceded — a stuck
+   agent's problem is usually visible in what it was thinking.
+9. Settled: no separate `rendered(state)`; the state tape is the single render the observer reads.
 10. How it relates to Tier 4b: 4a already introduces a minimal session container (journal and
     stack), while 4b adds session operations and attention statuses; the observer unit and outline
     are shared, the state vocabularies separate.

@@ -83,10 +83,11 @@ mechanism is built once and instantiated twice: the RequestObserver and the Sess
 
 - **4a — triggers and the RequestObserver (first).** The engine deterministically notices an
   event in the structure (a repeated `action→observation` over unchanged material, a third
-  entry into an island, >20 turns in a state, a repeated state chain through `move` edges,
+  entry into an island, >9 turns in a state, a repeated state chain through `move` edges,
   a premature `stop`, budget burn, etc.) and
-  emits a **trigger**; the RequestObserver with read-only outline tools decides what to do and
-  proposes an action; logos checks and applies. A trigger is an observation, not a verdict.
+  emits a **trigger**; the RequestObserver receives the state tape of the triggering state and
+  decides what to do, proposing an action; logos checks and applies. A trigger is an
+  observation, not a verdict.
   The list of triggers, the agent's tools and the reactions are open; they get a dedicated
   document, `docs/controllability.md` (RU: `docs/controllability_ru.md`). This lifts the deferred cycle/premature-stop
   detection without turning it into a hard gate. 4a introduces a minimal session container (the
