@@ -57,20 +57,20 @@ describe("frontier (applicable)", () => {
     expect(events.length).toBeGreaterThan(0);
   });
 
-  it("an open state's frontier carries the island's tool set (no write-class in Localization)", () => {
+  it("an open state's frontier carries the island's tool set (Patch locates and changes in one loop)", () => {
     const { ws } = makeWorkspace({});
-    const opened = exec(move("localization", "find it"), [request()], ws);
+    const opened = exec(move("patch", "find it"), [request()], ws);
     const moveId = currentFocus(opened.state)!;
     const frontier = applicable(opened.state, moveId);
     expect(frontier.applies).toContain("read");
-    expect(frontier.applies).not.toContain("edit");
-    expect(frontier.applies).not.toContain("write");
-    expect(frontier.applies).not.toContain("apply_patch");
+    expect(frontier.applies).toContain("edit");
+    expect(frontier.applies).toContain("write");
+    expect(frontier.applies).toContain("apply_patch");
   });
 
   it("a finished state offers the transition move", () => {
     const { ws } = makeWorkspace({});
-    const opened = execAll(withGoal("find", "true", "localization"), [request()], ws);
+    const opened = execAll(withGoal("find", "true", "patch"), [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
     const focused = fold(focusEvents(stopped.state), stopped.state);
     const moveId = currentFocus(focused)!;
@@ -90,9 +90,9 @@ describe("frontier (applicable)", () => {
     expect(classification(run("ls"), events).reason).toContain("no_state");
   });
 
-  it("REF-NOT-IN-STATE refuses an edit while in Localization (the write-class is not an inspection tool)", () => {
+  it("REF-NOT-IN-STATE refuses an edit while in Orientation (the write-class is not an inspection tool)", () => {
     const { ws } = makeWorkspace({ "a.txt": "x" });
-    const events = execAll([move("localization", "find it"), read("a.txt")], [request()], ws).events;
+    const events = execAll([move("orientation", "map it"), read("a.txt")], [request()], ws).events;
     expect(classification(edit("a.txt", "x", "y"), events).reason).toContain("not_in_state");
   });
 

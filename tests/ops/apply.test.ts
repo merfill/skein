@@ -35,7 +35,7 @@ afterEach(cleanupWorkspaces);
 describe("apply: the first turn", () => {
   it("OP-CG-1 the state's first apply creates turns and its first turn", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("localization", "find the bug"), [request()], ws);
+    const moved = exec(move("patch", "find the bug"), [request()], ws);
     const moveId = currentMove(moved.state)!;
     expect(turnsOf(moved.state, moveId)).toBeUndefined();
     const { state } = exec(run("make test"), moved.events, ws);
@@ -62,7 +62,7 @@ describe("apply: the first turn", () => {
 
   it("REF-AP-NO-STATE refuses apply at a finished state (move first)", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find the bug"), run("true")], [request()], ws);
+    const opened = execAll([move("patch", "find the bug"), run("true")], [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
     expect(classification(run("ls"), stopped.events).reason).toContain("no_state");
   });

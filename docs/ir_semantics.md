@@ -406,9 +406,8 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   projection emits the block as a `system` turn before the **current** state's instruction. One
   `fact:session` carries `{ environment, material }`: available tools (with versions where they
   are cheap), VCS status, top-level entries/paths and the file count. Orientation gets
-  `Workspace` (the map); Localization and Research get the same map as `Orientation result`
-  (Research also gets `Probe`); Patch gets it as `Workspace`; other states get `Probe`
-  (environment) under its own heading.
+  `Workspace` (the map); Patch and Research get the same map as `Orientation result`, plus
+  `Probe` (environment) under its own heading; other states get `Probe` alone.
   Configs, build commands, extensions and build state are not shown in Orientation; a declared
   command is not presented as the acceptance. Closed states carry no block. The source is an
   `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
@@ -419,11 +418,11 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   when set, the doxa's guess (`Your earlier guess (may be wrong): <move.what>`). The
   request is the second message of the tape (right after the base prompt), on **every** turn —
   never dropped;
-- **returning to Localization or Patch.** The failure stays on the tape in the closed `patch`
-  and `verification` `Finish` lines (the literal `stop.why`, not a code diagnosis). On the
-  `Verification → Patch/Localization` transition the engine writes a `revert` event and restores
-  the files to pre-patch; the current implementation renders **no** separate "Previous failed
-  attempt" block (see `tests/revert.test.ts`). `stop` still closes only by the doxa;
+- **returning to Patch.** The failure stays on the tape in the closed `patch` and `verification`
+  `Finish` lines (the literal `stop.why`, not a code diagnosis). On the `Verification → Patch`
+  transition the engine writes a `revert` event and restores the files to pre-patch; the current
+  implementation renders **no** separate "Previous failed attempt" block (see
+  `tests/revert.test.ts`). `stop` still closes only by the doxa;
 - `apply` — `assistant` with `tool_calls` (the tool name and arguments) + `tool` (the
   observation); the **first** `apply` after a `move` seeds the state's turns (a `turns` node +
   its first `turn`), so the first turn is an ordinary tool call;

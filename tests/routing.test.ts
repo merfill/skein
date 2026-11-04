@@ -18,7 +18,7 @@ import {
 
 afterEach(cleanupWorkspaces);
 
-type Corrective = "localization" | "research";
+type Corrective = "research" | "patch";
 
 const stop = (why: string): Action => ({ operator: "stop", why });
 
@@ -34,64 +34,63 @@ const tail = (context: ReturnType<typeof project>): string =>
   String(buildMessages(context).at(-1)?.content);
 
 // The corrective edges are a transition choice only: a state still open cannot use them, and
-// the in-state conduct stays free of transition text (docs/states_ru.md §2.2-2.3, §4).
-describe("routing: the corrective Localization ↔ Research edges", () => {
-  it("a finished Localization offers Research only as a situation, not as a routine exit", () => {
-    const { context } = finished("localization", "this is a situation, not a code defect");
+// the in-state conduct stays free of transition text (docs/states_ru.md §2.3-2.4, §4).
+describe("routing: the corrective Patch ↔ Research edge", () => {
+  it("a finished Patch offers Research only as a situation, not as a routine exit", () => {
+    const { context } = finished("patch", "this is a situation, not a defect to locate");
     expect(context.situation).toBe("transition");
-    expect(context.island).toBe("localization");
+    expect(context.island).toBe("patch");
 
     const instruction = tail(context);
-    expect(instruction).toContain("Choose Patch when the target is named and a cause is suspected.");
+    expect(instruction).toContain("Choose Verification when the change holds");
     expect(instruction).toContain(
-      "Choose Research only when the work is a situation, not a code defect to locate.",
+      "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
     );
-    expect(instruction).toContain("Next states from Localization:");
+    expect(instruction).toContain("Next states from Patch:");
     expect(instruction).toContain("- Research —");
-    // Only the state's `next` targets are offered.
     expect(instruction).not.toContain("Recovery");
   });
 
-  it("a finished Research offers Localization as a code-defect correction", () => {
+  it("a finished Research offers Patch as a code-defect correction", () => {
     const { context } = finished("research", "this is a code defect to locate");
     expect(context.situation).toBe("transition");
     expect(context.island).toBe("research");
 
     const instruction = tail(context);
-    expect(instruction).toContain("Choose Localization when the work is a code defect to locate.");
-    expect(instruction).toContain("- Localization —");
-    expect(instruction).not.toContain("Patch");
+    expect(instruction).toContain("Choose Patch when the work is a code defect to locate and fix.");
+    expect(instruction).toContain("- Patch —");
+    expect(instruction).not.toContain("Localization");
   });
 
   it("the engine accepts the corrective move and keeps the old state closed", () => {
-    const { ws, events } = finished("localization", "not a code defect");
-    const correction = move("research", "the situation");
+    const { ws, events } = finished("research", "not a situation");
+    const correction = move("patch", "the defect");
     expect(classification(correction, events).accept).toBe(true);
 
     const moved = exec(correction, events, ws);
     const next = project(moved.state);
     expect(next.situation).toBe("working");
-    expect(next.island).toBe("research");
-    expect(next.history.some((m) => m.text === "Start state Localization")).toBe(true);
-    expect(next.history.some((m) => m.text.startsWith("Finish state Localization"))).toBe(true);
+    expect(next.island).toBe("patch");
+    expect(next.history.some((m) => m.text === "Start state Research")).toBe(true);
+    expect(next.history.some((m) => m.text.startsWith("Finish state Research"))).toBe(true);
     // The closed state's plan is elided; the new state has no plan yet.
     expect(next.history.filter((m) => m.role === "tool")).toHaveLength(0);
   });
 
   it("the correction works in the other direction too", () => {
-    const { ws, events } = finished("research", "a code defect to locate");
-    const correction = move("localization", "the code defect");
+    const { ws, events } = finished("patch", "the defect is not in this artifact");
+    const correction = move("research", "the situation");
     expect(classification(correction, events).accept).toBe(true);
 
     const next = project(exec(correction, events, ws).state);
     expect(next.situation).toBe("working");
-    expect(next.island).toBe("localization");
-    expect(next.history.some((m) => m.text.startsWith("Finish state Research"))).toBe(true);
+    expect(next.island).toBe("research");
+    expect(next.history.some((m) => m.text.startsWith("Finish state Patch"))).toBe(true);
   });
 
   it("the edges are not an escape hatch while the state is still open", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll(withGoal("the object", "true", "localization"), [request()], ws);
+    const opened = execAll(withGoal("the object", "true", "patch"), [request()], ws);
     expect(project(opened.state).situation).toBe("working");
     expect(classification(move("research", "the situation"), opened.events).accept).toBe(false);
     expect(tail(project(opened.state))).not.toContain("Choose Research");
@@ -99,13 +98,38 @@ describe("routing: the corrective Localization ↔ Research edges", () => {
 
   it("the corrective text stays off the in-state conduct", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll(withGoal("the object", "true", "localization"), [request()], ws);
+    const opened = execAll(withGoal("the object", "true", "patch"), [request()], ws);
     const stateText = project(opened.state)
       .history.map((message) => message.text)
       .join("\n");
     expect(stateText).not.toContain("Choose Research");
-    expect(stateText).not.toContain("Choose Localization");
-    expect(transitionInstruction("localization")).toContain("not a code defect to locate");
+    expect(stateText).not.toContain("Choose Verification");
     expect(transitionInstruction("research")).toContain("a code defect to locate");
+  });
+});
+
+// Localization merged into Patch (2026-11-04): the cause and the change it implies are one
+// loop, not a handoff, so a failed change is revised inside Patch and Verification returns to
+// Patch. The island still renders for journals written before the merge.
+describe("routing: Localization merged into Patch", () => {
+  it("a finished Patch never offers Localization: the cause is revised in place", () => {
+    const { context } = finished("patch", "the cause was wrong");
+    const instruction = tail(context);
+    expect(instruction).toContain("- Verification —");
+    expect(instruction).not.toContain("- Localization —");
+    expect(instruction).not.toContain("back in doubt");
+  });
+
+  it("a failed Verification returns to Patch, not to Localization", () => {
+    expect(transitionInstruction("verification")).toContain("choose Patch");
+    expect(transitionInstruction("verification")).not.toContain("Choose Localization");
+  });
+
+  it("the legacy Localization island still renders its own transition rule", () => {
+    // Old journals carry `Start state Localization`; the rule must stay readable there.
+    const legacy = transitionInstruction("localization");
+    expect(legacy).toContain("Choose Patch when the target is named and a cause is suspected.");
+    expect(legacy).toContain("Next states from Localization:");
+    expect(legacy).toContain("- Patch —");
   });
 });

@@ -29,7 +29,7 @@ function failedAttempt() {
   const { ws } = makeWorkspace(DEFAULT_FILES);
   let step = execAll(withGoal("do it", "true"), [request()], ws);
   step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
-  step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, ws);
+  step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, ws);
   step = exec({ operator: "stop", why: "named" }, step.events, ws);
   step = execAll(
     [move("patch", "fix it"), edit("src/sum.mjs", "return a - b;", "return a + b;")],
@@ -60,7 +60,7 @@ function checkpointedWorkspace(): { ws: Workspace } {
 function failedPatchOn(ws: Workspace, actions: readonly Action[]) {
   let step = execAll(withGoal("do it", "true"), [request()], ws);
   step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
-  step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, ws);
+  step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, ws);
   step = exec({ operator: "stop", why: "named" }, step.events, ws);
   step = execAll([move("patch", "fix it"), ...actions], step.events, ws);
   const patchMoveId = currentMove(step.state) as string;
@@ -99,7 +99,7 @@ describe("revert: checkpoint covers bash, write and deletions", () => {
     const { ws, events } = failedPatch([
       run("sed -i 's/return a - b;/return a + b;/' src/sum.mjs"),
     ]);
-    const moved = exec(move("localization", "find again"), events, ws);
+    const moved = exec(move("patch", "find again"), events, ws);
     const history = project(moved.state).history;
     expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
     expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
@@ -137,7 +137,7 @@ describe("revert: checkpoint covers bash, write and deletions", () => {
   });
 });
 
-describe("revert: failed Patch -> Localization", () => {
+describe("revert: failed Verification -> Patch", () => {
   it("restores the pre-patch text, journals a revert, and updates the world version", () => {
     const { ws, events, state, patchMoveId } = failedAttempt();
     expect(ws.read("src/sum.mjs")).toContain("return a + b;");
@@ -154,10 +154,10 @@ describe("revert: failed Patch -> Localization", () => {
     expect(currentVersion(after, "file:src/sum.mjs")).toBe(ws.version("src/sum.mjs"));
   });
 
-  it("re-entering Localization has no failed-attempt block; the revert is in the journal", () => {
+  it("re-entering Patch has no failed-attempt block; the revert is in the journal", () => {
     const { ws, events, state, patchMoveId } = failedAttempt();
     const outcome = revertLastPatch(state, patchMoveId, ws);
-    const moved = exec(move("localization", "find again"), [...events, ...outcome.events], ws);
+    const moved = exec(move("patch", "find again"), [...events, ...outcome.events], ws);
     const history = project(moved.state).history;
     expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
     expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
@@ -167,14 +167,15 @@ describe("revert: failed Patch -> Localization", () => {
   it("re-entering Patch keeps the Start/Finish record and adds no failed-attempt block", () => {
     const { ws, events, state, patchMoveId } = failedAttempt();
     const outcome = revertLastPatch(state, patchMoveId, ws);
-    const localization = exec(move("localization", "find again"), [...events, ...outcome.events], ws);
-    const stopped = exec({ operator: "stop", why: "named again" }, localization.events, ws);
-    const patch = exec(move("patch", "fix again"), stopped.events, ws);
-    const history = project(patch.state).history;
+    const second = exec(move("patch", "find again"), [...events, ...outcome.events], ws);
+    const history = project(second.state).history;
+    // Localization merged into Patch (2026-11-04): the attempt now holds two Patch states plus
+    // the re-entry. Each is one Start/Finish pair — the record is per state, not merged.
     const starts = history
       .map((message, index) => (message.role === "system" && message.text.startsWith("Start state Patch") ? index : -1))
       .filter((index) => index >= 0);
-    expect(starts).toHaveLength(2);
+    expect(starts).toHaveLength(3);
+    expect(history.filter((message) => message.text.startsWith("Finish state Patch"))).toHaveLength(2);
     expect(history.some((message) => message.text.startsWith("Previous failed attempt:"))).toBe(false);
     expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
   });
@@ -183,7 +184,7 @@ describe("revert: failed Patch -> Localization", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let step = execAll(withGoal("do it", "true"), [request()], ws);
     step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
-    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, ws);
+    step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, ws);
     step = exec({ operator: "stop", why: "named" }, step.events, ws);
     step = execAll([move("patch", "fix it"), edit("src/sum.mjs", "return a - b;", "return a + b;")], step.events, ws);
     step = exec({ operator: "stop", why: "changed" }, step.events, ws);
@@ -191,7 +192,7 @@ describe("revert: failed Patch -> Localization", () => {
     step = exec({ operator: "stop", why: "acceptance failed: tests/basic failed" }, step.events, ws);
     // No revert: exit 0 means the engine sees no failed run. The model's why still explains the
     // failure, and the Finish line carries it.
-    const moved = exec(move("localization", "find again"), step.events, ws);
+    const moved = exec(move("patch", "find again"), step.events, ws);
     const history = project(moved.state).history;
     expect(history.map((message) => message.text)).toContain(
       "Finish state Verification — acceptance failed: tests/basic failed",
@@ -203,7 +204,7 @@ describe("revert: failed Patch -> Localization", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let step = execAll(withGoal("do it", "true"), [request()], ws);
     step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
-    step = execAll([move("localization", "find it")], step.events, ws);
+    step = execAll([move("patch", "find it")], step.events, ws);
     step = exec({ operator: "stop", why: "named" }, step.events, ws);
     step = execAll([move("patch", "fix it"), edit("src/sum.mjs", "a - b", "a + b")], step.events, ws);
     step = exec({ operator: "stop", why: "changed" }, step.events, ws);
@@ -259,14 +260,14 @@ describe("revert: failed Patch -> Localization", () => {
     expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
   });
 
-  it("the loop reverts before the move to Localization", async () => {
+  it("the loop reverts before the move back to Patch", async () => {
     const { ws, events, state } = failedAttempt();
     expect(ws.read("src/sum.mjs")).toContain("return a + b;");
     const result = await runAgent(
       {
         propose: async () => ({
-          thought: "verification failed; re-localize",
-          actions: [move("localization", "find again")],
+          thought: "verification failed; revise the cause in Patch",
+          actions: [move("patch", "find again")],
         }),
         workspace: ws,
         maxTurns: 2,

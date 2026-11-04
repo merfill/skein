@@ -1,7 +1,7 @@
 // The deterministic map of the material, recorded once at request start alongside the
 // environment probe. It is an index, not content: the workspace root, the repository status
 // and the entries/paths that exist. The projection renders it in Orientation and carries it
-// into Localization/Research as the Orientation result; it never decides what is acceptance.
+// into Patch/Research as the Orientation result; it never decides what is acceptance.
 
 export interface MaterialRepo {
   kind: "git" | "hg" | "svn";

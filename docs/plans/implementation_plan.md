@@ -294,6 +294,28 @@ Beyond Tier 0, the current line adds:
   `tests/routing.test.ts`; live 3 tasks × K=3 (`fix-code`, `db-wal`, `log-summary`,
   `--turns 34/32/21`): 9/9 `reward=1`, the edges were never taken and the normal routes did not
   move. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
+- **Patch = Localization + Patch (2026-11-04).** `localization` is merged into `patch`: locating
+  the defect and making the change it needs is one loop, not a handoff. The handoff was the
+  failure mode of the 65-turn `custom-memory-heap-crash` run — the run rejected the correct fix
+  at t7 on a false `__cxx11` premise and then had no state in which the cause could be revised
+  from the evidence, so it spent t21–t48 (~2.75₽) on a workaround. `patch` now carries the locate
+  step (target, coordinates, siblings ruled out, cause named as a suspicion) together with the
+  change, and its instruction says a change that does not hold is evidence about the cause, not a
+  reason to guess again. Deliberately dropped: "the cause is the one the previous state's `Finish`
+  line names", "do not re-derive the cause", "do not guess a different one" — those made a wrong
+  cause unrecoverable. Routes: `O → Patch` (defect), `P → V`, `P → R` (situation), `V → P` on a
+  failed acceptance (the `V → Localization` branch is gone). The probe block is
+  `vcs, build, compilers, interpreters`: the state both searches the material and builds the
+  change. `localization` stays in `ISLANDS` for journals written before the merge, with its own
+  `transitionRule`, but it is out of `LIVE_ISLAND_IDS`, so no live `move` can target it.
+  Tests — `tests/routing.test.ts`, `tests/islands.test.ts`, `tests/prompt.test.ts`,
+  `tests/environment.test.ts`; offline **596 passed, 40 skipped**, typecheck clean.
+  Live K=1 on `custom-memory-heap-crash`: reward=1, 42 turns, 2.216₽ against the 65-turn
+  baseline; the chain was `ori@0 → patch@2 → ver@34 → end@40`. **Attribution: the win is not
+  from this merge.** It came from an observer hint (seq=124, t19) that named
+  `std::_Facet_Register_impl()` outright; both runs rejected the same fix at t7, the base prompt
+  has 2 `__cxx11` mentions and the merged one 0, and the merged reasoning never re-opens the
+  target. A cleaner prompt comparison needs K≥3 on runs the observer does not steer.
 - **Terminal UI (2026-10-31, done).** `npm run cli` now opens an Ink TUI: live progress from
   the loop/session/observer, a persistent current-task states panel (turn ranges, tokens,
   actions, full `stop.why`), a read-only task-history overlay, and a session header with the

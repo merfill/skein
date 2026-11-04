@@ -26,14 +26,15 @@
 ленты, остаётся в журнале и достаётся по `id`.
 
 **Что такое состояние.** Работа агента разбита на состояния. Состояние — это не шаг и не
-команда, а состояние знания: например, «найти цель в материале» или «проверить изменение
-против приёмки». У каждого состояния есть цель (что должно быть известно), критерий (по какому
-наблюдаемому признаку видно, что цель достигнута) и способ действовать (какие инструменты
-доступны и как себя вести). Модель входит в состояние ходом `move`, работает в нём и закрывает
-его ходом `stop`, когда критерий выполнен. Набор состояний фиксирован: Orientation,
-Localization, Research, Patch, Construction, Verification, End. (`Recovery` — legacy-имя: его
-работа теперь входит в Research, а старые журналы его ещё рендерят.) Текущее состояние
-задаёт, что видно в ленте: его цель, сведения о материале, инструкцию и план. Когда состояние закрыто,
+команда, а состояние знания: например, «найти дефект в существующем артефакте и внести
+изменение, которое он требует» или «проверить изменение против приёмки». У каждого состояния
+есть цель (что должно быть известно), критерий (по какому наблюдаемому признаку видно, что цель
+достигнута) и способ действовать (какие инструменты доступны и как себя вести). Модель входит
+в состояние ходом `move`, работает в нём и закрывает его ходом `stop`, когда критерий выполнен.
+Набор состояний фиксирован: Orientation, Research, Patch, Construction, Verification, End.
+(`Recovery` и `Localization` — legacy-имена: их работа теперь входит в Research и Patch, а
+старые журналы их ещё рендерят.) Текущее состояние задаёт, что видно в ленте: его цель,
+сведения о материале, инструкцию и план. Когда состояние закрыто,
 лента оставляет от него только `Start`/`Finish`, а фокус переходит к следующему.
 
 **Принципы.** Отсюда следуют три вещи, на которых держится документ:
@@ -92,26 +93,26 @@ system   <подсказка хода: hint → Done when → требовани
 Вызовы и результаты накапливаются: это то, что модель уже сделала в этом состоянии.
 Подсказка хода не хранится: на следующем ходу её уже нет, а новая дописывается заново.
 
-Пример открытой Localization после двух вызовов:
+Пример открытой Patch после двух вызовов:
 
 ```
-system   Start state Localization
+system   Start state Patch
 system   Orientation result: root /app, entries ...
-system   Find the target in the material ...
-user     Goal: find the defect in existing code, files, or history
+system   Locate the defect and change the artifact in one loop ...
+user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... окно 40-90 ...
-system   Start from the workspace map ... Done when: "the target is named ..."
+system   Start from the workspace map ... Done when: "the defect is located ..."
          When it holds, `stop` — and nothing else.
 ```
 
 Когда состояние закрыто, от него остаются два `system`-сообщения — след:
 
 ```
-system   Start state Localization
-system   Finish state Localization — line 63 drops the last token ...
+system   Start state Patch
+system   Finish state Patch — line 63 drops the last token ...
 ```
 
 Инструкция, карта, цель, вызовы и результаты закрытого состояния из ленты уходят. Сами данные
@@ -123,11 +124,11 @@ system   Finish state Localization — line 63 drops the last token ...
 `system`-инструкция:
 
 ```
-system   Your result is the line `Finish state Localization — …` above — read it.
-         Next states from Localization:
-         - Patch — ...
+system   Your result is the line `Finish state Patch — …` above — read it.
+         Next states from Patch:
+         - Verification — ...
          - Research — ...
-         Choose Patch when ...
+         Choose Verification when the change holds ...
          Choose Research only when ...
          Call `move` alone. ...
 ```
@@ -163,20 +164,21 @@ move { state, what?, done? }
 
 | Остров | Цель (`island.what`) | Критерий (кратко) | Сведения о материале | `next` |
 |---|---|---|---|---|
-| **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace map` | L, R, C |
-| **Localization** | найти дефект в существующем коде, файлах или истории | цель и координаты; сиблинги исключены; предполагаемая причина (unverified) | `Workspace map` + environment | P, R¹ |
-| **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | `Workspace map` + environment | End, L¹ |
-| **Patch** | внести названное изменение в артефакт | полное изменение (найденный артефакт + остальные нужные файлы); форма результата проверена | `Workspace map` | V |
+| **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace map` | P, R, C |
+| **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | `Workspace map` + environment | End, P¹ |
+| **Patch** | найти дефект в существующем артефакте и внести изменение, которое он требует | цель и координаты; сиблинги исключены; причина названа как подозрение; полное изменение (найденный артефакт + остальные нужные файлы) в объявленной форме | `Workspace map` + environment | V, R¹ |
 | **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | environment | End, R |
-| **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | environment | End, P, L |
+| **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | environment | End, P¹ |
 | **End** | завершить запрос | проверка сделана в закрытом состоянии; не перепроверять | — | — |
 
-Legacy-остров `recovery` всё ещё рендерится для журналов до слияния; живой целью `move` он не
-является.
+Legacy-острова `recovery` и `localization` всё ещё рендерятся для журналов до их слияний; ни
+один не является живой целью `move`.
 
-¹ Коррекционные рёбра. `Localization → Research` выбирают, если работа оказалась ситуацией, а
-не дефектом кода; `Research → Localization` — если ситуация оказалась дефектом кода. Так
-исправляют неверную стартовую классификацию; обычным выходом эти рёбра не являются.
+¹ Коррекционные рёбра. `Patch → Research` выбирают, если работа оказалась ситуацией, а не
+дефектом для локализации и правки; `Research → Patch` — если ситуация оказалась дефектом кода;
+`Verification → Patch` после проваленной приёмки, потому что провал может быть и в изменении, и
+в причине, на которую оно опиралось. Так исправляют неверную стартовую классификацию или
+неверную причину; обычным выходом эти рёбра не являются.
 
 Кроме цели и критерия, остров задаёт `instruction` (как действовать; показывается один раз при
 входе), `hint` (как вести себя на каждом ходу) и `applies` (какие apply-инструменты доступны).
@@ -184,12 +186,12 @@ Legacy-остров `recovery` всё ещё рендерится для жур�
 
 ### 2.2 Маршруты
 
-- **Repair:** `O → L → P → V → End`.
+- **Repair:** `O → P → V → End`.
 - **Recovery:** `O → R → End` (реконструкцию делает Research; отдельного Recovery нет).
 - **Construction:** `O → C → End`; неудачный Construction может уйти в `R` при провале метода.
 - **Hybrid:** `O → R → P → V → End` для задачи, где сначала добывается секрет, а потом меняется
   артефакт (`git-leak-recovery`); шаг `R → P` — явный `move`, а не подсказанное ребро.
-- **Коррекционные:** `V → P/L` при провале; `L ↔ R` при неверной стартовой классификации;
+- **Коррекционные:** `V → P` при провале; `P ↔ R` при неверной стартовой классификации;
   `C → R` при провале метода.
 
 У запроса нет своего `stop`. Он интерпретируется один раз (`move` или `decline`), а прогон
@@ -199,9 +201,9 @@ Legacy-остров `recovery` всё ещё рендерится для жур�
 
 ### 3.1 Сведения о материале
 
-Сведения о материале зависят от острова: `Workspace map` (Orientation, Patch),
-`Workspace map` + environment (Localization, Research), environment (Construction, Verification).
-Legacy Recovery тоже получает environment. Это уже записанные факты; перепроверять их не нужно.
+Сведения о материале зависят от острова: `Workspace map` (Orientation),
+`Workspace map` + environment (Patch, Research), environment (Construction, Verification).
+Legacy Recovery и Localization тоже получают environment. Это уже записанные факты; перепроверять их не нужно.
 
 ### 3.2 Рассуждения
 
@@ -264,66 +266,59 @@ system   Start state Orientation
 system   Finish state Orientation — root /app; entries ...; acceptance: make test
 ```
 
-### 4.4 Переход в Localization
+### 4.4 Переход в Patch
 
 Теперь на ленте запрос, след Orientation и временная transition-инструкция:
 
 ```
 system   Your result is the line `Finish state Orientation — …` above — read it.
-         Next states: Localization, Research, Construction.
-         Move to Localization when the request is to find an error in existing code or files.
+         Next states: Patch, Research, Construction.
+         Move to Patch when the request is to fix an error in existing code or files.
          ...
 ```
 
-Доступен только `move`. Запрос — найти ошибку в существующем коде, поэтому выбираем
-Localization. (Для ситуации был бы Research, для полностью заданного артефакта — Construction.)
+Доступен только `move`. Запрос — найти и исправить ошибку в существующем коде, поэтому выбираем
+Patch. (Для ситуации был бы Research, для полностью заданного артефакта — Construction.)
 Докса вызывает:
 
 ```
-move {state:"localization", what:"the parse loop that breaks on the last token"}
+move {state:"patch", what:"the parse loop that breaks on the last token"}
 ```
 
-### 4.5 Localization
+### 4.5 Patch
 
-После `move` transition-инструкция стёрта; на ленте запрос, след Orientation и открытая
-Localization:
+После `move` transition-инструкция стёрта; на ленте запрос, след Orientation и открытая Patch:
 
 ```
-system   Start state Localization
+system   Start state Patch
 system   Orientation result: root /app; entries ...; acceptance: make test
-system   Find the target ... (инструкция состояния)
-user     Goal: find the defect in existing code, files, or history
+system   Locate the defect and change the artifact in one loop ... (инструкция состояния)
+user     Goal: find the defect in the existing artifact and make the change it needs
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... (окно 40-90) ...
-system   ... Done when: "the target is named ..." ... `stop` — and nothing else.
+system   ... Done when: "the defect is located ..." ... `stop` — and nothing else.
 ```
 
-Цель и причина найдены; ход —
-`stop {why:"line 63 drops the last token — off-by-one in the loop"}`.
+Цель и причина найдены и изменение внесено в том же состоянии; ход —
+`stop {why:"line 63 drops the last token — off-by-one in the loop, boundary moved"}`.
 
 След:
 
 ```
-system   Start state Localization
-system   Finish state Localization — line 63 drops the last token ...
-```
-
-### 4.6 Patch и Verification
-
-Дальше — правка и приёмка. Первый Patch делает изменение целиком: не только найденный артефакт,
-но и остальные файлы, которые нужны задаче. Обязательный файл не откладывается до Verification.
-
-```
-... Finish state Localization ...
 system   Start state Patch
-system   Workspace map ...
-user     Goal: make the named change to the artifact
-assistant [a3] edit {path:"src/parse.py", ...}
-tool      [m] mutated src/parse.py
-... (stop → Finish state Patch — ...)
+system   Finish state Patch — line 63 drops the last token ...
+```
+
+### 4.6 Verification
+
+Дальше — приёмка. Patch уже сделал изменение целиком: не только найденный артефакт, но и
+остальные файлы, которые нужны задаче.
+
+```
+... Finish state Patch ...
 system   Start state Verification
 system   Probe ...
 user     Goal: check the changed artifact against the goal's acceptance
@@ -335,7 +330,7 @@ tool      [o4] exit 1 — IndexError: list index out of range
 Что случилось: правка сдвинула границу цикла, и теперь на последней итерации код читает
 `tokens[i + 1]` за концом списка. Тест падает с `IndexError`. Сам объект — цикл разбора — найден
 верно; неверно именно изменение. Поэтому по правилу перехода `V → Patch` (провал в изменении
-или результате, объект тот же) возвращаемся в Patch, а не завершаем запрос.
+или в причине, на которую оно опиралось) возвращаемся в Patch, а не завершаем запрос.
 
 Перед возвратом движок пишет `revert`: файлы возвращаются к состоянию до первой правки. В ленте
 провал остаётся только в `Finish`-строке Verification; план провалившейся Verification не
@@ -347,7 +342,7 @@ tool      [o4] exit 1 — IndexError: list index out of range
 system   Finish state Verification — make test: exit 1 — IndexError: list index out of range
 system   Start state Patch
 system   Workspace map ...
-user     Goal: make the named change to the artifact
+user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a5] edit {path:"src/parse.py", ...}   ← другой diff
 tool      [m] mutated src/parse.py
 ... (stop → Finish state Patch — ...)
@@ -380,12 +375,11 @@ system   This is End. Call `stop` when the request is complete; the finished sta
 ```
 R  request
 ├─ I0 orientation   stopped   (на ленте только Start/Finish)
-├─ I1 localization  stopped   plan: a1 grep, a2 read
-├─ I2 patch         stopped   plan: a3 edit (v1→v2)
-├─ I3 verification  stopped   plan: a4 bash (exit 1)     ← провал
-│  ┆ revert v2→v1 (на переходе I3→I4)
-├─ I4 patch         stopped   plan: a5 edit (v1→v3)
-├─ I5 verification  stopped   plan: a6 bash (exit 0)
+├─ I1 patch         stopped   plan: a1 grep, a2 read, a3 edit (v1→v2)
+├─ I2 verification  stopped   plan: a4 bash (exit 1)     ← провал
+│  ┆ revert v2→v1 (на переходе I2→I3)
+├─ I3 patch         stopped   plan: a5 edit (v1→v3)
+├─ I4 verification  stopped   plan: a6 bash (exit 0)
 └─ H  end           stopped
 ```
 
@@ -408,8 +402,9 @@ R  request
 - **Поверхность — фронтир.** На запросе доступны `move`/`decline`; в открытом состоянии —
   apply-инструменты, `stop`, `recall`/`search`; в закрытом — только `move`; в терминальном —
   `stop`.
-- **Провал Verification ведёт в Patch по умолчанию.** `revert` откатывает последний Patch; в
-  Localization переходят, только если провал указывает на другой объект.
+- **Провал Verification ведёт в Patch.** `revert` откатывает последний Patch; провал может быть
+  и в изменении, и в причине, на которую оно опиралось, — и то и другое пересматривается в
+  Patch.
 
 ## 5. Особые случаи
 
@@ -426,7 +421,7 @@ R  request
 ### 5.2 Провал Verification: `revert` и возврат
 
 Провал приёмки не закрывает Verification сам — её закрывает `stop` доксы. На переходе
-`Verification → Patch/Localization` движок:
+`Verification → Patch` движок:
 
 1. записывает `revert` для последнего Patch (файлы возвращаются к состоянию до правки, версии
    обновляются);

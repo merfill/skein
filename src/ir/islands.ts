@@ -19,11 +19,11 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
-// The islands a live `move` may target. `recovery` stays in `ISLANDS` so journals written
-// before the Research/Recovery merge still render, but it is no longer reachable.
+// The islands a live `move` may target. `recovery` and `localization` stay in `ISLANDS` so
+// journals written before their merges still render, but they are no longer reachable:
+// `recovery` merged into Research (2026-11-03), `localization` into Patch (2026-11-04).
 export const LIVE_ISLAND_IDS = [
   "orientation",
-  "localization",
   "research",
   "patch",
   "construction",
@@ -99,7 +99,7 @@ export const ISLANDS: Record<IslandId, Island> = {
     applies: INSPECT,
     next: [
       {
-        to: "localization",
+        to: "patch",
         when: "the request is to fix an error in existing code, files, or history — the defect is in an existing artifact",
       },
       {
@@ -112,6 +112,8 @@ export const ISLANDS: Record<IslandId, Island> = {
       },
     ],
   },
+  // Merged into Patch (2026-11-04): the defect's cause and the change it implies are one loop,
+  // not a handoff. Kept so journals written before the merge still render.
   localization: {
     id: "localization",
     label: "Localization",
@@ -174,30 +176,35 @@ export const ISLANDS: Record<IslandId, Island> = {
         when: "the required result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains",
       },
       {
-        to: "localization",
-        when: "the work is a code defect to locate",
+        to: "patch",
+        when: "the work is a code defect to locate and fix",
       },
     ],
   },
   patch: {
     id: "patch",
     label: "Patch",
-    what: "make the named change to the artifact",
+    what: "find the defect in the existing artifact and make the change it needs",
     criterion:
-      "the change is complete — the located artifact and every other file the task needs are " +
-      "created or updated — and the result has the declared form",
+      "the defect is located — the target named with its coordinates, its siblings ruled out, " +
+      "and the cause named as a suspicion — and the change is complete: the located artifact " +
+      "and every other file the task needs are created or updated, and the result has the " +
+      "declared form",
     instruction:
-      "Apply the change the located material names. The change includes every other file the " +
-      "task needs, created or updated. If the result has a declared form (path, length, format), " +
-      "produce it and check that form in the same step. Do not relocate the artifact or " +
-      "re-derive the cause. Do not defer a required file to another state.",
+      "Locate the defect and change the artifact in one loop: name the target and the cause, " +
+      "make the change the cause implies, and read the result. The change includes every other " +
+      "file the task needs, created or updated. A change that does not hold is evidence about " +
+      "the cause — revise the cause and change again from it; do not repeat the same edit, and " +
+      "do not work around a cause you have not established. If the result has a declared form " +
+      "(path, length, format), produce it and check that form in the same step. Do not defer a " +
+      "required file to another state.",
     hint:
-      "The cause is the one the previous state's `Finish` line names — apply the change it " +
-      "implies. The change includes every other file the task needs; do not defer a required " +
-      "file to another state. Do not re-derive the cause or choose a different one. Read the " +
-      "definition of every symbol the change uses — the file that defines it, not a usage — and " +
-      "the sibling the line cites; use them only to confirm the change. If the result has a " +
-      "declared form, print it and check it in the same step; derive its values from the " +
+      "Choose the candidate files by name from the workspace map and the request; compare the " +
+      "target against the sibling that performs the same operation and name the cause before " +
+      "you edit — the expression, step, or encoding that looks wrong and the invariant it " +
+      "breaks. Mark it a suspicion, then change it and read the result. Read the definition of " +
+      "every symbol the change uses — the file that defines it, not a usage. If the result has " +
+      "a declared form, print it and check it in the same step; derive its values from the " +
       "material — do not fabricate them.",
     applies: PATCH_TOOLS,
     next: [
@@ -206,6 +213,10 @@ export const ISLANDS: Record<IslandId, Island> = {
         when:
           "the change is complete — the located artifact and every other file the task needs " +
           "are created or updated — and the result has the declared form",
+      },
+      {
+        to: "research",
+        when: "the work turns out to be a situation, not a defect to locate and fix",
       },
     ],
   },
@@ -280,8 +291,7 @@ export const ISLANDS: Record<IslandId, Island> = {
     applies: INSPECT,
     next: [
       { to: "end", when: "the acceptance holds" },
-      { to: "patch", when: "it fails but the located object still holds — the failure is in the change or result (value, length, format, span, assembly)" },
-      { to: "localization", when: "it fails and the object itself is in doubt — not found, or the failure points to a different object" },
+      { to: "patch", when: "it fails — the defect is still in the artifact, or the change or result was wrong; revise the cause and change again" },
     ],
   },
   end: {

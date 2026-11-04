@@ -258,23 +258,22 @@ function tailLines(text: string): string {
   return tail.length > 700 ? `…${tail.slice(tail.length - 700)}` : tail;
 }
 
-// The engine-owned facts for the focused state. Orientation gets the workspace map; L/R get
-// the same map as the Orientation result and, where the state needs tools, the environment
-// probe under its own heading; other states get the probe as reference.
+// The engine-owned facts for the focused state. Orientation gets the workspace map; the states
+// that work on existing material (Patch, Research) get the same map as the Orientation result
+// plus the environment probe under its own heading; other states get the probe alone.
 function stateBrief(state: State, island: IslandId): string {
   const probe = probeOf(state);
   if (probe === undefined) return "";
   const blocks: string[] = [];
   if (island === "orientation") {
     if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
-  } else if (island === "localization" || island === "research") {
+  } else if (island === "localization" || island === "research" || island === "patch") {
+    // The states that work on the existing material: the map (root, repo entries) resolves the
+    // coordinates without re-listing, and the environment names the toolchain the work runs on.
+    // `localization` is here for journals written before it merged into Patch (2026-11-04).
     if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
     const environment = probeBrief(probe, island);
     if (environment !== "") blocks.push(environment);
-  } else if (island === "patch") {
-    // Patch needs the material map, not the toolchain: the repository status (no git when
-    // `none`) and the entries resolve the located coordinates without re-listing.
-    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
   } else {
     const environment = probeBrief(probe, island);
     if (environment !== "") blocks.push(environment);
@@ -435,7 +434,7 @@ export function situationOf(state: State): Situation {
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
 // the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
-// surface has no write tool (Localization) is told to reply with its result, never to edit.
+// surface has no write tool (Orientation) is told to reply with its result, never to edit.
 // The island of the focused state (the current `move`), when it has one. An authored label
 // (docs/ir_semantics.md §2.5), never a gate.
 export function islandOf(state: State): IslandId | undefined {

@@ -154,7 +154,7 @@ Interpretation/Reconnaissance.
   are.
 - **Entry:** Interpretation.
 - **Criterion:** the entry point, the build and test commands, and the relevant paths are known.
-- **Exit:** → Localization (defect); → Reproduction (defect); → Design/Planning (feature,
+- **Exit:** → Patch (defect); → Reproduction (defect); → Design/Planning (feature,
   multi-step task).
 - **Constraints:** batch independent reads/greps; "wide first, then narrow".
 
@@ -165,10 +165,11 @@ Interpretation/Reconnaissance.
   failure).
 - **Criterion:** there is a command whose failure is observed **and relates to the goal, not to
   the environment**.
-- **Exit:** → Localization. If the failure is environmental — → Environment triage.
+- **Exit:** → Patch (locate the defect and change it). If the failure is environmental — →
+  Environment triage.
 - **Constraints:** "tell 'not found' from 'not built'"; "foreground for build/test".
 
-#### Localization / Diagnosis
+#### Localization / Diagnosis *(merged into Patch in the implementation, 2026-11-04)*
 
 - **What:** find the exact cause.
 - **Entry:** Reproduction (defect); Reconnaissance (an obvious defect); Verification (failure —
@@ -180,13 +181,16 @@ Interpretation/Reconnaissance.
 - **Constraints:** "do not recall code — read it"; "anti-reinvention"; "correct: compare with a
   neighboring pattern in the same file".
 
+Kept here as a separate conceptual step; in `src/ir/islands.ts` it is one state with Patch,
+because a cause that only diagnosis may name cannot be revised by the change that tests it.
+
 #### Reference acquisition *(optional, bounded state)*
 
 - **What:** obtain external truth (upstream, a diff, documentation).
-- **Entry:** Localization (confirmation/reference needed).
+- **Entry:** Patch (confirmation/reference needed).
 - **Criterion:** the reference is on disk and usable **or** the attempts are exhausted — and
   then returning to your own derivation is mandatory (not a loop).
-- **Exit:** → Localization (refined) / → Patch (reference obtained). On exhaustion — back with
+- **Exit:** → Patch (reference obtained or the derivation refined). On exhaustion — back with
   no change of state.
 - **Constraints:** "reference-acquisition budget"; "an unavailable reference is a fact, not a
   reason to retry".
@@ -194,7 +198,7 @@ Interpretation/Reconnaissance.
 #### Planning / Design
 
 - **What:** choose the approach and the sequence; for design, choose the interface/structure.
-- **Entry:** Reconnaissance (multi-step task); Localization (many edits).
+- **Entry:** Reconnaissance (multi-step task); Patch (many edits).
 - **Criterion:** a concrete set of changes or a sequence of items whose **first item is
   executable now**; for design — the chosen structure and why.
 - **Exit:** → Patch; → Decomposition (an item is too large).
@@ -202,10 +206,13 @@ Interpretation/Reconnaissance.
 
 #### Patch / Implementation
 
-- **What:** make the change.
-- **Entry:** Localization (the exact edit is named); Design/Planning (the approach is chosen).
-- **Criterion:** the exact change in the workspace, pointable to.
-- **Exit:** → Verification.
+- **What:** make the change — and, in the implementation, find the cause it rests on.
+- **Entry:** Design/Planning (the approach is chosen); Verification (a failed acceptance);
+  Reproduction (the defect is observed).
+- **Criterion:** the exact change in the workspace, pointable to; in the implementation, also the
+  target and the cause named as a suspicion.
+- **Exit:** → Verification. On a failed acceptance the cause and the change are revised in
+  place: the failure may be in either.
 - **Constraints:** "`oldString` is unique"; "`edit`, not `write`, for a targeted change";
   "anti-reinvention" (re-read the edit's purpose, do not retell the analysis).
 
@@ -214,8 +221,8 @@ Interpretation/Reconnaissance.
 - **What:** confirm the edit with the acceptance command/tests.
 - **Entry:** Patch.
 - **Criterion:** the acceptance command passes (the case that was failing now passes).
-- **Exit:** → Hand-off. **On failure → Localization** (a new round with new evidence, not a
-  blind re-edit).
+- **Exit:** → Hand-off. **On failure → Patch** (a new round with new evidence, not a blind
+  re-edit; the cause is revised there too).
 - **Constraints:** "do not re-verify what passed"; "foreground"; "do not repeat a failed
   command — change the approach".
 
@@ -257,7 +264,6 @@ gates a `move` — it delimits the action surface only (`docs/ir_semantics.md` �
 |---|---|
 | Reconnaissance | read, grep, list, bash, webfetch |
 | Reproduction | read, grep, list, bash, webfetch |
-| Localization | read, grep, list, bash, webfetch |
 | Reference | read, grep, list, bash, webfetch |
 | Design | read, grep, list, bash, webfetch |
 | **Patch** | read, grep, list, bash, webfetch, **edit, write, apply_patch** |
@@ -272,19 +278,22 @@ state's criterion needs" basis) is deferred.
 
 ```
 Goal → Interpretation → Reconnaissance
-Reconnaissance → Reproduction → Localization       (defect)
+Reconnaissance → Reproduction → Patch              (defect; locate and change in one loop)
 Reconnaissance → Design/Planning                   (feature/multi-step)
-Localization → Reference acquisition → Localization (external truth needed, bounded)
-Localization/Design/Planning → Patch → Verification
-Verification(failure) → Patch/Localization         (corrective cycle; Patch when the coordinates still hold)
+Reconnaissance → Reference acquisition → Patch      (external truth needed, bounded)
+Design/Planning → Patch → Verification
+Verification(failure) → Patch                      (corrective cycle; the change or the cause it acted on)
 Verification(success) → Hand-off → Goal
 * → Environment triage → *                         (floating)
 ```
 
+Localization is merged into Patch (2026-11-04): the cause and the change it implies are one
+loop, so a change that does not hold is revised in place instead of handing the cause onward.
+
 Properties of the graph:
 
 - **few transitions** — the route is derived, not listed;
-- **almost everything flows to the goal** — two allowed cycles (failure→patch/localization,
+- **almost everything flows to the goal** — one allowed cycle (Verification failure → Patch,
   environment);
 - **branches by kind of task** — a defect goes through reproduction, a feature through design.
 
@@ -292,9 +301,9 @@ Properties of the graph:
 
 | Constraint | Formulation | Applies in | Rationale |
 |---|---|---|---|
-| Anti-reinvention | If the goal/diff lines are already on the tape — name the exact replacement and edit in the same move; do not retell what you read. | Localization, Patch | #6: 89% reasoning before the edit; the analysis is reinvented for ~26 turns |
-| Do not recall code | Exact syntax/names/macros — read them from disk. | Localization, Patch | Recalling code is unreliable; it is in B13 |
-| Batch independent reads | Several independent reads/greps per turn. | Reconnaissance, Localization | fewer turns, the same context |
+| Anti-reinvention | If the goal/diff lines are already on the tape — name the exact replacement and edit in the same move; do not retell what you read. | Patch | #6: 89% reasoning before the edit; the analysis is reinvented for ~26 turns |
+| Do not recall code | Exact syntax/names/macros — read them from disk. | Patch | Recalling code is unreliable; it is in B13 |
+| Batch independent reads | Several independent reads/greps per turn. | Reconnaissance, Patch | fewer turns, the same context |
 | One line of intent | No narration, only the intent and the calls. | all | less visible output |
 | Do not repeat a failed command | Failure → a different approach. | Verification, Environment triage, Reference acquisition | the engine already refuses an exact repeat |
 | Do not re-verify what passed | Success attained → do not verify again. | Verification | #5: a clean `stop` is cheaper |

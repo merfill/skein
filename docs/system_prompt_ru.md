@@ -287,6 +287,31 @@
   не гонится за upstream-эталоном. Также тронуты критерий `turnInstruction` и описание `stop`.
   Пошаговая методика и обоснование — `docs/state_testing_ru.md`.
 
+- **2026-11-04 — Localization слит в Patch.** Два состояния — одно: локализация дефекта и
+  правка, которую он требует, идут одним циклом, потому что причина, которую вправе назвать
+  только Localization, не может быть пересмотрена изменением, которое её проверяет.
+  `localization` уходит из `LIVE_ISLAND_IDS` (остаётся в `ISLANDS`, чтобы журналы, записанные
+  до слияния, рендерились; `transitionRule("localization")` сохраняет текст для таких лент).
+  Что перенесено и что убрано:
+
+  - `patch.what` = «find the defect in the existing artifact and make the change it needs»;
+    `patch.criterion` = дефект локализован (цель, координаты, соседи исключены, причина как
+    подозрение) **и** изменение полное в объявленной форме.
+  - `patch.instruction` — цикл «найти и изменить»; не удержавшееся изменение есть свидетельство
+    о причине, поэтому причину пересматривают и меняют снова от неё.
+  - Сознательно убрано: «причина — та, что названа в `Finish` предыдущего состояния», «не
+    выводи причину заново», «не выбирай другую». Из-за них неверная причина становилась
+    неисправимой.
+  - `patch.next` = Verification, Research (коррекция ситуации); `orientation.next` → `patch`;
+    `research.next` → `patch`; `verification.next` → только `patch` (ветка `Localization`
+    убрана). B4 рендерится из `ISLANDS`, поэтому следует без правки блока.
+  - Блок пробы для Patch — `vcs, build, compilers, interpreters` (он и ищет в материале, и
+    собирает изменение); `src/ir/project.ts` рендерит карту + environment для
+    `localization`/`research`/`patch` одной ветвью.
+
+  Доки — `docs/states_ru.md` §2.2/§2.4/§3/§4, `docs/prompt_state_machine_concept.md` §4.3;
+  тесты — `tests/routing.test.ts`, `tests/prompt.test.ts`, `tests/environment.test.ts`.
+
 ## 5. Карта тестов
 
 | Уровень | Где | Что проверяет |

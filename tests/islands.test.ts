@@ -39,13 +39,13 @@ describe("islands: the closed vocabulary", () => {
   it("routes the epistemic and productive states", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
-    expect(targets("orientation")).toEqual(expect.arrayContaining(["localization", "research", "construction"]));
+    expect(targets("orientation")).toEqual(expect.arrayContaining(["patch", "research", "construction"]));
     expect(targets("localization")).toEqual(["patch", "research"]);
-    expect(targets("research")).toEqual(["end", "localization"]);
-    expect(targets("patch")).toEqual(["verification"]);
+    expect(targets("research")).toEqual(["end", "patch"]);
+    expect(targets("patch")).toEqual(["verification", "research"]);
     expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
     expect(targets("construction")).toEqual(expect.arrayContaining(["end", "research"]));
-    expect(targets("verification")).toEqual(expect.arrayContaining(["end", "patch", "localization"]));
+    expect(targets("verification")).toEqual(expect.arrayContaining(["end", "patch"]));
   });
 
   it("scopes the write-class to the productive states: the island delimits the apply surface", () => {
@@ -101,7 +101,7 @@ describe("islands: the doxa authors the state at move", () => {
 
   it("runs any tool as the state's first turn", () => {
     const { ws } = makeWorkspace({ "a.txt": "hello world\n" });
-    const res = execAll([move("localization", "read a"), read("a.txt")], [request()], ws);
+    const res = execAll([move("patch", "read a"), read("a.txt")], [request()], ws);
     const kinds = res.outcome.events
       .filter((event) => event.type === "add_node")
       .map((event) => (event as { node: { kind: string } }).node.kind);

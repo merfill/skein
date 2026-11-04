@@ -41,11 +41,16 @@ export interface EnvironmentFact {
 }
 
 // Orientation establishes the inputs and the acceptance, not the toolchain: it gets no
-// environment block. Localization needs the VCS tools and the interpreters that can run a search
-// script; Research needs the interpreters and package managers that can produce the result;
-// Construction and Verification run the project's build and its declared check.
+// environment block. Patch needs the VCS tools and the interpreters that can run a search
+// script, plus the toolchain the change is built with; Research needs the interpreters and
+// package managers that can produce the result; Construction and Verification run the project's
+// build and its declared check.
 const ORIENTATION_GROUPS: readonly EnvironmentGroup[] = [];
+// Legacy: Localization merged into Patch (2026-11-04). Kept for journals written before it.
 const LOCALIZATION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "interpreters"];
+// Patch locates the defect and makes the change, so it needs the search tools (vcs,
+// interpreters) and the toolchain the change is built with.
+const PATCH_GROUPS: readonly EnvironmentGroup[] = ["vcs", "build", "compilers", "interpreters"];
 const RESEARCH_GROUPS: readonly EnvironmentGroup[] = ["interpreters", "pkg"];
 const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
 const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["build", "compilers", "test", "interpreters", "pkg"];
@@ -57,11 +62,12 @@ function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
   if (island === undefined) return [];
   if (island === "orientation") return ORIENTATION_GROUPS;
   if (island === "localization") return LOCALIZATION_GROUPS;
+  if (island === "patch") return PATCH_GROUPS;
   if (island === "research") return RESEARCH_GROUPS;
   if (island === "recovery") return RECOVERY_GROUPS;
   if (island === "construction") return CONSTRUCTION_GROUPS;
   if (island === "verification") return VERIFICATION_GROUPS;
-  // Localization and End inspect the material with the model's own search tools.
+  // End inspects nothing: its surface is the model's own reply.
   return [];
 }
 

@@ -12,7 +12,9 @@
 > `docs/ir_semantics_ru.md` §7 (лента), `AGENTS.md`.
 >
 > **2026-11-03:** `Recovery` больше не живое состояние; его работа входит в `Research`.
-> Маршруты и результаты ниже записаны до слияния и оставлены как история.
+> **2026-11-04:** `Localization` тоже больше не живое состояние; он слит в `Patch`. Маршруты и
+> результаты ниже записаны до слияний и оставлены как история, поэтому маршрут вида
+> `O → L → P → V` сегодня читается как `O → P → V`.
 
 ## 0. Цель
 
@@ -123,8 +125,7 @@ npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 Чеклист:
 
 1. **Выбери run и точку входа.**
-   - второй вход в Localization — fold до `descend` после `move` (состояние
-     `plan / localization`);
+   - второй вход в Patch — fold до `descend` после `move` (состояние `plan / patch`);
    - провал Verification (transition) — до `stop`-edge закрытой Verification;
    - рабочая Verification после провала — до `result`-edge упавшего `bash`.
 2. **Приведи дерево к сиду.** Подними `dockerWorkspace` для `fix-ocaml-gc`; примени/откати
@@ -134,8 +135,8 @@ npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 3. **Запусти `runAgent({ propose, workspace, maxTurns }, { request, seed, startTurn })`.**
    Не делай ручной цикл `propose`: переходы и откат живут в `executeNode`.
 4. **Поставь sentinel в `propose`.** Остановись, когда `context.island` достиг целевого
-   (например, `localization` после отката или `verification` перед сборкой) — так один прогон
-   не уходит в дорогой build.
+   (например, `patch` после отката или `verification` перед сборкой) — так один прогон не
+   уходит в дорогой build.
 5. **Пиши `contexts/tNNN.txt`, `turns.ndjson`, `journal.ndjson`.** Смотри `reasoning`,
    действия, `stop why`, `revert`; контекст — ровно то, что ушло модели.
 6. **K≥3 и один фактор за раз.** `SKEIN_STREAMING`, `SKEIN_TEMPERATURE` и правки промта —
@@ -143,14 +144,12 @@ npx tsx bench/live-step.ts <task-id> --net off --dir <dir>
 
 Что ожидать после текущего фикса:
 
-- Verification провалилась → `stop` → `move` в Patch или Localization (модель выбирает; Patch, если
-  координаты ещё верны) → движок пишет `revert` последнего
-  Patch: файл возвращается к pre-patch, версии в IR обновляются;
-- в открытой Localization блок говорит `This change has been reverted…` и
-  `A different change is required…`;
+- Verification провалилась → `stop` → `move` в Patch (провал может быть и в изменении, и в
+  причине, на которую оно опиралось) → движок пишет `revert` последнего Patch: файл
+  возвращается к pre-patch, версии в IR обновляются;
 - Patch применяет **другой** diff, а не вариант откатанного;
-- вторая ошибка Verification снова даёт `stop` → Localization → revert, без отладки и правок
-  внутри Verification.
+- вторая ошибка Verification снова даёт `stop` → Patch → revert, без отладки и правок внутри
+  Verification.
 
 ## 3. Как формируется лента (что затирается, что добавляется)
 
@@ -176,11 +175,11 @@ system   — инструкция текущей ситуации (plan/working/
 записанный на старте запроса (`src/loop/probe.ts`). `material` — карта workspace (`root`, `cwd`
 если shell стартует не в root, repo, entries/paths, files), без конфигов, команд сборки и
 расширений. Проекция показывает её как
-`Workspace` в Orientation; в Localization/Research та же карта идёт как `Orientation result`
-(Research дополнительно получает `Probe` с interpreters/tools); Patch получает её же как
-`Workspace`; остальные состояния получают `Probe` (environment) отдельным заголовком. Закрытые состояния блоков не несут, на request-ходу
-их нет. `environment` также несёт `network: on|off` — режим агента, записанный harness (не
-угаданный shell); он говорит, можно ли ставить отсутствующий рантайм. Полный вывод probe на
+`Workspace` в Orientation; в Patch/Research та же карта идёт как `Orientation result` плюс
+`Probe` (environment) отдельным заголовком; остальные состояния получают только `Probe`.
+Закрытые состояния блоков не несут, на request-ходу их нет. `environment` также несёт
+`network: on|off` — режим агента, записанный harness (не угаданный shell); он говорит, можно ли
+ставить отсутствующий рантайм. Полный вывод probe на
 ленту не попадает; replay читает записанный факт.
 
 **Вход в состояние** (показывается, пока состояние открыто; brief — только у текущего):
@@ -194,13 +193,13 @@ user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.wh
 system   — <per-turn tail: hint, критерий, closure>  [не хранится]
 ```
 
-**Возврат в Localization или Patch после провала.** Отдельного блока `Previous failed attempt`
+**Возврат в Patch после провала.** Отдельного блока `Previous failed attempt`
 текущая реализация **не рендерит** (это проверяют `tests/revert.test.ts` и
 `tests/tape_render.test.ts`). Провал остаётся на ленте в `Finish`-строках закрытых `Patch` и
 `Verification`: `stop.why` упавшей Verification — буквальный пересказ ошибки (команда, exit,
 фактический текст), а не диагноз кода.
 
-Откат делает движок на переходе `Verification → Patch/Localization` по провалу: он пишет
+Откат делает движок на переходе `Verification → Patch` по провалу: он пишет
 событие `revert` (файлы + новые версии) и возвращает дерево к pre-patch. Планы закрытых
 состояний элидируются, поэтому фактическая правка отдельно не рендерится — модель видит
 `Finish`-строки и pre-patch дерево. Если откат невозможен (например, `write`/`apply_patch` без
@@ -373,7 +372,9 @@ system — Finish state <Label> — <why из stop>
   остаётся пере-проверка WAL (6,8k reasoning) — словами это не лечится. Трассы:
   `bench/runs/matrix/2026-10-29-patchall-fix-code/`,
   `2026-10-29-patchall-db-wal/`, `2026-10-29-recovery-{consumer,affirmative}-db-wal/`.
-- **Patch получает карту материала (2026-10-20).** Patch больше не получает Probe с
+- **Patch получает карту материала (2026-10-20).** *(Устарело 2026-11-04: Patch теперь и
+  локализует дефект, поэтому получает карту **плюс** пробу — `vcs, build, compilers,
+  interpreters`.)* Patch больше не получает Probe с
   compilers/interpreters; вместо него — `Workspace` (`root`, `repo`, `entries`, `files`), как у
   Orientation. На записанной ленте t9 (Patch plan) dry-проекция даёт `repo: none` и
   `entries: ocaml/ (4623 files)`; live K=3 на этом же контексте — 3/3 сразу читают
@@ -533,9 +534,9 @@ system — Finish state <Label> — <why из stop>
 - **Orientation result vs probe (2026-10-20).** Один `fact:session` (`environment` + `material`)
   пишется на старте запроса. `material` — карта workspace: `root`, repo-статус, top-level
   entries (для маленьких материалов — paths), число файлов; без конфигов, команд сборки,
-  расширений и build state. Orientation показывает её как `Workspace`; Localization и Research
-  получают ту же карту как `Orientation result` (Research — плюс `Probe` с interpreters/tools);
-  остальные состояния получают `Probe` (environment) отдельным заголовком. Цель Orientation
+  расширений и build state. Orientation показывает её как `Workspace`; Patch и Research
+  получают ту же карту как `Orientation result` плюс `Probe` (environment) отдельным
+  заголовком; остальные состояния получают только `Probe`. Цель Orientation
   сужена до входов и acceptance из запроса; если карта и запрос уже всё называют, первый же
   шаг может быть `stop`.
 - **Orientation на 13 задачах (2026-10-20, minimal).** Живой прогон на реальных образах: **13/13

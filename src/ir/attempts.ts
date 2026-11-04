@@ -47,12 +47,13 @@ export function lastPatchBefore(state: State, beforeMoveId: string): string | un
 }
 
 // A move out of a closed Verification whose acceptance run failed. The engine reverts the
-// preceding Patch before the move, so Localization OR Patch sees the tree the failed change
-// started from; the tape keeps the attempt record (Start/Finish and the failed run).
+// preceding Patch before the move, so Patch sees the tree the failed change started from; the
+// tape keeps the attempt record (Start/Finish and the failed run). `localization` is accepted
+// too: a journal written before the merge can still move there.
 export function isFailedVerificationMove(state: State, action: Action): boolean {
-  if (action.operator !== "move" || (action.state !== "localization" && action.state !== "patch")) {
-    return false;
-  }
+  if (action.operator !== "move") return false;
+  const target: string = action.state;
+  if (target !== "patch" && target !== "localization") return false;
   const move = currentMove(state);
   if (move === undefined) return false;
   if (moveIsland(state, move) !== "verification" || !isMoveFinished(state, move)) return false;
@@ -174,7 +175,7 @@ export function revertLastPatch(
   }
 }
 
-// The hook used by the loop before a failed Verification's move to Localization.
+// The hook used by the loop before a failed Verification's move back to Patch.
 export function revertFailedPatch(state: State, workspace: Workspace): Event[] {
   const move = currentMove(state);
   if (move === undefined) return [];

@@ -9,8 +9,10 @@
 > `docs/prompt_state_machine_concept.md` (the state graph), `docs/testing.md`,
 > `docs/ir_semantics.md` §7 (the tape), `AGENTS.md`.
 >
-> **2026-11-03:** `Recovery` is no longer a live state; its work is part of `Research`. The
-> routes and results below were recorded before the merge and are kept as history.
+> **2026-11-03:** `Recovery` is no longer a live state; its work is part of `Research`.
+> **2026-11-04:** `Localization` is no longer a live state either; it is merged into `Patch`. The
+> routes and results below were recorded before the merges and are kept as history, so a route
+> such as `O → L → P → V` reads as `O → P → V` today.
 
 ## 0. Goal
 
@@ -123,8 +125,8 @@ turn number) resume the loop; `maxTurns` stays absolute.
 Checklist:
 
 1. **Pick the run and the cut point.**
-   - second entrance into Localization — fold through the `descend` after its `move`
-     (`plan / localization`);
+   - second entrance into Patch — fold through the `descend` after its `move`
+     (`plan / patch`);
    - failed Verification (transition) — through the `stop` edge of the closed Verification;
    - working Verification after a failure — through the `result` edge of the failed `bash`.
 2. **Make the tree match the seed.** Start `dockerWorkspace` for `fix-ocaml-gc`; apply/reverse the
@@ -134,7 +136,7 @@ Checklist:
 3. **Call `runAgent({ propose, workspace, maxTurns }, { request, seed, startTurn })`.** Do not
    write a manual `propose` loop: transitions and the revert live in `executeNode`.
 4. **Put a sentinel in `propose`.** Stop when `context.island` reaches the target (e.g.
-   `localization` after the revert, or `verification` before a build) so one run does not enter an
+   `patch` after the revert, or `verification` before a build) so one run does not enter an
    expensive build.
 5. **Write `contexts/tNNN.txt`, `turns.ndjson`, `journal.ndjson`.** Read `reasoning`, the actions,
    `stop why`, `revert`; the context is exactly what went to the model.
@@ -143,14 +145,12 @@ Checklist:
 
 Expected after the current fix:
 
-- Verification fails → `stop` → `move` to Patch or Localization (the model chooses; Patch when the
-  coordinates still hold) → the engine writes `revert` for the last
-  Patch, restores the pre-patch file and updates the IR versions;
-- the open Localization block says `This change has been reverted…` and
-  `A different change is required…`;
+- Verification fails → `stop` → `move` to Patch (the failure may be in the change or in the cause
+  it acted on) → the engine writes `revert` for the last Patch, restores the pre-patch file and
+  updates the IR versions;
 - Patch applies **another** diff, not a variant of the reverted one;
-- a second Verification failure again gives `stop` → Localization → revert, with no debugging or
-  editing inside Verification.
+- a second Verification failure again gives `stop` → Patch → revert, with no debugging or editing
+  inside Verification.
 
 ## 3. How the tape is built (what is erased, what is added)
 
@@ -176,9 +176,9 @@ environment-brief message after the request.
 The **probe** is one session `fact` (`id: fact:session`, payload `{ environment, material }`),
 recorded at request start (`src/loop/probe.ts`). `material` is the workspace map (`root`, repo,
 entries/paths, files), with no configs, build commands or extensions. The projection shows it as
-`Workspace` in Orientation; in Localization/Research the same map is `Orientation result`
-(Research also gets `Probe` with interpreters/tools); Patch gets it as `Workspace`; other states
-get `Probe` (environment) under its own heading. Closed states carry no block and the request turn has none. The probe's
+`Workspace` in Orientation; in Patch/Research the same map is `Orientation result` plus `Probe`
+(environment) under its own heading; other states get `Probe` alone. Closed states carry no block
+and the request turn has none. The probe's
 raw output never reaches the tape; a replay reads the recorded fact instead of probing again.
 `environment` also carries `network: on|off` — the agent's mode, recorded by the harness (not
 guessed by a shell); it tells a state whether a missing runtime can be installed.
@@ -194,13 +194,13 @@ user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.wh
 system   — <per-turn tail: hint, criterion, closure>  [not stored]
 ```
 
-**Returning to Localization or Patch after a failure.** The current implementation renders **no**
+**Returning to Patch after a failure.** The current implementation renders **no**
 separate `Previous failed attempt` block (`tests/revert.test.ts` and `tests/tape_render.test.ts`
 assert this). The failure stays on the tape in the closed `Patch` and `Verification` `Finish`
 lines: the failed Verification's `stop.why` is a literal retelling of the failure (command, exit,
 actual error), not a code diagnosis.
 
-The engine performs the revert on the failure transition `Verification → Patch/Localization`: it
+The engine performs the revert on the failure transition `Verification → Patch`: it
 emits a `revert` event (files + new versions) and restores the pre-patch tree. Closed states'
 plans are elided, so the actual edit is not re-rendered; the model sees the `Finish` lines and
 the pre-patch tree. If the revert is impossible (e.g. `write`/`apply_patch` without a preimage),
@@ -359,9 +359,10 @@ system — Finish state <Label> — <why from stop>
   22 turns; the worst run still over-checks the WAL (6.8k reasoning) — wording does not fix it.
   Traces: `bench/runs/matrix/2026-10-29-patchall-fix-code/`,
   `2026-10-29-patchall-db-wal/`, `2026-10-29-recovery-{consumer,affirmative}-db-wal/`.
-- **Patch gets the material map (2026-10-20).** Patch no longer gets the Probe with
-  compilers/interpreters; instead it gets `Workspace` (`root`, `repo`, `entries`, `files`), as
-  Orientation does. On the recorded tape at t9 (Patch plan) a dry projection shows `repo: none`
+- **Patch gets the material map (2026-10-20).** *(Superseded 2026-11-04: Patch locates the defect
+  too, so it gets the map **plus** the probe — `vcs, build, compilers, interpreters`.)* Patch no
+  longer gets the Probe with compilers/interpreters; instead it gets `Workspace` (`root`, `repo`,
+  `entries`, `files`), as Orientation does. On the recorded tape at t9 (Patch plan) a dry projection shows `repo: none`
   and `entries: ocaml/ (4623 files)`; live K=3 on the same context — 3/3 go straight to
   `runtime/shared_heap.c` (280-699), with no git and no `ls`/broad grep. Before: t9 `git status`
   + `git diff` (7.3k chars of usage, 0.157₽) and t10 `ls` + `grep free_space/run/rle` (0.156₽);
@@ -515,9 +516,9 @@ system — Finish state <Label> — <why from stop>
 - **Orientation result vs probe (2026-10-20).** One `fact:session` (`environment` + `material`)
   is recorded at request start. `material` is the workspace map: `root`, `cwd` (when the shell
   starts outside the root), repo status, top-level entries (full paths for small materials),
-  file count; no configs, build commands, extensions or build state. Orientation renders it as `Workspace`; Localization and Research get the same map
-  as `Orientation result` (Research also gets `Probe` with interpreters/tools); other states get
-  `Probe` (environment) under its own heading. Orientation's goal is narrowed to the inputs and
+  file count; no configs, build commands, extensions or build state. Orientation renders it as
+  `Workspace`; Patch and Research get the same map as `Orientation result` plus `Probe`
+  (environment) under its own heading; other states get `Probe` alone. Orientation's goal is narrowed to the inputs and
   the acceptance declared by the request; if the map and request already name them, the first
   step can be `stop`.
 - **Orientation across 13 tasks (2026-10-20, minimal).** Live run on the real images: **13/13

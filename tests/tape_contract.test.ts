@@ -152,7 +152,7 @@ describe("move: before [request] -> delta -> after", () => {
 
   it("stops a state and moves on: the finished state's turns collapse to one line", async () => {
     const w = ws();
-    const first = execAll([move("localization", "do it"), run("false")], [request()], w);
+    const first = execAll([move("patch", "do it"), run("false")], [request()], w);
     const stopped = exec({ operator: "stop", why: "the line is named" }, first.events, w);
     expect(kinds(stopped)).toEqual(["stop"]);
     const moved = exec(move("patch", "apply the fix"), stopped.events, w);
@@ -160,15 +160,15 @@ describe("move: before [request] -> delta -> after", () => {
     // The finished state's plan and its command have left the tape; only the closure marker,
     // in the finished state's triple, remains.
     const texts = after.map((entry) => entry.content ?? "").join("\n");
-    expect(texts).toContain("Finish state Localization — the line is named");
+    expect(texts).toContain("Finish state Patch — the line is named");
     expect(texts).not.toContain("false");
     expect(
       after.find(
-        (entry) => entry.content === "Finish state Localization — the line is named",
+        (entry) => entry.content === "Finish state Patch — the line is named",
       ),
     ).toEqual({
       role: "system",
-      content: "Finish state Localization — the line is named",
+      content: "Finish state Patch — the line is named",
     });
   });
 });

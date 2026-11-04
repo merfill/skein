@@ -105,7 +105,7 @@ function buildSteps(): Step[] {
   // A finished state: transition with a move.
   {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find the cause"), run("true")], [request("Fix the failing test.")], ws);
+    const opened = execAll([move("patch", "find the cause"), run("true")], [request("Fix the failing test.")], ws);
     const stopped = exec({ operator: "stop", why: "the line is named" }, opened.events, ws);
     steps.push({
       name: "transition-move",

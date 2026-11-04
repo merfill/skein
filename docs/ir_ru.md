@@ -51,8 +51,8 @@
   записанный один раз на старте запроса; связей нет. `environment` — `{ root, found, missing }`,
   `material` — `{ root, repos, entries, paths, files }` (индекс workspace, без конфигов и
   команд сборки). Факт сессионный: будущий контейнер `Session` владеет им, а деревья запросов
-  ссылаются на него по id. Проекция: Orientation — `Workspace`, L/R — `Orientation result`,
-  Patch — `Workspace` (карта материала), остальные — `Probe` (environment); закрытые состояния и
+  ссылаются на него по id. Проекция: Orientation — `Workspace`; Patch/Research — `Orientation
+  result` плюс `Probe` (environment); остальные — только `Probe`; закрытые состояния и
   request-ход блоков не несут.
 
 **Связи** (`src/ir/types.ts`, без поля статуса): `move` (request → move), `unactionable`

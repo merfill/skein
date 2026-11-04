@@ -159,8 +159,16 @@ describe("environment probe", () => {
     expect(recovery).toContain("Installed interpreters:");
     expect(recovery).not.toContain("Version-control tools:");
 
-    // Patch edits an existing artifact: it gets the material map, not the toolchain.
-    expect(environmentBrief(environment, "patch")).toBe("");
+    // Patch locates the defect and changes the artifact: the search tools plus the toolchain
+    // the change is built with.
+    const patch = environmentBrief(environment, "patch");
+    expect(patch).toContain("Version-control tools: git 2.39.2.");
+    expect(patch).toContain("Build tools:");
+    expect(patch).toContain("Compilers:");
+    expect(patch).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
+    expect(patch).not.toContain("Test tools:");
+    expect(patch).not.toContain("Available package managers:");
+    expect(patch).not.toContain("Workspace root:");
 
     const construction = environmentBrief(environment, "construction");
     expect(construction).toContain("Build tools:");
@@ -177,6 +185,7 @@ describe("environment probe", () => {
     expect(localization).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
     expect(localization).not.toContain("tools: jq");
     expect(localization).not.toContain("Workspace root:");
+
     expect(environmentBrief(environment, "end")).toBe("");
   });
 
@@ -325,15 +334,16 @@ describe("session probe projection", () => {
     expect(brief?.text).not.toContain("Environment");
   });
 
-  it("carries the Orientation result into Localization and Research", () => {
+  it("carries the Orientation result into Patch and Research", () => {
     const probe: SessionProbe = { environment, material };
-    const localization = project(fold([request(), probeEvent(probe), ...move("localization")]));
-    const localizationBrief = localization.history.find(
+    const patchContext = project(fold([request(), probeEvent(probe), ...move("patch")]));
+    const patchBrief = patchContext.history.find(
       (message) => message.role === "system" && message.text.includes("Workspace map"),
     );
-    expect(localizationBrief?.text).toContain("Workspace map");
-    expect(localizationBrief?.text).toContain("Version-control tools: git 2.39.2.");
-    expect(localizationBrief?.text).toContain("Installed interpreters:");
+    expect(patchBrief?.text).toContain("Workspace map");
+    expect(patchBrief?.text).toContain("Version-control tools: git 2.39.2.");
+    expect(patchBrief?.text).toContain("Installed interpreters:");
+    expect(patchBrief?.text).toContain("Build tools:");
 
     const research = project(fold([request(), probeEvent(probe), ...move("research")]));
     const researchBrief = research.history.find(
@@ -354,7 +364,7 @@ describe("session probe projection", () => {
     expect(brief?.text).not.toContain("Workspace map");
   });
 
-  it("gives Patch the material map, not the toolchain", () => {
+  it("gives Patch the material map and the toolchain the change is built with", () => {
     const probe: SessionProbe = { environment, material };
     const patch = project(fold([request(), probeEvent(probe), ...move("patch")]));
     const brief = patch.history.find(
@@ -364,8 +374,9 @@ describe("session probe projection", () => {
     expect(brief?.text).toContain("repo: git at /app/ocaml");
     expect(brief?.text).toContain("entries:");
     expect(brief?.text).not.toContain("Environment");
-    expect(brief?.text).not.toContain("compilers:");
-    expect(brief?.text).not.toContain("interpreters:");
+    expect(brief?.text).toContain("Compilers:");
+    expect(brief?.text).toContain("Installed interpreters:");
+    expect(brief?.text).not.toContain("Test tools:");
   });
 
   it("has no workspace or probe on the request turn", () => {

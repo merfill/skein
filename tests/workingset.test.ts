@@ -78,7 +78,7 @@ describe("the message tape under a long horizon", () => {
         return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "echo FIRSTCMD" } }] };
       }
       if (call === 3) return { thought: "", actions: [{ operator: "stop", why: "A is done" }] };
-      if (call === 4) return { thought: "", actions: [{ operator: "move", state: "localization", what: "B", done: "b" }] };
+      if (call === 4) return { thought: "", actions: [{ operator: "move", state: "patch", what: "B", done: "b" }] };
       if (call === 5) return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "true" } }] };
       if (call === 6) return { thought: "", actions: [{ operator: "stop", why: "B is done" }] };
       if (call === 7) return { thought: "", actions: [{ operator: "move", state: "end", what: "" }] };

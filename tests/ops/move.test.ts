@@ -37,7 +37,7 @@ describe("move", () => {
 
   it("OP-MV-2 a move after a finished state is a sibling, not a child", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find it"), run("true")], [request()], ws);
+    const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
     const moved = exec(move("patch", "apply the fix"), stopped.events, ws);
 
@@ -76,7 +76,7 @@ describe("move", () => {
 
   it("DER-STATE-1 a state is finished only when it is stopped", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find it"), run("true")], [request()], ws);
+    const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
     const moveId = currentMove(opened.state)!;
     expect(isMoveFinished(opened.state, moveId)).toBe(false);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
@@ -85,7 +85,7 @@ describe("move", () => {
 
   it("DER-STATE-2 the current state is the last move child of the request", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const opened = execAll([move("localization", "find it"), run("true")], [request()], ws);
+    const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
     const moved = exec(move("patch", "apply the fix"), stopped.events, ws);
     const ids = [...moved.state.nodes.values()].filter((n) => n.kind === "move").map((n) => n.id);

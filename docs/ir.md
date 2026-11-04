@@ -51,8 +51,8 @@ reserved `symbol`/`test`, not produced).
   `{ root, found, missing }`; `material` is `{ root, repos, entries, paths, files }` (a workspace
   index, with no configs or build commands). The fact is session-scoped: a future `Session`
   container owns it, and request trees reference it by id. The projection renders `Workspace` in
-  Orientation, `Orientation result` in Localization/Research, `Workspace` in Patch, and `Probe`
-  (environment) elsewhere;
+  Orientation, `Orientation result` plus `Probe` (environment) in Patch/Research, and `Probe`
+  alone elsewhere;
   closed states and the request turn carry none.
 
 **Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`

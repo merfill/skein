@@ -26,15 +26,15 @@ tape, and a focus change changes the view without rewriting history. Whatever le
 in the journal and is fetched by `id`.
 
 **What a state is.** The agent's work is split into states. A state is not a step or a command
-but a state of knowledge: for example, "find the defect in existing code, files, or history" or "check the change
-against the acceptance". Every state has a goal (what should be known), a criterion (the
-observable sign that the goal is reached) and a way to act (which tools are available and how to
-behave). The model enters a state with a `move`, works in it and closes it with a `stop` when the
-criterion holds. The set of states is fixed: Orientation, Localization, Research, Patch,
-Construction, Verification, End. (Recovery is a legacy name: its work is now part of Research, and
-old journals still render it.) The current state determines what the tape shows: its goal, its
-material information, its instruction and its plan. Once a state is closed, the tape keeps only
-`Start`/`Finish` from it, and the focus moves to the next state.
+but a state of knowledge: for example, "find the defect in the existing artifact and make the
+change it needs" or "check the change against the acceptance". Every state has a goal (what
+should be known), a criterion (the observable sign that the goal is reached) and a way to act
+(which tools are available and how to behave). The model enters a state with a `move`, works in
+it and closes it with a `stop` when the criterion holds. The set of states is fixed: Orientation,
+Research, Patch, Construction, Verification, End. (Recovery and Localization are legacy names:
+their work is now part of Research and Patch, and old journals still render them.) The current state determines what the
+tape shows: its goal, its material information, its instruction and its plan. Once a state is
+closed, the tape keeps only `Start`/`Finish` from it, and the focus moves on.
 
 **Principles.** Three things follow, and the rest of this document builds on them:
 
@@ -92,26 +92,26 @@ system   <turn hint: hint → Done when → stop requirement>
 Calls and results accumulate: they are what the model has already done in this state. The turn
 hint is not stored: on the next turn it is gone, and a new one is appended.
 
-An example of an open Localization after two calls:
+An example of an open Patch after two calls:
 
 ```
-system   Start state Localization
+system   Start state Patch
 system   Orientation result: root /app, entries ...
-system   Find the target in the material ...
-user     Goal: find the defect in existing code, files, or history
+system   Locate the defect and change the artifact in one loop ...
+user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... window 40-90 ...
-system   Start from the workspace map ... Done when: "the target is named ..."
+system   Start from the workspace map ... Done when: "the defect is located ..."
          When it holds, `stop` — and nothing else.
 ```
 
 When a state is closed, two `system` messages remain — its trace:
 
 ```
-system   Start state Localization
-system   Finish state Localization — line 63 drops the last token ...
+system   Start state Patch
+system   Finish state Patch — line 63 drops the last token ...
 ```
 
 The instruction, map, goal, calls and results of a closed state leave the tape. The data stays in
@@ -123,11 +123,11 @@ After `stop` only `move` is available; there are no other tools. A temporary `sy
 is appended:
 
 ```
-system   Your result is the line `Finish state Localization — …` above — read it.
-         Next states from Localization:
-         - Patch — ...
+system   Your result is the line `Finish state Patch — …` above — read it.
+         Next states from Patch:
+         - Verification — ...
          - Research — ...
-         Choose Patch when ...
+         Choose Verification when the change holds ...
          Choose Research only when ...
          Call `move` alone. ...
 ```
@@ -135,7 +135,7 @@ system   Your result is the line `Finish state Localization — …` above — r
 After the `move` this instruction is erased. The next state opens with its own `Start state`, its
 own instruction, its own material information and its own goal; the previous state's plan is not
 carried.
-The corrective `L↔R` edges are described only here, in the transition rule; they do not affect
+The corrective `P↔R` edges are described only here, in the transition rule; they do not affect
 behavior inside a state.
 
 ## 2. A state is the unit of work
@@ -166,20 +166,21 @@ work.
 
 | Island | Goal (`island.what`) | Criterion (briefly) | Material information | `next` |
 |---|---|---|---|---|
-| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace map` | L, R, C |
-| **Localization** | find the defect in existing code, files, or history | target and coordinates; siblings ruled out; a suspected cause (unverified) | `Workspace map` + environment | P, R¹ |
-| **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | `Workspace map` + environment | End, L¹ |
-| **Patch** | make the named change to the artifact | complete change (located artifact + every other file the task needs); result form checked | `Workspace map` | V |
+| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace map` | P, R, C |
+| **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | `Workspace map` + environment | End, P¹ |
+| **Patch** | find the defect in the existing artifact and make the change it needs | target and coordinates; siblings ruled out; the cause named as a suspicion; complete change (located artifact + every other file the task needs) in its declared form | `Workspace map` + environment | V, R¹ |
 | **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | environment | End, R |
-| **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | environment | End, P, L |
+| **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | environment | End, P¹ |
 | **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
 
-The legacy `recovery` island is still rendered for journals written before the merge; it is not a
-live `move` target.
+The legacy `recovery` and `localization` islands are still rendered for journals written before
+their merges; neither is a live `move` target.
 
-¹ Corrective edges. `Localization → Research` is chosen when the work turns out to be a
-situation, not a code defect; `Research → Localization` when the situation turns out to be a code
-defect. This corrects a wrong start classification; these edges are not a routine exit.
+¹ Corrective edges. `Patch → Research` is chosen when the work turns out to be a situation, not a
+defect to locate and fix; `Research → Patch` when the situation turns out to be a code defect;
+`Verification → Patch` after a failed acceptance, because the failure may be in the change or in
+the cause it acted on. These correct a wrong start classification or a wrong cause; they are not
+a routine exit.
 
 Besides the goal and the criterion, an island defines `instruction` (how to act; shown once at
 entry), `hint` (how to behave on every turn) and `applies` (which apply-tools are available).
@@ -187,12 +188,12 @@ Neither the instruction nor the hint replaces the goal: the goal is `island.what
 
 ### 2.2 Routes
 
-- **Repair:** `O → L → P → V → End`.
+- **Repair:** `O → P → V → End`.
 - **Recovery:** `O → R → End` (Research does the reconstruction; there is no separate Recovery).
 - **Construction:** `O → C → End`; a failed Construction may move to `R` on a method failure.
 - **Hybrid:** `O → R → P → V → End` for a task that recovers a secret and then changes an artifact
   (`git-leak-recovery`); the `R → P` step is an explicit `move`, not a prompted edge.
-- **Corrective:** `V → P/L` on failure; `L ↔ R` on a wrong start classification; `C → R` on a
+- **Corrective:** `V → P` on failure; `P ↔ R` on a wrong start classification; `C → R` on a
   method failure.
 
 The request has no `stop` of its own. It is interpreted once (`move` or `decline`), and the run
@@ -202,10 +203,10 @@ ends when the terminal `End` state is closed.
 
 ### 3.1 Material information
 
-The material information depends on the island: `Workspace map` (Orientation, Patch),
-`Workspace map` + environment (Localization, Research), and the environment (Construction,
-Verification). The legacy Recovery gets the environment too. These are already recorded facts;
-there is no need to re-probe them.
+The material information depends on the island: `Workspace map` (Orientation),
+`Workspace map` + environment (Patch, Research), and the environment (Construction,
+Verification). The legacy Recovery and Localization get the environment too. These are already
+recorded facts; there is no need to re-probe them.
 
 ### 3.2 Reasoning
 
@@ -268,67 +269,60 @@ system   Start state Orientation
 system   Finish state Orientation — root /app; entries ...; acceptance: make test
 ```
 
-### 4.4 The transition to Localization
+### 4.4 The transition to Patch
 
 The tape now holds the request, the Orientation trace and a temporary transition instruction:
 
 ```
 system   Your result is the line `Finish state Orientation — …` above — read it.
-         Next states: Localization, Research, Construction.
-         Move to Localization when the request is to find an error in existing code or files.
+         Next states: Patch, Research, Construction.
+         Move to Patch when the request is to fix an error in existing code or files.
          ...
 ```
 
-Only `move` is available. The request is to find an error in existing code, so Localization is
+Only `move` is available. The request is to find and fix an error in existing code, so Patch is
 chosen. (A situation would go to Research; a fully specified artifact to Construction.) The doxa
 calls:
 
 ```
-move {state:"localization", what:"the parse loop that breaks on the last token"}
+move {state:"patch", what:"the parse loop that breaks on the last token"}
 ```
 
-### 4.5 Localization
+### 4.5 Patch
 
 After the `move` the transition instruction is erased; the tape holds the request, the Orientation
-trace and the open Localization:
+trace and the open Patch:
 
 ```
-system   Start state Localization
+system   Start state Patch
 system   Orientation result: root /app; entries ...; acceptance: make test
-system   Find the target ... (state instruction)
-user     Goal: find the defect in existing code, files, or history
+system   Locate the defect and change the artifact in one loop ... (state instruction)
+user     Goal: find the defect in the existing artifact and make the change it needs
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... (window 40-90) ...
-system   ... Done when: "the target is named ..." ... `stop` — and nothing else.
+system   ... Done when: "the defect is located ..." ... `stop` — and nothing else.
 ```
 
-The target and the cause are found; the move is
-`stop {why:"line 63 drops the last token — off-by-one in the loop"}`.
+The target and the cause are found and the change is made in the same state; the move is
+`stop {why:"line 63 drops the last token — off-by-one in the loop, boundary moved"}`.
 
 The trace:
 
 ```
-system   Start state Localization
-system   Finish state Localization — line 63 drops the last token ...
-```
-
-### 4.6 Patch and Verification
-
-Next come the change and the acceptance. The first Patch makes the whole change: not only the
-located artifact, but every other file the task needs. A required file is not deferred to
-Verification.
-
-```
-... Finish state Localization ...
 system   Start state Patch
-system   Workspace map ...
-user     Goal: make the named change to the artifact
-assistant [a3] edit {path:"src/parse.py", ...}
-tool      [m] mutated src/parse.py
-... (stop → Finish state Patch — ...)
+system   Finish state Patch — line 63 drops the last token ...
+```
+
+### 4.6 Verification
+
+Next comes the acceptance. The Patch already made the whole change: not only the located artifact,
+but every other file the task needs.
+
+```
+... Finish state Patch ...
 system   Start state Verification
 system   Probe ...
 user     Goal: check the changed artifact against the goal's acceptance
@@ -340,8 +334,8 @@ tool      [o4] exit 1 — IndexError: list index out of range
 What happened: the change moved the loop boundary, and now on the last iteration the code reads
 `tokens[i + 1]` past the end of the list. The test fails with `IndexError`. The object itself — the
 parse loop — was found correctly; the change is what is wrong. So by the transition rule
-`V → Patch` (the failure is in the change or the result, the object is the same) we return to
-Patch instead of finishing the request.
+`V → Patch` (the failure is in the change or in the cause it acted on) we return to Patch
+instead of finishing the request.
 
 Before the return the engine writes `revert`: files go back to the state before the first change.
 The failure stays on the tape only in Verification's `Finish` line; the failed Verification's plan
@@ -353,7 +347,7 @@ The second Patch applies a different diff — with a boundary check — and Veri
 system   Finish state Verification — make test: exit 1 — IndexError: list index out of range
 system   Start state Patch
 system   Workspace map ...
-user     Goal: make the named change to the artifact
+user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a5] edit {path:"src/parse.py", ...}   ← another diff
 tool      [m] mutated src/parse.py
 ... (stop → Finish state Patch — ...)
@@ -385,12 +379,11 @@ plan hangs on the state itself. The tape removed them from view, but the IR kept
 ```
 R  request
 ├─ I0 orientation   stopped   (on the tape only Start/Finish)
-├─ I1 localization  stopped   plan: a1 grep, a2 read
-├─ I2 patch         stopped   plan: a3 edit (v1→v2)
-├─ I3 verification  stopped   plan: a4 bash (exit 1)     ← failed
-│  ┆ revert v2→v1 (on the I3→I4 transition)
-├─ I4 patch         stopped   plan: a5 edit (v1→v3)
-├─ I5 verification  stopped   plan: a6 bash (exit 0)
+├─ I1 patch         stopped   plan: a1 grep, a2 read, a3 edit (v1→v2)
+├─ I2 verification  stopped   plan: a4 bash (exit 1)     ← failed
+│  ┆ revert v2→v1 (on the I2→I3 transition)
+├─ I3 patch         stopped   plan: a5 edit (v1→v3)
+├─ I4 verification  stopped   plan: a6 bash (exit 0)
 └─ H  end           stopped
 ```
 
@@ -414,8 +407,8 @@ are available by `id`.
 - **The surface is the frontier.** On the request, `move`/`decline`; in an open state, the
   apply-tools, `stop`, `recall`/`search`; in a closed state, only `move`; in the terminal state,
   `stop`.
-- **A failed Verification goes to Patch by default.** `revert` rolls the last Patch back;
-  Localization is chosen only when the failure points at a different object.
+- **A failed Verification goes to Patch.** `revert` rolls the last Patch back; the failure may be
+  in the change or in the cause it acted on, and both are revised in Patch.
 
 ## 5. Special cases
 
@@ -432,7 +425,7 @@ working in the same state, adds items and checks again.
 ### 5.2 Failed Verification: `revert` and return
 
 A failed acceptance does not close Verification by itself — the doxa's `stop` does. On the
-`Verification → Patch/Localization` transition the engine:
+`Verification → Patch` transition the engine:
 
 1. records `revert` for the last Patch (files return to the state before the change, versions are
    updated);

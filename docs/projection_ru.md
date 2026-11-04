@@ -17,8 +17,8 @@
 ## 2. Роли и ходы
 
 - `system` — базовый промпт, ограничения, инструкция **открытого** состояния (один раз при
-  входе), блок факта для **текущего** состояния (`Workspace` в Orientation/Patch,
-  `Orientation result` в Localization/Research, `Probe` в остальных) и инструкция текущей
+  входе), блок факта для **текущего** состояния (`Workspace` в Orientation, `Orientation result`
+  плюс `Probe` в Patch/Research, `Probe` в остальных) и инструкция текущей
   ситуации (в конце, временно); у закрытого состояния нет ни инструкции, ни блока фактов;
 - `user` — запрос (вверху ленты, каждый ход) и цель каждого **открытого** состояния;
 - `assistant` — маркеры состояний и вызовы доксы;
@@ -46,11 +46,10 @@
   `{ environment, material }`, записанный на старте запроса. Он не идёт отдельным сообщением
   после запроса; проекция выбирает нужный блок для **текущего** состояния.
   Orientation получает `Workspace` — карту workspace (`root`, `cwd` если shell стартует не в
-  root, repo, entries/paths); Localization
-  и Research получают ту же карту плюс environment; Patch получает карту; Construction и
-  Verification — environment. Environment — короткий список фактов (`Workspace root`,
-  `Network is available`, interpreters, package managers, build/test tools), не инвентарь
-  стоковых утилит. Блок идёт отдельным `system`-ходом перед инструкцией. Закрытые состояния
+  root, repo, entries/paths); Patch и Research получают ту же карту плюс environment;
+  Construction и Verification — только environment. Environment — короткий список фактов
+  (`Workspace root`, `Network is available`, interpreters, package managers, build/test tools),
+  не инвентарь стоковых утилит. Блок идёт отдельным `system`-ходом перед инструкцией. Закрытые состояния
   блоков не несут; на request-ходу их нет;
 - карта workspace детерминирована: `root`, `cwd` (если отличается), repo-статус, top-level
   entries (для маленьких материалов — paths), число файлов. Environment, расширения, конфиги, команды сборки и build

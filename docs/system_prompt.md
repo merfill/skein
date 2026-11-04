@@ -292,6 +292,29 @@ record.
   `stop` description are also touched. The step-by-step method and rationale —
   `docs/state_testing_ru.md`.
 
+- **2026-11-04 — Localization merged into Patch.** The two states are one: locating the defect
+  and making the change it needs share a loop, because a cause that only Localization may name
+  cannot be revised by the change that tests it. `localization` leaves `LIVE_ISLAND_IDS` (it
+  stays in `ISLANDS` so journals written before the merge still render, and
+  `transitionRule("localization")` keeps its text for those tapes). What moved and what was cut:
+
+  - `patch.what` = "find the defect in the existing artifact and make the change it needs";
+    `patch.criterion` = the defect is located (target, coordinates, siblings ruled out, cause as
+    a suspicion) **and** the change is complete in its declared form.
+  - `patch.instruction` is the locate-and-change loop; a change that does not hold is evidence
+    about the cause, so the cause is revised and the change is made again from it.
+  - Removed on purpose: "the cause is the one the previous state's `Finish` line names", "do not
+    re-derive the cause", "do not guess a different one". Those made a wrong cause unrecoverable.
+  - `patch.next` = Verification, Research (situation correction); `orientation.next` →
+    `patch`; `research.next` → `patch`; `verification.next` → `patch` only (the `Localization`
+    branch is gone). B4 renders this from `ISLANDS`, so it follows without a block edit.
+  - The probe block for Patch is `vcs, build, compilers, interpreters` (it both searches the
+    material and builds the change); `src/ir/project.ts` renders the map + environment for
+    `localization`/`research`/`patch` through one branch.
+
+  Docs — `docs/states_ru.md` §2.2/§2.4/§3/§4, `docs/prompt_state_machine_concept.md` §4.3;
+  tests — `tests/routing.test.ts`, `tests/prompt.test.ts`, `tests/environment.test.ts`.
+
 ## 5. Test map
 
 | Level | Where | What it checks |

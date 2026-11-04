@@ -395,9 +395,9 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
         ...(edit !== undefined ? { edit } : {}),
       });
       // A failed Verification leaves a patch that is known not to work. Before the move back
-      // to Localization the engine restores the tree to its pre-patch state, so Localization
-      // reasons about the original code and Patch cannot no-op on the rejected change. The
-      // attempt itself stays on the tape (the revert is an engine event, not a tool call).
+      // to Patch the engine restores the tree to its pre-patch state, so Patch reasons about
+      // the original code and cannot no-op on the rejected change. The attempt itself stays on
+      // the tape (the revert is an engine event, not a tool call).
       let target = current;
       if (isFailedVerificationMove(current, action)) {
         const revert = revertFailedPatch(current, deps.workspace);

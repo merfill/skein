@@ -754,8 +754,7 @@ describe("the message tape", () => {
 
 describe("text stop", () => {
   const NEXT: Partial<Record<IslandId, LiveIslandId>> = {
-    orientation: "localization",
-    localization: "patch",
+    orientation: "patch",
     patch: "verification",
     verification: "end",
   };
@@ -791,8 +790,6 @@ describe("text stop", () => {
       "transition",
       "working",
       "transition",
-      "working",
-      "transition",
       "terminal",
     ]);
     const stops = result.events
@@ -800,7 +797,6 @@ describe("text stop", () => {
       .map((event) => (event as { node: { label: string } }).node.label);
     expect(stops).toEqual([
       "finished orientation",
-      "finished localization",
       "finished patch",
       "finished verification",
       "finished end",

@@ -401,9 +401,9 @@ workspace). **Оконный** `recall` или любой `search` — друг�
   выводит блок отдельным `system`-ходом перед инструкцией **текущего** состояния. Один
   `fact:session` несёт
   `{ environment, material }`: доступные инструменты (с версиями, где они дешёвы), repo-статус,
-  top-level entries/paths и число файлов. Orientation получает `Workspace` (карту), Localization
-  и Research — ту же карту как `Orientation result` (Research ещё и `Probe`), Patch — её же как
-  `Workspace`, остальные — `Probe` (environment) отдельным заголовком. Конфиги, команды сборки, расширения и build state
+  top-level entries/paths и число файлов. Orientation получает `Workspace` (карту); Patch и
+  Research — ту же карту как `Orientation result` плюс `Probe` (environment) отдельным
+  заголовком; остальные — только `Probe`. Конфиги, команды сборки, расширения и build state
   в Orientation не показываются; объявленная команда не выдаётся за acceptance. Закрытые
   состояния блоков не несут. Источник — событие `add_node kind:"fact"`, записанное один раз на
   старте запроса (`src/loop/probe.ts`); replay читает записанный факт, а не запускает зонд снова;
@@ -413,10 +413,10 @@ workspace). **Оконный** `recall` или любой `search` — друг�
   задана, догадкой доксы (`Your earlier guess (may be wrong): <move.what>`).
   Запрос — второе сообщение ленты (сразу после базового промпта), на **каждом** ходу, не
   убирается;
-- **возврат в Localization или Patch.** Провал остаётся на ленте в `Finish`-строках закрытых
-  `patch` и `verification` (буквальный `stop.why`, а не диагноз кода). На переходе
-  `Verification → Patch/Localization` движок пишет событие `revert` и возвращает файлы к
-  pre-patch; отдельного блока «Previous failed attempt» текущая реализация **не рендерит**
+- **возврат в Patch.** Провал остаётся на ленте в `Finish`-строках закрытых `patch` и
+  `verification` (буквальный `stop.why`, а не диагноз кода). На переходе `Verification → Patch`
+  движок пишет событие `revert` и возвращает файлы к pre-patch; отдельного блока
+  «Previous failed attempt» текущая реализация **не рендерит**
   (см. `tests/revert.test.ts`). `stop` по-прежнему закрывается только доксой;
 - `apply` — `assistant` с `tool_calls` (имя инструмента и аргументы) + `tool` (наблюдение);
   **первый** `apply` после `move` засевает ходы состояния (`turns` + один `turn`), поэтому

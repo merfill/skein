@@ -7,7 +7,7 @@ export interface PromptBlock {
 
 // The transitions, rendered from the single island list (src/ir/islands.ts): each state's
 // outgoing edges with their precondition, grouped by source. Branches are several lines; the
-// corrective cycle (verification → localization) is explicit
+// corrective cycle (verification → patch) is explicit
 // (docs/prompt_state_machine_concept.md §4.3).
 const TRANSITIONS = (() => {
   const lines: string[] = [];
@@ -113,11 +113,12 @@ function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
       return [
-        "Move to Localization only when the request is to fix an error in existing code, files, or history — the defect is in an existing artifact.",
+        "Move to Patch only when the request is to fix an error in existing code, files, or history — the defect is in an existing artifact.",
         "Move to Research when the request is a situation — the required result must be recovered or derived from the material or the specification.",
         "Move to Construction when the request is to build a new artifact from a specification.",
       ];
     case "localization":
+      // Legacy: Localization merged into Patch (2026-11-04). Kept for old journals.
       return [
         "Choose Patch when the target is named and a cause is suspected.",
         "Choose Research only when the work is a situation, not a code defect to locate.",
@@ -125,7 +126,7 @@ function transitionRule(island?: IslandId): string[] {
     case "research":
       return [
         "Choose End when the required result exists in its declared form and matches the material or the request.",
-        "Choose Localization when the work is a code defect to locate.",
+        "Choose Patch when the work is a code defect to locate and fix.",
       ];
     case "recovery":
       return [
@@ -135,9 +136,14 @@ function transitionRule(island?: IslandId): string[] {
       return [
         "Choose End only when the artifact is derived from the specification or the material's behaviour and the acceptance check passes. If the check failed because the method or specification did not hold, choose Research.",
       ];
+    case "patch":
+      return [
+        "Choose Verification when the change holds — the artifact and every other file the task needs are updated and the result has the declared form.",
+        "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
+      ];
     case "verification":
       return [
-        "After a failed acceptance, choose Patch by default: the located object is still the material, and the failure is in the produced change or result (value, length, format, span, assembly). Choose Localization only when the failure names a different object (a different file, function, record, or image), or the object was not found; a change that did not fix the symptom is not enough.",
+        "After a failed acceptance, choose Patch: the failure is either in the change the Patch made or in the cause it acted on, and both are revised there. A change that did not fix the symptom is not enough to close the state — revise the cause and change again.",
       ];
     default:
       return [];

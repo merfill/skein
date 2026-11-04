@@ -132,7 +132,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     let step = execAll(withGoal("do it", "true"), [request()], w);
     step = exec({ operator: "stop", why: "mapped" }, step.events, w);
-    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, w);
+    step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, w);
     step = exec({ operator: "stop", why: "named" }, step.events, w);
     step = execAll(
       [move("patch", "fix it"), edit("src/sum.mjs", "return a - b;", "return a + b;")],
@@ -142,7 +142,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     step = exec({ operator: "stop", why: "changed" }, step.events, w);
     step = execAll([move("verification", "check it"), run("echo boom >&2; exit 2")], step.events, w);
     step = exec({ operator: "stop", why: "still fails" }, step.events, w);
-    step = exec(move("localization", "find again"), step.events, w);
+    step = exec(move("patch", "find again"), step.events, w);
 
     const history = project(step.state).history;
     expect(history.some((m) => m.text.startsWith("Previous failed attempt:"))).toBe(false);
@@ -154,7 +154,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     let step = execAll(withGoal("do it", "true"), [request()], w);
     step = exec({ operator: "stop", why: "mapped" }, step.events, w);
-    step = execAll([move("localization", "find it"), read("src/sum.mjs")], step.events, w);
+    step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, w);
     expect(project(step.state).history.some((m) => m.text.startsWith("Previous failed attempt:"))).toBe(false);
   });
 });

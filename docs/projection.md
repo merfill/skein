@@ -17,8 +17,8 @@ a projection, not an accumulating transcript. The same events always give the sa
 ## 2. Roles and the moves
 
 - `system` — the base prompt, the constraints, each **open** state's `instruction` (shown once at
-  entry), the **current** state's fact block (`Workspace` in Orientation/Patch, `Orientation
-  result` in Localization/Research, `Probe` elsewhere), and the current situation's instruction
+  entry), the **current** state's fact block (`Workspace` in Orientation, `Orientation result`
+  plus `Probe` in Patch/Research, `Probe` elsewhere), and the current situation's instruction
   (appended last, temporary); a closed state carries no instruction or fact block;
 - `user` — the request (leads the tape, every turn) and each **open** state's goal;
 - `assistant` — the state markers and the doxa's calls;
@@ -47,7 +47,7 @@ thousands of artifacts.
   request; the projection emits the block as a `system` turn before the **current** state's
   instruction. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
   starts outside the root, repo, entries/paths);
-  Localization and Research get the same map plus the environment; Patch gets the map;
+  Patch and Research get the same map plus the environment;
   Construction and Verification get the environment. The environment is a short list of facts
   (`Workspace root`, `Network is available`, interpreters, package managers, build/test tools),
   not an inventory of stock utilities. Closed states carry no block; the request turn has none;

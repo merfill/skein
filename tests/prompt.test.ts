@@ -53,9 +53,10 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toMatch(/- Orientation — .+\./);
     expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
     expect(BASE_PROMPT).toContain("Transitions —");
-    expect(BASE_PROMPT).toMatch(/- Localization → Patch — the target is named and a cause is suspected/);
-    expect(BASE_PROMPT).toMatch(/- Localization → Research — the work is a situation, not a code defect to locate/);
-    expect(BASE_PROMPT).toMatch(/- Research → Localization — the work is a code defect to locate/);
+    expect(BASE_PROMPT).toMatch(/- Orientation → Patch — the request is to fix an error in existing code, files, or history/);
+    expect(BASE_PROMPT).toMatch(/- Patch → Research — the work turns out to be a situation, not a defect to locate and fix/);
+    expect(BASE_PROMPT).toMatch(/- Research → Patch — the work is a code defect to locate and fix/);
+    expect(BASE_PROMPT).not.toMatch(/Localization/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation — the required result must be recovered or derived from the material or the specification/);
     expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request is to build a new artifact from a specification/);
     expect(BASE_PROMPT).toMatch(/End is terminal/);
@@ -72,12 +73,12 @@ describe("system prompt: base + node assembly", () => {
 
   it("at a transition, points at the finished state's `Finish` line as the source of what/done", () => {
     const fromOrientation = transitionInstruction("orientation");
-    expect(fromOrientation).toContain("Localization"); // a reachable candidate
+    expect(fromOrientation).toContain("Patch"); // a reachable candidate
     expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
-    expect(fromOrientation).not.toContain("Patch"); // only the focused state's `next` targets
+    expect(fromOrientation).not.toContain("Verification"); // only the focused state's `next` targets
     expect(fromOrientation).toContain("fix an error in existing code, files, or history");
     expect(fromOrientation).toContain("Move to Research when the request is a situation");
-    expect(fromOrientation).toContain("Next states: Localization, Research, Construction.");
+    expect(fromOrientation).toContain("Next states: Patch, Research, Construction.");
     expect(fromOrientation).toContain("Construction");
     expect(fromOrientation).toMatch(/`what`.*`done`/i);
     expect(fromOrientation).toContain("Choose the next state only");
@@ -86,19 +87,23 @@ describe("system prompt: base + node assembly", () => {
     expect(REQUEST_INSTRUCTION).not.toContain("notes");
     const fromVerification = transitionInstruction("verification");
     expect(fromVerification).toContain("Finish state Verification");
-    expect(fromVerification).toContain("Localization"); // the corrective edge
-    const fromLocalization = transitionInstruction("localization");
-    expect(fromLocalization).toContain("Finish state Localization");
-    expect(fromLocalization).toMatch(/target is named and a cause is suspected/);
+    expect(fromVerification).toContain("Patch"); // the corrective edge
+    expect(fromVerification).not.toContain("Localization"); // merged into Patch
+    const fromPatch = transitionInstruction("patch");
+    expect(fromPatch).toContain("Finish state Patch");
+    expect(fromPatch).toContain("locate");
     // The corrective edge: Research is offered only for a situation, not as a routine exit.
-    expect(fromLocalization).toContain("Research");
-    expect(fromLocalization).toMatch(
-      /Choose Research only when the work is a situation, not a code defect to locate/,
+    expect(fromPatch).toContain("Research");
+    expect(fromPatch).toMatch(
+      /Choose Research only when the work turns out to be a situation, not a defect to locate and fix/,
     );
+    const fromLocalization = transitionInstruction("localization");
+    expect(fromLocalization).toContain("Finish state Localization"); // legacy journals
+    expect(fromLocalization).toMatch(/target is named and a cause is suspected/);
     const fromResearch = transitionInstruction("research");
     expect(fromResearch).toContain("Finish state Research");
     expect(fromResearch).toMatch(/Choose End when the required result exists/);
-    expect(fromResearch).toMatch(/Choose Localization when the work is a code defect to locate/);
+    expect(fromResearch).toMatch(/Choose Patch when the work is a code defect to locate and fix/);
     expect(fromResearch).not.toContain("Construction");
     const fromRecovery = transitionInstruction("recovery");
     expect(fromRecovery).toContain("Finish state Recovery");
@@ -387,6 +392,6 @@ describe("context format: tape", () => {
       role: "system",
       content: transitionInstruction("orientation"),
     });
-    expect(String((messages.at(-1) as { content: string }).content)).toContain("Localization");
+    expect(String((messages.at(-1) as { content: string }).content)).toContain("Patch");
   });
 });
