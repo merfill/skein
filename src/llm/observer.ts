@@ -1,8 +1,6 @@
 import {
   InvalidToolInputError,
   NoSuchToolError,
-  generateText,
-  stepCountIs,
   tool,
   type LanguageModel,
   type ModelMessage,
@@ -13,26 +11,17 @@ import { z, ZodError } from "zod";
 import { isAborted } from "../abort";
 import { loadSettings, type Settings } from "../config/settings";
 import { usageOf } from "../session/telemetry";
-import type { Reaction } from "../session/types";
-import {
-  defaultObserverTools,
-  type ObserverDeps,
-  type ObserverReply,
-  type ObserverToolCall,
-  type RequestObserver,
+import type { Reaction, ReactionProposal } from "../session/types";
+import type {
+  ObserverDeps,
+  ObserverReply,
+  RequestObserver,
 } from "../session/observer";
+import { callModel } from "./structured";
 
-const outlineSchema = z.object({});
-const stateSchema = z.object({ id: z.string() });
-const turnsSchema = z.object({
-  id: z.string(),
-  from: z.number().int().optional(),
-  to: z.number().int().optional(),
-});
 const hintSchema = z.object({
   text: z.string(),
   evidence: z.array(z.string()).min(1),
-  state: z.string(),
 });
 const memoSchema = z.object({
   text: z.string(),
@@ -40,37 +29,13 @@ const memoSchema = z.object({
 });
 const haltSchema = z.object({ reason: z.string() });
 
+// The observer reads the tape it is handed and decides; it has no survey tools, because nothing
+// outside the seeded state body would reach it anyway (the state's record is the whole input).
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
-  {
-    name: "outline",
-    description: "Return the request and its states: the U/S survey of the running request.",
-    schema: outlineSchema,
-  },
-  {
-    name: "state",
-    description: "Return one state's structure, turns and closure. Call with { id }.",
-    schema: stateSchema,
-  },
-  {
-    name: "turns",
-    description: "Return a state's action→observation turns. Call with { id, from?, to? }.",
-    schema: turnsSchema,
-  },
-  {
-    name: "body",
-    description:
-      "Return a node's stored content: an observation body, an action result, or a closure label. Call with { id }.",
-    schema: stateSchema,
-  },
-  {
-    name: "rendered",
-    description: "Return the exact task tape render for a state. Call with { id }.",
-    schema: stateSchema,
-  },
   {
     name: "hint",
     description:
-      "Give the coding agent one short hint for the current state. Set `state` to the state id named in the situation. State the problem and one concrete next step; cite only the evidence ids that support it.",
+      "Give the coding agent one short hint for the state in the tape. State the problem and one concrete next step; cite only the evidence ids that support it.",
     schema: hintSchema,
   },
   {
@@ -99,11 +64,11 @@ export function observerTools(): ToolSet {
 
 type NativeCall = { toolName: string; input: unknown; toolCallId: string };
 
-function decisionOf(name: string, input: unknown): Reaction | undefined {
+function decisionOf(name: string, input: unknown): ReactionProposal | undefined {
   switch (name) {
     case "hint": {
       const value = hintSchema.parse(input);
-      return { kind: "hint", text: value.text, evidence: value.evidence, state: value.state };
+      return { kind: "hint", text: value.text, evidence: value.evidence };
     }
     case "memo": {
       const value = memoSchema.parse(input);
@@ -123,37 +88,24 @@ export function toObserverReply(calls: readonly NativeCall[]): ObserverReply {
     const decision = decisionOf(call.toolName, call.input);
     if (decision !== undefined) return { decision };
   }
-  if (calls.length === 0) return {};
-  const toolCalls: ObserverToolCall[] = calls.map((call) => ({
-    name: call.toolName,
-    args: (call.input as Record<string, unknown> | undefined) ?? {},
-    callId: call.toolCallId,
-  }));
-  return { toolCalls };
+  return {};
 }
 
 export interface ObserverModelOptions {
   settings?: Settings;
   onResponse?: (reply: { text: string; toolCalls: readonly NativeCall[] }) => void;
+  // The same usage seam the task proposer uses (`bench/metrics.ts` TurnMeter). Without it the
+  // observer's model calls are invisible to the run's token and cost totals.
+  usageHandlers?: unknown[];
 }
 
-export interface ObserverDepsOptions extends ObserverModelOptions {
-  maxTurns?: number;
-  maxDepth?: number;
-  surveyLimit?: number;
-}
+export type ObserverDepsOptions = ObserverModelOptions;
 
 export function createObserverDeps(
   model: LanguageModel,
   options: ObserverDepsOptions = {},
 ): ObserverDeps {
-  return {
-    agent: modelRequestObserver(model, options),
-    tools: defaultObserverTools,
-    ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
-    ...(options.maxDepth !== undefined ? { maxDepth: options.maxDepth } : {}),
-    ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
-  };
+  return { agent: modelRequestObserver(model, options) };
 }
 
 export function modelRequestObserver(
@@ -165,15 +117,18 @@ export function modelRequestObserver(
     let repair: ModelMessage | undefined;
     for (;;) {
       try {
-        const result = await generateText({
+        // Through the shared transport, not `generateText` directly: the observer's tokens must
+        // reach the same usage seam as the task agent's, or every run silently under-reports
+        // what the observer cost. Retry/repair policy stays here — `callModel` is one call.
+        // `streaming: false` keeps the observer's previous transport: it awaits one whole reply,
+        // so a stream would add nothing but a second code path.
+        const result = await callModel({
           model,
           messages: repair === undefined ? messages : [...messages, repair],
+          settings,
           tools: observerTools(),
-          stopWhen: stepCountIs(1),
-          allowSystemInMessages: true,
-          maxRetries: 0,
-          temperature: settings.temperature,
-          maxOutputTokens: settings.maxTokens,
+          streaming: false,
+          ...(options.usageHandlers !== undefined ? { usageHandlers: options.usageHandlers } : {}),
           ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
         const calls: NativeCall[] = result.toolCalls.map((call) => ({
@@ -186,7 +141,7 @@ export function modelRequestObserver(
           repair = {
             role: "user",
             content:
-              "You must call one of the observer tools: a read-only survey tool, or `hint`, `memo`, or `halt`.",
+              "You must answer with one of the decision tools: `hint`, `memo`, or `halt`.",
           };
           continue;
         }
@@ -206,7 +161,7 @@ export function modelRequestObserver(
           repair = {
             role: "user",
             content:
-              "Your tool call was invalid. Call one of the observer tools with arguments matching its schema.",
+              "Your tool call was invalid. Call `hint`, `memo`, or `halt` with arguments matching its schema.",
           };
           continue;
         }

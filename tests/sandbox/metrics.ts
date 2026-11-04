@@ -94,6 +94,26 @@ export function delta(
   };
 }
 
+// Usage recorded after the last per-turn delta (an observer firing on the final turn) has no
+// next turn to land in. Charge it to the last one so `summarize` — which only sums `perTurn` —
+// does not silently drop it from the totals.
+export function chargeTrailing(
+  turns: TurnMetric[],
+  meter: TurnMeter,
+  consumed: Snapshot,
+): void {
+  const trailing = delta(snapshot(meter), consumed);
+  if (trailing.llmCalls === 0 || turns.length === 0) return;
+  const last = turns[turns.length - 1]!;
+  last.llmCalls += trailing.llmCalls;
+  last.inputTokens += trailing.inputTokens;
+  last.outputTokens += trailing.outputTokens;
+  last.reasoningTokens += trailing.reasoningTokens;
+  last.cacheRead += trailing.cacheRead;
+  last.cacheWrite += trailing.cacheWrite;
+  if (trailing.cost !== null) last.cost = (last.cost ?? 0) + trailing.cost;
+}
+
 function bump(bucket: Bucket, turn: TurnMetric): void {
   bucket.calls += 1;
   bucket.input += turn.inputTokens;

@@ -64,7 +64,9 @@ describe("session memory: L2, turns, body, search", () => {
     expect(window).toContain("needle is here");
     expect(window).not.toContain("line one");
     expect(window).toContain("continue from 4");
-    expect(bodyText(session, "r1", "req")).toContain("request, not an observation");
+    // The request is addressable by its id: the outline prints it, so asking for it must work.
+    expect(bodyText(session, "r1", "req")).toBe("fix the parser");
+    expect(bodyText(session, "r1", "m1")).toContain("not an observation");
   });
 
   it("searches a unit's observations and returns the id and line", () => {

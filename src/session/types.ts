@@ -38,6 +38,14 @@ export type Reaction =
   | { kind: "memo"; text: string; evidence: string[] }
   | { kind: "halt"; reason: string };
 
+// What the observer proposes. A hint's state is not part of the proposal: the trigger already
+// named the state it fired in, so the engine stamps it instead of trusting the model to repeat it
+// (and `apply` still checks it against the tree).
+export type ReactionProposal =
+  | { kind: "hint"; text: string; evidence: string[] }
+  | { kind: "memo"; text: string; evidence: string[] }
+  | { kind: "halt"; reason: string };
+
 // A structured action of the SessionAgent on the session (docs/session_concepts.md §4.3).
 // The doxa proposes it; logos checks and applies it as a session event. The vocabulary is
 // deliberately minimal: answer, or start a task from a reformulated request. Resume/cancel

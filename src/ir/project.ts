@@ -89,6 +89,29 @@ function payloadOf(state: State, id: string): Record<string, unknown> | undefine
   return nodePayload(state.nodes.get(id));
 }
 
+// The request's own text. `payload.text` is the whole request; `label` is the same text cut to
+// 120 chars for one-line display, so it is only a fallback for nodes written before the payload
+// existed. Anything that reads the request's content must go through here, not through the
+// label — a truncated request silently loses constraints (the acceptance clause among them).
+export function requestTextOf(state: State): string | undefined {
+  const root = state.rootId;
+  if (root === undefined) return undefined;
+  const node = state.nodes.get(root);
+  if (node?.kind !== "request") return undefined;
+  const text = payloadOf(state, root)?.text;
+  return typeof text === "string" ? text : node.label;
+}
+
+// The bound on a rendered request body. Every reader of the request (the observer's outline and
+// `body`, the session agent's L1 and `body`) shows the same text, so the bound lives here once.
+export const MAX_REQUEST_TEXT = 8000;
+
+export function clipRequestText(text: string): string {
+  return text.length > MAX_REQUEST_TEXT
+    ? `${text.slice(0, MAX_REQUEST_TEXT)}\n… (${text.length - MAX_REQUEST_TEXT} chars omitted)`
+    : text;
+}
+
 // The newest result observation an action produced (`result` edge), if any.
 function resultChild(state: State, actionId: string): Node | undefined {
   let best: Node | undefined;
@@ -143,7 +166,10 @@ export function observationText(node: Node): string {
   return parts.join("\n");
 }
 
-function actionResultText(state: State, actionId: string): string {
+// What an action produced, for any reader that renders a turn: the result observation if the
+// action has one, else the paths it mutated (`write`/`edit` attach `mutates`, never a `result`
+// node — rendering those as "no result" would tell the reader the write failed).
+export function actionResultText(state: State, actionId: string): string {
   const result = resultChild(state, actionId);
   if (result !== undefined) return observationText(result);
   const mutated = mutatedPaths(state, actionId);
@@ -470,8 +496,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   if (rootId !== undefined) {
     const request = state.nodes.get(rootId);
     if (request?.kind === "request") {
-      const text = payloadOf(state, rootId)?.text;
-      const requestText = typeof text === "string" ? text : request.label;
+      const requestText = requestTextOf(state) ?? request.label;
       // The request leads the tape (right after the base prompt), once, on every turn.
       history.push({ role: "user", text: requestText });
       const unactionable = unactionableOf(state, rootId);

@@ -9,7 +9,7 @@ import { createObserverDeps } from "../../src/llm/observer";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
 import { runTask } from "./harness";
-import { delta, snapshot, summarize, type MetricsSummary, type TurnMetric } from "./metrics";
+import { chargeTrailing, delta, snapshot, summarize, type MetricsSummary, type TurnMetric } from "./metrics";
 import type { NetworkMode } from "./network";
 import type { SandboxTask } from "./task";
 
@@ -72,6 +72,9 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
   let turn = 0;
+  // The meter position already accounted for in `turns`. Anything beyond it at the end belongs
+  // to calls that ran outside the per-turn deltas (the observer, which fires in `progress`).
+  let consumed = snapshot(meter);
   const propose = async (context: Context): Promise<Proposals> => {
     currentTurn = turn;
     // Log the full model-facing context: the rendered messages (system base + node
@@ -121,7 +124,12 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
         })
         .join("\n\n"),
     );
-    const before = snapshot(meter);
+    // `consumed`, not a fresh snapshot: the observer fires in `progress` after this turn's model
+    // call, so a fresh snapshot here would already contain its tokens, and taking a delta from it
+    // would silently drop them. Measuring from the last accounted position carries them into this
+    // turn's delta — the agreed attribution (a): they are charged to the turn after the one that
+    // triggered the observer.
+    const before = consumed;
     const modelStarted = Date.now();
     const proposal = await proposeModel(model, context, {
       settings,
@@ -143,6 +151,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
       console.info(`[${task.id}] t${turn} actions=${JSON.stringify(proposal.actions).slice(0, 1200)}`);
     }
     const usage = delta(snapshot(meter), before);
+    consumed = snapshot(meter);
     // A text reply closes the state; account it as the `stop` the engine records.
     const actions: Action[] =
       proposal.actions.length > 0
@@ -163,7 +172,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   const run = await runTask(task, propose, {
     maxTurns: options.maxTurns,
     network: options.network ?? "on",
-    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings, usageHandlers: [meter] }) } : {}),
   });
   const elapsedMs = Date.now() - started;
   const sessionJournal = run.result.session?.journal ?? [];
@@ -178,9 +187,11 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   );
   const triggers = sessionJournal.filter((event) => event.type === "trigger");
   const reactions = sessionJournal.filter((event) => event.type === "reaction");
+  const silent = sessionJournal.filter((event) => event.type === "no_decision");
   if (triggers.length > 0) {
     console.info(
-      `[${task.id}] observer triggers=${triggers.length} reactions=${reactions.length} advisories=${advisories.length}`,
+      `[${task.id}] observer triggers=${triggers.length} reactions=${reactions.length} ` +
+        `advisories=${advisories.length} silent=${silent.length}`,
     );
   }
   const refused = new Set(
@@ -189,6 +200,10 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
       .map((event) => (event as { turn?: number }).turn ?? -1),
   );
   for (const record of turns) record.refused = refused.has(record.turn);
+
+  // The observer runs in `progress`, after the turn's delta was taken. Its tokens land in the next
+  // turn; after the last turn there is no next one, so any remainder is charged to the last turn.
+  chargeTrailing(turns, meter, consumed);
 
   const summary = summarize(turns);
   const network = {

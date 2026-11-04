@@ -166,6 +166,9 @@ async function main(): Promise<void> {
     });
 
   const logs: TurnLog[] = [];
+  // The observer runs in `progress`, outside `propose`, so it needs its own meter: otherwise its
+  // tokens are missing from every figure this tool prints.
+  const observerMeter = new TurnMeter();
   const propose = async (context: Context): Promise<Proposals> => {
     const meter = new TurnMeter();
     reasoning.length = 0;
@@ -203,7 +206,7 @@ async function main(): Promise<void> {
     workspace,
     maxTurns: turns,
     probe: probeSession,
-    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings, usageHandlers: [observerMeter] }) } : {}),
   }, { request: { id: "r1", text: requestText } });
 
   console.log("| t | situation | action(s) | in | out | reason | calls |");
@@ -228,6 +231,17 @@ async function main(): Promise<void> {
   );
 
   console.log(`\nstop=${result.stopReason ?? "none"} turns=${result.turns}`);
+  // The observer runs inside `runAgent`, outside `propose`, so its calls are not in the per-turn
+  // rows above. Printed separately, and added to the grand total, or the table under-reports
+  // what the run cost.
+  console.log(
+    `observer: calls=${observerMeter.calls} in=${observerMeter.inputTokens} out=${observerMeter.outputTokens} ` +
+      `reason=${observerMeter.reasoningTokens} cost=${observerMeter.costCalls ? `${observerMeter.costRub.toFixed(4)}₽` : "?"}`,
+  );
+  console.log(
+    `Σ + observer: in=${totals.input + observerMeter.inputTokens} out=${totals.output + observerMeter.outputTokens} ` +
+      `reason=${totals.reasoning + observerMeter.reasoningTokens} calls=${totals.calls + observerMeter.calls}`,
+  );
   for (const log of logs) {
     console.log(`\n--- t${log.turn} (${log.situation}) — ${log.proposal.actions.map((action) => JSON.stringify(action)).join(" | ").slice(0, 300)}`);
     if (log.reasoning !== "") console.log(`reasoning: ${log.reasoning.slice(0, 1200)}`);

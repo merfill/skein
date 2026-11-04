@@ -58,7 +58,7 @@ export interface StructuredOptions {
 
 // The provider's own truncation signal is normalized by the AI SDK to `length`. Its exactness
 // is why the retry does not guess from invalid JSON.
-interface ModelCall {
+export interface ModelCall {
   model: LanguageModel;
   messages: ModelMessage[];
   settings: Settings;
@@ -74,7 +74,7 @@ const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(
 
 // The usage seam: one handler per successful call. The bench meter and the LangGraph
 // adapter's Harbor bridge implement `handleUsage`; the model layer stays AI-SDK-only.
-async function notifyUsage(handlers: unknown[] | undefined, reply: ModelReply): Promise<void> {
+export async function notifyUsage(handlers: unknown[] | undefined, reply: ModelReply): Promise<void> {
   if (handlers === undefined || handlers.length === 0) return;
   for (const handler of handlers) {
     const usage = handler as { handleUsage?: (reply: ModelReply) => unknown };
@@ -82,7 +82,7 @@ async function notifyUsage(handlers: unknown[] | undefined, reply: ModelReply): 
   }
 }
 
-async function callModel(call: ModelCall): Promise<ModelReply> {
+export async function callModel(call: ModelCall): Promise<ModelReply> {
   const options = {
     model: call.model,
     messages: call.messages,

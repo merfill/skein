@@ -51,6 +51,6 @@ export function entryCycleScenario(): ObserverScenario {
 export function longStateScenario(): ObserverScenario {
   const workspace = makeWorkspace({ "src/a.txt": "one\n" }).ws;
   const actions: Action[] = [move("orientation", "survey the files")];
-  for (let index = 1; index <= 21; index += 1) actions.push(run(`echo ${index}`));
+  for (let index = 1; index <= 14; index += 1) actions.push(run(`echo ${index}`));
   return { name: "long_state", workspace, ...build(actions, workspace) };
 }

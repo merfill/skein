@@ -12,17 +12,17 @@ import type { State } from "../ir/graph";
 import type { TapeMessage } from "../ir/project";
 import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
-import { outline, observationBody, renderedState, stateOutline, stateTurns } from "./outline";
+import { stateTape } from "./outline";
 import type { ProgressSink } from "./progress";
-import type { Reaction, Trigger } from "./types";
+import type { NoDecisionReason, Reaction, ReactionProposal, Trigger } from "./types";
 
 export const OBSERVER_BASE_PROMPT = [
   "A coding agent is working on the user's request. Its work is recorded as an IR: the request, states, turns, actions and observations. Sometimes the agent gets stuck and cannot finish the request.",
-  "You are the advisor. Read the agent's history and give it one short, concrete hint that helps it solve the request. You do not edit the work yourself.",
-  "The engine has already shown you the request outline and the state where the problem was noticed. The engine brings you here when: the agent has entered the same state for the third time; the agent has spent more than 20 turns in one state; or the run is close to its turn limit.",
-  "Start with the outline and the anchor state. If they are not enough, inspect the state's turns, an observation body, or the rendered tape. Inspect at most three items; then decide.",
+  "You are the advisor. The state where the problem was noticed is in front of you: its request, its turns in order, what the agent was thinking before each action, the action itself and the observation it produced. You do not edit the work yourself.",
+  "Read that state and give the agent one short, concrete hint that helps it finish the request.",
   "A hint is a delta, not a summary: name the problem and one concrete next step, cite 1–2 evidence ids, do not repeat the state's goal or the history, and do not prescribe commands that the evidence does not name. Keep it under about 60 words.",
-  "When you know what to change, use a decision tool. The tool descriptions explain each choice. If you have inspected enough, decide instead of inspecting more.",
+  "What the request requires is read from the request itself; a fragment of it says nothing about the rest.",
+  "The state the hint applies to is already known from the tape; you do not name it. When you know what to change, use a decision tool. If nothing useful can be said, say so with `halt` or stay silent.",
 ].join("\n\n");
 
 export interface ObserverCall {
@@ -39,31 +39,10 @@ export interface ObserverResult {
   result: string;
 }
 
-export interface ObserverTools {
-  outline(state: State, turn?: number): string;
-  state(state: State, anchor: string, turn?: number): string;
-  turns?(state: State, stateId: string, range?: { from?: number; to?: number }): string;
-  body?(state: State, obsId: string): string;
-  rendered?(state: State, stateId: string, events?: readonly Event[]): string;
-}
-
-export const defaultObserverTools: ObserverTools = {
-  outline: (state, turn) => outline(state, turn),
-  state: (state, anchor, turn) => stateOutline(state, anchor, turn),
-  turns: (state, stateId, range) => stateTurns(state, stateId, range),
-  body: (state, obsId) => observationBody(state, obsId),
-  rendered: (state, stateId, events) => renderedState(state, stateId, events),
-};
-
-export interface ObserverToolCall {
-  name: string;
-  args: Record<string, unknown>;
-  callId?: string;
-}
-
 export interface ObserverReply {
-  toolCalls?: ObserverToolCall[];
-  decision?: Reaction;
+  // The doxa proposes; the state the hint applies to is not its to name — the engine knows the
+  // trigger's anchor and stamps it when the proposal becomes a reaction.
+  decision?: ReactionProposal;
   // Side-channel telemetry (docs/plans/session_interrupt_plan §5).
   usage?: Usage;
   model?: string;
@@ -76,23 +55,16 @@ export type RequestObserver = (
 
 export interface ObserverDeps {
   agent: RequestObserver;
-  tools: ObserverTools;
-  maxTurns?: number;
-  maxDepth?: number;
-  surveyLimit?: number;
   onProgress?: ProgressSink;
 }
 
 export interface ObserverRunInput {
   trigger: Trigger;
   state: State;
-  tools: ObserverTools;
   agent: RequestObserver;
+  // A resumed observer continues from the journal it already committed.
   journal?: readonly Event[];
-  events?: readonly Event[];
   startTurn?: number;
-  maxTurns?: number;
-  surveyLimit?: number;
   // A user pause: the in-flight model call is aborted and the loop returns `paused`.
   signal?: AbortSignal;
   // The observer unit id and the telemetry sink (side channel, never rendered).
@@ -105,6 +77,10 @@ export interface ObserverRunResult {
   journal: Event[];
   decision?: Reaction;
   turns: number;
+  // The observer ended without a reaction. `empty_reply` is the model calling no tool at all
+  // (it declined to decide); `max_turns` is the step budget running out. Without this the two
+  // are indistinguishable from the outside, and a silent observer looks like a healthy one.
+  noDecision?: NoDecisionReason;
   // The loop stopped on a user pause; the journal is committed and the unit stays open.
   paused?: boolean;
 }
@@ -155,50 +131,36 @@ function triggerText(trigger: Trigger): string {
   ].join("\n");
 }
 
-export function seedObserverUnit(
-  trigger: Trigger,
-  state: State,
-  tools: ObserverTools,
-): Event[] {
-  const events: Event[] = [];
-  let seq = 0;
-
-  const call = (tool: string, args: Record<string, unknown>): string => {
-    const callId = `observer:${tool}:${seq}`;
-    events.push({
+// The observer's whole input is one engine-provided body — the current state's record — rendered
+// into the unit journal as an ordinary action/observation pair. It is recorded, not recomputed,
+// so a resumed observer sees exactly the tape it started with (the same journal, the same call).
+export function seedObserverUnit(trigger: Trigger, state: State): Event[] {
+  const callId = "observer:state:0";
+  const body = stateTape(state, trigger.anchor);
+  return [
+    {
       type: "add_node",
       node: {
         id: callId,
         space: "work",
         kind: "action",
-        label: `observer:${tool}`,
-        payload: { origin: "engine", tool, args, callId },
-        seq,
+        label: "observer:state",
+        payload: { origin: "engine", tool: "state", args: { id: trigger.anchor }, callId },
+        seq: 0,
       },
-    });
-    seq += 1;
-    return callId;
-  };
-
-  const result = (tool: string, callId: string, text: string): void => {
-    events.push({
+    },
+    {
       type: "add_node",
       node: {
-        id: `observer:result:${seq}`,
+        id: "observer:result:1",
         space: "work",
         kind: "observation",
-        label: `observer:${tool}`,
-        payload: { origin: "engine", tool, callId, result: text },
-        seq,
+        label: "observer:state",
+        payload: { origin: "engine", tool: "state", callId, result: body },
+        seq: 1,
       },
-    });
-    seq += 1;
-  };
-
-  result("outline", call("outline", {}), tools.outline(state, trigger.turn));
-  result("state", call("state", { id: trigger.anchor }), tools.state(state, trigger.anchor, trigger.turn));
-
-  return events;
+    },
+  ];
 }
 
 export function projectObserver(trigger: Trigger, journal: readonly Event[]): ObserverContext {
@@ -232,145 +194,37 @@ export function buildObserverMessages(context: ObserverContext): ModelMessage[] 
   ];
 }
 
-function stringArg(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function executeTool(
-  tools: ObserverTools,
-  state: State,
-  name: string,
-  args: Record<string, unknown>,
-  events?: readonly Event[],
-  turn?: number,
-): string {
-  switch (name) {
-    case "outline":
-      return tools.outline(state, turn);
-    case "state": {
-      const id = stringArg(args, "id");
-      return id === undefined ? "missing argument: id" : tools.state(state, id, turn);
-    }
-    case "turns": {
-      const id = stringArg(args, "id") ?? stringArg(args, "state");
-      if (id === undefined) return "missing argument: id";
-      return tools.turns !== undefined
-        ? tools.turns(state, id, {
-            ...(typeof args.from === "number" ? { from: args.from } : {}),
-            ...(typeof args.to === "number" ? { to: args.to } : {}),
-          })
-        : "tool unavailable: turns";
-    }
-    case "body": {
-      const id = stringArg(args, "id");
-      return id === undefined
-        ? "missing argument: id"
-        : tools.body !== undefined
-          ? tools.body(state, id)
-          : "tool unavailable: body";
-    }
-    case "rendered": {
-      const id = stringArg(args, "id") ?? stringArg(args, "state");
-      return id === undefined
-        ? "missing argument: id"
-        : tools.rendered !== undefined
-          ? tools.rendered(state, id, events)
-          : "tool unavailable: rendered";
-    }
-    default:
-      return `unknown tool: ${name}`;
-  }
-}
-
 export async function runRequestObserver(input: ObserverRunInput): Promise<ObserverRunResult> {
-  const journal = [
-    ...(input.journal !== undefined
-      ? input.journal
-      : seedObserverUnit(input.trigger, input.state, input.tools)),
-  ];
-  const startTurn = input.startTurn ?? 0;
-  let turns = startTurn;
-  const maxTurns = input.maxTurns ?? 6;
-  const surveyLimit = input.surveyLimit ?? 3;
-  let surveys =
-    input.journal !== undefined
-      ? input.journal.filter(
-          (event) => event.type === "add_node" && event.node.kind === "observation",
-        ).length
-      : 0;
-
+  // One call, one tape. The observer no longer surveys: everything it may read is already in the
+  // seeded state body, so a second model turn could only restate it (measured on runs D–I: the
+  // six-turn survey reproduced what one state's record already held).
+  const journal = input.journal !== undefined ? [...input.journal] : seedObserverUnit(input.trigger, input.state);
+  const turn = (input.startTurn ?? 0) + 1;
   const progressUnitId = input.unitId ?? "";
-  for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
-    if (isAborted(input.signal)) {
-      input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
-      return { journal, turns, paused: true };
-    }
-    const context = projectObserver(input.trigger, journal);
-    const messages = buildObserverMessages(context);
-    if (surveys >= surveyLimit) {
-      messages.push({
-        role: "system",
-        content:
-          "You have inspected enough. Decide now: call `hint`, `memo`, or `halt`.",
-      });
-    }
-    const startedAt = Date.now();
-    input.onProgress?.({
-      type: "turn_started",
-      agent: "observer",
-      unitId: progressUnitId,
-      turn,
-    });
-    input.onProgress?.({
-      type: "model_call_started",
-      agent: "observer",
-      unitId: progressUnitId,
-      turn,
-    });
-    let reply: ObserverReply;
-    try {
-      reply = await input.agent(
-        messages,
-        input.signal !== undefined ? { signal: input.signal } : undefined,
-      );
-    } catch (error) {
-      input.onProgress?.({
-        type: "model_call_finished",
-        agent: "observer",
-        unitId: progressUnitId,
-        turn,
-        status: isAborted(input.signal) ? "aborted" : "error",
-      });
-      if (input.telemetry !== undefined) {
-        input.telemetry.record({
-          type: "model_call",
-          sessionId: LOCAL_SESSION_ID,
-          agent: "observer",
-          unitId: input.unitId ?? "",
-          turn,
-          model: "",
-          startedAt,
-          endedAt: Date.now(),
-          status: isAborted(input.signal) ? "aborted" : "error",
-          context: contextSnapshot(messages),
-        });
-      }
-      if (isAborted(input.signal)) {
-        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
-        return { journal, turns, paused: true };
-      }
-      throw error;
-    }
-    turns = turn;
+
+  if (isAborted(input.signal)) {
+    input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+    return { journal, turns: turn - 1, paused: true };
+  }
+
+  const context = projectObserver(input.trigger, journal);
+  const messages = buildObserverMessages(context);
+  const startedAt = Date.now();
+  input.onProgress?.({ type: "turn_started", agent: "observer", unitId: progressUnitId, turn });
+  input.onProgress?.({ type: "model_call_started", agent: "observer", unitId: progressUnitId, turn });
+  let reply: ObserverReply;
+  try {
+    reply = await input.agent(
+      messages,
+      input.signal !== undefined ? { signal: input.signal } : undefined,
+    );
+  } catch (error) {
     input.onProgress?.({
       type: "model_call_finished",
       agent: "observer",
       unitId: progressUnitId,
       turn,
-      model: reply.model,
-      status: isAborted(input.signal) ? "aborted" : "ok",
-      ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+      status: isAborted(input.signal) ? "aborted" : "error",
     });
     if (input.telemetry !== undefined) {
       input.telemetry.record({
@@ -379,105 +233,54 @@ export async function runRequestObserver(input: ObserverRunInput): Promise<Obser
         agent: "observer",
         unitId: input.unitId ?? "",
         turn,
-        model: reply.model ?? "",
+        model: "",
         startedAt,
         endedAt: Date.now(),
-        status: isAborted(input.signal) ? "aborted" : "ok",
-        ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+        status: isAborted(input.signal) ? "aborted" : "error",
         context: contextSnapshot(messages),
       });
     }
-    if (reply.decision !== undefined) {
-      if (isAborted(input.signal)) {
-        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
-        return { journal, turns, paused: true };
-      }
-      return { journal, decision: reply.decision, turns };
+    if (isAborted(input.signal)) {
+      input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+      return { journal, turns: turn - 1, paused: true };
     }
-    if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
-      return { journal, turns };
-    }
-    for (const call of reply.toolCalls) {
-      const callId = call.callId ?? `observer:call:${journal.length}`;
-      const emitFrom = journal.length;
-      const target = JSON.stringify(call.args).slice(0, 160);
-      input.onProgress?.({
-        type: "tool_started",
-        agent: "observer",
-        unitId: progressUnitId,
-        turn,
-        tool: call.name,
-        target,
-      });
-      journal.push({
-        type: "add_node",
-        node: {
-          id: callId,
-          space: "work",
-          kind: "action",
-          label: `observer:${call.name}`,
-          payload: { origin: "doxa", tool: call.name, args: call.args, callId },
-          seq: journal.length,
-        },
-      });
-      const toolStartedAt = Date.now();
-      const toolResult = executeTool(
-        input.tools,
-        input.state,
-        call.name,
-        call.args,
-        input.events,
-        input.trigger.turn,
-      );
-      input.telemetry?.record({
-        type: "tool_call",
-        sessionId: LOCAL_SESSION_ID,
-        agent: "observer",
-        unitId: input.unitId ?? "",
-        turn,
-        tool: call.name,
-        startedAt: toolStartedAt,
-        endedAt: Date.now(),
-        status: "ok",
-      });
-      journal.push({
-        type: "add_node",
-        node: {
-          id: `observer:result:${journal.length}`,
-          space: "work",
-          kind: "observation",
-          label: `observer:${call.name}`,
-          payload: {
-            origin: "engine",
-            tool: call.name,
-            callId,
-            result: toolResult,
-          },
-          seq: journal.length,
-        },
-      });
-      input.onProgress?.({
-        type: "events_added",
-        unitId: progressUnitId,
-        events: journal.slice(emitFrom),
-      });
-      input.onProgress?.({
-        type: "tool_finished",
-        agent: "observer",
-        unitId: progressUnitId,
-        turn,
-        tool: call.name,
-        target,
-        status: "ok",
-        preview: toolResult,
-      });
-      surveys += 1;
-      if (isAborted(input.signal)) {
-        input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
-        return { journal, turns, paused: true };
-      }
-    }
+    throw error;
   }
+  input.onProgress?.({
+    type: "model_call_finished",
+    agent: "observer",
+    unitId: progressUnitId,
+    turn,
+    model: reply.model,
+    status: isAborted(input.signal) ? "aborted" : "ok",
+    ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+  });
+  if (input.telemetry !== undefined) {
+    input.telemetry.record({
+      type: "model_call",
+      sessionId: LOCAL_SESSION_ID,
+      agent: "observer",
+      unitId: input.unitId ?? "",
+      turn,
+      model: reply.model ?? "",
+      startedAt,
+      endedAt: Date.now(),
+      status: isAborted(input.signal) ? "aborted" : "ok",
+      ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+      context: contextSnapshot(messages),
+    });
+  }
+  if (isAborted(input.signal)) {
+    input.onProgress?.({ type: "paused", agent: "observer", unitId: progressUnitId });
+    return { journal, turns: turn - 1, paused: true };
+  }
+  if (reply.decision === undefined) return { journal, turns: turn, noDecision: "empty_reply" };
 
-  return { journal, turns: maxTurns };
+  // The trigger named the state; the observer's hint inherits it. `apply` still checks that the
+  // anchor is a live move, so a bad anchor is refused there rather than trusted here.
+  const decision: Reaction =
+    reply.decision.kind === "hint"
+      ? { ...reply.decision, state: input.trigger.anchor }
+      : reply.decision;
+  return { journal, turns: turn, decision };
 }

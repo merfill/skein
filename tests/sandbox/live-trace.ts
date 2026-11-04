@@ -8,7 +8,7 @@ import { createChatModel } from "../../src/llm/client";
 import { createObserverDeps } from "../../src/llm/observer";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
-import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
+import { chargeTrailing, delta, snapshot, summarize, type TurnMetric } from "./metrics";
 import { runSandbox } from "./run";
 import { FIX_OCAML_REQUEST, fixOcamlGc } from "./specs/fix-ocaml-gc";
 
@@ -35,6 +35,9 @@ async function main(): Promise<void> {
   const meter = new TurnMeter();
   const turns: TurnMetric[] = [];
   let turn = 0;
+  // The meter position already accounted for in `turns`; the remainder at the end is what ran
+  // outside the per-turn deltas (the observer, which fires in `progress`).
+  let consumed = snapshot(meter);
   const propose = async (context: Context): Promise<Proposals> => {
     // Log the full model-facing context content (rendered messages) alongside the raw inputs.
     const messages = buildMessages(context);
@@ -53,7 +56,9 @@ async function main(): Promise<void> {
       join(dir, "contexts", `t${String(turn).padStart(3, "0")}.txt`),
       rendered.map((message) => `===== ${message.type} =====\n${message.content}`).join("\n\n"),
     );
-    const before = snapshot(meter);
+    // From `consumed`, not a fresh snapshot: the observer fires after this turn's model call, so a
+    // fresh snapshot here would already contain its tokens and exclude them from every delta.
+    const before = consumed;
     const proposal = await proposeModel(model, context, { settings, rebuild, usageHandlers: [meter] });
     if (proposal.reasoning !== undefined && proposal.reasoning !== "") {
       writeFileSync(
@@ -63,6 +68,7 @@ async function main(): Promise<void> {
       );
     }
     const usage = delta(snapshot(meter), before);
+    consumed = snapshot(meter);
     // A text reply closes the state; account it as the `stop` the engine records.
     const action: Action = proposal.actions[0] ?? { operator: "stop", why: proposal.thought };
     const tool = action.operator === "apply" ? action.action.tool : action.operator;
@@ -92,7 +98,7 @@ async function main(): Promise<void> {
 
   const { result, workspace } = await runSandbox(fixOcamlGc, FIX_OCAML_REQUEST, propose, {
     maxTurns,
-    ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+    ...(settings.observer ? { observer: createObserverDeps(model, { settings, usageHandlers: [meter] }) } : {}),
   });
   const source = workspace.read("ocaml/runtime/shared_heap.c") ?? "";
   const fixed = !source.includes("RLE-SWEEP-BUG");
@@ -108,6 +114,10 @@ async function main(): Promise<void> {
       .map((event) => (event as { turn?: number }).turn ?? -1),
   );
   for (const record of turns) record.refused = refused.has(record.turn);
+
+  // Tokens spent after the last per-turn delta (an observer firing on the final turn) have no
+  // next turn to land in, so they are charged to the last one rather than dropped.
+  chargeTrailing(turns, meter, consumed);
 
   const summary = summarize(turns);
   const metrics = { stopReason: result.stopReason, turns: turns.length, fixed, ...summary, perTurn: turns };

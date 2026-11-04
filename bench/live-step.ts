@@ -172,6 +172,9 @@ async function main(): Promise<void> {
   let startTurn = 0;
   let proposal: Proposals | undefined;
   let usage: TurnMeter | undefined;
+  // The observer runs inside `runAgent`, not `propose`; its calls are metered separately and
+  // reported on the turn it fired on.
+  const observerMeter = new TurnMeter();
 
   const propose = async (context: Context): Promise<Proposals> => {
     const meter = new TurnMeter();
@@ -224,7 +227,7 @@ async function main(): Promise<void> {
           workspace,
           maxTurns: startTurn + 1,
           probe: (workspace) => probeSession(workspace, { network: net }),
-          ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
+          ...(settings.observer ? { observer: createObserverDeps(model, { settings, usageHandlers: [observerMeter] }) } : {}),
         },
         events === undefined
           ? { request: { id: "r1", text: request } }
@@ -244,7 +247,10 @@ async function main(): Promise<void> {
         `\n=== t${turn} ${context.situation}/${context.island ?? "(none)"} in=${meter?.inputTokens ?? 0} ` +
           `out=${meter?.outputTokens ?? 0} reason=${meter?.reasoningTokens ?? 0} ` +
           `cache=${meter?.cacheRead ?? 0}/${meter?.cacheWrite ?? 0} ` +
-          `cost=${meter?.costCalls ? `${meter?.costRub.toFixed(4)}₽` : "?"} chars=${chars}`,
+          `cost=${meter?.costCalls ? `${meter?.costRub.toFixed(4)}₽` : "?"} chars=${chars}` +
+          (observerMeter.calls > 0
+            ? ` | observer in=${observerMeter.inputTokens} out=${observerMeter.outputTokens} calls=${observerMeter.calls}`
+            : ""),
       );
       for (const action of actions) console.info(`  call ${callName(action)} ${callArgs(action)}`);
       for (const line of toolTail) console.info(`  out  ${line}`);

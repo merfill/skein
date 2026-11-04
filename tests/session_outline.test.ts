@@ -168,6 +168,29 @@ describe("session outline: L0 and L1", () => {
     expect(outline).toContain('m1 end what="finish" closed: make check passed');
   });
 
+  // The L0 unit line keeps the short label (one line per unit); L1 shows the request so the
+  // session agent can read what it requires.
+  it("shows the whole request at L1 while L0 keeps the short label", () => {
+    const text = `${"x".repeat(110)} Success Criteria: compare A, B and C.`;
+    // The node `runAgent` seeds: the label is the 120-char display cut, the payload is the text.
+    const node: Event = {
+      type: "add_node",
+      node: {
+        id: "req",
+        space: "work",
+        kind: "request",
+        label: text.replace(/\s+/g, " ").trim().slice(0, 120),
+        payload: { text },
+        seq: 0,
+      },
+    };
+    const session = createSession();
+    openUnit(session, "r1", "task", [node, ...move("m1", "orientation", 1)]);
+    expect(unitOutline(session, "r1")).toContain("Success Criteria: compare A, B and C.");
+    expect(sessionOutline(session)).toContain(`"${"x".repeat(110)} `);
+    expect(sessionOutline(session)).not.toContain("Success Criteria");
+  });
+
   it("truncates L1 explicitly with a cursor", () => {
     const session = createSession();
     openUnit(session, "r1", "task", [

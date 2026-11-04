@@ -47,7 +47,7 @@ export interface Settings {
 }
 
 export const DEFAULT_STATE_CYCLE_ENTRIES = 3;
-export const DEFAULT_STATE_LONG_TURNS = 20;
+export const DEFAULT_STATE_LONG_TURNS = 9;
 export const DEFAULT_BUDGET_TURNS = 3;
 export const DEFAULT_GRACE_TURNS = 5;
 

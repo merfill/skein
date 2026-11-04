@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { TurnMeter } from "../../bench/metrics";
-import { delta, snapshot, summarize, type TurnMetric } from "./metrics";
+import { chargeTrailing, delta, snapshot, summarize, type TurnMetric } from "./metrics";
 
 // Offline verification of the sandbox token accounting — no model, no money. It pins the
 // provider shapes `extractUsage` must read (`usage_metadata`, the provider's
@@ -127,5 +127,63 @@ describe("sandbox metrics: summarize", () => {
     expect(summary.totals.llmCalls).toBe(2);
     expect(summary.totals.toolCalls).toBe(1);
     expect(summary.totals.costRub).toBeNull();
+  });
+});
+
+describe("sandbox metrics: chargeTrailing", () => {
+  const turn = (partial: Partial<TurnMetric> & { turn: number }): TurnMetric => ({
+    operator: "apply",
+    tool: "read",
+    chars: 1000,
+    refused: false,
+    llmCalls: 1,
+    inputTokens: 100,
+    outputTokens: 20,
+    reasoningTokens: 5,
+    cacheRead: 60,
+    cacheWrite: 0,
+    cost: 0.01,
+    ...partial,
+  });
+
+  // The observer fires in `progress`, after the turn's delta was taken. With no turn left, its
+  // tokens used to vanish from `totals` because `summarize` only sums `perTurn`.
+  it("charges usage recorded after the last delta to the last turn", () => {
+    const meter = new TurnMeter();
+    meter.calls = 1;
+    meter.inputTokens = 100;
+    meter.outputTokens = 20;
+    const consumed = snapshot(meter);
+    const turns = [turn({ turn: 0 }), turn({ turn: 1 })];
+
+    // The observer's two calls land after the final delta.
+    meter.calls = 3;
+    meter.inputTokens = 160;
+    meter.outputTokens = 35;
+    meter.costCalls = 2;
+    meter.costRub = 0.05;
+
+    chargeTrailing(turns, meter, consumed);
+    // Added to the last turn's own usage, not replacing it.
+    expect(turns[1]!.llmCalls).toBe(1 + 2);
+    expect(turns[1]!.inputTokens).toBe(100 + (160 - 100));
+    expect(turns[1]!.outputTokens).toBe(20 + (35 - 20));
+    expect(turns[1]!.cost).toBeCloseTo(0.01 + 0.05);
+    expect(summarize(turns).totals.llmCalls).toBe(1 + 3);
+  });
+
+  it("is a no-op when nothing was recorded after the last delta", () => {
+    const meter = new TurnMeter();
+    meter.calls = 2;
+    const consumed = snapshot(meter);
+    const turns = [turn({ turn: 0 })];
+    chargeTrailing(turns, meter, consumed);
+    expect(turns[0]!.llmCalls).toBe(1);
+  });
+
+  it("is a no-op on an empty run", () => {
+    const meter = new TurnMeter();
+    meter.calls = 5;
+    expect(() => chargeTrailing([], meter, snapshot(new TurnMeter()))).not.toThrow();
   });
 });

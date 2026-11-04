@@ -9,7 +9,7 @@ import {
   type State,
 } from "../ir/graph";
 import { ISLANDS } from "../ir/islands";
-import { observationText, project } from "../ir/project";
+import { observationText, project, clipRequestText, requestTextOf, actionResultText } from "../ir/project";
 import { currentMove, isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
 
 const MAX_TOOL_TEXT = 8000;
@@ -34,7 +34,9 @@ function resultOf(state: State, actionId: string): string | undefined {
 export function outline(state: State, turn?: number): string {
   const root = state.rootId;
   if (root === undefined) return "no request";
-  const request = labelOf(state, root);
+  // The whole request, not the 120-char display label: the observer must be able to read what
+  // the request actually requires (bounded like every other outline body).
+  const request = clipRequestText(requestTextOf(state) ?? labelOf(state, root));
   const moves = childrenOf(state, root).filter(
     (id) => state.nodes.get(id)?.kind === "move",
   );
@@ -98,13 +100,13 @@ export function stateTurns(
 export function observationBody(state: State, obsId: string): string {
   const node = state.nodes.get(obsId);
   if (node === undefined) return `unknown observation: ${obsId}`;
-  if (node.kind === "observation") return clip(observationText(node));
-  if (node.kind === "action") {
-    const resultId = resultOf(state, obsId);
-    return resultId !== undefined
-      ? clip(observationText(state.nodes.get(resultId)!))
-      : "no result";
+  // A request's stored body is its full text, not the display label. The observer reaches body
+  // with the request id when it needs what the request requires.
+  if (node.kind === "request") {
+    return clipRequestText(requestTextOf(state) ?? node.label);
   }
+  if (node.kind === "observation") return clip(observationText(node));
+  if (node.kind === "action") return clip(actionResultText(state, obsId));
   return clip(node.label);
 }
 
@@ -135,6 +137,85 @@ export function renderedState(
     if (index > 0) return clip(tapeText(fold(events.slice(0, index))));
   }
   return clip(tapeText(state));
+}
+
+// The tape handed to the observer: the current state's whole record in one body — the request, the
+// move list, and every turn of the state in order. Each turn carries the doxa's reasoning, the
+// action's full command and the observation body it produced, addressed by its node id so a hint's
+// `evidence` can name it.
+//
+// Two deliberate choices, both measured on recorded runs. The state is the whole tape because a
+// trigger fires inside one state and, in every recorded `state_long` run, 100% of the observation
+// bodies sat in that state (none in the earlier ones). The reasoning is included because a stuck
+// agent's problem is usually visible in what it was thinking, not only in what it ran — and the
+// observer can no longer inspect anything it is not given here.
+export function stateTape(state: State, anchor: string): string {
+  const node = state.nodes.get(anchor);
+  const moves: string[] = [];
+  const root = state.rootId;
+  if (root !== undefined) {
+    for (const move of childrenOf(state, root)) {
+      if (state.nodes.get(move)?.kind !== "move") continue;
+      const payload = movePayload(state, move);
+      const turnsId = turnsOf(state, move);
+      const count = turnsId !== undefined ? childrenOf(state, turnsId).length : 0;
+      const stop = stopOf(state, move);
+      const closed = isMoveFinished(state, move);
+      const outcome = closed ? `closed: ${stop !== undefined ? labelOf(state, stop) : ""}` : "open";
+      moves.push(
+        `- ${move} ${moveIsland(state, move) ?? "unknown"} what="${payload?.what ?? ""}" ${outcome} turns=${count}${
+          move === anchor ? "  <- current" : ""
+        }`,
+      );
+    }
+  }
+  const header = [
+    root !== undefined
+      ? `request ${root}: ${clipRequestText(requestTextOf(state) ?? "")}`
+      : "request: (none)",
+    "moves:",
+    ...moves,
+  ];
+  if (node === undefined || node.kind !== "move") {
+    // A trigger anchored on the request (no move yet): the moves are all there is to show.
+    return header.join("\n");
+  }
+  const payload = movePayload(state, anchor);
+  const turnsId = turnsOf(state, anchor);
+  const actions = (turnsId !== undefined ? childrenOf(state, turnsId) : []).filter(
+    (id) => state.nodes.get(id)?.kind === "action",
+  );
+  const lines = [
+    ...header,
+    "",
+    `state ${anchor}: ${moveIsland(state, anchor) ?? "unknown"}`,
+    `what: ${payload?.what ?? ""}`,
+    ...(payload?.done !== undefined && payload.done !== "" ? [`done: ${payload.done}`] : []),
+    `closure: ${isMoveFinished(state, anchor) ? "closed" : "open"}`,
+    `turns: ${actions.length}`,
+  ];
+  for (const actionId of actions) {
+    const action = state.nodes.get(actionId);
+    if (action === undefined) continue;
+    lines.push("");
+    lines.push(`## ${actionId}`);
+    // Chronology, as it happened: what the agent was thinking, what it then ran, what came back.
+    // The reasoning comes first because it is the state's own account of why it is stuck.
+    const reasoning = (action.payload as { reasoning?: unknown } | undefined)?.reasoning;
+    if (typeof reasoning === "string" && reasoning !== "") lines.push(`thinking: ${reasoning}`);
+    lines.push(`action: ${action.label}`);
+    const resultId = resultOf(state, actionId);
+    if (resultId !== undefined) {
+      const observation = state.nodes.get(resultId);
+      lines.push(`-> ${resultId}`);
+      lines.push(observation !== undefined ? observationText(observation) : "");
+      continue;
+    }
+    // `write`/`edit` attach a `mutates` edge, never a result node: rendering those as
+    // "no result" would tell the observer a successful write failed.
+    lines.push(`-> ${actionResultText(state, actionId)}`);
+  }
+  return lines.join("\n");
 }
 
 export function stateOutline(state: State, anchor: string, turn?: number): string {

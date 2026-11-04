@@ -5,6 +5,7 @@ import type {
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it } from "vitest";
 
+import { TurnMeter } from "../bench/metrics";
 import { loadSettings } from "../src/config/settings";
 import {
   modelRequestObserver,
@@ -59,37 +60,25 @@ function mockModel(
 const settings = { ...loadSettings(), streaming: false };
 
 describe("observer model: tools and mapping", () => {
-  it("exposes the read-only survey and decision tools", () => {
-    expect(Object.keys(observerTools()).sort()).toEqual([
-      "body",
-      "halt",
-      "hint",
-      "memo",
-      "outline",
-      "rendered",
-      "state",
-      "turns",
-    ]);
+  it("exposes only the decision tools", () => {
+    expect(Object.keys(observerTools()).sort()).toEqual(["halt", "hint", "memo"]);
   });
 
-  it("maps a decision tool to a reaction", () => {
+  it("maps a decision tool to a reaction proposal without a state", () => {
     expect(
       toObserverReply([
-        { toolName: "hint", input: { text: "reuse", evidence: ["o1"], state: "m1" }, toolCallId: "c1" },
+        { toolName: "hint", input: { text: "reuse", evidence: ["o1"] }, toolCallId: "c1" },
       ]),
     ).toEqual({
-      decision: { kind: "hint", text: "reuse", evidence: ["o1"], state: "m1" },
+      decision: { kind: "hint", text: "reuse", evidence: ["o1"] },
     });
   });
 
-  it("maps survey calls to tool calls", () => {
+  it("drops a survey call: there are no survey tools any more", () => {
+    // A call the model still tries (out of habit) is not a decision and not a survey.
     expect(
-      toObserverReply([
-        { toolName: "state", input: { id: "m1" }, toolCallId: "c1" },
-      ]),
-    ).toEqual({
-      toolCalls: [{ name: "state", args: { id: "m1" }, callId: "c1" }],
-    });
+      toObserverReply([{ toolName: "state", input: { id: "m1" }, toolCallId: "c1" }]),
+    ).toEqual({});
   });
 });
 
@@ -106,14 +95,12 @@ describe("observer model: the call", () => {
     expect(reply.decision).toEqual({ kind: "memo", text: "keep", evidence: ["r1"] });
   });
 
-  it("returns a survey call for the runner to execute", async () => {
-    const model = mockModel(() => toolReply([{ name: "turns", args: { id: "m1" } }]));
+  it("returns nothing for a call to a tool that no longer exists", async () => {
+    const model = mockModel(() => toolReply([{ name: "state", args: { id: "m1" } }]));
     const reply = await modelRequestObserver(model, { settings })([
       { role: "system", content: "observe" },
     ]);
-    expect(reply.toolCalls).toEqual([
-      { name: "turns", args: { id: "m1" }, callId: "c1" },
-    ]);
+    expect(reply.decision).toBeUndefined();
   });
 
   it("repairs a text-only reply once", async () => {
@@ -132,7 +119,7 @@ describe("observer model: the call", () => {
   it("repairs invalid decision arguments once", async () => {
     const model = mockModel((call) =>
       call === 1
-        ? toolReply([{ name: "hint", args: { text: "missing evidence", state: "m1" } }])
+        ? toolReply([{ name: "hint", args: { text: "missing evidence" } }])
         : toolReply([{ name: "halt", args: { reason: "cannot decide" } }]),
     );
     const reply = await modelRequestObserver(model, { settings })([
@@ -140,5 +127,20 @@ describe("observer model: the call", () => {
     ]);
     expect(model.doGenerateCalls).toHaveLength(2);
     expect(reply.decision).toEqual({ kind: "halt", reason: "cannot decide" });
+  });
+
+  // The observer's model calls run through the same transport as the task agent's, so a run's
+  // token and cost totals include the advice it received. Asserted on the real meter: a stub
+  // handler proves only that a callback was called, not that the numbers arrive.
+  it("reports usage to the shared handlers", async () => {
+    const meter = new TurnMeter();
+    const model = mockModel(() => toolReply([{ name: "halt", args: { reason: "loop" } }]));
+    await modelRequestObserver(model, { settings, usageHandlers: [meter] })([
+      { role: "system", content: "observe" },
+    ]);
+    expect(meter.calls).toBe(1);
+    expect(meter.inputTokens).toBe(1);
+    expect(meter.outputTokens).toBe(1);
+    expect(meter.usage).toHaveLength(1);
   });
 });

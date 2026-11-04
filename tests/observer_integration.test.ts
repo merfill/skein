@@ -3,15 +3,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { fold } from "../src/ir/graph";
 import type { Proposals } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
-import type { RequestObserver, ObserverTools } from "../src/session/observer";
+import type { RequestObserver } from "../src/session/observer";
 import { cleanupWorkspaces, makeWorkspace, move, run } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
-
-const tools: ObserverTools = {
-  outline: () => "outline body",
-  state: (_state, anchor) => `state ${anchor}`,
-};
 
 function loopingPropose() {
   let turn = 0;
@@ -39,7 +34,7 @@ describe("observer integration: progress", () => {
         propose: loopingPropose(),
         workspace,
         maxTurns: 6,
-        observer: { agent, tools },
+        observer: { agent },
       },
       { request: { id: "r1", text: "green" } },
     );
@@ -65,7 +60,7 @@ describe("observer integration: progress", () => {
         propose: loopingPropose(),
         workspace,
         maxTurns: 8,
-        observer: { agent, tools },
+        observer: { agent },
       },
       { request: { id: "r1", text: "green" } },
     );
@@ -82,5 +77,35 @@ describe("observer integration: progress", () => {
           event.reaction.reason === "cannot diagnose the loop",
       ),
     ).toBe(true);
+  });
+
+  // A run that silently got no advice must be distinguishable from one that was never
+  // supervised: the trigger alone leaves no trace of what the observer did.
+  it("records a silent observer as no_decision on its own unit", async () => {
+    const workspace = makeWorkspace().ws;
+    const agent: RequestObserver = async () => ({});
+    const result = await runAgent(
+      {
+        propose: loopingPropose(),
+        workspace,
+        maxTurns: 6,
+        observer: { agent },
+      },
+      { request: { id: "r1", text: "green" } },
+    );
+
+    const journal = result.session?.journal ?? [];
+    const trigger = journal.find((event) => event.type === "trigger");
+    if (trigger === undefined) throw new Error("expected a trigger");
+    const observerUnit = journal.find(
+      (event) => event.type === "open_unit" && event.unitType === "observer",
+    );
+    if (observerUnit === undefined) throw new Error("expected an observer unit");
+    const noDecision = journal.find(
+      (event) => event.type === "no_decision" && event.unitId === observerUnit.unitId,
+    );
+    expect(noDecision).toMatchObject({ reason: "empty_reply" });
+    // It stays a fact about the observer, not a reaction of the task.
+    expect(journal.filter((event) => event.type === "reaction")).toHaveLength(0);
   });
 });

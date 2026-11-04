@@ -27,6 +27,7 @@ import {
   openUnit,
   popUnit,
   pushUnit,
+  recordNoDecision,
   recordReaction,
   recordTrigger,
   sessionFocus,
@@ -553,7 +554,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
       if (
         trigger !== undefined &&
         deps.observer !== undefined &&
-        observerDepth(session) < (deps.observer.maxDepth ?? 1)
+        observerDepth(session) < 1
       ) {
         recordTrigger(session, unitId, state.turn, trigger);
         const observerUnitId = `observer:${trigger.id}`;
@@ -564,16 +565,10 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
           observer = await runRequestObserver({
             trigger,
             state: current,
-            tools: deps.observer.tools,
             agent: deps.observer.agent,
-            events: state.events,
             unitId: observerUnitId,
             ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
             ...(deps.signal !== undefined ? { signal: deps.signal } : {}),
-            ...(deps.observer.maxTurns !== undefined ? { maxTurns: deps.observer.maxTurns } : {}),
-            ...(deps.observer.surveyLimit !== undefined
-              ? { surveyLimit: deps.observer.surveyLimit }
-              : {}),
             ...(deps.observer.onProgress !== undefined
               ? { onProgress: deps.observer.onProgress }
               : {}),
@@ -587,6 +582,12 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
         if (observer.paused === true) {
           // Keep the observer unit on the stack; the driver resumes it before the task.
           return { events, done: true, paused: true, session };
+        }
+        // A silent observer is a fact about the observer, not about the task: it is recorded on
+        // the observer unit (which the session outline hides) so a run can tell "declined" from
+        // "budget ran out" instead of showing a trigger with no trace of what followed.
+        if (observer.decision === undefined && observer.noDecision !== undefined) {
+          recordNoDecision(session, observerUnitId, observer.turns, observer.noDecision);
         }
         popUnit(session);
 

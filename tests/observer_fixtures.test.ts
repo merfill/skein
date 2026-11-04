@@ -55,25 +55,25 @@ describe("observer fixtures: entry cycle", () => {
 });
 
 describe("observer fixtures: long state", () => {
-  it("fires state_long after more than 20 turns", () => {
+  it("fires state_long after more than 13 turns", () => {
     const scenario = longStateScenario();
     const triggers = detectTriggers(
       { state: scenario.state, session: sessionFor(), unitId: "r1", turn: scenario.turn },
       { maxTurns: 100 },
     );
     expect(triggers.map((trigger) => trigger.kind)).toEqual(["state_long"]);
-    expect(scenario.turn).toBe(22);
+    expect(scenario.turn).toBe(15);
   });
 
-  it("has 21 turns and the current state for the observer", () => {
+  it("has 14 turns and the current state for the observer", () => {
     const scenario = longStateScenario();
     const state = scenario.state;
     const move = [...state.nodes.values()].find((node) => node.kind === "move");
     if (move === undefined) throw new Error("expected a move");
-    expect(stateTurns(state, move.id).split("\n")).toHaveLength(21);
-    expect(outline(state)).toContain("turns=21");
-    expect(outline(state, scenario.turn)).toContain("entries=1 turns=21");
-    expect(stateOutline(state, move.id, scenario.turn)).toContain("turns: 21");
+    expect(stateTurns(state, move.id).split("\n")).toHaveLength(14);
+    expect(outline(state)).toContain("turns=14");
+    expect(outline(state, scenario.turn)).toContain("entries=1 turns=14");
+    expect(stateOutline(state, move.id, scenario.turn)).toContain("turns: 14");
     expect(renderedState(state, move.id, scenario.events)).toContain("echo 1");
   });
 });

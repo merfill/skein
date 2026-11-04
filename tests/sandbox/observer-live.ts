@@ -8,7 +8,6 @@ import { project } from "../../src/ir/project";
 import { applyReaction } from "../../src/session/apply";
 import {
   buildObserverMessages,
-  defaultObserverTools,
   projectObserver,
   runRequestObserver,
   type RequestObserver,
@@ -59,9 +58,7 @@ async function main(): Promise<void> {
   const result = await runRequestObserver({
     trigger,
     state: scenario.state,
-    tools: defaultObserverTools,
     agent,
-    events: scenario.events,
   });
   console.info(`observer turns=${result.turns}`);
   console.info(`observer journal events=${result.journal.length}`);

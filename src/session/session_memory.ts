@@ -7,7 +7,7 @@ import {
   turnsOf,
   type State,
 } from "../ir/graph";
-import { observationText } from "../ir/project";
+import { observationText, requestTextOf, clipRequestText } from "../ir/project";
 import type { Node } from "../ir/types";
 import { isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
 import { readingText, type ReadFile } from "./reading";
@@ -172,6 +172,11 @@ export function bodyText(
   const state = unitState(session, unitId);
   const node = state.nodes.get(id);
   if (node === undefined) return `unknown observation: ${id}`;
+  // The request's body is its full text: this is the id the outline prints, so asking for it
+  // must return the request, not "not an observation".
+  if (node.kind === "request") {
+    return windowText(clipRequestText(requestTextOf(state) ?? node.label), window);
+  }
   if (node.kind === "observation") return windowText(observationContent(node, readFile), window);
   if (node.kind === "action") {
     const result = resultOf(state, id);

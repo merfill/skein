@@ -95,8 +95,9 @@ describe("triggers: state cycle and long state", () => {
   it("fires state_long when the current state exceeds the turn limit", () => {
     const session = readySession();
     const state = stateWith(...moveTo("m1", "orientation", 1, 1));
-    expect(detectTriggers({ state, session, unitId: "r1", turn: 21 })).toEqual([]);
-    const triggers = detectTriggers({ state, session, unitId: "r1", turn: 22 });
+    // The state was entered at turn 1; the default limit is 9, so a dwell of 9 is still fine.
+    expect(detectTriggers({ state, session, unitId: "r1", turn: 10 })).toEqual([]);
+    const triggers = detectTriggers({ state, session, unitId: "r1", turn: 11 });
     expect(triggers.map((trigger) => trigger.kind)).toEqual(["state_long"]);
     expect(triggers[0]?.anchor).toBe("m1");
   });
@@ -104,10 +105,10 @@ describe("triggers: state cycle and long state", () => {
   it("does not repeat state_long for the same state entry", () => {
     const session = readySession();
     const state = stateWith(...moveTo("m1", "orientation", 1, 1));
-    const [trigger] = detectTriggers({ state, session, unitId: "r1", turn: 22 });
+    const [trigger] = detectTriggers({ state, session, unitId: "r1", turn: 11 });
     if (trigger === undefined) throw new Error("expected a trigger");
-    recordTrigger(session, "r1", 22, trigger);
-    expect(detectTriggers({ state, session, unitId: "r1", turn: 23 })).toEqual([]);
+    recordTrigger(session, "r1", 11, trigger);
+    expect(detectTriggers({ state, session, unitId: "r1", turn: 12 })).toEqual([]);
   });
 });
 
@@ -182,7 +183,7 @@ describe("triggers: budget", () => {
 describe("triggers: thresholds", () => {
   it("uses named defaults and reads environment overrides", () => {
     expect(DEFAULT_STATE_CYCLE_ENTRIES).toBe(3);
-    expect(DEFAULT_STATE_LONG_TURNS).toBe(20);
+    expect(DEFAULT_STATE_LONG_TURNS).toBe(9);
     expect(DEFAULT_BUDGET_TURNS).toBe(3);
     expect(DEFAULT_GRACE_TURNS).toBe(5);
     const settings = loadSettings({

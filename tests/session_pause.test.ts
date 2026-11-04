@@ -12,11 +12,7 @@ import {
   type SessionTurnDeps,
 } from "../src/session/driver";
 import { runRepl } from "../src/session/repl";
-import {
-  defaultObserverTools,
-  runRequestObserver,
-  type RequestObserver,
-} from "../src/session/observer";
+import { runRequestObserver, type RequestObserver } from "../src/session/observer";
 import { attentionOf, createSession, openUnit } from "../src/session/session";
 import { createSessionTools, type SessionAgent } from "../src/session/session_agent";
 import { memoryTelemetry } from "../src/session/telemetry";
@@ -287,7 +283,7 @@ describe("observer pause inside a task", () => {
       calls += 1;
       if (calls === 1) {
         controller.abort();
-        return { toolCalls: [{ name: "outline", args: {}, callId: "o1" }] };
+        return { decision };
       }
       return { decision };
     };
@@ -297,7 +293,7 @@ describe("observer pause inside a task", () => {
         propose: COMPLETE,
         workspace: ws,
         maxTurns: 4,
-        observer: { agent: observer, tools: defaultObserverTools },
+        observer: { agent: observer },
       },
     };
     const session = createSession();
@@ -322,14 +318,13 @@ describe("observer pause inside a task", () => {
 });
 
 describe("observer loop pause and resume", () => {
-  it("keeps the survey turn and resumes to one decision", async () => {
+  it("keeps the single turn and resumes it", async () => {
     const controller = new AbortController();
     let calls = 0;
-    const decision = { kind: "hint" as const, text: "h", evidence: ["e"], state: "patch" };
+    const decision = { kind: "hint" as const, text: "h", evidence: ["e"] };
     const agent: RequestObserver = async () => {
       calls += 1;
-      if (calls === 1) return { toolCalls: [{ name: "outline", args: {}, callId: "o1" }] };
-      if (calls === 2) {
+      if (calls === 1) {
         controller.abort();
         return { decision };
       }
@@ -348,7 +343,6 @@ describe("observer loop pause and resume", () => {
     const first = await runRequestObserver({
       trigger,
       state,
-      tools: defaultObserverTools,
       agent,
       signal: controller.signal,
     });
@@ -359,13 +353,12 @@ describe("observer loop pause and resume", () => {
     const resumed = await runRequestObserver({
       trigger,
       state,
-      tools: defaultObserverTools,
       agent,
       journal: first.journal,
       startTurn: first.turns,
       signal: resumeController.signal,
     });
     expect(resumed.paused).toBeUndefined();
-    expect(resumed.decision).toEqual(decision);
+    expect(resumed.decision).toEqual({ ...decision, state: "patch" });
   });
 });

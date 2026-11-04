@@ -13,6 +13,7 @@ import {
   abandonUnit,
   attentionOf,
   popUnit,
+  recordNoDecision,
   recordReaction,
   recordReport,
   sessionFocus,
@@ -462,15 +463,11 @@ async function resumeObserver(
   const observer = await runRequestObserver({
     trigger,
     state: fold(taskUnit.journal),
-    tools: observerDeps.tools,
     agent: observerDeps.agent,
     journal: observerUnit.journal,
     startTurn: observerUnit.turn,
-    events: taskUnit.journal,
     unitId: observerUnit.id,
     ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
-    ...(observerDeps.maxTurns !== undefined ? { maxTurns: observerDeps.maxTurns } : {}),
-    ...(observerDeps.surveyLimit !== undefined ? { surveyLimit: observerDeps.surveyLimit } : {}),
     ...(observerDeps.onProgress !== undefined ? { onProgress: observerDeps.onProgress } : {}),
     ...(signal !== undefined ? { signal } : {}),
   });
@@ -484,6 +481,10 @@ async function resumeObserver(
     return result;
   }
 
+  // Same fact as in `progress`: a resumed observer that never decided leaves it on its unit.
+  if (observer.decision === undefined && observer.noDecision !== undefined) {
+    recordNoDecision(session, observerUnit.id, observer.turns, observer.noDecision);
+  }
   popUnit(session);
   if (observer.decision !== undefined) {
     recordReaction(session, taskUnitId, observer.decision);

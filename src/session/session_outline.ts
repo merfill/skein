@@ -1,4 +1,5 @@
 import { childrenOf, fold, stopOf, turnsOf, unactionableOf, type State } from "../ir/graph";
+import { clipRequestText, requestTextOf } from "../ir/project";
 import { currentMove, isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
 import {
   attentionOf,
@@ -287,7 +288,9 @@ export function unitOutline(
     return lines.join("\n");
   }
 
-  lines.push(`request: ${labelOf(state, root)}`);
+  // The full request, not the display label: the session agent must be able to read what the
+  // request requires (the L0 unit line keeps the short label for one-line-per-unit display).
+  lines.push(`request: ${clipRequestText(requestTextOf(state) ?? labelOf(state, root))}`);
   const unactionable = unactionableOf(state, root);
   if (unactionable !== undefined) {
     lines.push(`unactionable: ${labelOf(state, unactionable)}`);
