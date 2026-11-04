@@ -37,7 +37,9 @@ opencode пишет ещё `opencode.txt`).
 
 > **2026-10-23, breadth:** `fix-code` / `fix-git` / `custom-memory` — **3/3 reward=1**;
 > 25 / 19 / 60 ходов, **0.942 / 0.847 / 3.822₽**. `fix-git` прошёл без Verification;
-> `custom-memory` — регрессия (60 ходов, 4 цикла). См. «Батч 2026-10-23 — breadth».
+> `custom-memory` тогда упёрлась в бюджет 60 (4 цикла). И то и другое — свойства той сборки,
+> а не задачи: перезамер 2026-11-04 дал 65 ходов / 5.954₽ с чистым self-close
+> (`task_benchmarks_ru.md` §12.6). См. «Батч 2026-10-23 — breadth».
 
 > **2026-10-23, breadth rootless D + relative paths:** `fix-code` / `fix-git` /
 > `custom-memory` — **3/3 reward=1**; 20 / 20 / 60 ходов, **0.769 / 0.833 / 3.114₽**.
@@ -267,8 +269,13 @@ variance + лишние `grep`/`bash`/`read` в Patch. K=3, temp 0.1 — нап�
 **Против session3 (K=3, `docs/plans/handoff_2026-10-20_localization_session3_ru.md`):**
 fix-code 0.942₽ (было 0.81–1.32), fix-git 0.847₽ (было 0.86–1.30), custom-memory 3.822₽
 (лучший cmh3 — 32 хода / 2.15₽; cmh1 3.80₽ без закрытия). То есть fix-code/fix-git — в норме,
-**custom-memory — регрессия** по ходам и стоимости. K=1 на задачу, temp 0.1 — это наблюдение,
-не статистика.
+а custom-memory была регрессией **относительно той старой сборки, на 2026-10-23**. K=1 на
+задачу, temp 0.1 — это наблюдение, не статистика.
+
+> **Устарело 2026-11-04.** Путь в 4 цикла и упор в 60 ходов были свойствами кода той даты, а
+> не задачи: перезапуск с `--turns 80` закрывается сам на 65 ходах (`request_addressed`),
+> 5.954₽, на плоских ходах и со слиянием Research+Recovery. Старая медиана «57» в
+> `task_benchmarks_ru.md` §12 была обрезана бюджетом в 60 ходов. См. §12.6 там.
 
 Трассы: `bench/runs/sandbox-tasks/2026-10-23T05-04-29-581Z-fix-code-vulnerability`,
 `…05-04-31-786Z-fix-git`, `…05-04-33-824Z-custom-memory-heap-crash`.

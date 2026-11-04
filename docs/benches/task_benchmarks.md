@@ -235,6 +235,33 @@ The table shows medians, with the range in parentheses.
 - Old opencode series: `bench/runs/sandbox-tasks/2026-10-11T06-05-26-806Z-fix-ocaml-gc-opencode-on`,
   `…06-52-33-197Z-fix-ocaml-gc-opencode-off`.
 
+### 4.6 Current state (2026-11-04) — K=1 re-measurement
+
+The table in §4.3 dates from 2026-10-24, before the flat-turn IR, the Research/Recovery
+merge and the observer. One run on the current engine
+(`npx tsx tests/sandbox/sandbox-run.ts fix-ocaml-gc --turns 80 --net off`), reward 1,
+40/40 tests, `request_addressed`:
+
+| turns | env actions | total in | fresh | cache hit | out (vis + rea) | peak | ₽ |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| **29** | 28 | 299 857 | 81 617 | 73% | 13 751 (3 589 + 10 162) | 86 865 | **2.470** |
+
+29 turns sits inside the 26–30 range of §4.3, so the turn count is stable. The cost is not
+comparable: the 2026-10-24 cells ran on `deepseek-v4.1-flash-1017` (BytePlus), this run on
+`deepseek-v4-flash-latest` (routerai). **Different model — not a regression.**
+
+Route: `O → L → P → V → End`; the one-line `p += Whsize_hd(hd)` → `p += wh` edit lands at t16,
+the build and the testsuite at t23–t25. One `llm call failed` (empty provider stream) around
+t13 was retried and did not affect the result.
+
+**Observer.** One `state_long` trigger at t12 with a hint naming `pool_sweep` and the exact
+line. The agent had already derived that fix itself on t11 from the `verify_pool` invariant,
+so the hint carried no new information: it coincided with the conclusion and only accelerated
+the move to Patch. See §10 of `docs/plans/request_observer_plan.md` — this run is the
+"stale/coincidental hint" case, not evidence of observer value.
+
+Trace: `bench/runs/sandbox-tasks/2026-11-04T17-18-17-428Z-fix-ocaml-gc-sTIh2b`.
+
 ## 5. modernize-scientific-stack
 
 ### 5.1 The task
@@ -800,6 +827,38 @@ comparable — but for the current sandbox the result is as shown.
 
 `bench/runs/matrix/2026-10-24-custom-memory/` — cells under
 `cells/<agent>-netoff-r<n>/`, summary in `summary.json`.
+
+### 12.6 Current state (2026-11-04) — K=1, and the 57 was censored
+
+The median in §12.3 (**57**, range 49–59) was measured against a **60-turn budget**, and two
+of the three cells ended at 57 and 59 — one of them stopped by `max_turns` exactly at 60. So
+57 was a **lower bound clipped by the budget, not a median**. A run with `--turns 80` on the
+current engine:
+
+| turns | env actions | total in | fresh | cache hit | out (vis + rea) | peak | ₽ | stop |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| **65** | 73 | 1 486 127 | 150 831 | 90% | 40 585 (9 984 + 30 601) | 157 063 | **5.954** | `request_addressed` |
+
+It closes on its own at 65, i.e. the task genuinely needs more than the old budget allowed.
+All 6 verifier checks pass, including valgrind.
+
+The route is no longer the old 4-cycle one: `O → L → P → V → End`, five states, no cycles. The
+"regression: 60 steps, 4 cycles" note in the 2026-10-23 breadth batch described the code of
+that date and is **not a property of the task**. Nearly all the cost is one state: Patch spans
+t14–t56 (43 of 65 turns) and 3.78 ₽ of 5.95 ₽.
+
+Again **not a clean engine comparison**: the 2026-10-24 cells ran on
+`deepseek-v4.1-flash-1017` (BytePlus), this one on `deepseek-v4-flash-latest` (routerai).
+
+**Observer.** Two `state_long` triggers (t12, t24). The second hint told the agent to set a
+gdb breakpoint on `_Facet_Register_impl` — which it had already done. Eleven subsequent turns
+open with "the hint is stale — I already did that", costing **0.886 ₽** of the 5.95 ₽. The
+hint is built from the tape as it stood at the trigger and then stays in context as a `memo`,
+so it keeps reading as a current instruction after the work has moved on. This is the first
+recorded run where the observer is relevant at all, and it shows a defect, not a benefit. See
+`docs/plans/request_observer_plan.md` §10.
+
+Trace: `bench/runs/sandbox-tasks/2026-11-04T17-18-17-428Z-custom-memory-heap-crash-U9IInX`.
 
 ## 13. password-recovery
 

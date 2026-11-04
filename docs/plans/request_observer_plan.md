@@ -255,6 +255,29 @@ hint, and every action inside a state is a distinct command. `state_long` measur
 there, not a lost thread. Testing "the observer earns its keep when the agent goes off course"
 needs a task where the agent actually thrashes; the current registry has none.
 
+**Re-measurement 2026-11-04 (K=1 per task, `--turns 80`, `net off`).** Two runs, both
+`reward=1`, both revealing the same weakness from opposite sides. Neither hint carried new
+information.
+
+- `custom-memory-heap-crash` — 65 turns, 5.954₽. Two `state_long` triggers (t12, t24). The
+  second hint told the agent to set a gdb breakpoint on `_Facet_Register_impl`, which it had
+  already done. Eleven later turns open with "the hint is stale — I already did that",
+  costing **0.886₽** of 5.95₽, and the agent rewrote `user.cpp` twice from the outdated
+  advice (one `stale_base` refusal). The hint is built from the tape as it stood at the
+  trigger and then persists in context as a `memo`, so it keeps reading as a live instruction
+  after the work moves on.
+- `fix-ocaml-gc` — 29 turns, 2.470₽. One `state_long` trigger at t12 whose hint names
+  `pool_sweep` and the exact `p += Whsize_hd(hd)` line. The agent had derived the same fix
+  one turn earlier (t11) from the `verify_pool` invariant, so the hint coincided with the
+  conclusion instead of producing it.
+
+So the failure is not the threshold: at 9 it fires in time in both runs. The defect is that a
+`state_long` hint has **no notion of being current** — the engine never re-checks it against
+turns that arrive after the trigger, and never retires it. This is the same class as the
+invented-offsets defect below: logos checks that the evidence ids exist, not that what the
+hint says is still true of the tape.
+
 **Open defect.** The observer invents numeric offsets that are not in the tape (e.g. `1048671`
 and `3145726` against an actual `3145727`). Logos validates that evidence ids exist, not that
-the quoted content appears. Not fixed.
+the quoted content appears. Not fixed. Same root cause as the staleness above: the check is on
+form, not on correspondence with the tape.

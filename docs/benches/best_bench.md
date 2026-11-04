@@ -37,7 +37,9 @@ writes `opencode.txt`).
 
 > **2026-10-23, breadth:** `fix-code` / `fix-git` / `custom-memory` — **3/3 reward=1**;
 > 25 / 19 / 60 steps, **0.942 / 0.847 / 3.822₽**. `fix-git` skipped Verification;
-> `custom-memory` is a regression (60 steps, 4 cycles). See the 2026-10-23 breadth batch.
+> `custom-memory` hit the 60-step budget then (4 cycles). Both are properties of that build,
+> not of the task — re-measured 2026-11-04 at 65 turns / 5.954₽ with a clean self-close
+> (`task_benchmarks.md` §12.6). See the 2026-10-23 breadth batch.
 
 > **2026-10-23, breadth rootless D + relative paths:** `fix-code` / `fix-git` /
 > `custom-memory` — **3/3 reward=1**; 20 / 20 / 60 steps, **0.769 / 0.833 / 3.114₽**.
@@ -282,8 +284,13 @@ All `request_addressed`, reward 1.
 **Against session3 (K=3, `docs/plans/handoff_2026-10-20_localization_session3_ru.md`):**
 fix-code 0.942₽ (was 0.81–1.32), fix-git 0.847₽ (was 0.86–1.30), custom-memory 3.822₽
 (best cmh3 — 32 steps / 2.15₽; cmh1 3.80₽ without closure). So fix-code/fix-git are in range,
-**custom-memory is a regression** in steps and cost. K=1 per task, temp 0.1 — a direction, not
-statistics.
+and custom-memory was a regression **against that older build, on 2026-10-23**. K=1 per task,
+temp 0.1 — a direction, not statistics.
+
+> **Superseded 2026-11-04.** The 4-cycle path and the 60-step ceiling were properties of the
+> code of that date, not of the task: a re-run with `--turns 80` closes by itself at 65 turns
+> (`request_addressed`), 5.954₽, on the flat-turn IR with the Research/Recovery merge. The old
+> "57" median in `task_benchmarks.md` §12 was clipped by a 60-turn budget. See §12.6 there.
 
 Traces: `bench/runs/sandbox-tasks/2026-10-23T05-04-29-581Z-fix-code-vulnerability`,
 `…05-04-31-786Z-fix-git`, `…05-04-33-824Z-custom-memory-heap-crash`.
