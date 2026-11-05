@@ -55,7 +55,7 @@ function journal(): Event[] {
 }
 
 describe("message wrappers: the wire JSON of the tape", () => {
-  it("the request leads the tape, then the state's Start + instruction + goal and hint; results are tool messages", async () => {
+  it("the request leads the tape, then the state's Start + instruction + goal; results are tool messages", async () => {
     const base = fold(journal());
     const drift = focusEvents(base);
     const msgs = await wire(buildMessages(project(drift.length > 0 ? fold(drift, base) : base)));
@@ -65,7 +65,6 @@ describe("message wrappers: the wire JSON of the tape", () => {
       "user", // the request (leads the tape)
       "system", // the `Start state` marker
       "system", // the island instruction
-      "system", // the per-turn conduct hint
       "user", // the state's own goal + criterion
       "assistant", "tool", // the first plan item (ls)
       "assistant", "tool", // edit
@@ -75,7 +74,7 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(userTexts).toHaveLength(2);
     expect(userTexts[0]).toContain("fix the bug");
     expect(userTexts[1]).toContain(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
     );
     expect(userTexts[1]).toContain("Your earlier guess (may be wrong): green");
     expect(userTexts[1]).toContain("Done when: \"");
@@ -89,26 +88,26 @@ describe("message wrappers: the wire JSON of the tape", () => {
     expect(msgs[2]?.tool_calls).toBeUndefined();
 
     // The state's first plan item is an ordinary `bash` call + its observation.
-    expect(msgs[6]?.tool_calls?.[0]?.function.name).toBe("bash");
-    expect(msgs[6]?.tool_calls?.[0]?.id).toBe("a1");
-    expect(msgs[7]).toMatchObject({ role: "tool", tool_call_id: "a1" });
-    expect(String(msgs[7]?.content)).toContain("[o1] exit 0");
+    expect(msgs[5]?.tool_calls?.[0]?.function.name).toBe("bash");
+    expect(msgs[5]?.tool_calls?.[0]?.id).toBe("a1");
+    expect(msgs[6]).toMatchObject({ role: "tool", tool_call_id: "a1" });
+    expect(String(msgs[6]?.content)).toContain("[o1] exit 0");
 
     // A plain command move is its own tool call.
-    expect(msgs[8]?.tool_calls?.[0]?.function.name).toBe("edit");
-    expect(msgs[8]?.tool_calls?.[0]?.id).toBe("a2");
-    expect(msgs[9]).toMatchObject({ role: "tool", tool_call_id: "a2" });
-    expect(String(msgs[9]?.content)).toContain("edit failed: find not found");
+    expect(msgs[7]?.tool_calls?.[0]?.function.name).toBe("edit");
+    expect(msgs[7]?.tool_calls?.[0]?.id).toBe("a2");
+    expect(msgs[8]).toMatchObject({ role: "tool", tool_call_id: "a2" });
+    expect(String(msgs[8]?.content)).toContain("edit failed: find not found");
 
     // The alternative is a plain native call: no marker, and the failure body rides only in
     // its own `tool` result (never duplicated into an assistant message).
-    expect(msgs[10]?.tool_calls?.[0]?.function.name).toBe("read");
-    expect(msgs[10]?.tool_calls?.[0]?.id).toBe("a3");
+    expect(msgs[9]?.tool_calls?.[0]?.function.name).toBe("read");
+    expect(msgs[9]?.tool_calls?.[0]?.id).toBe("a3");
     const tape = msgs.slice(2);
     const tapeText = tape.map((m) => String(m.content)).join("\n");
     expect(tapeText).not.toContain("alternative to step");
     expect(tapeText.split("--- current content of ocaml/x.c").length - 1).toBe(1);
-    expect(msgs[11]).toMatchObject({ role: "tool", tool_call_id: "a3" });
+    expect(msgs[10]).toMatchObject({ role: "tool", tool_call_id: "a3" });
   });
 
   it("a refused structural move is an assistant call + a tool reason", async () => {
@@ -162,10 +161,10 @@ describe("message wrappers: the wire JSON of the tape", () => {
   it("a turn's reasoning rides its assistant tool message (the wire adapter relocates it)", async () => {
     const events: Event[] = [
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 } },
-      node("m1", "move", "localization", 1, {
-        state: "localization",
+      node("m1", "move", "patch", 1, {
+        state: "patch",
         what: "find the failure",
-        call: { name: "move", args: { state: "localization", what: "find the failure" } },
+        call: { name: "move", args: { state: "patch", what: "find the failure" } },
       }),
       edge("em", "r1", "m1", "move"),
       node("p1", "turns", "turns", 2),

@@ -217,14 +217,13 @@ describe("session agent: workspace intro", () => {
   it("explains the project and includes the material map", () => {
     const messages = buildSessionMessages({
       ...context,
-      workspace: { root: "/proj", map: "Workspace map\nroot: /proj\nfiles: 2" },
+      workspace: { root: "/proj", map: "Workspace root: /proj\nWorkspace repository: none" },
     });
     const text = String(messages[1]?.content);
     expect(messages[1]?.role).toBe("system");
     expect(text).toContain("the project tree this session works in");
     expect(text).toContain("route reading, analysis and explanation to `general`");
-    expect(text).toContain("Workspace map");
-    expect(text).toContain("root: /proj");
+    expect(text).toContain("Workspace root: /proj");
   });
 
   it("falls back to the root when there is no map", () => {

@@ -44,16 +44,14 @@ export interface EnvironmentFact {
 // environment block. Patch needs the VCS tools and the interpreters that can run a search
 // script, plus the toolchain the change is built with; Research needs the interpreters and
 // package managers that can produce the result; Construction and Verification run the project's
-// build and its declared check.
+// build and its declared check, and Construction reads and checks history as well.
 const ORIENTATION_GROUPS: readonly EnvironmentGroup[] = [];
-// Legacy: Localization merged into Patch (2026-11-04). Kept for journals written before it.
-const LOCALIZATION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "interpreters"];
 // Patch locates the defect and makes the change, so it needs the search tools (vcs,
 // interpreters) and the toolchain the change is built with.
 const PATCH_GROUPS: readonly EnvironmentGroup[] = ["vcs", "build", "compilers", "interpreters"];
 const RESEARCH_GROUPS: readonly EnvironmentGroup[] = ["interpreters", "pkg"];
 const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
-const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["build", "compilers", "test", "interpreters", "pkg"];
+const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "build", "compilers", "test", "interpreters", "pkg"];
 const VERIFICATION_GROUPS: readonly EnvironmentGroup[] = ["build", "test", "pkg"];
 
 function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
@@ -61,7 +59,6 @@ function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
   // (Orientation) gets the subset.
   if (island === undefined) return [];
   if (island === "orientation") return ORIENTATION_GROUPS;
-  if (island === "localization") return LOCALIZATION_GROUPS;
   if (island === "patch") return PATCH_GROUPS;
   if (island === "research") return RESEARCH_GROUPS;
   if (island === "recovery") return RECOVERY_GROUPS;
@@ -86,7 +83,7 @@ export function environmentGroupsBrief(
 ): string {
   if (groups.length === 0) return "";
   const lines: string[] = [];
-  if (options.showRoot === true && fact.root !== "") lines.push(`Workspace root: ${fact.root}.`);
+  if (options.showRoot === true && fact.root !== "") lines.push(`Workspace root: ${fact.root}`);
   if (fact.network !== undefined) {
     lines.push(
       fact.network === "off"
@@ -110,15 +107,11 @@ export function environmentGroupsBrief(
   return lines.join("\n");
 }
 
-// A compact brief for the state, or "" when it has nothing to say.
+// A compact brief for the state's environment, or "" when it has nothing to say. The root is
+// not printed here: a state's brief carries the coordinates (`Workspace root`,
+// `Workspace repository`) once, from the material fact.
 export function environmentBrief(fact: EnvironmentFact, island?: IslandId): string {
   const groups = groupsFor(island);
   if (groups.length === 0) return "";
-  return environmentGroupsBrief(fact, groups, {
-    showRoot:
-      island === "orientation" ||
-      island === "recovery" ||
-      island === "construction" ||
-      island === "verification",
-  });
+  return environmentGroupsBrief(fact, groups);
 }

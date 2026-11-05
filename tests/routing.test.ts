@@ -125,11 +125,4 @@ describe("routing: Localization merged into Patch", () => {
     expect(transitionInstruction("verification")).not.toContain("Choose Localization");
   });
 
-  it("the legacy Localization island still renders its own transition rule", () => {
-    // Old journals carry `Start state Localization`; the rule must stay readable there.
-    const legacy = transitionInstruction("localization");
-    expect(legacy).toContain("Choose Patch when the target is named and a cause is suspected.");
-    expect(legacy).toContain("Next states from Localization:");
-    expect(legacy).toContain("- Patch —");
-  });
 });

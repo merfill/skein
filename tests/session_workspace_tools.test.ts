@@ -62,12 +62,12 @@ describe("probeText: one fact by kind", () => {
     expect(probeText(probe, "packages")).toContain("Available package managers: npm 10.0.0.");
     expect(probeText(probe, "packages")).not.toContain("node");
     expect(probeText(probe, "interpreters")).toContain("Installed interpreters: node 20.0.0.");
-    expect(probeText(probe, "environment")).toContain("Workspace root: /app.");
+    expect(probeText(probe, "environment")).toContain("Version-control tools: git 2.43.0.");
     expect(probeText(probe, "environment")).not.toContain("grep");
   });
 
-  it("returns the workspace map and reports a missing probe", () => {
-    expect(probeText(probe, "material")).toContain("Workspace map");
+  it("returns the workspace coordinates and reports a missing probe", () => {
+    expect(probeText(probe, "material")).toContain("Workspace root: /app");
     expect(probeText(probe, "material")).toContain("entries: src/ (2 files)");
     expect(probeText(undefined, "environment")).toBe("probe unavailable");
   });

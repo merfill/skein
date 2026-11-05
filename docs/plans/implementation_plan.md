@@ -238,19 +238,19 @@ Beyond Tier 0, the current line adds:
   updated; plan/status — `docs/plans/ai_sdk_migration_plan.md`.
 - **Literal Verification why + failed-attempt block (2026-10-17, done).** Verification's
   `stop.why` is a literal retelling of the error: the command, exit status, actual text; no code
-  diagnosis and no "why the fix did not work". `Previous failed attempt` in the open Localization
-  and Patch is built from the model's `why` of the failed Verification and the actual diff of the
+  diagnosis and no "why the fix did not work". `Previous failed attempt` in the open Patch is
+  built from the model's `why` of the failed Verification and the actual diff of the
   last Patch; the mechanical `lastFailingRun`/`git`/exit no longer leaks into the block. It says
   `has been reverted` and `Do not repeat this change`; a masked exit-0 with `stop.why` is also
   visible. Tests — `tests/revert.test.ts`, `tests/tape_render.test.ts`.
 - **Verification → Patch + revert (2026-10-17, done).** `ISLANDS.verification.next` includes
-  Patch: when the Localization coordinates still hold and only the change failed, the model may go
-  straight back to Patch. `isFailedVerificationMove` reverts the failed Patch on both targets
-  (`Patch`/`Localization`), so Patch starts from the pre-patch tree and with the block. Live:
-  run5 of the final batch chose `verification → patch`, made one revert and fixed the tail; in
-  separate stage samples the model more often chose Localization. Tests — `tests/revert.test.ts`.
+  Patch: when the Patch coordinates still hold and only the change failed, the model may go
+  straight back to Patch. `isFailedVerificationMove` reverts the failed Patch, so Patch starts
+  from the pre-patch tree and with the block. Live:
+  run5 of the final batch chose `verification → patch`, made one revert and fixed the tail.
+  Tests — `tests/revert.test.ts`.
 - **Per-state hints (2026-10-17, done).** `Island.hint` per state + a shared closure tail:
-  Orientation — `pwd`/build/check; Localization — sibling walkers; Patch — "only the named change
+  Orientation — `pwd`/build/check; Patch — "only the named change
   / do not repeat the failed attempt"; Verification — pass/fail/environment; End — `stop` when the
   request is complete.
   `turnInstruction` no longer mixes states; tests — `tests/prompt.test.ts`,
@@ -261,8 +261,8 @@ Beyond Tier 0, the current line adds:
 - **Orientation result vs probe (2026-10-20, done).** One `fact:session`
   (`environment` + `material`) is recorded at request start. `material` is the workspace map:
   `root`, repo status, top-level entries/paths, file count; configs, build commands, extensions
-  and build state are gone. Orientation renders `Workspace`; Localization/Research get the same
-  map as `Orientation result` (Research also gets `Probe` with interpreters/tools); other states
+  and build state are gone. Orientation renders `Workspace`; Research gets the same
+  map as `Orientation result` (plus `Probe` with interpreters/tools); other states
   get `Probe` (environment) under its own heading. Orientation's goal is narrowed to the inputs
   and the acceptance declared by the request; if the map and request already name them, the first
   step can be `stop`.
@@ -270,52 +270,7 @@ Beyond Tier 0, the current line adds:
   Orientation in 3 turns** (request → `stop` → transition; one `password` took 4), with no
   material exploration and no errors. `fix-ocaml-gc`: 3 turns, ~6.4k in, 0.065₽ versus 6 turns /
   25.9k / 0.166₽ before. K=3 routes: password/cobol → Research, custom-memory/fix-git →
-  Localization, git-leak → Research (3/3). Tests — `364 passed`, typecheck clean.
-- **Localization/Patch alignment (2026-10-20).** Localization — the 29-turn criterion:
-  target + coordinates/extent + siblings ruled out, **no** failing code/cause. Patch — as in the
-  29-turn run (`439095b`, declared form); Verification was already that version. Probe rules:
-  `repo: none` → no git, no build docs/configs, start from the named subsystem; "the tape already
-  holds what you observed".
-- **Full fix-ocaml (2026-10-20, live).** With failing code: 60 turns/7.61₽, wrong line, Patch-1
-  21 + Patch-2 16. After alignment: reward=1, `stop=request_addressed`, **34 turns, 4.24₽**:
-  Orientation 3/0.29, Localization 7/0.83, **Research 5/1.00 (extra step)**, Patch 10/1.22,
-  Verification 8/0.79, End 1/0.10. The remaining gap to 29/1.684₽ is the extra Research: for a
-  code defect the transition should be L→P; Research is for situations/new artifacts. Tests —
-  `364 passed`, typecheck clean.
-- **Localization → Patch (2026-10-20).** *(Superseded 2026-10-29 — see the corrective L↔R entry
-  below.)* The late `L → R` edge is removed (`83243ae`):
-  Localization again has a single transition — Patch. A dry rebuild of the transition from the
-  34-turn run shows no Research; live K=3 — 3/3 `move patch`. Full `fix-ocaml-gc` K=1: reward=1,
-  `request_addressed`, 34 turns, 5.23₽ — no Research; the remainder is Patch at 15 turns
-  (re-deriving the cause, ~10k reasoning) and 2 turns on `.skein/checkpoints`; cache hit 81%.
-- **Corrective L↔R edges (2026-10-29).** `Localization → Research` is back as a corrective edge
-  (a wrong start classification, not a routine exit), with the symmetric `Research → Localization`;
-  the in-state prompts are untouched (`next` and the transition rule only). Synthetic
-  `tests/routing.test.ts`; live 3 tasks × K=3 (`fix-code`, `db-wal`, `log-summary`,
-  `--turns 34/32/21`): 9/9 `reward=1`, the edges were never taken and the normal routes did not
-  move. Trace: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
-- **Patch = Localization + Patch (2026-11-04).** `localization` is merged into `patch`: locating
-  the defect and making the change it needs is one loop, not a handoff. The handoff was the
-  failure mode of the 65-turn `custom-memory-heap-crash` run — the run rejected the correct fix
-  at t7 on a false `__cxx11` premise and then had no state in which the cause could be revised
-  from the evidence, so it spent t21–t48 (~2.75₽) on a workaround. `patch` now carries the locate
-  step (target, coordinates, siblings ruled out, cause named as a suspicion) together with the
-  change, and its instruction says a change that does not hold is evidence about the cause, not a
-  reason to guess again. Deliberately dropped: "the cause is the one the previous state's `Finish`
-  line names", "do not re-derive the cause", "do not guess a different one" — those made a wrong
-  cause unrecoverable. Routes: `O → Patch` (defect), `P → V`, `P → R` (situation), `V → P` on a
-  failed acceptance (the `V → Localization` branch is gone). The probe block is
-  `vcs, build, compilers, interpreters`: the state both searches the material and builds the
-  change. `localization` stays in `ISLANDS` for journals written before the merge, with its own
-  `transitionRule`, but it is out of `LIVE_ISLAND_IDS`, so no live `move` can target it.
-  Tests — `tests/routing.test.ts`, `tests/islands.test.ts`, `tests/prompt.test.ts`,
-  `tests/environment.test.ts`; offline **596 passed, 40 skipped**, typecheck clean.
-  Live K=1 on `custom-memory-heap-crash`: reward=1, 42 turns, 2.216₽ against the 65-turn
-  baseline; the chain was `ori@0 → patch@2 → ver@34 → end@40`. **Attribution: the win is not
-  from this merge.** It came from an observer hint (seq=124, t19) that named
-  `std::_Facet_Register_impl()` outright; both runs rejected the same fix at t7, the base prompt
-  has 2 `__cxx11` mentions and the merged one 0, and the merged reasoning never re-opens the
-  target. A cleaner prompt comparison needs K≥3 on runs the observer does not steer.
+  Patch, git-leak → Research (3/3). Tests — `364 passed`, typecheck clean.
 - **Terminal UI (2026-10-31, done).** `npm run cli` now opens an Ink TUI: live progress from
   the loop/session/observer, a persistent current-task states panel (turn ranges, tokens,
   actions, full `stop.why`), a read-only task-history overlay, and a session header with the
@@ -333,7 +288,7 @@ Beyond Tier 0, the current line adds:
 - **Research = Research + Recovery (2026-11-03).** The `recovery` island is merged into
   `research`: one state derives the required result from the material or the specification, writes
   the output and verifies it (read-only on a copy); `recovery` stays only for old journals. Routes:
-  `O → L` (defect), `O → R` (situation), `O → C` (build); `R → C` is removed, Construction stays
+  `O → P` (defect), `O → R` (situation), `O → C` (build); `R → C` is removed, Construction stays
   separate. The Environment block is now a short fact list (network, interpreters, package
   managers, build/test tools), not a stock-utility inventory; a closed state's `Finish` line
   carries `Artifacts:` from explicit `write`/`edit` calls; B2 prefers narrow probes and stopping.
@@ -421,16 +376,16 @@ same IR, not a subagent; similarity/RAG stays out of scope.
   "determine the byte-level transform" rather than "XOR 0x42, little-endian checksums"; Recovery
   re-derived it and got stuck on endianness (t18–t21, 4–12k chars). General rule: `stop.why`
   carries what the next state needs — the method/coordinates/check, not just the situation.
-- **Localization loses the cross-state handoff (regression, 2026-10-15).** The real sandbox
-  `fix-ocaml-gc --net on` (Phase-20 tape) failed — reward 0, `max_turns` 60: orientation closed
-  on "layout known" and localization started with a causal goal ("find why the bootstrap
+- **The cross-state handoff is lost on a narrow orientation (regression, 2026-10-15).** The real
+  sandbox `fix-ocaml-gc --net on` (Phase-20 tape) failed — reward 0, `max_turns` 60: orientation
+  closed on "layout known" and the repair started with a causal goal ("find why the bootstrap
   crashes") with no pointer to `runtime/shared_heap.c`, then went into `major_gc.c` / bootstrap
   debugging. The successful 2026-10-14 run (Phase 18, 29 turns, reward 1) chained via a **broad
   orientation goal** ("…locate the sweeping/free-space changes in the major GC…") and the move's
   **`note`** (the leaving state's summary → "…changes in `runtime/shared_heap.c`/`.h`"). Phase 20
   narrowed orientation to "layout" and dropped `note` from the move contract / B9, so the handoff
   is gone. Not yet fixed; options: (A) restore the `note` chain, (B) widen orientation to "where
-  the change belongs", (C) make localization's first step "locate the touched files". Evidence:
+  the change belongs", (C) make the first repair step "locate the touched files". Evidence:
   `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / virtual spec).
   **Update 2026-10-17:** the final `fix-ocaml-gc --net on` batch is 5/5
   (`docs/benches/best_bench.md`); per-state hints, the literal `why` and the

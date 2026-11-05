@@ -656,10 +656,9 @@ describe("the message tape", () => {
     // instruction and the state's own goal (the request leads the tape); the first apply seeds
     // the plan.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "system", "system", "system", "user"]);
+    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
     expect(roles[2]).toEqual([
       "user",
-      "system",
       "system",
       "system",
       "user",
@@ -669,7 +668,6 @@ describe("the message tape", () => {
     // A command appends an assistant/tool pair.
     expect(roles[3]).toEqual([
       "user",
-      "system",
       "system",
       "system",
       "user",

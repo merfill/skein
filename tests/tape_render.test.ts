@@ -56,12 +56,11 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The state entry is the `Start state` marker, the island instruction, the per-turn conduct
-    // hint, and the state's own goal + criterion as a `user` turn. Nothing is appended after
-    // the tape: the whole context is the projection.
+    // The state entry is the `Start state` marker, the island instruction, and the state's own
+    // goal + criterion as a `user` turn. Nothing is appended after the tape: the whole context
+    // is the projection.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
-      ["system", null, false],
       ["system", null, false],
       ["system", null, false],
       ["user", null, false],
@@ -72,12 +71,11 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     ]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
     expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toBe(ISLANDS.orientation.hint);
-    expect(ctx.history[4]?.text).toContain(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    expect(ctx.history[3]?.text).toContain(
+      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
     );
-    expect(ctx.history[4]?.text).toContain("Your earlier guess (may be wrong): do it");
-    expect(ctx.history[4]?.text).toContain(
+    expect(ctx.history[3]?.text).toContain("Your earlier guess (may be wrong): do it");
+    expect(ctx.history[3]?.text).toContain(
       `Done when: "${ISLANDS.orientation.criterion}".`,
     );
   });

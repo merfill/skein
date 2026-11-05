@@ -93,13 +93,12 @@ describe("session view", () => {
     expect(renderTurn(result)).toContain("session: no decision (empty reply)");
   });
 
-  it("shows the task work and the post-task report instead of the raw stop", async () => {
+  it("shows the task work and End's report instead of the raw stop", async () => {
     const result = await runSessionTurn(
       {
         sessionAgent: {
           agent: async () => ({ operation: { kind: "start", text: "fix it" } }),
           tools,
-          report: async () => "## Report\n\n- done",
         },
         task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
       },
@@ -112,8 +111,6 @@ describe("session view", () => {
     expect(text).toContain("task r1: request_addressed after 2 turns");
     expect(text).toContain("move: end");
     expect(text).toContain("stop: done");
-    expect(lines).toContain("report:");
-    expect(lines).toContain("## Report\n\n- done");
-    expect(text).not.toContain("task answer:");
+    expect(lines).toContain("task answer: done");
   });
 });

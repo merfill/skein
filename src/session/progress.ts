@@ -65,9 +65,7 @@ export type ProgressEvent =
       turn: number;
       stopReason?: string | null;
     }
-  | { type: "paused"; agent: ProgressAgent; unitId: string }
-  | { type: "report_started"; unitId: string }
-  | { type: "report_finished"; unitId: string; text?: string };
+  | { type: "paused"; agent: ProgressAgent; unitId: string };
 
 export type ProgressSink = (event: ProgressEvent) => void;
 

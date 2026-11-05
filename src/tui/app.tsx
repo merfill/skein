@@ -473,12 +473,6 @@ export function TuiApp(props: TuiAppProps) {
       case "paused":
         setActivity("paused");
         break;
-      case "report_started":
-        setActivity("session · report");
-        break;
-      case "report_finished":
-        setActivity("session · report done");
-        break;
     }
   };
 
@@ -526,7 +520,6 @@ export function TuiApp(props: TuiAppProps) {
           : null,
       noDecision: result.noDecision ?? null,
       reply: result.reply ?? null,
-      report: result.report ?? null,
       task:
         result.task !== undefined
           ? {
@@ -569,6 +562,10 @@ export function TuiApp(props: TuiAppProps) {
       appendNotice(
         `task ${result.task.unitId} · ${outcome} · ${result.task.result.turns} turns`,
       );
+      const report = result.task.result.done ? answerOf(result.task.result.events) : undefined;
+      if (report !== undefined && report.trim() !== "") {
+        append({ id: nextId(), kind: "report", text: report });
+      }
     }
     if (result.general !== undefined) {
       const outcome = result.general.result.done
@@ -581,9 +578,6 @@ export function TuiApp(props: TuiAppProps) {
       if (answer !== undefined && answer !== "") {
         append({ id: nextId(), kind: "assistant", text: answer });
       }
-    }
-    if (result.report !== undefined) {
-      append({ id: nextId(), kind: "report", text: result.report });
     }
     if (result.paused !== undefined) {
       setPaused(result.paused);

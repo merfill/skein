@@ -6,7 +6,6 @@ import { PROPOSAL_TOOLS, toolDescriptionsFor } from "../src/llm/tools";
 import {
   BASE_BLOCKS,
   BASE_PROMPT,
-  NODE_INSTRUCTIONS,
   PROMPT_BLOCKS,
   REQUEST_INSTRUCTION,
   transitionInstruction,
@@ -97,9 +96,6 @@ describe("system prompt: base + node assembly", () => {
     expect(fromPatch).toMatch(
       /Choose Research only when the work turns out to be a situation, not a defect to locate and fix/,
     );
-    const fromLocalization = transitionInstruction("localization");
-    expect(fromLocalization).toContain("Finish state Localization"); // legacy journals
-    expect(fromLocalization).toMatch(/target is named and a cause is suspected/);
     const fromResearch = transitionInstruction("research");
     expect(fromResearch).toContain("Finish state Research");
     expect(fromResearch).toMatch(/Choose End when the required result exists/);
@@ -148,9 +144,9 @@ describe("system prompt: tool contract", () => {
     // description, so the state's own instruction decides what the work needs.
     const research = toolDescriptionsFor("research");
     expect(research.bash).toMatch(/may reconstruct the result/i);
-    expect(research.bash).toMatch(/keep the material read-only/i);
+    expect(research.bash).toMatch(/change the material only where the task says to/i);
     expect(research.write).toMatch(/may reconstruct the result/i);
-    expect(research.write).toMatch(/do not overwrite the material/i);
+    expect(research.write).toMatch(/change the material only where the task says to/i);
     expect(research.edit).toBeUndefined();
 
     const recovery = toolDescriptionsFor("recovery");
@@ -170,7 +166,7 @@ describe("system prompt: tool contract", () => {
   });
 
   it("keeps Recovery's prompt minimal", () => {
-    const text = `${ISLANDS.recovery.instruction} ${ISLANDS.recovery.hint}`;
+    const text = ISLANDS.recovery.instruction;
     expect(text).not.toMatch(/source check|accept a candidate|negative control|script|container|Research/i);
     expect(text).toMatch(/do not fabricate/i);
     expect(text).toMatch(/keep the material read-only/i);
@@ -198,7 +194,7 @@ describe("system prompt: tool contract", () => {
     const properties = ((move?.function.parameters ?? {}) as { properties?: Record<string, unknown> })
       .properties ?? {};
     expect(properties).not.toHaveProperty("notes");
-    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("localization")}`;
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("patch")}`;
     for (const removed of ["done_when", "checkReady", "nextAction", "revises"]) {
       expect(prompt, `prompt must not mention ${removed}`).not.toContain(removed);
       expect(description, `move must not mention ${removed}`).not.toContain(removed);
@@ -260,7 +256,7 @@ describe("tool surface: no drift to a removed tool", () => {
   it("mentions no removed tool anywhere the model reads", () => {
     // `query` was split into `recall`/`search`; the old name must not survive in a tool
     // description or the prompt, or the model will call a tool that does not exist.
-    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("localization")}`;
+    const prompt = `${BASE_PROMPT}\n${REQUEST_INSTRUCTION}\n${transitionInstruction("patch")}`;
     for (const tool of PROPOSAL_TOOLS) {
       expect(tool.function.description, `${tool.function.name} mentions 'query'`).not.toMatch(
         /\bquery\b/i,
@@ -343,7 +339,7 @@ describe("context format: tape", () => {
 
   it("appends nothing on plan and working: the state's hint and criterion live in its header", () => {
     for (const situation of ["working"] as const) {
-      const withIsland: Context = { ...context, situation, island: "localization" };
+      const withIsland: Context = { ...context, situation, island: "patch" };
       const messages = buildMessages(withIsland);
       expect(messages).toHaveLength(withIsland.history.length + 2);
       expect(withIsland.history.at(-1)).toMatchObject({ role: "tool" });
@@ -351,16 +347,17 @@ describe("context format: tape", () => {
     }
   });
 
-  it("keeps the request/transition prompts and the terminal instruction", () => {
-    const request = buildMessages({ ...context, situation: "request", island: "localization" }).at(-1);
+  it("keeps the request and transition prompts; End carries its instruction on the tape", () => {
+    const request = buildMessages({ ...context, situation: "request", island: "patch" }).at(-1);
     expect(request).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
-    const transition = buildMessages({ ...context, situation: "transition", island: "localization" }).at(-1);
+    const transition = buildMessages({ ...context, situation: "transition", island: "patch" }).at(-1);
     expect(transition).toMatchObject({
       role: "system",
-      content: transitionInstruction("localization"),
+      content: transitionInstruction("patch"),
     });
-    const terminal = buildMessages({ ...context, situation: "terminal", island: "end" }).at(-1);
-    expect(terminal).toMatchObject({ role: "system", content: NODE_INSTRUCTIONS.terminal });
+    // End appends no situation prompt: its instruction is part of the state's own entry.
+    const terminal = buildMessages({ ...context, situation: "terminal", island: "end" });
+    expect(terminal).toEqual(buildMessages({ ...context, situation: "working", island: "end" }));
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {

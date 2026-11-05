@@ -1,7 +1,8 @@
 // The deterministic map of the material, recorded once at request start alongside the
 // environment probe. It is an index, not content: the workspace root, the repository status
-// and the entries/paths that exist. The projection renders it in Orientation and carries it
-// into Patch/Research as the Orientation result; it never decides what is acceptance.
+// and the entries/paths that exist. A state's brief takes the coordinates only
+// (`Workspace root`, `Workspace repository`); the listing serves the `probe` tool. The map
+// never decides what is acceptance.
 
 export interface MaterialRepo {
   kind: "git" | "hg" | "svn";
@@ -44,20 +45,25 @@ function repoLine(repo: MaterialRepo): string {
   if (repo.dirty !== undefined) parts.push(`${repo.dirty} changed`);
   const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
   const error = repo.error !== undefined && repo.error !== "" ? ` — status unavailable: ${repo.error}` : "";
-  return `repo: ${repo.kind} at ${code(repo.root)}${detail}${error}`;
+  return `Workspace repository: ${repo.kind} at ${code(repo.root)}${detail}${error}`;
 }
 
-// The workspace lines shared by every state that receives the material map.
-export function workspaceLines(fact: MaterialFact): string[] {
+// The workspace lines shared by every state that receives the coordinates. `index: false` drops
+// the listing (entries, paths, file count): a state's brief states where the work happens, not
+// what the tree contains — a state that needs the files lists them itself.
+export function workspaceLines(fact: MaterialFact, options: { index?: boolean } = {}): string[] {
   const lines: string[] = [];
-  if (fact.root !== "") lines.push(`root: ${code(fact.root)}`);
-  if (fact.cwd !== undefined && fact.cwd !== "" && fact.cwd !== fact.root) lines.push(`cwd: ${code(fact.cwd)}`);
+  if (fact.root !== "") lines.push(`Workspace root: ${code(fact.root)}`);
+  if (fact.cwd !== undefined && fact.cwd !== "" && fact.cwd !== fact.root) {
+    lines.push(`Working directory: ${code(fact.cwd)}`);
+  }
   if (fact.repos.length === 0) {
     const scope = fact.root !== "" ? ` under ${fact.root}` : "";
-    lines.push(`repo: none (no .git/.hg/.svn${scope})`);
+    lines.push(`Workspace repository: none (no .git/.hg/.svn${scope})`);
   } else {
     for (const repo of fact.repos) lines.push(repoLine(repo));
   }
+  if (options.index === false) return lines;
   if (fact.entries.length > 0) {
     const shown = fact.entries.slice(0, 16).map((entry) =>
       entry.kind === "dir" ? `${entry.name}/ (${entry.files ?? 0} files)` : entry.name,
@@ -80,8 +86,13 @@ export function workspaceLines(fact: MaterialFact): string[] {
   return lines;
 }
 
-// A titled workspace block. The title is the same for every state that receives the map.
-export function workspaceBrief(fact: MaterialFact, title: string): string {
-  const lines = workspaceLines(fact);
-  return lines.length > 0 ? [title, ...lines].join("\n") : "";
+// A workspace block. An empty title renders the lines without a heading (Construction).
+export function workspaceBrief(
+  fact: MaterialFact,
+  title: string,
+  options: { index?: boolean } = {},
+): string {
+  const lines = workspaceLines(fact, options);
+  if (lines.length === 0) return "";
+  return title === "" ? lines.join("\n") : [title, ...lines].join("\n");
 }

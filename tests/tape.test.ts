@@ -109,11 +109,10 @@ describe("the tape: request and state", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    // The request leads the tape; then the state's entry (`Start state`, instruction, hint,
+    // The request leads the tape; then the state's entry (`Start state`, instruction,
     // goal + criterion), then each plan item as a native call + tool result.
     expect(roles(context.history)).toEqual([
       "user",
-      "system",
       "system",
       "system",
       "user",
@@ -121,14 +120,13 @@ describe("the tape: request and state", () => {
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toBe(ISLANDS.orientation.hint);
-    expect(context.history[4]?.text).toContain(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    expect(context.history[3]?.text).toContain(
+      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
     );
-    expect(context.history[4]?.text).toContain("Your earlier guess (may be wrong): green");
-    expect(context.history[4]?.text).toContain("Done when: \"");
-    expect(context.history[5]?.text).toBe("[a1] make test");
-    expect(context.history[6]?.text).toBe("[o1] exit 1\nboom");
+    expect(context.history[3]?.text).toContain("Your earlier guess (may be wrong): green");
+    expect(context.history[3]?.text).toContain("Done when: \"");
+    expect(context.history[4]?.text).toBe("[a1] make test");
+    expect(context.history[5]?.text).toBe("[o1] exit 1\nboom");
   });
 
   it("decline renders a single assistant refusal", () => {
@@ -161,14 +159,13 @@ describe("the tape: commands and their outcomes", () => {
       "user",
       "system",
       "system",
-      "system",
       "user",
       "assistant",
       "tool",
       "assistant",
       "tool",
     ]);
-    expect(context.history[8]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
+    expect(context.history[7]?.text).toBe("[o2] src/a.ts lines 1-1 of 1\nsource");
   });
 
   it("renders an edit's mutate (no observation) as a mutated file", () => {
@@ -181,7 +178,7 @@ describe("the tape: commands and their outcomes", () => {
       ...turns("p1", "m1", ["a1"], 4),
     ]);
     const context = project(focused(state));
-    expect(context.history[6]?.text).toBe("[a1] mutated src/a.ts");
+    expect(context.history[5]?.text).toBe("[a1] mutated src/a.ts");
   });
 
   it("renders a refused command as an observation with the reason", () => {
@@ -194,7 +191,7 @@ describe("the tape: commands and their outcomes", () => {
       ...turns("p1", "m1", ["a1"], 5),
     ]);
     const context = project(focused(state));
-    expect(context.history[6]?.text).toBe("[o1] repeated_action: o0 already has it");
+    expect(context.history[5]?.text).toBe("[o1] repeated_action: o0 already has it");
   });
 
   it("renders each turn in order without an alternative marker", () => {
@@ -222,7 +219,7 @@ describe("the tape: the compaction of a finished state", () => {
   it("a finished state leaves one line, carried by the next move", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "localization", "find it", 1),
+      ...moved("m1", "patch", "find it", 1),
       action("a1", "grep x", 3),
       observation("o1", 4, { ref: "file:src/a.ts", version: "v1", output: "FOUND-BODY" }, "grep x"),
       result("e1", "a1", "o1"),
@@ -235,7 +232,7 @@ describe("the tape: the compaction of a finished state", () => {
     // The finished state's command has left the tape...
     expect(body).not.toContain("FOUND-BODY");
     // ...only its closure marker remains, in the finished state's triple.
-    expect(body).toContain("Finish state Localization — named the line");
+    expect(body).toContain("Finish state Patch — named the line");
     expect(context.situation).toBe("working");
   });
 });
@@ -244,7 +241,7 @@ describe("the tape: edge cases", () => {
   it("a stopped state without a successor leaves only the move and its closure", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "localization", "gone", 1),
+      ...moved("m1", "patch", "gone", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
@@ -255,7 +252,7 @@ describe("the tape: edge cases", () => {
     expect(roles(context.history)).toEqual(["user", "system", "system"]);
     expect(context.situation).toBe("transition");
     expect(texts(context.history)).not.toContain("[a1] make test");
-    expect(texts(context.history)).toContain("Finish state Localization — all green");
+    expect(texts(context.history)).toContain("Finish state Patch — all green");
   });
 
   it("a declared state without a plan renders move + confirmation", () => {
@@ -265,7 +262,7 @@ describe("the tape: edge cases", () => {
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
-    expect(roles(context.history)).toEqual(["user", "system", "system", "system", "user"]);
+    expect(roles(context.history)).toEqual(["user", "system", "system", "user"]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
   });
 });
@@ -291,13 +288,12 @@ describe("the tape: recall and determinism", () => {
       "user",
       "system",
       "system",
-      "system",
       "user",
       "assistant",
       "tool",
     ]);
-    expect(context.history[5]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
-    expect(context.history[6]?.text).toBe("[o1] the stored body");
+    expect(context.history[4]?.call).toEqual({ id: "a1", name: "recall", args: { id: "obs:5" } });
+    expect(context.history[5]?.text).toBe("[o1] the stored body");
   });
 
   it("is deterministic: same events, same tape", () => {

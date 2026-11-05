@@ -8,7 +8,6 @@
 
 export const ISLAND_IDS = [
   "orientation",
-  "localization",
   "research",
   "patch",
   "recovery",
@@ -19,9 +18,8 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
-// The islands a live `move` may target. `recovery` and `localization` stay in `ISLANDS` so
-// journals written before their merges still render, but they are no longer reachable:
-// `recovery` merged into Research (2026-11-03), `localization` into Patch (2026-11-04).
+// The islands a live `move` may target. `recovery` stays in `ISLANDS` so journals written before
+// its merge still render, but it is no longer reachable: it merged into Research (2026-11-03).
 export const LIVE_ISLAND_IDS = [
   "orientation",
   "research",
@@ -46,10 +44,6 @@ export interface Island {
   criterion: string;
   // How to act in this state — the engine's instruction, rendered once when the state is entered.
   instruction: string;
-  // The conduct hint for an open state: what to do or avoid in THIS state. The projection
-  // renders it in the state's entry (after `instruction`, before the goal/criterion). It is not
-  // the state's goal (`what`) and not the one-time `instruction`.
-  hint: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
   // existing artifact, Recovery writes the output and scratch copies, Construction builds a new
@@ -70,32 +64,19 @@ const PATCH_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 const RECOVER_TOOLS: readonly string[] = [...INSPECT, "write"];
 const CONSTRUCT_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 
-const LOCALIZATION_CRITERION =
-  "the target is named — the file, record, image, or function — with the coordinates or " +
-  "extent that identify it; its siblings are ruled out; and a suspected cause is named — the " +
-  "expression, step, or encoding that looks wrong and the rule or invariant it breaks — " +
-  "marked unverified";
-
 export const ISLANDS: Record<IslandId, Island> = {
   orientation: {
     id: "orientation",
     label: "Orientation",
-    what: "name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    what: "name the workspace root, the repository status, and the acceptance the request declares",
     criterion:
-      "the workspace root and its top-level entries are known; the repository status is noted; " +
-      "and the acceptance is named from the request — an in-workspace command, an external " +
-      "verifier, or declared constraints",
+      "the reply names the workspace root, the repository status, and the acceptance the request " +
+      "declares",
     instruction:
-      "Read the workspace map: root, repository status, top-level entries. The request is only " +
-      "the source of the acceptance — name it as the request declares it; do not restate, " +
-      "interpret, or solve the task. This state only reads the map: do not create or modify " +
-      "files. If the map and the request already name those, reply with the result as text now. Do not list inside the " +
-      "entries, verify build targets or paths, read file contents, or inspect history or data " +
-      "formats — those belong to the next state.",
-    hint:
-      "The map is the index; the request names the acceptance. Name them; do not restate the " +
-      "task or work on it. Do not list inside entries, check paths, or inspect build state, " +
-      "configs, history, or contents.",
+      "Write one reply with three lines: the workspace root, the repository status, and the " +
+      "acceptance. The root and the status are already in the tape; the acceptance is the " +
+      "request's own words. Nothing else is needed — the files, the build targets and the " +
+      "history belong to the next state.",
     applies: INSPECT,
     next: [
       {
@@ -112,44 +93,6 @@ export const ISLANDS: Record<IslandId, Island> = {
       },
     ],
   },
-  // Merged into Patch (2026-11-04): the defect's cause and the change it implies are one loop,
-  // not a handoff. Kept so journals written before the merge still render.
-  localization: {
-    id: "localization",
-    label: "Localization",
-    what: "find the defect in existing code, files, or history",
-    criterion: LOCALIZATION_CRITERION,
-    instruction:
-      "Find the target in the material — the file, record, image, or function — and name its " +
-      "coordinates or extent. Before inspecting, think about what the code is supposed to do " +
-      "from the user's request, the workspace map (filesystem facts), the environment (available " +
-      "tools), and the filenames; use that to choose which files and symbols to inspect. For " +
-      "shell work, use only the tools the environment lists; missing ones are unavailable. " +
-      "Distinguish it from its siblings by shape, code, or signature. Name the target, say why " +
-      "the siblings are not it, and name a suspected cause: the expression, step, or encoding " +
-      "that looks wrong and the rule or invariant it breaks. Mark the cause unverified. Do not " +
-      "change the target.",
-    hint:
-      "Start from the workspace map (filesystem facts) and the environment (available tools). " +
-      "Think about what the code is supposed to do from the filenames and the directory " +
-      "structure: list the relevant directories and choose the candidate files by name — the " +
-      "implementation and the definitions or headers it uses — then inspect those. If a sibling " +
-      "performs the same traversal or operation — the neighbouring loop or function — compare " +
-      "against it and use its pattern as the reference. If there is no sibling, derive the " +
-      "invariant from the material's contract or behaviour. A suspected cause is enough — " +
-      "reply with the result then; do not look for a different bug.",
-    applies: INSPECT,
-    next: [
-      {
-        to: "patch",
-        when: "the target is named and a cause is suspected",
-      },
-      {
-        to: "research",
-        when: "the work is a situation, not a code defect to locate",
-      },
-    ],
-  },
   research: {
     id: "research",
     label: "Research",
@@ -158,17 +101,12 @@ export const ISLANDS: Record<IslandId, Island> = {
       "the task's required result exists in its declared form, is derived from the material or " +
       "the specification, and matches what the material or the request contains.",
     instruction:
-      "Solve the task from the material. Create the required result in its declared form when " +
-      "the task needs one. Let the material decide — a read-only check on a copy is allowed and " +
-      "preferred over guessing. Keep the material read-only; do not fabricate. The workspace map " +
-      "and the environment are recorded facts: they are already read — do not re-probe or " +
-      "re-list them.",
-    hint:
-      "Work from the material, not from its appearance. A read-only check on a copy is allowed " +
-      "and preferred over guessing; let the material confirm the result. Do not overwrite the " +
-      "material. The tape already holds what you observed — do not re-read, re-probe, or " +
-      "re-list it. When the required result exists and matches the material, reply with it as " +
-      "text only.",
+      "Work from the material, not from its appearance: a read-only check on a copy is allowed " +
+      "and preferred over guessing, and the material confirms the result. The material is " +
+      "evidence — change it only where the task says to (repair the damaged file, clean the " +
+      "repository); otherwise write the result beside it. The workspace root, the repository " +
+      "status and the environment are in the tape: they are already read. When the required " +
+      "result exists and matches the material, reply with it as text only.",
     applies: RECOVER_TOOLS,
     next: [
       {
@@ -191,15 +129,7 @@ export const ISLANDS: Record<IslandId, Island> = {
       "and every other file the task needs are created or updated, and the result has the " +
       "declared form",
     instruction:
-      "Locate the defect and change the artifact in one loop: name the target and the cause, " +
-      "make the change the cause implies, and read the result. The change includes every other " +
-      "file the task needs, created or updated. A change that does not hold is evidence about " +
-      "the cause — revise the cause and change again from it; do not repeat the same edit, and " +
-      "do not work around a cause you have not established. If the result has a declared form " +
-      "(path, length, format), produce it and check that form in the same step. Do not defer a " +
-      "required file to another state.",
-    hint:
-      "Choose the candidate files by name from the workspace map and the request; compare the " +
+      "Choose the candidate files from the workspace and the request; compare the " +
       "target against the sibling that performs the same operation and name the cause before " +
       "you edit — the expression, step, or encoding that looks wrong and the invariant it " +
       "breaks. Mark it a suspicion, then change it and read the result. Read the definition of " +
@@ -229,8 +159,7 @@ export const ISLANDS: Record<IslandId, Island> = {
       "matches what the material contains",
     instruction:
       "Reconstruct the required output from the material. Create the output and any working " +
-      "copies; keep the material read-only.",
-    hint:
+      "copies; keep the material read-only.\n\n" +
       "Keep the material read-only; write the required output and working copies. Do not " +
       "fabricate. If a tool is missing, fix the environment before replacing it.",
     applies: RECOVER_TOOLS,
@@ -253,12 +182,9 @@ export const ISLANDS: Record<IslandId, Island> = {
       "the artifact exists, is derived from the specification or the material's behaviour, and " +
       "the acceptance check passes",
     instruction:
-      "Build the artifact from the specification. When the request names a program or artifact " +
-      "whose behaviour is the specification, use that behaviour. Write and run an acceptance " +
-      "check; fix the artifact until it passes. Leave the material unchanged.",
-    hint:
-      "Check the artifact against the specification or the material's behaviour on representative " +
-      "inputs. The artifact must pass the check; if it fails, fix the artifact.",
+      "Build the artifact from the specification the request declares, or from the behaviour of " +
+      "the program it names. Check it on representative inputs and fix it until the check " +
+      "passes. The material stays unchanged.",
     applies: CONSTRUCT_TOOLS,
     next: [
       {
@@ -280,14 +206,14 @@ export const ISLANDS: Record<IslandId, Island> = {
       "and the result is derived from the source material, not synthesized",
     instruction:
       "Run the acceptance command if the workspace has one; otherwise check the declared " +
-      "constraints. Read the actual result. Do not write the acceptance or change the artifact.",
-    hint:
-      "Run the acceptance command if the workspace has one; otherwise check the declared " +
-      "constraints, and read the actual result. Do not change the artifact here — not with an " +
-      "edit, not with a shell command. A check that only reads your own output is not " +
-      "acceptance: compare the result against the source material. If it could not run because " +
-      "the environment is not ready — wrong working directory or missing build/test artifacts — " +
-      "fix the environment and retry.",
+      "constraints, and read the output itself — a zero exit status is not proof that the check " +
+      "passed. The acceptance is the one the request declares: do not substitute a criterion of " +
+      "your own. Do not change the artifact here, not with an edit and not with a shell command. " +
+      "If the check could not run because the environment is not ready — wrong working directory, " +
+      "missing build or test artifacts — fix the environment and retry.\n\n" +
+      "If it passes, close the state. If it fails, close it too and put the failure in the " +
+      "result: the command or constraint, its exit status, and the first real error, quoted. Do " +
+      "not interpret the code and do not propose a fix — that is the next state's work.",
     applies: INSPECT,
     next: [
       { to: "end", when: "the acceptance holds" },
@@ -299,10 +225,13 @@ export const ISLANDS: Record<IslandId, Island> = {
     label: "End",
     what: "complete the request",
     criterion: "",
-    instruction: "The work is done; complete the request.",
-    hint:
-      "Reply with the final result as text when the request is complete; the finished state's " +
-      "check is the verification — do not re-verify here.",
+    instruction:
+      "The work is done; complete the request. Reply with the final report as text only, with no " +
+      "tool calls.\n\n" +
+      "Read the tape — the request, the states the task passed, what each of them did, the files " +
+      "it changed, and how the result was checked — and write the report from those records in " +
+      "GitHub-flavored Markdown: what was done and where, how it was verified, and what is still " +
+      "open. Your reply is shown to the user as-is.",
     applies: [],
     next: [],
   },

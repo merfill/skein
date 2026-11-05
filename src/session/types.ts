@@ -88,9 +88,6 @@ export type SessionEvent =
       reason: string;
       reasoning?: string;
     }
-  // The session agent's answer after a task it started has finished. It is a report, not a
-  // second interpretation of the utterance, so it belongs to the same session unit.
-  | { type: "report"; unitId: string; turn: number; text: string }
   | { type: "no_decision"; unitId: string; turn: number; reason: NoDecisionReason };
 
 export interface SessionState {

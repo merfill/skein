@@ -302,12 +302,23 @@ describe("apply: edit", () => {
     );
   });
 
-  it("OP-AP-EDIT-4 / REF-EDIT-STALE refuses editing on a stale read", () => {
+  it("OP-AP-EDIT-4 / REF-EDIT-STALE refuses editing on a stale read, carrying current content", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(read("src/sum.mjs"), [request()], ws);
     // A successful edit mutates the file; the read is now stale.
     const mutated = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
-    expect(refusalText(edit("src/sum.mjs", "a + b", "a - b"), mutated.events, ws)).toBe("stale_base");
+    const stale = exec(edit("src/sum.mjs", "a + b", "a - b"), mutated.events, ws);
+    expect(refusalText(edit("src/sum.mjs", "a + b", "a - b"), mutated.events, ws)).toMatch(
+      /^stale_base: src\/sum\.mjs changed since it was read/,
+    );
+    // The refused observation shows the current content and marks that version as observed, so
+    // a retry is legitimate instead of refused again for the same reason.
+    expect(stale.outcome.turn.text).toContain("current content of src/sum.mjs");
+    expect(stale.outcome.turn.text).toContain("a + b");
+    // The stale observations carries the current version, so the retry is not refused again
+    // for the same reason — the stale-base turn no longer costs a separate read.
+    const retried = exec(edit("src/sum.mjs", "a + b", "a - b"), stale.events, ws);
+    expect(retried.outcome.turn.text).toContain("edited src/sum.mjs");
   });
 
   it("OP-AP-EDIT-5 a path outside the workspace is a fail observation, not a crash", () => {
@@ -350,11 +361,18 @@ describe("apply: write", () => {
     );
   });
 
-  it("OP-AP-WRITE-4 / REF-WRITE-STALE refuses overwriting on a stale read", () => {
+  it("OP-AP-WRITE-4 / REF-WRITE-STALE refuses overwriting on a stale read, then accepts a retry", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(read("src/sum.mjs"), [request()], ws);
     const mutated = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
-    expect(refusalText(write("src/sum.mjs", "x"), mutated.events, ws)).toBe("stale_base");
+    const refused = exec(write("src/sum.mjs", "x"), mutated.events, ws);
+    expect(refused.outcome.turn.text).toMatch(/^stale_base: src\/sum\.mjs changed since it was read/);
+    expect(ws.read("src/sum.mjs")).toContain("a + b");
+    // The observation carried the current content and version, so the retry applies directly:
+    // the stale-base turn no longer costs a separate read.
+    const retried = exec(write("src/sum.mjs", "x"), refused.events, ws);
+    expect(retried.outcome.turn.text).toContain("wrote src/sum.mjs");
+    expect(ws.read("src/sum.mjs")).toBe("x");
   });
 
   it("OP-AP-WRITE-5 fails to overwrite a file that was never read, leaving it intact", () => {

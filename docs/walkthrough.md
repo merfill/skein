@@ -31,8 +31,7 @@ change it needs" or "check the change against the acceptance". Every state has a
 should be known), a criterion (the observable sign that the goal is reached) and a way to act
 (which tools are available and how to behave). The model enters a state with a `move`, works in
 it and closes it with a `stop` when the criterion holds. The set of states is fixed: Orientation,
-Research, Patch, Construction, Verification, End. (Recovery and Localization are legacy names:
-their work is now part of Research and Patch, and old journals still render them.) The current state determines what the
+Research, Patch, Construction, Verification, End. The current state determines what the
 tape shows: its goal, its material information, its instruction and its plan. Once a state is
 closed, the tape keeps only `Start`/`Finish` from it, and the focus moves on.
 
@@ -78,7 +77,7 @@ Then come the states. An open state looks like this:
 
 ```
 system   Start state <label>
-system   <workspace map or environment facts>
+system   <coordinates and/or environment facts>
 system   <instruction: how to act in this state>
 user     Goal: <state goal>
          Your earlier guess (may be wrong): <guess>   ← when the model set it
@@ -86,24 +85,23 @@ assistant [id] <tool call> + reasoning
 tool      [id] <result>
 assistant [id] <next call> + reasoning
 tool      [id] <result>
-system   <turn hint: hint → Done when → stop requirement>
 ```
 
-Calls and results accumulate: they are what the model has already done in this state. The turn
-hint is not stored: on the next turn it is gone, and a new one is appended.
+Calls and results accumulate: they are what the model has already done in this state. Nothing is
+appended after them: the goal and `Done when` live in the state's entry.
 
 An example of an open Patch after two calls:
 
 ```
 system   Start state Patch
-system   Orientation result: root /app, entries ...
+system   Workspace root: /app / Workspace repository: ... / environment
 system   Locate the defect and change the artifact in one loop ...
 user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... window 40-90 ...
-system   Start from the workspace map ... Done when: "the defect is located ..."
+system   Choose the candidate files from the workspace ... Done when: "the defect is located ..."
          When it holds, `stop` — and nothing else.
 ```
 
@@ -166,15 +164,15 @@ work.
 
 | Island | Goal (`island.what`) | Criterion (briefly) | Material information | `next` |
 |---|---|---|---|---|
-| **Orientation** | name the root, top-level entries, repo status and acceptance | root and entries known; repo noted; acceptance named | `Workspace map` | P, R, C |
-| **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | `Workspace map` + environment | End, P¹ |
-| **Patch** | find the defect in the existing artifact and make the change it needs | target and coordinates; siblings ruled out; the cause named as a suspicion; complete change (located artifact + every other file the task needs) in its declared form | `Workspace map` + environment | V, R¹ |
-| **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | environment | End, R |
+| **Orientation** | name the root, repo status and acceptance | root known; repo noted; acceptance named | coordinates | P, R, C |
+| **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | coordinates + environment | End, P¹ |
+| **Patch** | find the defect in the existing artifact and make the change it needs | target and coordinates; siblings ruled out; the cause named as a suspicion; complete change (located artifact + every other file the task needs) in its declared form | coordinates + environment | V, R¹ |
+| **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | coordinates + environment | End, R |
 | **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | environment | End, P¹ |
 | **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
 
-The legacy `recovery` and `localization` islands are still rendered for journals written before
-their merges; neither is a live `move` target.
+Coordinates are the `Workspace root`, the `Workspace repository` status and the `Working
+directory` when the shell starts outside the root.
 
 ¹ Corrective edges. `Patch → Research` is chosen when the work turns out to be a situation, not a
 defect to locate and fix; `Research → Patch` when the situation turns out to be a code defect;
@@ -183,8 +181,8 @@ the cause it acted on. These correct a wrong start classification or a wrong cau
 a routine exit.
 
 Besides the goal and the criterion, an island defines `instruction` (how to act; shown once at
-entry), `hint` (how to behave on every turn) and `applies` (which apply-tools are available).
-Neither the instruction nor the hint replaces the goal: the goal is `island.what`.
+entry) and `applies` (which apply-tools are available). The instruction does not replace the
+goal: the goal is `island.what`.
 
 ### 2.2 Routes
 
@@ -203,10 +201,10 @@ ends when the terminal `End` state is closed.
 
 ### 3.1 Material information
 
-The material information depends on the island: `Workspace map` (Orientation),
-`Workspace map` + environment (Patch, Research), and the environment (Construction,
-Verification). The legacy Recovery and Localization get the environment too. These are already
-recorded facts; there is no need to re-probe them.
+The material information depends on the island: the coordinates alone (Orientation), the
+coordinates + environment (Research, Patch, Construction), and the environment alone
+(Verification). The tree itself is not listed: a state that needs the files lists them. These
+are already recorded facts; there is no need to re-probe them.
 
 ### 3.2 Reasoning
 
@@ -253,20 +251,20 @@ The doxa calls `move {state:"orientation"}`. The Orientation entry appears on th
 
 ```
 system   Start state Orientation
-system   Workspace map: root /app; entries src/, Makefile, tests/ ...
-system   Read the workspace map ... (state instruction)
-user     Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares
+system   Workspace root: /app
+system   The workspace root and the repository status are already in the tape ... (state instruction)
+user     Goal: name the workspace root, the repository status, and the acceptance the request declares
 system   ... Done when: "..." ... When it holds, `stop` — and nothing else.
 ```
 
 The map and the request already give the goal and the acceptance, so the move is
-`stop {why:"root /app; entries src/, Makefile, tests/; acceptance: make test"}`.
+`stop {why:"root /app; acceptance: make test"}`.
 
 Orientation leaves a trace:
 
 ```
 system   Start state Orientation
-system   Finish state Orientation — root /app; entries ...; acceptance: make test
+system   Finish state Orientation — root /app; acceptance: make test
 ```
 
 ### 4.4 The transition to Patch
@@ -295,7 +293,7 @@ trace and the open Patch:
 
 ```
 system   Start state Patch
-system   Orientation result: root /app; entries ...; acceptance: make test
+system   Workspace root: /app / Workspace repository: ...; acceptance: make test
 system   Locate the defect and change the artifact in one loop ... (state instruction)
 user     Goal: find the defect in the existing artifact and make the change it needs
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
@@ -346,7 +344,7 @@ The second Patch applies a different diff — with a boundary check — and Veri
 ```
 system   Finish state Verification — make test: exit 1 — IndexError: list index out of range
 system   Start state Patch
-system   Workspace map ...
+system   Workspace root: /app / Workspace repository: ...
 user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a5] edit {path:"src/parse.py", ...}   ← another diff
 tool      [m] mutated src/parse.py
@@ -398,8 +396,8 @@ are available by `id`.
   the material information leave, but stay in the IR.
 - **`Finish` is the trace and the handoff.** The next state does not inherit the plan. It gets its
   own material information and reads the `Finish` line as the result.
-- **The tail holds the goal.** `hint`, `Done when` and the closure requirement are rebuilt every
-  turn. This is not memory; it is a reminder at the end of the tape.
+- **The tail holds the goal.** `Done when` and the closure requirement live in the state's entry.
+  This is not memory; it is the state entry at the top of the tape.
 - **Reasoning on the tape.** The doxa sees its past reasoning on assistant turns; the raw
   `thought` is not stored, its meaning stays in `why`.
 - **No criterion check.** `stop` is accepted by the doxa; an instrument failure is a fact, not a
@@ -462,8 +460,8 @@ active. `recall`/`search` are available only while a state is open.
 
 - **States are isolated.** The model works with the current state's goal and material, not the
   whole past path; a closed state does not distract it.
-- **The tail holds the goal.** `hint`, `Done when` and the closure requirement remind it of the
-  criterion at the end of the tape and leave no debris in the journal.
+- **The goal is in the state entry.** `Done when` and the closure requirement keep the criterion
+  in view and leave no debris in the journal.
 - **The focus is non-monotone.** The tape is a view, not a transcript. A focus change removes the
   irrelevant, but knowledge stays available by `id`.
 - **Transitions cost money.** A prefix cache miss (prefill), an extra turn per transition, and

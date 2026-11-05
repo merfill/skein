@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  briefFor,
+  constructionBrief,
+  orientationBrief,
+  patchBrief,
+  researchBrief,
+} from "../src/ir/briefs";
 import { environmentBrief, type EnvironmentFact } from "../src/ir/environment";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
-import { workspaceBrief, type MaterialFact } from "../src/ir/material";
+import { workspaceLines, type MaterialFact } from "../src/ir/material";
 import { project } from "../src/ir/project";
-import { SESSION_PROBE_ID, probeBrief, type SessionProbe } from "../src/ir/session";
+import { SESSION_PROBE_ID, type SessionProbe } from "../src/ir/session";
 import { probeMaterial } from "../src/loop/material";
 import { parseProbe, probeSession } from "../src/loop/probe";
 import type { CommandResult, Workspace } from "../src/tools/workspace";
@@ -155,9 +162,9 @@ describe("environment probe", () => {
     expect(research).not.toContain("7z");
 
     const recovery = environmentBrief(environment, "recovery");
-    expect(recovery).toContain("Workspace root: /app.");
     expect(recovery).toContain("Installed interpreters:");
     expect(recovery).not.toContain("Version-control tools:");
+    expect(recovery).not.toContain("Workspace root:");
 
     // Patch locates the defect and changes the artifact: the search tools plus the toolchain
     // the change is built with.
@@ -171,6 +178,7 @@ describe("environment probe", () => {
     expect(patch).not.toContain("Workspace root:");
 
     const construction = environmentBrief(environment, "construction");
+    expect(construction).toContain("Version-control tools: git 2.39.2.");
     expect(construction).toContain("Build tools:");
     expect(construction).toContain("Test tools:");
     expect(construction).toContain("Available package managers:");
@@ -179,12 +187,6 @@ describe("environment probe", () => {
     expect(verification).toContain("Build tools:");
     expect(verification).toContain("Test tools:");
     expect(verification).not.toContain("Installed interpreters:");
-
-    const localization = environmentBrief(environment, "localization");
-    expect(localization).toContain("Version-control tools: git 2.39.2.");
-    expect(localization).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
-    expect(localization).not.toContain("tools: jq");
-    expect(localization).not.toContain("Workspace root:");
 
     expect(environmentBrief(environment, "end")).toBe("");
   });
@@ -208,33 +210,78 @@ describe("environment probe", () => {
     expect(brief).toContain("time budget");
   });
 
-  it("keeps the environment probe separate from the Orientation result", () => {
+  it("keeps the environment probe separate from the material coordinates", () => {
     const probe: SessionProbe = { environment, material };
-    expect(probeBrief(probe, "orientation")).toBe("");
-    expect(probeBrief(probe, "research")).toContain("Installed interpreters:");
-    expect(probeBrief(probe, "localization")).toContain("Version-control tools:");
+    expect(orientationBrief(probe)).not.toContain("Installed interpreters:");
+    expect(orientationBrief(probe)).toContain("Workspace root: /app");
+    expect(researchBrief(probe)).toContain("Installed interpreters:");
+    expect(researchBrief(probe)).toContain("Workspace repository: git at /app/ocaml");
   });
 });
 
-describe("workspace map", () => {
-  it("renders the workspace lines under the requested title", () => {
-    const workspace = workspaceBrief(material, "Workspace map");
-    expect(workspace).toContain("Workspace map");
-    expect(workspace).toContain("root: /app");
-    expect(workspace).toContain("repo: git at /app/ocaml");
-    expect(workspace).toContain("entries: ocaml/ (20 files), README.md");
-    expect(workspace).toContain("paths: README.md, ocaml/Makefile, ocaml/src/a.c");
-    expect(workspace).toContain("files: 20");
+describe("state briefs", () => {
+  const probe: SessionProbe = { environment, material };
+
+  it("renders the coordinates without a listing or a title", () => {
+    const brief = researchBrief(probe);
+    expect(brief).not.toContain("Workspace map");
+    expect(brief).not.toContain("entries:");
+    expect(brief).not.toContain("paths:");
+    expect(brief).not.toContain("files:");
+    expect(brief.split("\n")[0]).toBe("Workspace root: /app");
+    expect(brief).toContain("Workspace repository: git at /app/ocaml (branch main, head abc1234, 2 changed)");
+  });
+
+  it("puts the environment right under the coordinates, with no blank line", () => {
+    const brief = researchBrief({ environment: { ...environment, network: "off" }, material });
+    expect(brief).not.toContain("\n\n");
+    expect(brief).toMatch(/Workspace repository: .*\nNetwork is available:/);
+  });
+
+  it("gives Construction the same coordinates and its own toolchain", () => {
+    const brief = constructionBrief(probe);
+    expect(brief).toContain("Workspace root: /app");
+    expect(brief).toContain("Workspace repository:");
+    expect(brief).toContain("Version-control tools: git 2.39.2.");
+    expect(brief).toContain("Compilers: gcc 13.2.0.");
+    expect(brief).toContain("Installed interpreters:");
+    expect(brief).toContain("Available package managers:");
+  });
+
+  it("leaves the coordinates out when the material fact is missing", () => {
+    const brief = patchBrief({ environment });
+    expect(brief).toContain("Workspace root: /app");
+    expect(brief).not.toContain("Workspace repository:");
+    expect(brief).toContain("Version-control tools:");
+  });
+
+  it("gives End an empty brief and dispatches by island", () => {
+    expect(briefFor("end", probe)).toBe("");
+    expect(briefFor("research", probe)).toBe(researchBrief(probe));
+    expect(briefFor("orientation", probe)).toBe(orientationBrief(probe));
+  });
+});
+
+describe("workspace lines", () => {
+  it("states the coordinates under human headings", () => {
+    const lines = workspaceLines(material);
+    expect(lines[0]).toBe("Workspace root: /app");
+    expect(lines[1]).toBe("Workspace repository: git at /app/ocaml (branch main, head abc1234, 2 changed)");
   });
 
   it("states the scope when there is no repository", () => {
-    const workspace = workspaceBrief({ ...material, repos: [] }, "Workspace map");
-    expect(workspace).toContain("repo: none (no .git/.hg/.svn under /app)");
+    expect(workspaceLines({ ...material, repos: [] })).toContain(
+      "Workspace repository: none (no .git/.hg/.svn under /app)",
+    );
   });
 
-  it("shows the shell cwd only when it differs from the root", () => {
-    expect(workspaceBrief({ ...material, cwd: "/app/ocaml" }, "Workspace map")).toContain("cwd: /app/ocaml");
-    expect(workspaceBrief({ ...material, cwd: "/app" }, "Workspace map")).not.toContain("cwd:");
+  it("shows the shell working directory only when it differs from the root", () => {
+    expect(workspaceLines({ ...material, cwd: "/app/ocaml" })).toContain("Working directory: /app/ocaml");
+    expect(workspaceLines({ ...material, cwd: "/app" })).not.toContain("Working directory:");
+  });
+
+  it("keeps the listing out of the coordinates", () => {
+    expect(workspaceLines(material, { index: false })).not.toContain("entries: ocaml/ (20 files), README.md");
   });
 });
 
@@ -319,7 +366,7 @@ describe("material probe", () => {
 });
 
 describe("session probe projection", () => {
-  it("renders the workspace map as a system brief inside Orientation, not the environment", () => {
+  it("renders the coordinates as a system brief inside Orientation, without the environment", () => {
     const probe: SessionProbe = { environment, material };
     const context = project(fold([request(), probeEvent(probe), ...move("orientation")]));
     expect(context.history[0]).toMatchObject({ role: "user", text: "task" });
@@ -328,52 +375,50 @@ describe("session probe projection", () => {
     );
     expect(start?.text).toBe("Start state Orientation");
     const brief = context.history.find(
-      (message) => message.role === "system" && message.text.includes("Workspace map"),
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
-    expect(brief?.text).toContain("Workspace map");
-    expect(brief?.text).not.toContain("Environment");
+    expect(brief?.text).toContain("Workspace repository: git at /app/ocaml");
+    expect(brief?.text).not.toContain("Installed interpreters:");
   });
 
-  it("carries the Orientation result into Patch and Research", () => {
+  it("carries the coordinates into Patch and Research", () => {
     const probe: SessionProbe = { environment, material };
     const patchContext = project(fold([request(), probeEvent(probe), ...move("patch")]));
     const patchBrief = patchContext.history.find(
-      (message) => message.role === "system" && message.text.includes("Workspace map"),
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
-    expect(patchBrief?.text).toContain("Workspace map");
+    expect(patchBrief?.text).toContain("Workspace repository: git at /app/ocaml");
     expect(patchBrief?.text).toContain("Version-control tools: git 2.39.2.");
     expect(patchBrief?.text).toContain("Installed interpreters:");
     expect(patchBrief?.text).toContain("Build tools:");
 
     const research = project(fold([request(), probeEvent(probe), ...move("research")]));
-    const researchBrief = research.history.find(
-      (message) => message.role === "system" && message.text.includes("Workspace map"),
+    const researchBriefText = research.history.find(
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
-    expect(researchBrief?.text).toContain("Workspace map");
-    expect(researchBrief?.text).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
-    expect(researchBrief?.text).not.toContain("Environment");
+    expect(researchBriefText?.text).toContain("Workspace repository: git at /app/ocaml");
+    expect(researchBriefText?.text).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
+    expect(researchBriefText?.text).not.toContain("entries:");
   });
 
-  it("gives other states the probe only, not the Orientation result", () => {
+  it("gives Recovery its coordinates and no Orientation listing", () => {
     const probe: SessionProbe = { environment, material };
     const recovery = project(fold([request(), probeEvent(probe), ...move("recovery")]));
     const brief = recovery.history.find(
       (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
     expect(brief?.text).toContain("Installed interpreters:");
-    expect(brief?.text).not.toContain("Workspace map");
+    expect(brief?.text).not.toContain("entries:");
   });
 
-  it("gives Patch the material map and the toolchain the change is built with", () => {
+  it("gives Patch the coordinates and the toolchain the change is built with", () => {
     const probe: SessionProbe = { environment, material };
     const patch = project(fold([request(), probeEvent(probe), ...move("patch")]));
     const brief = patch.history.find(
-      (message) => message.role === "system" && message.text.includes("Workspace map"),
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
-    expect(brief?.text).toContain("Workspace map");
-    expect(brief?.text).toContain("repo: git at /app/ocaml");
-    expect(brief?.text).toContain("entries:");
-    expect(brief?.text).not.toContain("Environment");
+    expect(brief?.text).toContain("Workspace repository: git at /app/ocaml");
+    expect(brief?.text).not.toContain("entries:");
     expect(brief?.text).toContain("Compilers:");
     expect(brief?.text).toContain("Installed interpreters:");
     expect(brief?.text).not.toContain("Test tools:");
@@ -385,7 +430,7 @@ describe("session probe projection", () => {
     expect(context.history).toEqual([{ role: "user", text: "task" }]);
   });
 
-  it("elides the blocks from older closed states", () => {
+  it("elides the brief from older closed states", () => {
     const probe: SessionProbe = { environment, material };
     const events = [
       request(),
@@ -396,7 +441,7 @@ describe("session probe projection", () => {
     ];
     const context = project(fold(events));
     const results = context.history.filter(
-      (message) => message.role === "system" && message.text.includes("Workspace map"),
+      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
     );
     expect(results).toHaveLength(1);
     expect(results[0]?.text).not.toContain("what:");
@@ -427,6 +472,6 @@ describe("session probe", () => {
     expect(probe?.environment?.network).toBe("off");
     expect(probe?.environment?.found.map((tool) => tool.name)).toEqual(["git", "python3"]);
     expect(probe?.material?.files).toBe(2);
-    expect(workspaceBrief(probe?.material as MaterialFact, "Workspace map")).toContain("Workspace map");
+    expect(workspaceLines(probe?.material as MaterialFact)[0]).toBe("Workspace root: /app");
   });
 });

@@ -46,25 +46,6 @@ export const SESSION_BASE_PROMPT = [
   "`respond` is shown to the user as-is: GitHub-flavored Markdown. Answer as briefly as possible and only what the user asked.",
 ].join("\n\n");
 
-// The post-task answer: the session agent reports a finished task to the user. It is a report,
-// not a second interpretation, so it does not open a session unit of its own.
-export const SESSION_REPORT_PROMPT = [
-  "You are the assistant that reports a finished coding task to the user. The original request, the task request and the task trace are below.",
-  "Write a concise GitHub-flavored Markdown report: what was done, where, how it was verified, and any caveats. Use only facts from the trace; do not invent results. If the task is still open, say where it stopped.",
-  "Do not start a new task and do not change files. No preamble; keep it under about 250 words.",
-].join("\n\n");
-
-export interface SessionReportInput {
-  // The user utterance that started the turn.
-  utterance: string;
-  // The reformulated task request the task agent received.
-  request: string;
-  // A deterministic trace of the task: states, changed files, outcome.
-  trace: string;
-}
-
-export type SessionReporter = (input: SessionReportInput) => Promise<string | undefined>;
-
 export interface SessionToolCall {
   name: string;
   args: Record<string, unknown>;
@@ -112,8 +93,6 @@ export interface SessionAgentDeps {
   tools: SessionTools;
   // Side-channel telemetry; never rendered on the tape.
   telemetry?: TelemetrySink;
-  // The post-task report. Absent in tests and replays that do not need an extra model call.
-  report?: SessionReporter;
   maxTurns?: number;
   surveyLimit?: number;
   onProgress?: ProgressSink;

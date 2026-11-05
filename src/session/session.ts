@@ -146,16 +146,6 @@ export function recordOperation(
   });
 }
 
-export function recordReport(
-  session: SessionState,
-  unitId: string,
-  turn: number,
-  text: string,
-): void {
-  unitOf(session, unitId);
-  append(session, { type: "report", unitId, turn, text });
-}
-
 export function recordNoDecision(
   session: SessionState,
   unitId: string,

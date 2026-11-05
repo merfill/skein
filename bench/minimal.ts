@@ -1,9 +1,8 @@
 import type { ModelMessage } from "ai";
 
 import { loadSettings } from "../src/config/settings";
+import { patchBrief } from "../src/ir/briefs";
 import { ISLANDS } from "../src/ir/islands";
-import { workspaceBrief } from "../src/ir/material";
-import { probeBrief } from "../src/ir/session";
 import { createChatModel } from "../src/llm/client";
 import type { Action, Apply } from "../src/llm/schemas";
 import { invokeTools } from "../src/llm/structured";
@@ -103,9 +102,7 @@ async function main(): Promise<void> {
 
   try {
     const probe = probeSession(workspace);
-    const map = probe?.material !== undefined ? workspaceBrief(probe.material, "Workspace map") : "";
-    const environment = probe !== undefined ? probeBrief(probe, "localization") : "";
-    const brief = [map, environment].filter((part) => part !== "").join("\n\n");
+    const brief = probe !== undefined ? patchBrief(probe) : "";
 
     const messages: ModelMessage[] = [
       {

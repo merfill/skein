@@ -15,7 +15,6 @@ import {
   popUnit,
   recordNoDecision,
   recordReaction,
-  recordReport,
   sessionFocus,
   takePending,
   unitOf,
@@ -26,7 +25,6 @@ import {
   type SessionAgentDeps,
   type WorkspaceIntro,
 } from "./session_agent";
-import { unitOutline } from "./session_outline";
 import { generalFactsText, projectInstructionsText } from "./session_workspace";
 import type {
   NoDecisionReason,
@@ -68,7 +66,7 @@ export interface PausedState {
   unitId: string;
   utterance: string;
   utteranceTurn: number;
-  // The session unit that proposed the `start`; the post-task report belongs to it.
+  // The session unit that proposed the `start`.
   interpretationUnitId?: string;
   // Session resume: the loop turn already completed and the captured L0.
   startTurn?: number;
@@ -89,8 +87,6 @@ export interface SessionTurnResult {
   reply?: string;
   task?: { unitId: string; result: AgentResult };
   general?: { unitId: string; result: GeneralResult };
-  // The session agent's Markdown report after the task finished.
-  report?: string;
   // Why the interpretation ended without an operation.
   noDecision?: NoDecisionReason;
   // The turn stopped on a user pause; the unit is open and focused.
@@ -146,41 +142,6 @@ function requestText(journal: readonly Event[]): string {
     return typeof payload?.text === "string" ? payload.text : event.node.label;
   }
   return "";
-}
-
-function lastStop(events: readonly Event[]): string | undefined {
-  let stop: string | undefined;
-  for (const event of events) {
-    if (event.type === "add_node" && event.node.kind === "stop") stop = event.node.label;
-  }
-  return stop;
-}
-
-function changedFiles(events: readonly Event[]): string[] {
-  const refs = new Set<string>();
-  for (const event of events) {
-    if (event.type === "mutate") refs.add(event.ref);
-  }
-  return [...refs];
-}
-
-// The deterministic facts the reporter may use: the task's states, changed files, outcome.
-function taskTrace(
-  session: SessionState,
-  unitId: string,
-  events: readonly Event[],
-  result: AgentResult,
-): string {
-  const changed = changedFiles(events);
-  const stop = lastStop(events);
-  const outcome =
-    stop !== undefined ? `${result.stopReason ?? "done"}: ${stop}` : (result.stopReason ?? "still open");
-  return [
-    unitOutline(session, unitId),
-    changed.length > 0 ? `changed files: ${changed.join(", ")}` : "changed files: none",
-    `outcome: ${outcome}`,
-    `turns: ${result.turns}`,
-  ].join("\n");
 }
 
 function lastTrigger(session: SessionState, taskUnitId: string): Trigger | undefined {
@@ -303,39 +264,6 @@ function pauseState(
   };
 }
 
-async function reportTask(
-  deps: SessionTurnDeps,
-  session: SessionState,
-  utterance: string,
-  turn: number,
-  interpretationUnitId: string,
-  unitId: string,
-  run: AgentResult,
-  result: SessionTurnResult,
-): Promise<void> {
-  if (deps.sessionAgent.report === undefined) return;
-  deps.onProgress?.({ type: "report_started", unitId: interpretationUnitId });
-  try {
-    const report = await deps.sessionAgent.report({
-      utterance,
-      request: requestText(unitOf(session, unitId).journal),
-      trace: taskTrace(session, unitId, run.events, run),
-    });
-    if (report !== undefined && report.trim() !== "") {
-      recordReport(session, interpretationUnitId, turn, report);
-      result.report = report;
-    }
-    deps.onProgress?.({
-      type: "report_finished",
-      unitId: interpretationUnitId,
-      ...(result.report !== undefined ? { text: result.report } : {}),
-    });
-  } catch {
-    // The task result is the fact; the report is a presentation aid.
-    deps.onProgress?.({ type: "report_finished", unitId: interpretationUnitId });
-  }
-}
-
 async function dispatch(
   deps: SessionTurnDeps,
   session: SessionState,
@@ -408,7 +336,6 @@ async function dispatch(
     recordPause(deps, result.paused);
     return result;
   }
-  await reportTask(deps, session, utterance, turn, interpretation.unitId, unitId, run, result);
   return result;
 }
 
@@ -531,16 +458,6 @@ async function resumeObserver(
     recordPause(deps, result.paused);
     return result;
   }
-  await reportTask(
-    deps,
-    session,
-    paused.utterance,
-    paused.utteranceTurn,
-    paused.interpretationUnitId ?? taskUnitId,
-    taskUnitId,
-    run,
-    result,
-  );
   return result;
 }
 
@@ -649,16 +566,6 @@ export async function resumeTurn(
     recordPause(deps, result.paused);
     return result;
   }
-  await reportTask(
-    deps,
-    session,
-    paused.utterance,
-    paused.utteranceTurn,
-    paused.interpretationUnitId ?? paused.unitId,
-    paused.unitId,
-    run,
-    result,
-  );
   return result;
 }
 

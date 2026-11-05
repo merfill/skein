@@ -45,17 +45,19 @@ thousands of artifacts.
 - the **probe** is one session `fact` (`add_node kind:"fact"`, `id: fact:session`) carrying
   `{ environment, material }`, recorded at request start. It is not a separate message after the
   request; the projection emits the block as a `system` turn before the **current** state's
-  instruction. Orientation gets `Workspace` — the workspace map (`root`, `cwd` when the shell
-  starts outside the root, repo, entries/paths);
-  Patch and Research get the same map plus the environment;
-  Construction and Verification get the environment. The environment is a short list of facts
-  (`Workspace root`, `Network is available`, interpreters, package managers, build/test tools),
-  not an inventory of stock utilities. Closed states carry no block; the request turn has none;
-- the workspace map is deterministic: `root`, `cwd` (when it differs), repo status, top-level
-  entries (full paths for small materials), file count. Environment, extensions, configs, build commands and build state
-  are **not** shown in Orientation; a declared command is never presented as the acceptance;
+  instruction. The block comes from the state's own brief (`src/ir/briefs.ts`): Orientation gets
+  the coordinates (the workspace root, the repository status, the working directory when the shell
+  starts outside the root); Research, Patch and Construction get the coordinates plus their
+  environment subset; Verification gets the environment alone; End gets nothing. The environment
+  is a short list of facts (`Network is available`, interpreters, package managers, build/test
+  tools, version-control tools), not an inventory of stock utilities. Closed states carry no
+  block; the request turn has none;
+- the coordinates are deterministic and are not a listing: no top-level entries, no paths, no
+  file count. A state that needs the files lists them. Environment, extensions, configs, build
+  commands and build state are **not** shown in Orientation; a declared command is never
+  presented as the acceptance;
 - its states (`move` children) render in order: an **open** state (the current one) renders its
-  `Start state` marker, brief, `instruction` (`system`), conduct hint, goal + `Done when` (`user`) and turns; a state
+  `Start state` marker, brief, `instruction` (`system`), goal + `Done when` (`user`) and turns; a state
   **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
   No brief, instruction, goal, turn messages or separate `stop` message remain;
 - the doxa's `move.what` is an unverified guess shown on the open state's `Goal:` turn
@@ -100,8 +102,8 @@ The system part is assembled per situation, not as a monolith:
   `request`/`transition` only `move` is offered, while a state is open the apply tools are
   offered (`recall`/`search` always); `stop` is engine-owned (the doxa closes a state with text);
 - the **situation prompt** is appended last only for `request`, `transition` and `terminal`
-  (temporary, never stored). An open state appends nothing: its hint and `Done when` live in the
-  state entry. `request` (choose the first state, or `decline`; `what`/`done` — **from the
+  (temporary, never stored). An open state appends nothing: its `Done when` lives in the state
+  entry. `request` (choose the first state, or `decline`; `what`/`done` — **from the
   request**), `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
   `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
   the next state or End), `terminal` ("This is End." + the text completion rule);

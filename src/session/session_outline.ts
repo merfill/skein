@@ -38,13 +38,11 @@ interface TraceDecision {
   operation?: SessionOperation;
   reason?: string;
   reasoning?: string;
-  // The post-task answer, when the session unit started a task that has since finished.
-  report?: string;
   // Why an interpretation turn ended without an operation.
   noDecision?: NoDecisionReason;
 }
 
-// The decision a session unit committed or had refused; a report may follow a `start`.
+// The decision a session unit committed or had refused.
 function decisionOf(session: SessionState, unitId: string): TraceDecision | undefined {
   const decision: TraceDecision = {};
   for (const event of session.journal) {
@@ -57,8 +55,6 @@ function decisionOf(session: SessionState, unitId: string): TraceDecision | unde
       decision.operation = event.operation;
       decision.reason = event.reason;
       if (event.reasoning !== undefined) decision.reasoning = event.reasoning;
-    } else if (event.type === "report") {
-      decision.report = event.text;
     } else if (event.type === "no_decision") {
       decision.noDecision = event.reason;
     }
@@ -67,7 +63,7 @@ function decisionOf(session: SessionState, unitId: string): TraceDecision | unde
 }
 
 function decisionText(decision: TraceDecision): string {
-  const { operation, reason, reasoning, report, noDecision } = decision;
+  const { operation, reason, reasoning, noDecision } = decision;
   const text =
     operation === undefined
       ? ""
@@ -79,8 +75,7 @@ function decisionText(decision: TraceDecision): string {
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
-  const answer = report !== undefined ? `${text !== "" ? " · " : ""}report: "${short(report)}"` : "";
-  const base = `${text}${refused}${thought}${answer}`;
+  const base = `${text}${refused}${thought}`;
   const missing =
     noDecision !== undefined ? `${base !== "" ? " · " : ""}no decision: ${noDecision}` : "";
   return `${base}${missing}`;

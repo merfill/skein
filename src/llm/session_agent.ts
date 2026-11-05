@@ -15,11 +15,9 @@ import { loadSettings, type Settings } from "../config/settings";
 import { usageOf } from "../session/telemetry";
 import {
   createSessionTools,
-  SESSION_REPORT_PROMPT,
   type SessionAgent,
   type SessionAgentDeps,
   type SessionReply,
-  type SessionReporter,
   type SessionToolCall,
 } from "../session/session_agent";
 import type { ReadFile } from "../session/reading";
@@ -159,31 +157,6 @@ export interface SessionAgentDepsOptions extends SessionModelOptions {
   readFile?: ReadFile;
 }
 
-// The report is one plain completion: the task trace is already deterministic, so it needs no
-// tools and its output is not a session unit.
-export function modelSessionReporter(
-  model: LanguageModel,
-  options: SessionModelOptions = {},
-): SessionReporter {
-  return async (input) => {
-    const settings = options.settings ?? loadSettings();
-    const result = await generateText({
-      model,
-      system: SESSION_REPORT_PROMPT,
-      prompt: [
-        `Original request:\n${input.utterance}`,
-        `Task request:\n${input.request}`,
-        `Task trace:\n${input.trace}`,
-      ].join("\n\n"),
-      maxRetries: 0,
-      temperature: settings.temperature,
-      maxOutputTokens: settings.maxTokens,
-    });
-    const text = result.text.trim();
-    return text !== "" ? text : undefined;
-  };
-}
-
 export function createSessionAgentDeps(
   model: LanguageModel,
   options: SessionAgentDepsOptions = {},
@@ -192,7 +165,6 @@ export function createSessionAgentDeps(
   return {
     agent: modelSessionAgent(model, options),
     tools: createSessionTools(readFile),
-    report: modelSessionReporter(model, options),
     ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
     ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
   };

@@ -144,10 +144,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     const outcome = run.done ? (run.stopReason ?? "done") : "still open";
     lines.push(`task ${unitId}: ${outcome} after ${run.turns} turns`);
     lines.push(...taskLines(run.events, options));
-    if (result.report === undefined) {
-      const answer = taskAnswer(run.events);
-      if (run.done && answer !== undefined && answer !== "") lines.push(`task answer: ${answer}`);
-    }
+    const answer = taskAnswer(run.events);
+    if (run.done && answer !== undefined && answer !== "") lines.push(`task answer: ${answer}`);
   }
 
   if (result.general !== undefined) {
@@ -157,9 +155,6 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push(...taskLines(run.events, options));
     const answer = generalAnswer(run.events);
     if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
-  }
-  if (result.report !== undefined) {
-    lines.push("report:", result.report);
   }
   if (result.paused !== undefined) {
     lines.push("paused: [r]esume  [c]ancel  [q]uit");

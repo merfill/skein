@@ -40,7 +40,6 @@ describe("islands: the closed vocabulary", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
     expect(targets("orientation")).toEqual(expect.arrayContaining(["patch", "research", "construction"]));
-    expect(targets("localization")).toEqual(["patch", "research"]);
     expect(targets("research")).toEqual(["end", "patch"]);
     expect(targets("patch")).toEqual(["verification", "research"]);
     expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
@@ -121,17 +120,17 @@ describe("islands: the projection highlights the state", () => {
     expect(context.situation).toBe("working");
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
-    // The entry is a `Start state` marker, the island instruction + conduct hint, and the
-    // state's own goal + criterion as a `user` turn.
+    // The entry is a `Start state` marker, the island instruction, and the state's own goal +
+    // criterion as a `user` turn.
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
     expect(start).toBe("Start state Orientation");
-    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.hint)).toBe(true);
+    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.instruction)).toBe(true);
     expect(
       context.history.some(
         (m) =>
           m.role === "user" &&
           m.text.startsWith(
-            "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+            "Goal: name the workspace root, the repository status, and the acceptance the request declares",
           ) &&
           m.text.includes("Your earlier guess (may be wrong): recon") &&
           m.text.includes(`Done when: "${ISLANDS.orientation.criterion}".`),

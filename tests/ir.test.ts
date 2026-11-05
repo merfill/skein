@@ -166,16 +166,15 @@ describe("projection (the message tape)", () => {
       "user",
       "system",
       "system",
-      "system",
       "user",
       "assistant",
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[4]?.text).toContain(
-      "Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares",
+    expect(context.history[3]?.text).toContain(
+      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
     );
-    expect(context.history[4]?.text).toContain("Your earlier guess (may be wrong): green");
+    expect(context.history[3]?.text).toContain("Your earlier guess (may be wrong): green");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
     expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);
@@ -194,7 +193,7 @@ describe("projection (the message tape)", () => {
   it("elides a finished state's turns and carries its compaction line on the next move", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "localization", "find the cause", 1),
+      move("m1", "patch", "find the cause", 1),
       { type: "add_edge", edge: edge("em1", "r1", "m1", "move", llm) },
       { type: "add_node", node: workNode("a1", "action", "grep p", 3, { command: "grep p" }) },
       { type: "add_node", node: workNode("o1", "observation", "p at line 3", 4, { command: "grep p", output: "p at line 3" }) },
@@ -211,7 +210,7 @@ describe("projection (the message tape)", () => {
     expect(texts.some((text) => text.includes("p at line 3"))).toBe(false);
     expect(texts.some((text) => text.includes("grep p"))).toBe(false);
     // ...only its closure marker remains, in the finished state's triple.
-    expect(texts.some((text) => text.includes("Finish state Localization"))).toBe(true);
+    expect(texts.some((text) => text.includes("Finish state Patch"))).toBe(true);
     expect(context.situation).toBe("working");
   });
 

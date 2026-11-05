@@ -132,9 +132,7 @@ const PROBE_GROUPS: Record<Exclude<ProbeKind, "environment" | "material" | "all"
 };
 
 function materialText(probe: SessionProbe): string {
-  return probe.material !== undefined
-    ? ["Workspace map", ...workspaceLines(probe.material)].join("\n")
-    : "no material";
+  return probe.material !== undefined ? workspaceLines(probe.material).join("\n") : "no material";
 }
 
 function environmentText(probe: SessionProbe, groups: readonly EnvironmentGroup[]): string {

@@ -12,9 +12,6 @@
 > `docs/ir_semantics_ru.md` §7 (лента), `AGENTS.md`.
 >
 > **2026-11-03:** `Recovery` больше не живое состояние; его работа входит в `Research`.
-> **2026-11-04:** `Localization` тоже больше не живое состояние; он слит в `Patch`. Маршруты и
-> результаты ниже записаны до слияний и оставлены как история, поэтому маршрут вида
-> `O → L → P → V` сегодня читается как `O → P → V`.
 
 ## 0. Цель
 
@@ -271,18 +268,14 @@ system — Finish state <Label> — <why из stop>
   состоянии», рендерится `system`-сообщением при входе.
   - Orientation: «исследуй репозиторий поиском, прочти документацию проекта (README, HACKING)…
     дефект не ищи, сбой не воспроизводи, с upstream не сверяйся».
-  - Localization: «прочти подозрительный код и **сверь его с сиблингами** — другими обходами
-    той же структуры (тех же пулов/хипа); расхождение в шаге/кодировке — сигнал. Назови
-    файл(ы) и строки. Дефект не доказывай, правку не применяй, с upstream не сверяйся».
 - **Сверка с сиблингами работает**: в прогоне модель сама сопоставляет `pool_sweep` с
   `calc_pool_stats`/`pool_finalise`/`compact_update_pools`/`verify_pool` и находит расхождение
   `p += Whsize_hd(hd)` против `p += wh` (`runtime/shared_heap.c:650`). Дрейфа в `major_gc.c`
-  на свежем прогоне Localization нет.
+  на свежем прогоне нет.
 - **Описание `stop` усилено** (`src/llm/tools.ts`): теперь оно ссылается на строку
   критерия в контексте и несёт «a strong suspicion is enough — do not verify to be sure».
-- **Полный прогон до конца пути**: Localization (t6–t17) → transition → Patch
-  (`edit`: `p += Whsize_hd(hd)` → `p += wh`, t18–t24) → transition → Verification (t25+,
-  начал `./configure`/`make`). Ответ везде верный.
+- **Полный прогон до конца пути**: Patch (t6–t24; правка `p += Whsize_hd(hd)` → `p += wh` на
+  t18–t24) → transition → Verification (t25+, начал `./configure`/`make`). Ответ везде верный.
 - **Разобран промт opencode** (для сравнения): системный промт — общий, **без сценария**
   (ни `major`, ни `heap`, ни `sweep`); единственный источник задачи — запрос. opencode
   выигрывает не разметкой, а поведением: читает код широко и **сверяет «сестринские» циклы**,
@@ -293,18 +286,18 @@ system — Finish state <Label> — <why из stop>
   на assistant-сообщении хода; вкл. по умолчанию, `SKEIN_REASONING_TAPE=false` — выключатель для
   A/B.
   Контролируемый A/B на полном цикле (`sandbox-run`, `--net off`, K=3–4): **момент закрытия
-  локализации не меняется** (ON t14,15,14,11 / OFF t14,11,14), но reasoning ~2.5× меньше и
+  состояния не меняется** (ON t14,15,14,11 / OFF t14,11,14), но reasoning ~2.5× меньше и
   стоимость ~40% ниже (добавленный контекст уходит в `cacheRead`, fresh-вход равен ≈49k).
   Детали — `docs/benches/best_bench_ru.md`, раздел «2026-10-17».
-- **Возврат в Localization/Patch несёт неудачную попытку (2026-10-17).** `renderState`
-  (`src/ir/project.ts`) для **текущих открытых** Localization и Patch вставляет `system` сразу после
+- **Возврат в Patch несёт неудачную попытку (2026-10-17).** `renderState`
+  (`src/ir/project.ts`) для **текущего открытого** Patch вставляет `system` сразу после
   `ai: Start state …`: фактическую правку последнего `patch` (из `payload.call`) и модельный
   `stop.why` упавшей `verification` (literal, команда/exit/фактический текст); блок
   переформулирован ниже (reverted / different change). Раньше связь терялась: план закрытого
   состояния элидировался, оставались только `why` доксы.
   **Проверка без полного прогона** (по §2.3): записанный журнал прогона с циклом
-  (`2026-10-17T08-04-06-897Z`) до повторного входа в Localization, на свежее дерево применена та
-  же неудачная правка, три прохода Localization до `stop`. Контроль (без блока) повторно называл
+  (`2026-10-17T08-04-06-897Z`) до повторного входа в Patch, на свежее дерево применена та
+  же неудачная правка, три прохода Patch до `stop`. Контроль (без блока) повторно называл
   строку 644 и зацикливался; с блоком: **2/3 закрылись на верной строке** (`p += Whsize_hd(hd)`
   → `p += wh`, строки ~644–653/653), **1/3** не закрылась за 12 ходов, но и **не** подтвердила
   старую гипотезу (продолжала читать). Блок виден на ленте (`Previous failed attempt:`).
@@ -313,8 +306,8 @@ system — Finish state <Label> — <why из stop>
   `SKEIN_STREAMING` (дефолт on). SSE-адаптер и `ChatOpenAI` не нужны. Подробности — §7 и
   `docs/plans/implementation_plan_ru.md`.
 - **Literal Verification why + Verification→Patch + финальный батч (2026-10-17, сделано).**
-  `stop.why` у Verification — literal error; `Previous failed attempt` в Localization и Patch;
-  ребро `Verification → Patch` + revert на оба перехода; per-state hints. `fix-ocaml-gc --net on`,
+  `stop.why` у Verification — literal error; `Previous failed attempt` в Patch;
+  ребро `Verification → Patch` + revert на этом переходе; per-state hints. `fix-ocaml-gc --net on`,
   **5/5 reward=1**, 7.315₽; `docs/benches/best_bench_ru.md`.
 - **Мета-провайдер: `tool_choice` больше не форсим (2026-10-17).** `required` уводил маршрут на
   thinking-апстримы, которые отвергали его или были под лимитом; opencode его тоже не ставит.
@@ -323,15 +316,15 @@ system — Finish state <Label> — <why из stop>
   подрядчики требуют поле), а кросс-подрядчиковый mismatch «ход без reasoning → thinking»
   лечится одним повтором с выключенным thinking (`isReasoningContentRequired`).
 - **Откат проваленного Patch + выход из Verification (2026-10-17).**
-  - На переходе `Verification → Patch/Localization` по провалу движок откатывает последний Patch:
+  - На переходе `Verification → Patch` по провалу движок откатывает последний Patch:
     событие `revert` (`src/ir/events.ts`), `State.reverted` и обновление версий в `fold`
     (`src/ir/graph.ts`), реализация — `src/ir/attempts.ts` (`isFailedVerificationMove`,
     `revertLastPatch`, `revertFailedPatch`). Хук — в `executeNode` (`src/loop/graph.ts`).
   - Блок `Previous failed attempt` теперь говорит, что правка откатана, показывает модельный
     literal `why` упавшей Verification и требует **другого** изменения, а не «look elsewhere».
-    Он рендерится в открытых Localization и Patch.
+    Он рендерится в открытом Patch.
   - В hint Verification: при провале acceptance — literal `why`; выбор `patch`, если координаты
-    Localization ещё верны, иначе `localization`; environment-ошибки — не `stop`, чинить и
+    ещё верны; environment-ошибки — не `stop`, чинить и
     повторять; без отладки/правок в Verification.
   - Для replay добавлены `AgentInput.seed`/`startTurn` (`src/loop/graph.ts`), чтобы гонять
     `runAgent` с записанного журнала (см. §2.5).
@@ -340,40 +333,24 @@ system — Finish state <Label> — <why из stop>
   - **K=3 на `08-04-06`:** циклов **0/3**; верная правка — 1/3 при streaming on (temp 0.1),
     2/3 при streaming off (temp 0.1), 2/3 при streaming off + temp 0. Неверный вариант —
     free-ветка с оставленным `Whsize_hd` для live-блоков — сохраняется. Вторая ошибка
-    Verification (реальная сборка) даёт `stop` → Localization → `revert` без цикла.
+    Verification (реальная сборка) даёт `stop` → Patch → `revert` без цикла.
   - Phase 1 откатывает только `edit`; `write`/`apply_patch` возвращают conflict (Phase 2).
   - **Финальный батч `fix-ocaml-gc --net on` (2026-10-17):** 5/5 `reward=1`, 29–50 ходов,
     7.315₽; run5 использовал `Verification → Patch` напрямую (один revert), остальные — прямой
     путь. Токены — `docs/benches/best_bench_ru.md`.
 
-- **Localization → Patch only (2026-10-20).** *(Устарело 2026-10-29 — см. запись о
-  коррекционных L↔R ниже.)* Убрано позднее ребро `Localization → Research`
-  (`83243ae`): у Localization снова единственный переход — Patch. Dry-rebuild перехода из
-  34-ходового прогона Research не показывает; live K=3 на том же ходу — 3/3 `move patch`
-  (reasoning 0–166). Полный `fix-ocaml-gc` K=1: reward=1, `request_addressed`, 34 хода, 5.23₽ —
-  Research нет, но Patch 15 ходов: пере-вывод причины (~10k reasoning на t13–t20) и 2 хода на
-  `.skein/checkpoints`; cache hit 81%.
-- **Коррекционные L↔R (2026-10-29).** `Localization → Research` возвращено не как обычный
-  выход, а как коррекция неверной стартовой классификации; симметрично добавлено
-  `Research → Localization`. `instruction`/`hint`/`criterion`/`what`/`applies` состояний не
-  менялись — только `next` и правило перехода. Синтетика — `tests/routing.test.ts`: переход
-  рендерится, `classify` его принимает, открытое состояние — отклоняет. Живой прогон
-  3 задач × K=3 (`fix-code`, `db-wal`, `log-summary`, `--turns 34/32/21`): **9/9 reward=1**,
-  рёбра не выбраны ни разу, нормальные пути не сдвинулись. db-wal: 2/3 решают через
-  `O → L → P → V` (Patch пишет deliverable), 1/3 — через `O → R → Recovery`. Трасса:
-  `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
 - **Patch: полное изменение (2026-10-29).** `Patch` больше не ограничивается найденным
   артефактом: `criterion` требует `the change is complete — the located artifact and every other
   file the task needs are created or updated`, `hint` — не откладывать обязательный файл до
   Verification; End получил «the finished state's check is the verification — do not re-verify».
-  Live: `fix-code` K=3 — 3/3 `O → L → P → V → End`, 22–24 хода против 32, без `P → V → P` и
+  Live: `fix-code` K=3 — 3/3 `O → P → V → End`, 22–24 хода против 32, без `P → V → P` и
   `revert`; db-wal Patch-пакет — 20 ходов (15–20), `V → P` нет. Recovery-формулировки (consumer
   и утвердительная `matches what the material contains`) дали 22 хода медианы; в худшем прогоне
   остаётся пере-проверка WAL (6,8k reasoning) — словами это не лечится. Трассы:
   `bench/runs/matrix/2026-10-29-patchall-fix-code/`,
   `2026-10-29-patchall-db-wal/`, `2026-10-29-recovery-{consumer,affirmative}-db-wal/`.
 - **Patch получает карту материала (2026-10-20).** *(Устарело 2026-11-04: Patch теперь и
-  локализует дефект, поэтому получает карту **плюс** пробу — `vcs, build, compilers,
+  находит дефект, поэтому получает карту **плюс** пробу — `vcs, build, compilers,
   interpreters`.)* Patch больше не получает Probe с
   compilers/interpreters; вместо него — `Workspace` (`root`, `repo`, `entries`, `files`), как у
   Orientation. На записанной ленте t9 (Patch plan) dry-проекция даёт `repo: none` и
@@ -382,54 +359,45 @@ system — Finish state <Label> — <why из stop>
   `git diff` (7.3k символов usage, 0.157₽) и t10 `ls` + `grep free_space/run/rle` (0.156₽);
   стало: 0.019–0.091₽ на первом ходе Patch.
 
-- **Гипотеза причины в Localization (2026-10-20, K=3).** Критерий L расширен: target +
-  siblings + предполагаемая причина (`unverified`). Полные `fix-ocaml-gc`: reward 3/3, ходы
-  30/24/43, input 307 859/153 747/334 964, cost 2.315/1.526/3.130₽ (было 34/404 613/5.226₽).
-  В 2/3 причина верная — Patch 4–6 ходов, 1.5–2.3₽; в run3 причина размытая («free-run skip
-  mixing block and word units») → неверная правка → segfault → второй Patch: 43 хода, 3.13₽.
-  Узкое место теперь — точность предполагаемой причины, а не Patch.
-
 ### Проблемы (на завтра)
 
-> Гипотеза п.1–2 **закрыта**: «позднее закрытие от того, что модель не видит свой вывод» —
+> Гипотеза п.1 **закрыта**: «позднее закрытие от того, что модель не видит свой вывод» —
 > **не причина** (A/B по reasoning на ленте, см. «Сделано»; прежний baseline n=30 оказался
 > артефактом гарнитуры: replay-харнесс (`bench/step.ts`, удалён) против полного цикла — см. §6). Значит, пере-вывод после
 > находки (Patch в run1: t17–t21 перечитывал перед правкой) — disposition, а не отсутствие
 > рассуждений на ленте. Отсюда и новые пункты ниже.
 
-1. **Localization закрывается поздно**: ответ на руках с ~t10–t14, а `stop` — на t17;
-   reasoning раздувается (1.5k–8.8k), модель пере-выводит уже добытое.
-2. **Критерий не считается выполненным.** Модель **не игнорирует** критерий — она его
+1. **Критерий не считается выполненным.** Модель **не игнорирует** критерий — она его
    цитирует (t14: «the state's criterion is just naming file(s) and coordinates»), но всё
    равно читает дальше: «назвал кандидата → а вдруг не тот → прочту ещё». Это воля к
    уверенности, а не отсутствие текста.
-3. **Правки у точки `stop` не дают надёжного закрытия.** Усиленное описание `stop` — ~1/3
+2. **Правки у точки `stop` не дают надёжного закрытия.** Усиленное описание `stop` — ~1/3
    закрытий на t16; дублирование «a strong suspicion…» внутрь критерия — хуже (тоже ~1/3, но
    шумнее). Т.е. дело, похоже, не в формулировке, а в disposition модели на позднем,
    раздутом ходу.
-4. **Meta-сомнение (t25):** модель путается, что маркеры `ai: Start/Finish state` — это
+3. **Meta-сомнение (t25):** модель путается, что маркеры `ai: Start/Finish state` — это
    реплики движка, а не её собственные («did I actually apply a fix? … the tool calls so far
    were "move" declarations, not actual edits»). Возможный побочный эффект того, что вход
    состояния — `ai`-сообщение.
-5. **Verification дорогой**: каждый ход переигрывает весь `seq` в свежем контейнере, поэтому
+4. **Verification дорогой**: каждый ход переигрывает весь `seq` в свежем контейнере, поэтому
    `configure`/`make` в `seq` исполняется заново каждый ход.
-6. **EN-зеркало и индекс** (`docs/README.md`) — сделано (`docs/state_testing.md`).
-7. **Verification-ловушка: после провала сборки модель остаётся в Verification и жжёт бюджет
+5. **EN-зеркало и индекс** (`docs/README.md`) — сделано (`docs/state_testing.md`).
+6. **Verification-ловушка: после провала сборки модель остаётся в Verification и жжёт бюджет
    (2026-10-17, главное).** Живые `--net on`, K=3: **1/3** reward=1 (40 ходов, верная правка
    хвоста `p += Whsize_hd(hd)` → `p += wh`); **2/3** — `max_turns`=60, транспортных
-   `llm_error` нет. В обоих фейлах локализация снова назвала **free-run строку**
+   `llm_error` нет. В обоих фейлах модель снова назвала **free-run строку**
    (`p += wh * Wosize_hd(hd)`), Patch правил её, хвост `p += Whsize_hd(hd)` остался → сборка
    падает с тем же segfault. Дальше модель **не закрывает Verification и не уходит в
-   Localization**:
+   Patch**:
    - run `10-20-26`: `./configure`, затем **19× `make -j16`** (t29,33,36,39,42,44,46,48–59)
      вперемешку с чтением исходников; acceptance-команду так и не запустил;
    - run `10-33-08`: configure, make, gdb, valgrind, `runtime/ocamlrund`, и **правит файл через
      `bash`** (`python3`/`perl`) внутри Verification (write-инструменты там не предлагаются, но
      `bash` пишет).
    Блок «Previous failed attempt» тут не сработал **не потому, что плохой**: он показывается
-   только при повторном входе в Localization, а возврата не было.
+   только при повторном входе в Patch, а возврата не было.
    **Сделано:** на провале acceptance хинт Verification требует literal `why` и выбор
-   `Patch`/`Localization` (Patch, если координаты ещё верны); вторая ошибка (реальная сборка)
+   `Patch` (если координаты ещё верны); вторая ошибка (реальная сборка)
    проверена — модель останавливается, движок откатывает Patch. Осталось: (а) маскировка exit code (`make ...; echo $?`) — принципиальный
    фикс не в промте, а в engine-owned acceptance observation (команду запускает движок, модель
    не передаёт shell-строку); (б) после отката модель иногда выбирает вариант free-ветки вместо
@@ -443,7 +411,7 @@ system — Finish state <Label> — <why из stop>
   structure» — **эффекта нет** (модель по-прежнему уходила к эталону `VERSION`/upstream).
 - Копирование «a strong suspicion…» из хинта ещё и внутрь критерия — **не помогает** (~1/3).
 - Текстовые «костыли» (вернуть B0/anti-diff) — отвергнуты как частное решение.
-- **Сравнивать только в одной гарнитуре.** Baseline `run-loc-restart` (закрытие локализации
+- **Сравнивать только в одной гарнитуре.** Baseline `run-loc-restart` (закрытие состояния
   n=30) против полного цикла дал ложный «выигрыш»: прежний replay-харнесс
   (`bench/step.ts`, удалён; переигрыш всего `seq` на каждый ход) и `sandbox-run`
   (инкрементальный цикл) несопоставимы по числу ходов. A/B — только
@@ -501,16 +469,16 @@ system — Finish state <Label> — <why из stop>
 ## 8. Следующие шаги
 
 - **Закрыто:** «reasoning не на ленте → позднее закрытие» (дефолт, A/B — `docs/benches/best_bench_ru.md`, 2026-10-17).
-- **Сделано:** стриминг-транспорт; возврат в Localization с последней неудачной попыткой;
+- **Сделано:** стриминг-транспорт; возврат в Patch с последней неудачной попыткой;
   провайдерская совместимость (нет `tool_choice`, пустой `reasoning_content`, thinking-off
   fallback, transition-инструкция как `system`); откат проваленного Patch на
-  `Verification → Patch/Localization`; failure-stop в Verification; `seed`/`startTurn` для replay —
+  `Verification → Patch`; failure-stop в Verification; `seed`/`startTurn` для replay —
   см. §5, §7.
 - **Живой статус (2026-10-17).** `fix-ocaml-gc --net on`, K=3 до фикса: транспорт 3/3 без
   `llm_error`, reward 1/3 (фейлы — `max_turns`=60 из-за Verification-ловушки). После фикса
   отката/стопа: **циклов 0/3**; верная правка 1/3 (streaming on, temp 0.1), 2/3 (streaming
   off, temp 0.1) и 2/3 (streaming off, temp 0). Вторая ошибка Verification (реальная сборка)
-  даёт `stop` → Localization → `revert`.
+  даёт `stop` → Patch → `revert`.
 - **Осталось исследовать** (на `fix-ocaml-gc`, K≥3, в **одной** гарнитуре — §6):
   1. **Правильность Patch, не цикл.** После отката модель иногда выбирает вариант free-ветки
      (`p += wh*(Wosize+1)` с оставленным `Whsize_hd` для live-блоков) вместо хвоста
@@ -529,7 +497,7 @@ system — Finish state <Label> — <why из stop>
      shell стартует вне material root (task `workdir`). `git status` в probe больше не считает
      служебный `.skein` изменённым файлом и запускается с `GIT_OPTIONAL_LOCKS=0`, поэтому не
      перезаписывает `.git/index`.
-  6. **Meta-сомнение** (§5 п.4): не мешает ли `ai`-маркер `Start/Finish state`.
+  6. **Meta-сомнение** (§5 п.3): не мешает ли `ai`-маркер `Start/Finish state`.
   7. Тексты состояний Patch/Verification — `docs/states_ru.md` §2.4, §2.7.
 - **Orientation result vs probe (2026-10-20).** Один `fact:session` (`environment` + `material`)
   пишется на старте запроса. `material` — карта workspace: `root`, repo-статус, top-level
@@ -543,26 +511,11 @@ system — Finish state <Label> — <why из stop>
   закрыли Orientation за 3 хода** (request → `stop` → transition; один `password` — 4), без
   исследования материала, `max_turns`, `llm_error` или отказов. `fix-ocaml-gc`: 3 хода, ~6.4k
   входных токенов, 0.065₽ против 6 ходов / 25.9k / 0.166₽ в прежней схеме. K=3 маршрутов:
-  password/cobol → Research, custom-memory/fix-git → Localization, git-leak → Research (3/3).
+  password/cobol → Research, custom-memory/fix-git → Patch, git-leak → Research (3/3).
   Осталось: environment для других состояний, `.skein` виден shell’у, staleness probe после
   установок/правок.
-- **Localization/Patch alignment (2026-10-20).** Localization вернули к критерию 29-ходового
-  прогона: target + coordinates/extent + siblings ruled out, **без** failing code/cause.
-  Patch — как в 29-ходовом (`439095b`, declared form); Verification уже был в этой версии.
-  Добавлены probe-правила: `repo: none` → без git, не читать build-доки/конфиги, старт от
-  названной подсистемы; «tape already holds what you observed».
-- **Localization live K=3 (2026-10-20).** `fix-code-vulnerability`: 3/3, Localization 4 хода,
-  16–22k in, 0.22–0.36₽; target `_hkey`/`_hval` и CRLF/NUL назван верно. `fix-ocaml-gc`: 3/3,
-  Localization 8–11 ходов, 63–139k in, 1.6–2.25₽; reasoning-шторм на финальном ходу
-  (2.3–2.8k), модель тратит ходы на `git status/diff` при `repo: none`, HACKING и широкий поиск.
-  Сделан probe-aware набор: при `repo: none` не запускать git, не читать build-доки/конфиги,
-  начинать с названной в запросе подсистемы. Повтор K=3 `fix-ocaml`: ходы 9/7/9 (было 8/11/10),
-  стоимость 2.01/1.18/1.19₽ (было 1.62/1.87/2.25) — заметно лучше, но всё ещё больше старых
-  6 ходов; reasoning-шторм остался в run1 (3.3k), поэтому «one or two sibling sites» (#4) пока
-  не добавляли. `fix-code` — 4/4/5 ходов, 0.24–0.39₽, без регрессии.
-- **Полный fix-ocaml-gc после alignment (2026-10-20, live).** reward=1,
-  `stop=request_addressed`, **34 хода, 4.24₽**: Orientation 3/0.29, Localization 7/0.83,
+- **Полный fix-ocaml-gc (2026-10-20, live).** reward=1,
+  `stop=request_addressed`, **34 хода, 4.24₽**: Orientation 3/0.29,
   **Research 5/1.00 (лишний шаг)**, Patch 10/1.22, Verification 8/0.79, End 1/0.10. Точная
-  правка `p += wh` верная. До alignment (failing code) было 60 ходов/7.61₽ и неверная строка.
-  Остаток разрыва с 29 ходами/1.684₽ — лишний Research: для code defect надо идти в Patch,
-  Research оставить для ситуаций/новых артефактов.
+  правка `p += wh` верная. Остаток разрыва с 29 ходами/1.684₽ — лишний Research: для code defect
+  надо идти в Patch, Research оставить для ситуаций/новых артефактов.

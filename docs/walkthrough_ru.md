@@ -32,8 +32,7 @@
 достигнута) и способ действовать (какие инструменты доступны и как себя вести). Модель входит
 в состояние ходом `move`, работает в нём и закрывает его ходом `stop`, когда критерий выполнен.
 Набор состояний фиксирован: Orientation, Research, Patch, Construction, Verification, End.
-(`Recovery` и `Localization` — legacy-имена: их работа теперь входит в Research и Patch, а
-старые журналы их ещё рендерят.) Текущее состояние задаёт, что видно в ленте: его цель,
+Текущее состояние задаёт, что видно в ленте: его цель,
 сведения о материале, инструкцию и план. Когда состояние закрыто,
 лента оставляет от него только `Start`/`Finish`, а фокус переходит к следующему.
 
@@ -87,24 +86,23 @@ assistant [id] <вызов инструмента> + reasoning
 tool      [id] <результат>
 assistant [id] <следующий вызов> + reasoning
 tool      [id] <результат>
-system   <подсказка хода: hint → Done when → требование stop>
 ```
 
-Вызовы и результаты накапливаются: это то, что модель уже сделала в этом состоянии.
-Подсказка хода не хранится: на следующем ходу её уже нет, а новая дописывается заново.
+Вызовы и результаты накапливаются: это то, что модель уже сделала в этом состоянии. После них
+ничего не добавляется: цель и `Done when` живут в записи состояния.
 
 Пример открытой Patch после двух вызовов:
 
 ```
 system   Start state Patch
-system   Orientation result: root /app, entries ...
+system   Workspace root: /app / Workspace repository: ... / environment
 system   Locate the defect and change the artifact in one loop ...
 user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... окно 40-90 ...
-system   Start from the workspace map ... Done when: "the defect is located ..."
+system   Choose the candidate files from the workspace ... Done when: "the defect is located ..."
          When it holds, `stop` — and nothing else.
 ```
 
@@ -164,15 +162,15 @@ move { state, what?, done? }
 
 | Остров | Цель (`island.what`) | Критерий (кратко) | Сведения о материале | `next` |
 |---|---|---|---|---|
-| **Orientation** | назвать корень, верхний уровень, статус репозитория и приёмку | корень и entries известны; repo отмечен; приёмка названа | `Workspace map` | P, R, C |
-| **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | `Workspace map` + environment | End, P¹ |
-| **Patch** | найти дефект в существующем артефакте и внести изменение, которое он требует | цель и координаты; сиблинги исключены; причина названа как подозрение; полное изменение (найденный артефакт + остальные нужные файлы) в объявленной форме | `Workspace map` + environment | V, R¹ |
-| **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | environment | End, R |
+| **Orientation** | назвать корень, статус репозитория и приёмку | корень известен; repo отмечен; приёмка названа | координаты | P, R, C |
+| **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | координаты + environment | End, P¹ |
+| **Patch** | найти дефект в существующем артефакте и внести изменение, которое он требует | цель и координаты; сиблинги исключены; причина названа как подозрение; полное изменение (найденный артефакт + остальные нужные файлы) в объявленной форме | координаты + environment | V, R¹ |
+| **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | координаты + environment | End, R |
 | **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | environment | End, P¹ |
 | **End** | завершить запрос | проверка сделана в закрытом состоянии; не перепроверять | — | — |
 
-Legacy-острова `recovery` и `localization` всё ещё рендерятся для журналов до их слияний; ни
-один не является живой целью `move`.
+Координаты — это `Workspace root`, статус `Workspace repository` и `Working directory`, когда
+шелл стартует вне корня.
 
 ¹ Коррекционные рёбра. `Patch → Research` выбирают, если работа оказалась ситуацией, а не
 дефектом для локализации и правки; `Research → Patch` — если ситуация оказалась дефектом кода;
@@ -181,8 +179,8 @@ Legacy-острова `recovery` и `localization` всё ещё рендеря�
 неверную причину; обычным выходом эти рёбра не являются.
 
 Кроме цели и критерия, остров задаёт `instruction` (как действовать; показывается один раз при
-входе), `hint` (как вести себя на каждом ходу) и `applies` (какие apply-инструменты доступны).
-Ни инструкция, ни хинт не заменяют цель: цель — это `island.what`.
+входе) и `applies` (какие apply-инструменты доступны). Инструкция не заменяет цель: цель — это
+`island.what`.
 
 ### 2.2 Маршруты
 
@@ -201,9 +199,10 @@ Legacy-острова `recovery` и `localization` всё ещё рендеря�
 
 ### 3.1 Сведения о материале
 
-Сведения о материале зависят от острова: `Workspace map` (Orientation),
-`Workspace map` + environment (Patch, Research), environment (Construction, Verification).
-Legacy Recovery и Localization тоже получают environment. Это уже записанные факты; перепроверять их не нужно.
+Сведения о материале зависят от острова: только координаты (Orientation), координаты +
+environment (Research, Patch, Construction), только environment (Verification). Само дерево не
+перечисляется: состояние, которому нужны файлы, запрашивает их через `list`. Это уже записанные
+факты; перепроверять их не нужно.
 
 ### 3.2 Рассуждения
 
@@ -250,20 +249,20 @@ system   Choose the state to start in ... (request-инструкция)
 
 ```
 system   Start state Orientation
-system   Workspace map: root /app; entries src/, Makefile, tests/ ...
-system   Read the workspace map ... (инструкция состояния)
-user     Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares
+system   Workspace root: /app
+system   The workspace root and the repository status are already in the tape ... (инструкция состояния)
+user     Goal: name the workspace root, the repository status, and the acceptance the request declares
 system   ... Done when: "..." ... When it holds, `stop` — and nothing else.
 ```
 
 Карта и запрос уже дают цель и приёмку, поэтому ход —
-`stop {why:"root /app; entries src/, Makefile, tests/; acceptance: make test"}`.
+`stop {why:"root /app; acceptance: make test"}`.
 
 От Orientation остаётся след:
 
 ```
 system   Start state Orientation
-system   Finish state Orientation — root /app; entries ...; acceptance: make test
+system   Finish state Orientation — root /app; acceptance: make test
 ```
 
 ### 4.4 Переход в Patch
@@ -291,7 +290,7 @@ move {state:"patch", what:"the parse loop that breaks on the last token"}
 
 ```
 system   Start state Patch
-system   Orientation result: root /app; entries ...; acceptance: make test
+system   Orientation result: root /app; acceptance: make test
 system   Locate the defect and change the artifact in one loop ... (инструкция состояния)
 user     Goal: find the defect in the existing artifact and make the change it needs
          Your earlier guess (may be wrong): the parse loop that breaks on the last token
@@ -341,7 +340,7 @@ tool      [o4] exit 1 — IndexError: list index out of range
 ```
 system   Finish state Verification — make test: exit 1 — IndexError: list index out of range
 system   Start state Patch
-system   Workspace map ...
+system   Workspace root: /app / Workspace repository: ...
 user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a5] edit {path:"src/parse.py", ...}   ← другой diff
 tool      [m] mutated src/parse.py
@@ -394,8 +393,8 @@ R  request
   план и сведения о материале уходят, но остаются в IR.
 - **`Finish` — след и передача.** Следующее состояние не наследует план. Оно получает сведения
   о материале заново и читает `Finish`-строку как результат.
-- **Хвост удерживает цель.** `hint`, `Done when` и требование закрыть состояние пересобираются
-  каждый ход. Это не память, а напоминание в конце ленты.
+- **Хвост удерживает цель.** `Done when` и требование закрыть состояние живут в записи состояния.
+  Это не память, а запись состояния в начале ленты.
 - **Рассуждения на ленте.** Докса видит свои прошлые рассуждения на assistant-ходах; сырой
   `thought` не хранится, его смысл остаётся в `why`.
 - **Проверки критерия нет.** `stop` принимает докса; провал инструмента — факт, а не закрытие.
@@ -458,8 +457,8 @@ R  request
 
 - **Состояния изолированы.** Модель работает с целью и материалом текущего состояния, а не со
   всем прошлым путём; закрытое состояние её не отвлекает.
-- **Цель удерживается хвостом.** `hint`, `Done when` и требование закрыть состояние напоминают
-  о критерии в конце ленты и не оставляют мусора в журнале.
+- **Цель — в записи состояния.** `Done when` и требование закрыть состояние держат критерий
+  на виду и не оставляют мусора в журнале.
 - **Фокус немонотонен.** Лента — это вид, а не транскрипт. Смена фокуса убирает лишнее, но
   знание остаётся доступным по `id`.
 - **Переходы стоят денег.** Промах кэша префикса (предзаполнение), лишний ход на переход и

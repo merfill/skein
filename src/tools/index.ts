@@ -441,46 +441,59 @@ function actionExtra(apply: Apply): Record<string, unknown> {
   }
 }
 
+// A refusal has two forms: a plain reason, and — for a stale base — the current file the model
+// needs to act on (`stale`, absent when the file is gone).
+export interface CommandRefusal {
+  reason: string;
+  stale?: { path: string; ref: string; version: string };
+}
+
 // Non-execution of a command (docs/ir_revision.md §3.3, §4): a repeat, a stale base, a
 // forbidden path or an empty command is a reason, returned here so the engine records it as
 // an observation rather than refusing without a node. The checks are state-only.
-function commandRefusal(state: State, apply: Apply, command: string): string | undefined {
+function commandRefusal(state: State, apply: Apply, command: string): CommandRefusal | undefined {
   if (apply.tool === "read" || apply.tool === "grep") {
     const found = latestAction(state, command);
     if (found !== undefined && state.lastMutationSeq < found.seq) {
-      return `repeated_action: ${resultId(state, found.id)} already has it; retrieve it by id (recall), do not repeat`;
+      const prior = resultId(state, found.id);
+      return { reason: `repeated_action: ${prior} already has it; retrieve it by id (recall), do not repeat` };
     }
   }
   if (apply.tool === "bash") {
-    if (command.trim() === "") return "bash needs a command";
+    if (command.trim() === "") return { reason: "bash needs a command" };
     const found = latestAction(state, bashSignature(apply.command ?? "", apply.workdir, apply.timeout));
     if (found !== undefined && state.lastMutationSeq < found.seq) {
       const prior = state.nodes.get(resultId(state, found.id));
       const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
       if (typeof exit === "number") {
-        return `repeated_action: ${resultId(state, found.id)} already has it; retrieve it by id (recall), do not repeat`;
+        const prior = resultId(state, found.id);
+        return { reason: `repeated_action: ${prior} already has it; retrieve it by id (recall), do not repeat` };
       }
     }
   }
   if (apply.tool === "edit" || apply.tool === "write") {
     for (const { id, pattern } of forbiddenConstraints(state)) {
-      if (matchesPath(pattern, apply.path)) return `constraint_violation:${pattern}:${id}`;
+      if (matchesPath(pattern, apply.path)) return { reason: `constraint_violation:${pattern}:${id}` };
     }
     const ref = `file:${apply.path}`;
     const readVersion = latestReadVersion(state, ref);
-    if (readVersion !== undefined && currentVersion(state, ref) !== readVersion) {
-      return "stale_base";
+    const version = currentVersion(state, ref);
+    if (readVersion !== undefined && version !== readVersion) {
+      return {
+        reason: "stale_base",
+        ...(version !== undefined ? { stale: { path: apply.path, ref, version } } : {}),
+      };
     }
   }
   if (apply.tool === "fetch" && apply.path !== undefined) {
     for (const { pattern } of forbiddenConstraints(state)) {
-      if (matchesPath(pattern, apply.path)) return `constraint_violation:${pattern}`;
+      if (matchesPath(pattern, apply.path)) return { reason: `constraint_violation:${pattern}` };
     }
   }
   if (apply.tool === "apply_patch") {
     for (const target of patchTargets(apply.patch)) {
       for (const { pattern } of forbiddenConstraints(state)) {
-        if (matchesPath(pattern, target)) return `constraint_violation:${pattern}`;
+        if (matchesPath(pattern, target)) return { reason: `constraint_violation:${pattern}` };
       }
     }
   }
@@ -1135,7 +1148,50 @@ export function executeAction(
       // Non-execution of a command is an observation with a reason, not a refusal without a
       // node (docs/ir_revision.md §3.3, §4).
       const refusal = commandRefusal(state, apply, command);
-      if (refusal !== undefined) return failed(refusal);
+      if (refusal !== undefined) {
+        const stale = refusal.stale;
+        if (stale === undefined) return failed(refusal.reason);
+        // The base went stale under the model: a bash write, or another action, changed the
+        // file after its read. A bare `stale_base` costs a read turn before the change can be
+        // retried, so the observation carries the current content — the same move a failed
+        // `edit` makes (tools §4.3) — and the current version, which `fold` records as the
+        // observed one, so the retry is legitimate instead of refused again.
+        let content: string | undefined;
+        try {
+          content = workspace.read(stale.path);
+        } catch {
+          content = undefined;
+        }
+        const label = `stale_base: ${stale.path} changed since it was read`;
+        const header = `--- current content of ${stale.path} (re-read it; your change did not apply) ---`;
+        const full =
+          content === undefined ? label : `${label}\n${header}\n${content}\n--- end ---`;
+        const observationSeq = next();
+        const observationId = `obs:${observationSeq}`;
+        events.push({
+          type: "add_node",
+          node: {
+            id: observationId,
+            space: "work",
+            kind: "observation",
+            label: refusal.reason,
+            payload: {
+              failed: true,
+              ref: stale.ref,
+              version: stale.version,
+              ...storeOutput(observationId, full, QUERY_BODY_LIMIT),
+            },
+            seq: observationSeq,
+          },
+        });
+        addEdge({ kind: "llm" }, actionId, observationId, "result");
+        return {
+          events,
+          turn: proposalTurn(bounded(full), observationId),
+          done: false,
+          stopReason: null,
+        };
+      }
 
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
@@ -1411,9 +1467,8 @@ export function executeAction(
               `write failed: ${apply.path} exists; read it before overwriting (use edit for a small change)`,
             );
           }
-          if (currentVersion(state, ref) !== readVersion) {
-            return failed(`write failed: stale base: ${apply.path} changed since it was read; re-read first`);
-          }
+          // A stale base never reaches here: `commandRefusal` returns it first, with the
+          // current content in the observation.
         }
         try {
           workspace.write(apply.path, apply.content);

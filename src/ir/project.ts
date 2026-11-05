@@ -8,8 +8,8 @@ import {
 } from "./graph";
 import type { EnvironmentFact } from "./environment";
 import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
-import { workspaceBrief } from "./material";
-import { SESSION_PROBE_ID, probeBrief, type SessionProbe } from "./session";
+import { briefFor } from "./briefs";
+import { SESSION_PROBE_ID, type SessionProbe } from "./session";
 import {
   applicable,
   currentMove,
@@ -258,27 +258,13 @@ function tailLines(text: string): string {
   return tail.length > 700 ? `…${tail.slice(tail.length - 700)}` : tail;
 }
 
-// The engine-owned facts for the focused state. Orientation gets the workspace map; the states
-// that work on existing material (Patch, Research) get the same map as the Orientation result
-// plus the environment probe under its own heading; other states get the probe alone.
+// The engine-owned facts for the focused state, rendered by the state's own brief
+// (`src/ir/briefs.ts`). Orientation and the material states get the coordinates plus their
+// environment subset; Verification and Recovery get the environment alone; End gets nothing.
 function stateBrief(state: State, island: IslandId): string {
   const probe = probeOf(state);
   if (probe === undefined) return "";
-  const blocks: string[] = [];
-  if (island === "orientation") {
-    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
-  } else if (island === "localization" || island === "research" || island === "patch") {
-    // The states that work on the existing material: the map (root, repo entries) resolves the
-    // coordinates without re-listing, and the environment names the toolchain the work runs on.
-    // `localization` is here for journals written before it merged into Patch (2026-11-04).
-    if (probe.material !== undefined) blocks.push(workspaceBrief(probe.material, "Workspace map"));
-    const environment = probeBrief(probe, island);
-    if (environment !== "") blocks.push(environment);
-  } else {
-    const environment = probeBrief(probe, island);
-    if (environment !== "") blocks.push(environment);
-  }
-  return blocks.join("\n\n");
+  return briefFor(island, probe);
 }
 
 // Render a state: its boundaries. A state is a decision, not a tool call, so it is two markers:
@@ -302,11 +288,6 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   if (brief !== "") out.push({ role: "system", text: brief });
   if (island !== undefined) {
     out.push({ role: "system", text: ISLANDS[island].instruction });
-    // The per-turn conduct used to ride the last message (the tail). It now lives in the
-    // state's own entry, so the projection carries the whole context and nothing is appended.
-    if (ISLANDS[island].hint !== "") {
-      out.push({ role: "system", text: ISLANDS[island].hint });
-    }
   }
 
   const payload = movePayload(state, moveId);

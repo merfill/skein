@@ -4,6 +4,55 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-05 — Переформат промптов состояний, фикс Orientation, полные прогоны
+
+- **`hint` слит в `instruction`.** Поле `Island.hint` удалено: подсказка состояния — это его же
+  инструкция, а не второй текст. `project.ts` больше не добавляет `ISLANDS[island].hint` в
+  запись состояния; список `hint`-строк остался только у recovery/construction, вклеен в текст.
+- **`localization` удалён целиком.** `ISLAND_IDS` (без него), `ISLANDS` (запись удалена, не
+  «оставлена для старых журналов»), `transitionRule`, `stateBrief`, `tests/*` — синхронизированы.
+  `LIVE_ISLAND_IDS` теперь совпадает с `ISLAND_IDS` минус `recovery`.
+- **Карта workspace убрана из брифа.** Вместо блока `Workspace map` с листингом и счётчиками —
+  три строки координат: `Workspace root:`, `Workspace repository:`, `Working directory:` (без
+  пустой строки между ними). `entries`/`paths`/`(N files)` не рендерятся нигде.
+- **Брифы разнесены по состояниям** — новый `src/ir/briefs.ts`: одна функция на состояние,
+  `stateBrief` в `project.ts` стал диспетчером. Research/Patch/Construction/Recovery получают
+  координаты плюс свой подмножество environment; Verification — только environment; End — пусто.
+- **End пишет отчёт сам.** `SESSION_REPORT_PROMPT` и отдельный вызов модели для отчёта удалены
+  (`driver.ts`, `session_agent.ts`, `llm/session_agent.ts`, `types.ts`). `end.instruction` велит
+  писать финальный GitHub-flavored Markdown прямо в `stop`. `NODE_INSTRUCTIONS`/`terminal`
+  ситуационный промпт удалён полностью; критерий End остался пустым.
+- **Критерий Orientation переписан — и это починило нестабильность.** Было: три конъюнкта
+  знания плюс расплывчатая инструкция о том, что писать и когда останавливаться; 6 из 39
+  прогонов тратили ход на `list`/`bash` внутри Orientation («already known… let me list to
+  ground»). Стало: `the reply names the workspace root, the repository status, and the acceptance
+  the request declares`; инструкция — «три строки, root и status уже на ленте, acceptance —
+  слова запроса». После правки: **69/69 прогонов закрывают Orientation на t1, ноль вызовов
+  инструментов внутри** (серии route4/5/6, 13 задач × K=3).
+- **Полные прогоны 5 задач × K=3 (`/tmp/full1`, `live-step --auto`, без `--turn`).**
+  13 из 15 дошли до конца, 3.75₽. `request_addressed`: cmhc r2/r3, db-wal r1, fix-code r1–r3,
+  fix-git r1–r3, regex-log r1–r3. `observer_halt`: cmhc r1. Два прогона db-wal (r2/r3) убиты
+  вручную на t8 — их журналы неполные. Ходов 11–31 (медиана ~14).
+  `bench/live-step.ts` не запускает верификатор, поэтому reward по этим логам не считается.
+- **End выдаёт Markdown, и он разный.** 13 завершённых отчётов: 1.3–2.8 тыс. символов, H2-разделы
+  (`Summary`/`Root cause`/`Change`/`Verification`/`Still open`), таблица при перечислении файлов,
+  код-блок для паттерна/JSON. Одно отклонение — `cmhc-r1` без H2, с жирными метками.
+- **Найден дефект движка: `move` не проверяет достижимость.** В `fix-code-vulnerability-r1`
+  (серия route5) модель на переходном ходу вызвала `move(orientation)` из закрытой Orientation —
+  движок принял, в журнале `orientation → orientation`. Причина: `move.state` в схеме —
+  `z.enum(LIVE_ISLAND_IDS)`, а `classify` (`src/loop/classify.ts:40`) проверяет только
+  «состояние закрыто», но не «цель есть в `ISLANDS[island].next`». Аудит 92 прогонов: ровно один
+  такой случай. Переигровка того же контекста 20 раз: Patch 14, Research 6, Orientation 0 — то
+  есть выброс, не систематическая тяга. **Не исправлено** (владелец: «пока забьём»).
+- **`live-step` теряет причину `observer_halt`.** `graph.ts:599` кладёт её в
+  `AgentResult.stopText`, но `bench/live-step.ts` пишет в `turns.ndjson` только `stopReason`.
+  Одна строка (`stopText: run.stopText`) сделала бы halt диагностируемым.
+- **Проверено офлайн:** `npm run typecheck` чистый; **601 passed / 64 файла**
+  (`SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`).
+- **Не сделано:** документация про `localization` не вычищена (`docs/states_ru.md`,
+  `docs/testing.md`, `docs/system_prompt*`, `docs/benches/*`, `docs/plans/*`) — отложено
+  владельцем до конца правок кода.
+
 ## 2026-11-04 — Два живых прогона после слияния (observer off) и предложения
 
 - **Зачем observer off.** Единственный прогон после слияния (42 хода) выигрывал за счёт хинта
@@ -17,12 +66,6 @@
   `O@t0 → P@t2 → V@t29 → End@t34`, все шесть проверок зелёные, включая valgrind.
   Разбивка стоимости: Orientation 3 хода / 0.049₽ (2%); **Patch 26 ходов / 1.938₽ (87%),
   пик контекста 108 523 символа**; Verification 5 / 0.160₽ (7%); End 2 / 0.075₽ (3%).
-- **Что слияние дало.** `localization` в контексте не встречается ни разу; ложной посылки про
-  `std::__cxx11::` нет ни в одном из двух прогонов (в 65-ходовом базлайне она была 2 раза и
-  стоила отвергнутой верной правки на t7). Причина названа на t9–t10, изменение держится на
-  t10 (A) и t13 (B) — против t17 в 42-ходовом и t59 в 65-ходовом. `Patch` закрылся сам, с
-  содержательным `Finish` (дефект / исключённые соседи / причина / изменение / проверка) —
-  ровно то, чего не хватало при разрыве Localization→Patch.
 - **Что осталось.** В B после t13 (изменение уже держится) ушло ещё ~15 ходов: gdb/objdump-
   археология «почему регистрация работает именно так» (t16–t21) и погоня за valgrind-овским
   `still reachable: 73 728 bytes` — это EH-pool libstdc++ (`eh_alloc.cc:373`), не утечка; агент
@@ -33,51 +76,76 @@
   Разброс больше измеряемого эффекта: утверждение «29 против 42/65» неверно, честное —
   «не хуже, крайний случай 65 ходов не воспроизвёлся, механизм поломки ушёл».
 
-### Предложения (не реализованы)
+## 2026-11-05 — Предложения 1–3 разобраны: `stale_base`, критерий `Patch`, дефолт бюджета
+
+- **Поправка к записи ниже.** Утверждение «`stale_base` стоил двух ходов» неверно: в прогоне B
+  он занял **три** (t23 отказ, t24 read, t25 write). Дополнительно: `still reachable` в этом
+  запросе — **не чужой**, запрос прямо требует «There must be no memory leaks detected by
+  Valgrind», то есть это часть приёмки. Поэтому пункт 2 предложений ниже в этой части
+  переформулирован: valgrind из критерия не вычёркивается, он переносится в Verification.
+- **Замер по записанным прогонам (Слой 0, без live).** Метрика: первый ход, где приёмка
+  выполняется → закрытие состояния. `fix-ocaml-gc`: 1–4 хода (все 2026-10-23 — 1). CMHC
+  42 и 65 ходов — по 4. **Аномалия одна — CMHC-36: 15 ходов.** Её состав: t14 приёмка держится;
+  t15–t17 повторный release, debug, запуск (в запросе); t18–t22 археология механизма
+  (gdb/objdump, `_Facet_Register_impl`); t23–t25 `stale_base`; t26–t28 сборка + valgrind —
+  работа Verification, которая потом заняла всего 5 ходов/7%. То есть механизм закрытия в целом
+  здоров, а 15 ходов распадаются на три названные причины, а не на «долго думал».
+- **Пункт 3 сделан: `stale_base` отдаёт содержимое.** `commandRefusal` возвращал голую строку,
+  и это срабатывало раньше ветки `write`, поэтому сообщение на `:1415` («changed since it was
+  read; re-read first») было **недостижимо**. Теперь отказ несёт `stale: { path, ref, version }`,
+  наблюдение рисует текущее содержимое файла (приём уже работал у неудачного `edit`) и записывает
+  текущую версию, которую `fold` фиксирует как observed, — повторный write/edit проходит без
+  отдельного read-хода. Мёртвая ветка удалена. Тесты `REF-EDIT-STALE`/`REF-WRITE-STALE` обновлены
+  и проверяют сам ретрай.
+- **Пункт 2 сделан (текст): критерий `Patch` стал решаемым.** Убран повисший конъюнкт «the result
+  has the declared form» — теперь эту форму никто не объявляет, и
+  doxa не могла решить критерий внутри состояния, поэтому добирала уверенность (это же
+  §5.2 `state_testing` — «will to certainty» — но с конкретной причиной в тексте). Новый
+  критерий: `… and the change holds: every file the task needs is created or updated, it builds
+  with the command the request declares where it declares one, and the symptom the request names
+  is gone`. В `instruction` и `hint` названа граница: объяснение механизма и приёмочные проверки
+  запроса (leak-проверки, тестсьюты) — работа Verification. Синхронизированы `patch.next[0].when`
+  и `transitionRule("patch")`. Размер критерия не вырос (297 против 300 символов).
+- **Пункт 1 НЕ сделан — и почему.** «Поднять дефолт 24→40» в коде отсутствует: `settings.ts`,
+  `sandbox-run.ts`, `harness.ts`, `run.ts`, `sandbox-smoke.ts`, `.env.example`, README — всюду 24;
+  у `custom-memory-heap-crash` поля `maxTurns` нет. 36-ходовой прогон прошёл с **явным**
+  `--turns 40` (`sandbox-run.ts:44`: явный флаг перекрывает дефолт), поэтому он ничего не
+  доказывает про дефолт. Пара A (29 ходов, `max_turns`) и B (36, `request_addressed`) — это и есть
+  демонстрация разницы 24 против 40. Отдельно: `settings.maxTurns` песочницей не читается вовсе
+  (только `bench/run.ts`), так что поднимать надо не одно значение, а четыре точки или ставить
+  `maxTurns` на задачу, как у `fix-ocaml-gc` (60). Решение владельца — отдельным шагом.
+- **Проверено офлайн:** typecheck чистый; **596 passed / 40 skipped**. Live не запускался.
+
+### Предложения из записи 2026-11-04 (состояние на 2026-11-05)
 
 1. **Дефолт `maxTurns` в песочнице мал.** `tests/sandbox/sandbox-run.ts:44` берёт
    `task.maxTurns ?? 24`, у `custom-memory-heap-crash` поле не задано; `settings.maxTurns`
    (`SKEIN_MAX_TURNS`) тоже 24. После слияния только `Patch` занимает 26 ходов, поэтому
    прогон A упёрся в потолок при уже выполненной приёмке. Варианты: поднять дефолт до 40 или
    задавать `maxTurns` на задачу в `tests/sandbox/tasks/*`.
+   **Статус 2026-11-05: не сделано** (решение владельца; затрагивает четыре точки, см. запись выше).
 2. **У `Patch` нет границы «изменение держится — остановись».** Критерий (`change holds`,
    форма проверена) выполняется на t13, а состояние живёт до t28: агент объясняет механизм и
    разбирается с `still reachable`, хотя это не часть критерия. Это 87% стоимости прогона и
    главная утечка. Вариант: явная строка в `patch.instruction`/`hint` о том, что объяснение
    механизма и разбор чужого `still reachable` в критерий не входят, — но это правка
    поведения, её надо решать отдельно и мерить K≥3.
+   **Статус 2026-11-05: сделано в тексте, не проверено live.** Уточнение: `still reachable`
+   здесь **не чужой** — запрос требует отсутствия утечек по Valgrind. Поэтому строка отделяет
+   не «valgrind не нужен», а «valgrind — работа Verification», и критерий перестал требовать
+   необъявленную форму. Мерить K≥3 — отдельным go-ahead.
 3. **Отказ `stale_base` на write после длинной bash-серии** повторяется в обоих прогонах
    (t25 в A, t22 в B) и стоит двух ходов. Стоит посмотреть, нельзя ли отдавать в контексте
    актуальную версию файла, который агент только что прочитал, вместо отказа.
-
-## 2026-11-04 — `Localization` слит в `Patch`
-
-- **Слияние.** `localization` слит в `patch`: цель (найти дефект), критерий (цель с
-  координатами, соседи исключены, причина как подозрение) и переход в Patch перенесены в `patch`.
-  Причина — механизм провала 65-ходового `custom-memory-heap-crash`: на t7 прогон отверг верную
-  правку по ложной посылке про `__cxx11`, а состояния, где причину можно пересмотреть по
-  результату правки, не было (Localization уже закрыта, у Patch нет ни причины, ни права её
-  менять); t21–t48 (~2.75₽) ушли на обход.
-- **Что в коде.** `patch.what`/`criterion`/`instruction`/`hint` переписаны под цикл
-  «найти-и-изменить»; `patch.next` = Verification + Research; `orientation.next` → `patch`;
-  `research.next` → `patch`; `verification.next` → только `patch`; `PATCH_GROUPS` =
-  `vcs, build, compilers, interpreters`; `applies` Patch уже включал write-class. Сознательно
-  убрано: «причина — та, что названа в `Finish` предыдущего состояния», «не выводи причину
-  заново», «не выбирай другую».
-- **Legacy.** `localization` остаётся в `ISLANDS` (рендер старых журналов), но исключён из
-  `LIVE_ISLAND_IDS`; `transitionRule("localization")` и `LOCALIZATION_GROUPS` сохранены с
-  комментарием; `isFailedVerificationMove` принимает оба таргета.
-- **Проверено офлайн:** `596 passed / 40 skipped`, typecheck чистый. Живого сравнения на момент
-  слияния не было: единственный тогдашний прогон после слияния (42 хода, 2.216₽) выиграл за счёт
-  подсказки обсервера (seq=124), а не слияния. Два чистых прогона с выключенным обсервером —
-  в разделе выше.
+   **Статус 2026-11-05: сделано.** Отказ несёт текущее содержимое и версию; ретрай проходит без
+   read-хода. Уточнение: в B это t23–t25, три хода, а не два.
 
 ## 2026-11-04 — Перезамер `fix-ocaml-gc` и `custom-memory` (K=1), дефект хинта
 
 - **`custom-memory-heap-crash`: 65 ходов, 5.954₽, reward=1, `request_addressed`.** Старая
   медиана **57 была цензурирована бюджетом 60**: две ячейки из трёх кончались на 57 и 59, одна
   упёрлась в `max_turns` ровно на 60. С `--turns 80` задача закрывается сама на 65. Путь
-  больше не четырёхцикловый: `O → L → P → V → End`, 5 состояний. Patch — 43 хода из 65 и
+  больше не четырёхцикловый: `O → P → V → End`, 4 состояния. Patch — 43 хода из 65 и
   3.78₽ из 5.95₽. Все 6 проверок приёмки, включая valgrind, проходят.
 - **`fix-ocaml-gc`: 29 ходов, 2.470₽, reward=1, 40/40 тестов.** Попадает в диапазон 26–30 из
   §4.3, счёт ходов устойчив. Правка одной строки на t16, сборка и тестсьют t23–t25. Один
@@ -151,11 +219,9 @@
   is derived from the material or the specification, and matches what the material or the request
   contains`. Убраны `investigate/produce result it yields`, `reconstruct`, ветка Construction и
   запрет «do not carry it out». Read-only проверка на копии разрешена.
-- **Маршруты:** `O → L` (дефект в существующем артефакте) / `O → R` (ситуация: результат вывести
+- **Маршруты:** `O → P` (дефект в существующем артефакте) / `O → R` (ситуация: результат вывести
   из материала/спеки) / `O → C` (построить новый артефакт). `Research → Construction` удалено —
-  Construction остаётся отдельным. Localization `what` = `find the defect in existing code, files,
-  or history` (было `find the target in the material`), Orientation-правило Localization —
-  «only … the defect is in an existing artifact».
+  Construction остаётся отдельным.
 - **Environment:** без заголовка `Environment`, без `tools:`/`missing`. Только
   `Workspace root`, `Network is available`, `Version-control tools`, `Build tools`, `Compilers`,
   `Installed interpreters`, `Test tools`, `Available package managers`. `core/crypto/data/archive/net`
@@ -188,28 +254,27 @@
   `buildMessages`.
 - **Потребители:** tools/project/attempts, session outline/memory/general, TUI view-model.
 - **Промпт:** B2 явно запрещает реконструировать external/upstream по памяти (reference —
-  зацепка, не оракул); Localization hint сравнивает sibling условно, с fallback на инвариант
-  из материала.
+  зацепка, не оракул).
 - **Проверки:** typecheck чистый; офлайн **583 passed, 40 skipped**; sandbox offline 7 passed.
 - **Live (`live-trace`, 6+5 grace):** Orientation — t0 `move`, t1 текстовый stop;
-  Localization — t2 `move`, t3 `read`, t4 текстовый stop; Patch — t5 `move`, t6 `read`,
+  Patch — t5 `move`, t6 `read`,
   t7 `recall`, t8 `read`, t9–t10 `bash`, затем `max_turns`. Ошибок нет, `stop`-тула нет;
   повторный `read` на t6→t7 — просто следующий ход, без alternative-маркера. `fixed=false`
   из-за cap, не регрессия; трейс `bench/runs/sandbox-live-2026-11-03T13-27-31-502Z-fix-ocaml-gc`.
 - **Live K=3 (`live-trace`, 6 ходов):** во всех трёх Orientation — t0 `move`, t1 текстовый
-  stop; дальше маршрут нестабилен: r1 → Research, r2 → Localization, r3 →
-  Localization→Research. Все `max_turns` на 6, ошибок/отказов нет; 0.22–0.30₽/прогон
-  (~0.75₽). Отдельный сигнал: r1 ушёл в Research вместо Localization.
+  stop; дальше маршрут нестабилен: r1 → Research, r2 → Patch, r3 →
+  Patch→Research. Все `max_turns` на 6, ошибок/отказов нет; 0.22–0.30₽/прогон
+  (~0.75₽).
 - **Live K=3, maxTurns=40 (`live-trace`):** завершены 2 из 3 (третий прерван). Оба
   `fixed=true`, `max_turns` на 45 (40+5 grace), 45 ходов, 0 отказов, `stop`-тула нет;
-  r1: O→L→P→V→L→P→V, r2: O→L→P→V→P. Токены/стоимость: 294k/22.9k in/out, cache 83%,
+  r1: O→P→V→P→V, r2: O→P→V→P. Токены/стоимость: 294k/22.9k in/out, cache 83%,
   2.56₽; 331.9k/17.3k, cache 88%, 1.97₽.
-- **Real sandbox K=3, `fix-ocaml-gc`, `--turns 20`, net off:** reward **1/3**; Localization
-  закрылась во всех трёх (t11 / t17 / t15). Два прогона упёрлись в `max_turns` (20+5 grace)
+- **Real sandbox K=3, `fix-ocaml-gc`, `--turns 20`, net off:** reward **1/3**; два прогона
+  упёрлись в `max_turns` (20+5 grace)
   в Patch/Verification. Стоимость 1.247 / 1.574 / 1.563₽ (mean 1.461₽); in 181k / 312k / 284k,
-  cache hit 77 / 86 / 84%. 20+grace мало для reward, но не для закрытия Localization.
-- **Real sandbox K=3, `fix-code-vulnerability`, `--turns 20`, net off:** **3/3 reward=1**;
-  Localization закрылась на **t7 во всех трёх** (6 ходов). Turns 25/21/20; cost
+  cache hit 77 / 86 / 84%. 20+grace мало для reward.
+- **Real sandbox K=3, `fix-code-vulnerability`, `--turns 20`, net off:** **3/3 reward=1**.
+  Turns 25/21/20; cost
   0.803 / 0.747 / 0.749₽ (mean 0.766₽); in 144k / 109k / 118k, cache 80 / 74 / 77%.
   Patch доминирует по стоимости. Для сравнения opencode net-off (matrix 2026-10-24-fix-code):
   8/14/9 шагов, cost ~0.34/0.52/0.27₽, fresh 8.4–13.5k, cache 92–94%, out 1.2–3.0k.
@@ -217,12 +282,12 @@
   (3.55k vs 1.91k); reasoning сопоставим (0.85k vs 0.79k). Исторический Skein net-off:
   21–26 ходов, ~0.750₽.
 - **Real sandbox K=3, `fix-git`, `--turns 20`, net off:** 3/3 reward=1, но маршрут у всех
-  **O→Research→Recovery→End**, не Localization — fix-git с текущим промптом не проверяет L.
+  **O→Research→Recovery→End** — fix-git с текущим промптом не доходит до Patch.
   Turns 17/20/20; cost 0.689/1.158/0.893₽ (mean 0.913); in 71k/113k/118k, cache 71/74/77%.
   Opencode net-off: 8–10 шагов, ~0.204₽; исторический Skein: 19–22 хода, ~0.744₽
-  (документированный O→L→P→V).
+  (документированный O→P→V).
 - **Real sandbox K=3, `custom-memory-heap-crash`, `--turns 20`, net off:** reward **1/3**;
-  L закрылась t17 / t11 / t8, но все три упёрлись в `max_turns` на 25 (run2/run3 — в
+  все три упёрлись в `max_turns` на 25 (run2/run3 — в
   Patch/Construction). Cost 1.541 / 1.532 / 1.632₽ (mean 1.568₽); in 266k / 231k / 168k,
   fresh 34k / 42k / 41k, cache 87 / 82 / 76%, out 12.5k / 10.7k / 12.6k.
   Opencode net-off: 27 / 20 / 18 steps, cost ~1.401 / 1.377 / 2.132₽ (mean 1.637₽),
@@ -244,7 +309,7 @@
   видит карту workspace (root/repo/entries), а не вынужден делать `list`/`git status`.
   Это была причина трёх ходов в первом live-trace.
 - **Промпт:** B1 — критерий выполнен → ответ текстом без tool call; B2 — dedicated tools
-  first, `bash` только когда они не могут; обновлены `end`/orientation/localization.
+  first, `bash` только когда они не могут; обновлены `end`/orientation.
 - **Файлы:** `src/llm/{tools,structured}.ts`, `src/loop/{propose,graph}.ts`,
   `src/ir/{project,islands,traversal}.ts`, `src/loop/prompt/{blocks,index}.ts`.
 - **Тесты:** `tests/loop.test.ts` (+text stop, terminal, transition), обновлены
@@ -252,7 +317,7 @@
 - **Проверки:** typecheck чистый; офлайн **583 passed, 40 skipped**; sandbox offline
   (`fix-ocaml.test.ts`, `metrics.test.ts`) — 7 passed; `bench/rollout --dry` ок.
 - **Live (`live-trace`, 6 ходов, после probe):** Orientation — t0 `move`, t1 текстовый stop
-  (2 шага); Localization — t2 `move`, t3 `read`, t4 текстовый stop; t5 `move` Research.
+  (2 шага); t5 `move` Research.
   `max_turns` на 6 — ожидаемый cap; `stop` в tools нет. Первые 3 шага в Orientation были
   из-за отсутствия `probe` (нет карты workspace) — исправлено.
 - **Reasoning:** `stop`-узел теперь хранит `payload.reasoning`; `live-trace` пишет
@@ -562,7 +627,7 @@
 `probe` (окружение, пакетные менеджеры, интерпретаторы, material) — тоже **tool**, а не unit:
 он отдаёт уже записанный `SessionProbe` по `kind` и кэшируется на сессию.
 
-Виды работы внутри `task` (`orientation`, `localization`, `research`, `patch`, `recovery`,
+Виды работы внутри `task` (`orientation`, `research`, `patch`, `recovery`,
 `construction`, `verification`, `end`) — это острова, а не типы unit'ов; новый «тип задачи»
 не требует нового unit'а, а другого маршрута по островам.
 

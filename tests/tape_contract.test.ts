@@ -7,7 +7,7 @@ import { project, type Context } from "../src/ir/project";
 import type { Action } from "../src/llm/schemas";
 import { modelCall } from "../src/llm/schemas";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { NODE_INSTRUCTIONS, REQUEST_INSTRUCTION } from "../src/loop/prompt";
+import { REQUEST_INSTRUCTION } from "../src/loop/prompt";
 import type { Workspace } from "../src/tools/workspace";
 import {
   DEFAULT_FILES,
@@ -49,18 +49,13 @@ afterEach(cleanupWorkspaces);
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
   // Strip the leading system prefix (base + one message per constraint) and the appended
-  // situation prompt: `request`/`transition` a system turn, `terminal` the End instruction.
-  // `plan`/`working` append nothing — the state's hint and criterion are in its entry, which
-  // is on the tape and must stay.
+  // situation prompt: `request`/`transition` a system turn. `plan`/`working`/`terminal` append
+  // nothing — the state's instruction and criterion are in its entry, which is on the tape and
+  // must stay.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
-  const appended =
-    context.situation === "request"
-      ? REQUEST_INSTRUCTION
-      : context.situation === "terminal"
-        ? NODE_INSTRUCTIONS.terminal
-        : undefined;
+  const appended = context.situation === "request" ? REQUEST_INSTRUCTION : undefined;
   if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "system") end -= 1;
   return all.slice(start, end);
@@ -94,10 +89,9 @@ const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
   { role: "system", content: ISLANDS.orientation.instruction },
-  { role: "system", content: ISLANDS.orientation.hint },
   {
     role: "user",
-    content: `Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
+    content: `Goal: name the workspace root, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
   },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
@@ -122,10 +116,9 @@ describe("move: before [request] -> delta -> after", () => {
       REQ,
       { role: "system", content: "Start state Orientation" },
       { role: "system", content: ISLANDS.orientation.instruction },
-      { role: "system", content: ISLANDS.orientation.hint },
       {
         role: "user",
-        content: `Goal: name the workspace root, its top-level entries, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
+        content: `Goal: name the workspace root, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
       },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {

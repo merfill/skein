@@ -434,7 +434,7 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   with the reason (`rejected <move>: <reason>`, next turn; no node). A `recall`/`search` is a
   regular step: an `action` + its `observation` on the state's tape (see above).
 
-So an **open state** is `Start state <label>` / `instruction` (`system`) / conduct hint /
+So an **open state** is `Start state <label>` / `instruction` (`system`) /
 goal + criterion (`user`) and its turns (the `apply` calls and their results, in append order);
 a **closed state** is only `Start state <label>` / `Finish state <label> — <why>`. There is no
 alternative marker: every call is its own turn. Each `apply` result exposes the node id
@@ -469,7 +469,7 @@ instruction: `request` (choose the first state, or `decline`; `what`/`done` — 
 `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
 `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
 the next state), `terminal` ("This is End." + the text completion rule). An open state appends
-nothing: its hint and `Done when` criterion live in its `Start state` entry. The tool
+nothing: its `Done when` criterion lives in its `Start state` entry. The tool
 names/parameters/descriptions are **not** in the prompt — they ship in the request's `tools`
 field, and that field is **bound from `Context.applicable`**: on a `request`/`transition` only
 `move` is offered (plus read-only `recall`/`search`), while a state is open the apply tools are

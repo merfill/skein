@@ -24,8 +24,8 @@ const TRANSITIONS = (() => {
 // The states, rendered from the island list (single source): each is a goal (`what`) and the
 // knowledge that closes it (`done`). The base prompt carries the whole set, once.
 // The states are the map: each is its kind of work (`what`). The criterion is NOT here — it
-// rides the focused state's own entry (`Start state` / hint / goal / `Done when`), so it
-// appears once and never duplicates the map.
+// rides the focused state's own entry (`Start state` / goal / `Done when`), so it appears once
+// and never duplicates the map.
 const STATES = ISLAND_ORDER.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
 
 // The states a request can start in, shown in the request hint. There is no START node in the
@@ -77,7 +77,7 @@ Do not reconstruct an external or upstream version from memory. If a reference i
 
 Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.
 
-The workspace map and the environment are engine-recorded facts: they are already read — do not re-probe, re-list, or re-derive them. If a block is marked partial, only the unlisted facts are unknown.
+The workspace root, the repository status and the environment are engine-recorded facts: they are already read — do not re-probe or re-derive them. The tree itself is not indexed: list what you need. If a block is marked partial, only the unlisted facts are unknown.
 
 Never expose or commit secrets or keys. Report concisely; no preamble or summary unless asked.`,
   },
@@ -107,8 +107,8 @@ ${REQUEST_WHAT}`,
   },
 ];
 
-// The state-specific transition rule: the hint of the finished state is not visible on the
-// transition turn, so the rule that decides among its reachable states lives here.
+// The state-specific transition rule: the finished state's own instruction is not visible on
+// the transition turn, so the rule that decides among its reachable states lives here.
 function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
@@ -116,12 +116,6 @@ function transitionRule(island?: IslandId): string[] {
         "Move to Patch only when the request is to fix an error in existing code, files, or history — the defect is in an existing artifact.",
         "Move to Research when the request is a situation — the required result must be recovered or derived from the material or the specification.",
         "Move to Construction when the request is to build a new artifact from a specification.",
-      ];
-    case "localization":
-      // Legacy: Localization merged into Patch (2026-11-04). Kept for old journals.
-      return [
-        "Choose Patch when the target is named and a cause is suspected.",
-        "Choose Research only when the work is a situation, not a code defect to locate.",
       ];
     case "research":
       return [
@@ -143,7 +137,8 @@ function transitionRule(island?: IslandId): string[] {
       ];
     case "verification":
       return [
-        "After a failed acceptance, choose Patch: the failure is either in the change the Patch made or in the cause it acted on, and both are revised there. A change that did not fix the symptom is not enough to close the state — revise the cause and change again.",
+        "When the acceptance holds, choose End.",
+        "When it fails, choose Patch: the result you just wrote names the failure, and the cause and the change are revised there.",
       ];
     default:
       return [];
@@ -152,7 +147,7 @@ function transitionRule(island?: IslandId): string[] {
 
 // The transition prompt (`transition`): the finished-state scenario: the tape above carries the
 // record (each finished state is a `Start state` / `Finish state` pair) and the user's request.
-// The hint names the states reachable from the focused one; the next state's OWN goal stands
+// The rule names the states reachable from the focused one; the next state's OWN goal stands
 // as-is (never carried from the `Finish` line).
 export function transitionInstruction(island?: IslandId): string {
   const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
@@ -195,9 +190,5 @@ export const BASE_PROMPT = assemble(BASE_BLOCKS);
 // The request prompt, appended as a system message after the request: it scopes the first
 // `move`'s `what` (never the whole task). Rendered per turn (never stored).
 export const REQUEST_INSTRUCTION = assemble(REQUEST_BLOCKS);
-
-export const NODE_INSTRUCTIONS = {
-  terminal: `This is End. Reply with the final result as text only, with no tool calls; that completes the request.`,
-};
 
 export const PROMPT_BLOCKS: readonly PromptBlock[] = [...BASE_BLOCKS, ...REQUEST_BLOCKS];

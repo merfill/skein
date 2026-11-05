@@ -34,7 +34,7 @@
 Каждый ход — пара `assistant` + `tool`; первый `apply` после `move` засевает ходы
 состояния. Команда, исполнившаяся и изменившая файл (правка), наблюдения не имеет, поэтому её
 `tool`-сообщение читается как `mutated <path>`. Открытое состояние — это `Start state <label>` /
-`instruction` / conduct hint / цель + `Done when` (`user`) / ходы; закрытое — только `Start state <label>` / `Finish state
+`instruction` / цель + `Done when` (`user`) / ходы; закрытое — только `Start state <label>` / `Finish state
 <label>`. Маркер `Finish state` несёт **только**
 метку и причину `stop` — никогда список изменённых файлов: состояние, запускающее сборку,
 мутирует тысячи артефактов.
@@ -45,17 +45,19 @@
 - **probe** — один сессионный `fact` (`add_node kind:"fact"`, `id: fact:session`) с
   `{ environment, material }`, записанный на старте запроса. Он не идёт отдельным сообщением
   после запроса; проекция выбирает нужный блок для **текущего** состояния.
-  Orientation получает `Workspace` — карту workspace (`root`, `cwd` если shell стартует не в
-  root, repo, entries/paths); Patch и Research получают ту же карту плюс environment;
-  Construction и Verification — только environment. Environment — короткий список фактов
-  (`Workspace root`, `Network is available`, interpreters, package managers, build/test tools),
-  не инвентарь стоковых утилит. Блок идёт отдельным `system`-ходом перед инструкцией. Закрытые состояния
-  блоков не несут; на request-ходу их нет;
-- карта workspace детерминирована: `root`, `cwd` (если отличается), repo-статус, top-level
-  entries (для маленьких материалов — paths), число файлов. Environment, расширения, конфиги, команды сборки и build
-  state в Orientation **не** показываются; объявленная команда не выдаётся за acceptance;
+  Блок строит собственная функция брифа состояния (`src/ir/briefs.ts`): Orientation получает
+  координаты (`Workspace root`, статус `Workspace repository`, `Working directory` если shell
+  стартует не в root); Research, Patch и Construction — координаты плюс свой набор environment;
+  Verification — только environment; End — ничего. Environment — короткий список фактов
+  (`Network is available`, interpreters, package managers, build/test tools, version-control
+  tools), не инвентарь стоковых утилит. Блок идёт отдельным `system`-ходом перед инструкцией.
+  Закрытые состояния блоков не несут; на request-ходу их нет;
+- координаты детерминированы и не являются списком: ни top-level entries, ни paths, ни числа
+  файлов. Состояние, которому нужны файлы, запрашивает их через `list`. Environment, расширения,
+  конфиги, команды сборки и build state в Orientation **не** показываются; объявленная команда
+  не выдаётся за acceptance;
 - его состояния (дети `move`) рендерятся по порядку: **открытое** (текущее) состояние рендерит
-  маркер `Start state`, brief, инструкцию (`system`), conduct hint, цель + `Done when` (`user`) и ходы;
+  маркер `Start state`, brief, инструкцию (`system`), цель + `Done when` (`user`) и ходы;
   **оставленное позади** или остановленное состояние сворачивается в `Start state <label>` /
   `Finish state <label> — <why>`. Ни brief, ни инструкции, ни цели, ни сообщений ходов, ни
   отдельного сообщения `stop` не остаётся;
@@ -101,8 +103,8 @@
   `request`/`transition` предложен только `move`, пока состояние открыто — apply-инструменты
   (`recall`/`search` всегда); `stop` принадлежит движку (докса закрывает состояние текстом);
 - **промпт ситуации** добавляется в конце только для `request`, `transition` и `terminal`
-  (временно, не хранится). Открытое состояние ничего не добавляет: его hint и `Done when`
-  живут в записи состояния. `request` (выбери первое состояние или `decline`; `what`/`done` —
+  (временно, не хранится). Открытое состояние ничего не добавляет: его `Done when` живёт в
+  записи состояния. `request` (выбери первое состояние или `decline`; `what`/`done` —
   **из запроса**), `transition` (`transitionInstruction(island)`: источник `what`/`done` — строка
   `Finish state <label>` закрытого состояния; перечислены соседи по `next`; выбери следующее
   или End), `terminal` («This is End.» + правило текстового завершения);

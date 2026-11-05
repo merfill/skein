@@ -104,9 +104,8 @@ A state is rendered on the tape, in order:
 
 The request **leads** the tape — the second message, right after the base prompt — on every
 turn. `start`/`brief`/`instruction`/`goal` are shown once when the state is entered and only
-while it is open. On `plan`/`working` the last message of every turn is the per-turn tail
-(`planInstruction`/`turnInstruction`): hint → done criterion → closure; it is never
-stored and is rebuilt on the next turn. When the state closes, only `start` + `finish` remain.
+while it is open. Nothing is appended after its turns: the goal and `Done when` live in the
+state's entry. When the state closes, only `start` + `finish` remain.
 The old `Previous failed attempt` block is gone: the previous states' `finish` lines carry the
 record.
 

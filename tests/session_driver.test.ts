@@ -12,7 +12,6 @@ import {
 } from "../src/session/session";
 import type {
   SessionAgent,
-  SessionReportInput,
   SessionTools,
 } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
@@ -85,32 +84,25 @@ describe("session driver: one utterance turn", () => {
     expect(sessionFocus(session)?.unitId).toBe("r2");
   });
 
-  it("asks the session agent for a Markdown report after the task", async () => {
+  it("takes the report from End's own reply, not from a second model call", async () => {
     const session = createSession();
-    const inputs: SessionReportInput[] = [];
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "start", text: "fix the build" } }),
         tools,
-        report: async (input) => {
-          inputs.push(input);
-          return "## Done\n\n- task `r1` finished.";
-        },
       },
       task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
     };
 
     const result = await runSessionTurn(turnDeps, session, "fix it");
 
-    expect(result.report).toBe("## Done\n\n- task `r1` finished.");
-    expect(inputs[0]?.utterance).toBe("fix it");
-    expect(inputs[0]?.request).toBe("fix the build");
-    expect(inputs[0]?.trace).toContain("outcome: request_addressed");
-    expect(inputs[0]?.trace).toContain("unit r1 (task)");
-    expect(
-      session.journal.some((event) => event.type === "report" && event.text.includes("## Done")),
-    ).toBe(true);
-    expect(sessionOutline(session)).toContain('report: "## Done');
+    const stops = result.task?.result.events.filter(
+      (event) => event.type === "add_node" && event.node.kind === "stop",
+    );
+    expect(stops).toHaveLength(1);
+    const stop = stops?.[0];
+    expect(stop?.type === "add_node" ? stop.node.label : undefined).toBe("done");
+    expect(sessionOutline(session)).not.toContain("report:");
   });
 
   it("answers without starting a task", async () => {
@@ -183,7 +175,7 @@ describe("session driver: one utterance turn", () => {
     expect(text).toContain("this session works in");
     expect(text).toContain(made.root);
     expect(text).toContain("The tree is not indexed here");
-    expect(text).not.toContain("Workspace map");
+    expect(text).not.toContain("Workspace repository");
     expect(text).not.toContain("README.md");
   });
 

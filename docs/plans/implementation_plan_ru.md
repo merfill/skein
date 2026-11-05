@@ -238,19 +238,19 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
   обновлены; план и статус — `docs/plans/ai_sdk_migration_plan_ru.md`.
 - **Literal Verification why + failed-attempt block (2026-10-17, сделано).** `stop.why` у
   Verification — буквальный пересказ ошибки: команда, exit status, фактический текст; без
-  диагноза кода и без «почему фикс не сработал». `Previous failed attempt` в открытых
-  Localization и Patch собирается из модельного `why` упавшей Verification и фактического diff
+  диагноза кода и без «почему фикс не сработал». `Previous failed attempt` в открытом
+  Patch собирается из модельного `why` упавшей Verification и фактического diff
   последнего Patch; механический `lastFailingRun`/`git`/exit в блок не попадает. Блок говорит
   `has been reverted` и `Do not repeat this change`; masked exit-0 с `stop.why` тоже виден.
   Тесты — `tests/revert.test.ts`, `tests/tape_render.test.ts`.
 - **Verification → Patch + revert (2026-10-17, сделано).** `ISLANDS.verification.next` включает
-  Patch: если координаты Localization ещё верны, а не сработала только правка, модель может идти
-  прямо в Patch. `isFailedVerificationMove` откатывает failed Patch на оба перехода
-  (`Patch`/`Localization`), поэтому Patch стартует с pre-patch дерева и с блоком. Live-проверка:
-  в финальном батче run5 выбрал `verification → patch`, сделал один revert и починил tail;
-  в отдельных stage-сэмплах модель чаще выбирала Localization. Тесты — `tests/revert.test.ts`.
+  Patch: если координаты Patch ещё верны, а не сработала только правка, модель может идти
+  прямо в Patch. `isFailedVerificationMove` откатывает failed Patch, поэтому Patch стартует
+  с pre-patch дерева и с блоком. Live-проверка:
+  в финальном батче run5 выбрал `verification → patch`, сделал один revert и починил tail.
+  Тесты — `tests/revert.test.ts`.
 - **Per-state hints (2026-10-17, сделано).** `Island.hint` для каждого состояния + общий
-  closure-хвост: Orientation — `pwd`/build/check; Localization — sibling walkers; Patch —
+  closure-хвост: Orientation — `pwd`/build/check; Patch —
   «только названное изменение / не повторять failed attempt»; Verification —
   pass/fail/environment; End — `stop`, когда запрос завершён. `turnInstruction` больше не смешивает состояния;
   тесты — `tests/prompt.test.ts`, `docs/system_prompt_ru.md`.
@@ -260,61 +260,15 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 - **Orientation result vs probe (2026-10-20, сделано).** Один `fact:session`
   (`environment` + `material`) пишется на старте запроса. `material` — карта workspace: `root`,
   repo-статус, top-level entries/paths, число файлов; конфиги, команды сборки, расширения и
-  build state убраны. Orientation показывает `Workspace`; Localization/Research получают ту же
-  карту как `Orientation result` (Research — плюс `Probe` с interpreters/tools); остальные —
+  build state убраны. Orientation показывает `Workspace`; Research получает ту же
+  карту как `Orientation result` (плюс `Probe` с interpreters/tools); остальные —
   `Probe` (environment) отдельным заголовком. Цель Orientation сужена до входов и acceptance из
   запроса; если карта и запрос уже всё называют, первый шаг может быть `stop`.
 - **Orientation на 13 задачах (2026-10-20, minimal).** Реальные образы задач: **13/13 закрыли
   Orientation за 3 хода** (request → `stop` → transition; один `password` — 4), без
   исследования материала и ошибок. `fix-ocaml-gc`: 3 хода, ~6.4k in, 0.065₽ против 6 ходов /
   25.9k / 0.166₽ раньше. K=3 маршрутов: password/cobol → Research, custom-memory/fix-git →
-  Localization, git-leak → Research (3/3). Тесты — `364 passed`, typecheck чистый.
-- **Localization/Patch alignment (2026-10-20).** Localization — критерий 29-ходового прогона:
-  target + coordinates/extent + siblings ruled out, **без** failing code/cause. Patch — как в
-  29-ходовом (`439095b`, declared form); Verification уже был в этой версии. Добавлены
-  probe-правила: `repo: none` → без git, не читать build-доки/конфиги, старт от названной
-  подсистемы; «tape already holds what you observed».
-- **Полный fix-ocaml (2026-10-20, live).** С failing code: 60 ходов/7.61₽, неверная строка,
-  Patch-1 21 + Patch-2 16. После alignment: reward=1, `stop=request_addressed`, **34 хода,
-  4.24₽**: Orientation 3/0.29, Localization 7/0.83, **Research 5/1.00 (лишний шаг)**, Patch
-  10/1.22, Verification 8/0.79, End 1/0.10. Остаток разрыва с 29/1.684₽ — лишний Research:
-  для code defect нужен переход L→P; Research — для ситуаций/новых артефактов. Тесты —
-  `364 passed`, typecheck чистый.
-- **Localization → Patch (2026-10-20).** *(Устарело 2026-10-29 — см. запись о коррекционных
-  L↔R ниже.)* Позднее ребро `L → R` убрано (`83243ae`): у
-  Localization снова единственный переход — Patch. Dry-rebuild перехода из 34-ходового прогона
-  Research не показывает; live K=3 — 3/3 `move patch`. Полный `fix-ocaml-gc` K=1: reward=1,
-  `request_addressed`, 34 хода, 5.23₽ — Research нет; остаток — Patch 15 ходов (пере-вывод
-  причины, ~10k reasoning) и 2 хода на `.skein/checkpoints`; cache hit 81%.
-- **Коррекционные L↔R (2026-10-29).** `Localization → Research` возвращено как коррекция
-  неверной стартовой классификации (не обычный выход), симметрично — `Research → Localization`;
-  промты внутри состояний не тронуты (только `next` и правило перехода). Синтетика —
-  `tests/routing.test.ts`; живой прогон 3 задач × K=3 (`fix-code`, `db-wal`, `log-summary`,
-  `--turns 34/32/21`): 9/9 `reward=1`, рёбра не выбраны ни разу, нормальные пути не сдвинулись.
-  Трасса: `bench/runs/prompt-tests/2026-10-29T08-12-37-edges-k3-full/`.
-- **Patch = Localization + Patch (2026-11-04).** `localization` слит в `patch`: локализация
-  дефекта и правка, которую он требует, — один цикл, а не передача хода. Именно передача была
-  механизмом провала 65-ходового прогона `custom-memory-heap-crash`: на t7 прогон отверг верную
-  правку по ложной посылке про `__cxx11`, и не было состояния, где причину можно пересмотреть по
-  свидетельству, — поэтому t21–t48 (~2.75₽) ушли на обход. Теперь `patch` несёт шаг локализации
-  (цель, координаты, исключённые соседи, причина как подозрение) вместе с изменением, и его
-  инструкция говорит, что не удержавшееся изменение — свидетельство о причине, а не повод гадать
-  заново. Сознательно убрано: «причина — та, что названа в `Finish` предыдущего состояния», «не
-  выводи причину заново», «не выбирай другую» — из-за них неверная причина становилась
-  неисправимой. Маршруты: `O → Patch` (дефект), `P → V`, `P → R` (ситуация), `V → P` при провале
-  приёмки (ветка `V → Localization` убрана). Блок пробы — `vcs, build, compilers, interpreters`:
-  состояние и ищет в материале, и собирает изменение. `localization` остаётся в `ISLANDS` для
-  журналов, записанных до слияния, со своим `transitionRule`, но исключён из `LIVE_ISLAND_IDS`,
-  поэтому живой `move` туда попасть не может. Тесты — `tests/routing.test.ts`,
-  `tests/islands.test.ts`, `tests/prompt.test.ts`, `tests/environment.test.ts`; офлайн
-  **596 passed, 40 skipped**, typecheck чистый.
-  Живой K=1 на `custom-memory-heap-crash`: reward=1, 42 хода, 2.216₽ против 65-ходового
-  базлайна; цепочка `ori@0 → patch@2 → ver@34 → end@40`. **Атрибуция: выигрыш не от этого
-  слияния.** Он пришёл от подсказки обсервера (seq=124, t19), прямо назвавшей
-  `std::_Facet_Register_impl()`; оба прогона отвергли одну и ту же правку на t7, в базовом
-  промте 2 упоминания `__cxx11`, в слитом 0, и рассуждение слитого прогона ни разу не
-  переоткрывает цель. Для честного сравнения промтов нужен K≥3 на прогонах, которые обсервер
-  не ведёт.
+  Patch, git-leak → Research (3/3). Тесты — `364 passed`, typecheck чистый.
 - **Терминальный UI (2026-10-31, сделано).** `npm run cli` открывает Ink-TUI: живой прогресс
   из loop/session/observer, постоянная панель состояний текущей задачи (диапазоны ходов,
   токены, действия, полный `stop.why`), read-only overlay истории задач и header с размером текущего
@@ -331,7 +285,7 @@ staleness; объективный арбитр. Детали — `docs/plans/arc
 
 - **Research = Research + Recovery (2026-11-03).** `recovery` слит в `research`: одно состояние
   выводит требуемый результат из материала или спецификации, пишет output и проверяет его
-  (read-only на копии); `recovery` остаётся только для старых журналов. Маршруты: `O → L`
+  (read-only на копии); `recovery` остаётся только для старых журналов. Маршруты: `O → P`
   (дефект), `O → R` (ситуация), `O → C` (build); `R → C` удалено, Construction остаётся
   отдельным. Environment — короткий список фактов (network, interpreters, package managers,
   build/test tools), не инвентарь утилит; `Finish` закрытого состояния несёт `Artifacts:` из
@@ -423,16 +377,16 @@ CSP/арифметика, UI, мультиязычность, несколько
   «determine the byte-level transform», а не «XOR 0x42, checksums little-endian»; Recovery
   заново выводил метод и вязнул в endianness (t18–t21, 4–12k симв.). Общее правило: `stop.why`
   несёт то, что нужно следующему состоянию — метод/координаты/проверку, а не только ситуацию.
-- **Локализация теряет межсостоянийную передачу (регресс, 2026-10-15).** Реальный sandbox
-  `fix-ocaml-gc --net on` (Phase-20-лента) провалился — reward 0, `max_turns` 60: orientation
-  закрылась на «layout known», а локализация стартовала с причинной целью («find why the
+- **Межсостоянийная передача теряется при узкой orientation (регресс, 2026-10-15).** Реальный
+  sandbox `fix-ocaml-gc --net on` (Phase-20-лента) провалился — reward 0, `max_turns` 60:
+  orientation закрылась на «layout known», а правка стартовала с причинной целью («find why the
   bootstrap crashes») без указателя на `runtime/shared_heap.c` и ушла в `major_gc.c` / отладку
   bootstrap. Успешный прогон 2026-10-14 (Phase 18, 29 ходов, reward 1) держался на **широкой цели
   orientation** («…locate the sweeping/free-space changes in the major GC…») и **`note`** — сводке
   оставляемого состояния («…changes in `runtime/shared_heap.c`/`.h`»). Phase 20 сузил orientation
   до «layout» и убрал `note` из контракта `move`/B9 — передача потеряна. Фикс не выбран;
   варианты: (A) вернуть `note`-цепочку, (B) расширить orientation до «где лежит изменение»,
-  (C) сделать первый шаг локализации «найти затронутые файлы». Доказательства:
+  (C) сделать первый шаг правки «найти затронутые файлы». Доказательства:
   `docs/benches/best_bench_ru.md` (Фаза 20, Docker net on / виртуальная спека).
   **Обновление 2026-10-17:** финальный батч `fix-ocaml-gc --net on` — 5/5
   (`docs/benches/best_bench_ru.md`); per-state hints, literal `why` и `Previous failed attempt`

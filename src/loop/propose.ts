@@ -6,7 +6,6 @@ import { invokeTools, type ToolsOptions } from "../llm/structured";
 import { toolDescriptionsFor, toolNamesFor } from "../llm/tools";
 import {
   BASE_PROMPT,
-  NODE_INSTRUCTIONS,
   REQUEST_INSTRUCTION,
   transitionInstruction,
 } from "./prompt";
@@ -85,11 +84,10 @@ export function historyMessages(history: readonly TapeMessage[]): ModelMessage[]
 }
 
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
-// the tape itself, then the situation's prompt (the request/transition instruction or the
-// terminal instruction). An open state carries its hint and criterion in the tape itself (at
-// its `Start state` entry), so nothing is appended per turn: the projection is the whole
-// context. The base prompt carries the contract and the tape carries the state
-// (docs/ir_semantics §7).
+// the tape itself, then the situation's prompt (the request or transition instruction). An open
+// state carries its instruction and criterion in the tape itself (at its `Start state` entry), so
+// nothing is appended per turn: the projection is the whole context. The base prompt carries the
+// contract and the tape carries the state (docs/ir_semantics §7).
 export function buildMessages(context: Context): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "system", content: BASE_PROMPT }];
   for (const constraint of context.constraints) {
@@ -102,13 +100,12 @@ export function buildMessages(context: Context): ModelMessage[] {
   // The transition rule is a `system` turn: it is the engine's rule for choosing the next
   // state, not a user request. The tape already ends with the finished state's `Finish` line,
   // so the rule follows it as another system turn (docs/ir_semantics §7). An open state's
-  // situation appends nothing: its hint and criterion live in the state header.
+  // situation appends nothing: its instruction and criterion live in the state header. End
+  // appends nothing either: its instruction is on the tape with the state.
   if (context.situation === "request") {
     messages.push({ role: "system", content: REQUEST_INSTRUCTION });
   } else if (context.situation === "transition") {
     messages.push({ role: "system", content: transitionInstruction(context.island) });
-  } else if (context.situation === "terminal") {
-    messages.push({ role: "system", content: NODE_INSTRUCTIONS.terminal });
   }
   return messages;
 }
