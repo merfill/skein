@@ -50,10 +50,9 @@ reserved `symbol`/`test`, not produced).
   (`fact:session`), recorded once at request start; it has no relation. `environment` is
   `{ root, found, missing }`; `material` is `{ root, repos, entries, paths, files }` (a workspace
   index, with no configs or build commands). The fact is session-scoped: a future `Session`
-  container owns it, and request trees reference it by id. The projection renders `Workspace` in
-  Orientation, `Orientation result` plus `Probe` (environment) in Patch/Research, and `Probe`
-  alone elsewhere;
-  closed states and the request turn carry none.
+  container owns it, and request trees reference it by id. The projection renders the coordinates
+  (`Workspace root`, repository status) and the focused island's environment subset; the request
+  turn and closed states carry none.
 
 **Relations** (`src/ir/types.ts`, no status field): `move` (request → move), `unactionable`
 (request → unactionable), `turns` (move → turns), `turn` (turns → action), `stop` (move → stop),
@@ -121,11 +120,11 @@ tape of `user`/`assistant`/`tool` turns (rebuilt from the tree), the current sit
 (`request`/`working`/`transition`/`terminal`), the admissible moves, and the constraints. `src/loop/propose.ts`
 assembles the model messages: the base prompt, the constraints, the history, and — appended last
 (temporary) — the current situation's instruction. A state is a decision, not a tool call: it is
-rendered as a `Start state <label>` marker (an `assistant` turn), the state's `instruction` (a
-`system` turn) and — while open — its goal (`Goal:`, `user`) with the doxa's unverified guess and `Done when`; its turns follow;
-a finished state collapses to `Start state
+rendered as a `Start state <label>` marker (a `system` turn), its brief and, while open, its
+turns; `buildMessages` then appends one `user` working prompt (`Goal`, the doxa's unverified
+guess, `Done when`, `Plan`, request as reference). A finished state collapses to `Start state
 <label>` / `Finish state <label> — <why>` (the `stop` reason, read from the `move.stop`
-relation) — its brief, instruction, goal and turn messages leave the tape. The request is
+relation) — its brief and turn messages leave the tape. The request is
 the second message of the tape (right after the base prompt), on every turn. The `tool` messages
 carry the bounded inline body (an inspection result's head, a command's tail, when large); the
 full body is addressed by id via `recall`/`search`. A structural move refused by `classify`

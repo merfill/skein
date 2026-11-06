@@ -183,11 +183,13 @@ system   — инструкция текущей ситуации (plan/working/
 
 ```
 system   — Start state <Label>
-system   — <brief: Workspace map / Orientation result / Probe>
-system   — <инструкция острова: как действовать в этом состоянии>
-user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.what>", если задана)
-…план…
-system   — <per-turn tail: hint, критерий, closure>  [не хранится]
+system   — <brief: координаты + environment-подмножество>
+…ходы…
+user     — Goal: <island.what>
+           Your earlier guess (may be wrong): <move.what>   [если задана]
+           Done when: <criterion>. When it holds, reply with the result as text only — no tool call.
+           Plan: <island.instruction>
+           The original user request is context for this state, not its goal.   [не хранится]
 ```
 
 **Возврат в Patch после провала.** Отдельного блока `Previous failed attempt`
@@ -218,8 +220,7 @@ system — Finish state <Label> — <why из stop>
 | ситуация | что добавляется |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — выбрать стартовое состояние (`move`) или `decline` |
-| `plan` | `planInstruction` — «Call a tool…» + tail: hint → `done`-критерий → closure |
-| `working` | `turnInstruction` — тот же tail (per-turn, не хранится) |
+| `working` | `workingInstruction` — один `user`-ход: цель, догадка, критерий, план, запрос как reference (per-turn, не хранится) |
 | `transition` | `transitionInstruction` — прочитать строку `Finish state`, выбрать следующее состояние |
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — «This is End. …» |
 
@@ -230,9 +231,9 @@ system — Finish state <Label> — <why из stop>
 
 **Что добавляется:**
 - запрос — вверху, один раз;
-- вход состояния — `ai(Start)` + `system(инструкция)` + `user(what)`;
-- хвост хода — per-turn tail открытого состояния (`plan`/`working`) или инструкция ситуации
-  (не хранится, на следующем ходу пересобирается);
+- вход состояния — `system(Start)` + `system(brief)` + его ходы;
+- промпт хода — per-turn `working`-ход открытого состояния (цель, догадка, критерий, план,
+  запрос как reference) или инструкция ситуации (не хранится, на следующем ходу пересобирается);
 - вызовы инструментов — как `tool_calls` в `ai`; шаги одного хода доксы идут **одной пачкой**
   (`ai` с массивом `tool_calls` + N `tool`), а не по паре на вызов.
 

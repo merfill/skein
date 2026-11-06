@@ -90,9 +90,9 @@ describe("frontier (applicable)", () => {
     expect(classification(run("ls"), events).reason).toContain("no_state");
   });
 
-  it("REF-NOT-IN-STATE refuses an edit while in Orientation (the write-class is not an inspection tool)", () => {
+  it("REF-NOT-IN-STATE refuses an edit while in Research (edit is not in its surface)", () => {
     const { ws } = makeWorkspace({ "a.txt": "x" });
-    const events = execAll([move("orientation", "map it"), read("a.txt")], [request()], ws).events;
+    const events = execAll([move("research", "map it"), read("a.txt")], [request()], ws).events;
     expect(classification(edit("a.txt", "x", "y"), events).reason).toContain("not_in_state");
   });
 

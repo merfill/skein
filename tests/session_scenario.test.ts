@@ -110,7 +110,7 @@ function createTaskProposer(): Proposer {
       if (request.includes("src/app.txt")) {
         return { thought: "", actions: [move("construction", "apply the rule")] };
       }
-      return { thought: "", actions: [move("end", "finish")] };
+      return { thought: "", actions: [move("research", "finish")] };
     }
 
     if (context.situation === "working") {

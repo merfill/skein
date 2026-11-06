@@ -16,25 +16,26 @@ a projection, not an accumulating transcript. The same events always give the sa
 
 ## 2. Roles and the moves
 
-- `system` — the base prompt, the constraints, each **open** state's `instruction` (shown once at
-  entry), the **current** state's fact block (`Workspace` in Orientation, `Orientation result`
-  plus `Probe` in Patch/Research, `Probe` elsewhere), and the current situation's instruction
-  (appended last, temporary); a closed state carries no instruction or fact block;
-- `user` — the request (leads the tape, every turn) and each **open** state's goal;
+- `system` — the base prompt, the constraints, the **current** state's fact block (coordinates
+  plus its environment subset), and the current situation's instruction (appended last,
+  temporary); a closed state carries no fact block;
+- `user` — the request (leads the tape, every turn) and the per-turn working prompt after an
+  open state's turns;
 - `assistant` — the state markers and the doxa's calls;
 - `tool` — command results.
 
 | Turn | Messages |
 |---|---|
-| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn (`Workspace`/`Orientation result`/`Probe`), the state's `instruction` as a `system` turn, and — while the state is open — its goal as a `user` turn (`Goal: <island.what>`), with the doxa's unverified note (`Your earlier guess (may be wrong): <move.what>`) when set. The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
+| `move` | a **state is a decision, not a tool call**: a `system` marker `Start state <label>`, the focused fact block as a `system` turn, then — while the state is open — its turns. The goal, criterion and plan are appended by `buildMessages` as one `user` working prompt after the turns (`Goal: <island.what>`, the doxa's guess when set, `Done when`, `Plan`, request reference). The request leads the tape as the second message (right after the base prompt), on **every** turn — never dropped |
 | `apply` | `assistant` (the call) + `tool` (the observation); the first `apply` after a `move` seeds the state's turns and its first action |
 | `stop` | the state's closure, rendered as a `system` marker `Finish state <label> — <why>`; it adds no tool call. At the terminal state the request ends |
 | `decline` | `assistant` (the reason `why`): the request is declined |
 
 Every turn is a pair `assistant` + `tool`; the first `apply` after a `move` seeds the
 state's turns. A command that ran and mutated a file (an edit) has no observation, so its `tool`
-message reads `mutated <path>`. An open state is `Start state <label>` / `instruction` / goal
-(`user`) + `Done when` / turns; a closed one is only `Start state <label>` / `Finish state <label>`. The
+message reads `mutated <path>`. An open state is `Start state <label>` / brief / turns, with one
+`user` working prompt appended after the turns; a closed one is only `Start state <label>` /
+`Finish state <label>`. The
 `Finish state` marker carries **only** the label
 and the `stop` reason — never the list of changed files: a state that runs a build mutates
 thousands of artifacts.
@@ -44,25 +45,25 @@ thousands of artifacts.
 - the request is the first `user` turn (right after the base prompt), on every turn;
 - the **probe** is one session `fact` (`add_node kind:"fact"`, `id: fact:session`) carrying
   `{ environment, material }`, recorded at request start. It is not a separate message after the
-  request; the projection emits the block as a `system` turn before the **current** state's
-  instruction. The block comes from the state's own brief (`src/ir/briefs.ts`): Orientation gets
-  the coordinates (the workspace root, the repository status, the working directory when the shell
-  starts outside the root); Research, Patch and Construction get the coordinates plus their
-  environment subset; Verification gets the environment alone; End gets nothing. The environment
+  request; the projection emits the block as a `system` turn in the **current** state's entry.
+  The block comes from the state's own brief (`src/ir/briefs.ts`): every working state gets the
+  coordinates (the workspace root, the repository status, the working directory when the shell
+  starts outside the root) plus the environment subset its island needs; End gets nothing. The environment
   is a short list of facts (`Network is available`, interpreters, package managers, build/test
   tools, version-control tools), not an inventory of stock utilities. Closed states carry no
   block; the request turn has none;
 - the coordinates are deterministic and are not a listing: no top-level entries, no paths, no
   file count. A state that needs the files lists them. Environment, extensions, configs, build
-  commands and build state are **not** shown in Orientation; a declared command is never
+  commands and build state are **not** shown; a declared command is never
   presented as the acceptance;
 - its states (`move` children) render in order: an **open** state (the current one) renders its
-  `Start state` marker, brief, `instruction` (`system`), goal + `Done when` (`user`) and turns; a state
-  **left behind** or stopped collapses to `Start state <label>` / `Finish state <label> — <why>`.
-  No brief, instruction, goal, turn messages or separate `stop` message remain;
-- the doxa's `move.what` is an unverified guess shown on the open state's `Goal:` turn
-  (`Your earlier guess (may be wrong): …`); the request's presumptions are not carried into the
-  state as facts;
+  `Start state` marker, brief and turns; a state **left behind** or stopped collapses to
+  `Start state <label>` / `Finish state <label> — <why>`. No brief, turn messages or separate
+  `stop` message remain;
+- `buildMessages` appends one `user` working prompt after an open state's turns: the state's
+  `Goal`, the doxa's unverified guess (`Your earlier guess (may be wrong): …`) when set,
+  `Done when`, `Plan`, and the original request marked as reference; the request's presumptions
+  are not carried into the state as facts;
 - **the tape is not monotone.** When a state is left behind, its `apply` turns leave the tape;
   only its triple remains. Only the view goes, not the data: the tree stays complete;
 - **the doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
@@ -95,15 +96,17 @@ A refused structural move creates no node: its reason arrives as a transient `to
 
 The system part is assembled per situation, not as a monolith:
 
-- the **base prompt** holds only what is true on any turn — the role, the contract, and the state
-  set with its transitions. It is stable, so it is a good cache prefix. The
+- the **base prompt** holds only what is true on any turn — the role and the contract. It is
+  stable, so it is a good cache prefix. The state map and transitions are scoped to the
+  request/transition situation prompts. The
   tool names/parameters/descriptions are **not** here: they ship in the request's `tools` field;
 - the **tool surface** offered in that field is bound from `Context.applicable`: on a
   `request`/`transition` only `move` is offered, while a state is open the apply tools are
   offered (`recall`/`search` always); `stop` is engine-owned (the doxa closes a state with text);
-- the **situation prompt** is appended last only for `request`, `transition` and `terminal`
-  (temporary, never stored). An open state appends nothing: its `Done when` lives in the state
-  entry. `request` (choose the first state, or `decline`; `what`/`done` — **from the
+- the **situation prompt** is appended last for `request`, `transition`, `terminal` and the open
+  state (`working`), always temporary, never stored. `working` appends one `user` turn with the
+  state's `Goal`, guess, `Done when`, `Plan` and request reference. `request` (choose the first
+  state, or `decline`; `what`/`done` — **from the
   request**), `transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
   `Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
   the next state or End), `terminal` ("This is End." + the text completion rule);

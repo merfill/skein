@@ -1,51 +1,25 @@
-import { ISLAND_ORDER, ISLANDS, TERMINAL_ISLAND, type IslandId } from "../../ir/islands";
+import { ISLANDS, TERMINAL_ISLAND, type IslandId } from "../../ir/islands";
 
 export interface PromptBlock {
   id: string;
   text: string;
 }
 
-// The transitions, rendered from the single island list (src/ir/islands.ts): each state's
-// outgoing edges with their precondition, grouped by source. Branches are several lines; the
-// corrective cycle (verification → patch) is explicit
-// (docs/prompt_state_machine_concept.md §4.3).
-const TRANSITIONS = (() => {
-  const lines: string[] = [];
-  for (const id of ISLAND_ORDER) {
-    const island = ISLANDS[id];
-    for (const edge of island.next) {
-      lines.push(`- ${island.label} → ${ISLANDS[edge.to].label} — ${edge.when}.`);
-    }
-  }
-  lines.push("End is terminal.");
-  return lines.join("\n");
-})();
-
-// The states, rendered from the island list (single source): each is a goal (`what`) and the
-// knowledge that closes it (`done`). The base prompt carries the whole set, once.
-// The states are the map: each is its kind of work (`what`). The criterion is NOT here — it
-// rides the focused state's own entry (`Start state` / goal / `Done when`), so it appears once
-// and never duplicates the map.
-const STATES = ISLAND_ORDER.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
-
-// The states a request can start in, shown in the request hint. There is no START node in the
-// graph, so the list is explicit: add a state here to offer it at the request. Orientation is
-// the only start: every path begins by mapping the material and the acceptance.
-const START_ISLANDS: readonly IslandId[] = ["orientation"];
 const renderStates = (ids: readonly IslandId[]): string =>
   ids.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
-const START_STATES = renderStates(START_ISLANDS);
 
-// How to set the state's `what` at the request: the state's goal and criterion are its own
-// (from the island); the request only names the object or situation the state will work on.
-const REQUEST_WHAT =
-  "`what` names the object or situation this state will work on — one short phrase, up to ~20 " +
-  "words; do not restate the request or the task. Leave `done` out: the state's own criterion applies.";
+// The legacy Orientation transition rule. The request now states its own routing literally.
+const START_RULE: readonly string[] = [
+  "Move to Patch when the task is to find an error in the existing code and fix it by editing an existing file.",
+  "Move to Construction when the task is to write new file(s) explicitly.",
+  "Otherwise move to Research.",
+];
 
-// The base: the stable system prompt, in block order. B1 is the role; B2 the principles; B3
-// the state map; B4 the moves (transitions). It does NOT repeat the tool descriptions — those
-// ship in the request's `tools` field (the single source is the registry, `PROPOSAL_TOOLS`).
-// Stable, so a good cache prefix.
+// The base: the stable system prompt, in block order. B1 is the role; B2 the principles. The
+// state map and the moves are not here: they are rendered in the request/transition situation
+// prompts, scoped to the choice at hand, so an open state never carries other states' goals.
+// It does NOT repeat the tool descriptions — those ship in the request's `tools` field (the
+// single source is the registry, `PROPOSAL_TOOLS`). Stable, so a good cache prefix.
 export const BASE_BLOCKS: readonly PromptBlock[] = [
   {
     id: "B1",
@@ -55,7 +29,7 @@ You are a software engineering agent with access to the user's filesystem. You s
 
 ## How you work
 
-You solve a task by moving between states; you are in exactly one state at a time, and the state is its goal — one step of the work with its own stop criterion. Work the state until its criterion holds, then reply with text only, no tool calls: the engine records that reply as the state's result on the \`Finish\` line. After a state is finished, choose the next state and call \`move\` to enter it.
+You solve a task by moving between states; you are in exactly one state at a time, and the state is its goal — one step of the work with its own stop criterion. The request is reference, not the goal: it explains why the task exists, but the state's goal is the only active goal for this turn, and the state's criterion decides when the turn ends. Work the state until its criterion holds, then reply with text only, no tool calls: the engine records that reply as the state's result on the \`Finish\` line. After a state is finished, choose the next state and call \`move\` to enter it.
 
 Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result. A reply with no tool call ends the state, so give it only when the state's criterion holds — otherwise call a tool.`,
   },
@@ -81,14 +55,6 @@ The workspace root, the repository status and the environment are engine-recorde
 
 Never expose or commit secrets or keys. Report concisely; no preamble or summary unless asked.`,
   },
-  {
-    id: "B3",
-    text: `## States\n\n**These are descriptions of the states; do not use them as instructions inside a state.**\n\nStates:\n${STATES}`,
-  },
-  {
-    id: "B4",
-    text: `## Transitions\n\n**These are descriptions of the transitions; use them only to choose the next state after the current state is stopped — they are not instructions inside a state.**\n\nTransitions — move on as soon as the condition holds:\n${TRANSITIONS}`,
-  },
 ];
 
 // The request prompt (`request`): the request scenario (a fresh request: choose the first state, or
@@ -98,12 +64,12 @@ Never expose or commit secrets or keys. Report concisely; no preamble or summary
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {
     id: "request",
-    text: `Choose the state to start in from the user's request: call \`move\` to enter it, or \`decline\` if the request admits no such state.
+    text: `Choose exactly one of three values:
+- Patch when the task is to find an error in the existing code and fix it by editing an existing file.
+- Construction when the task is to write new file(s) explicitly.
+- Research in all other cases.
 
-Startable states:
-${START_STATES}
-
-${REQUEST_WHAT}`,
+The original user request is context for this choice, not the goal.`,
   },
 ];
 
@@ -112,11 +78,7 @@ ${REQUEST_WHAT}`,
 function transitionRule(island?: IslandId): string[] {
   switch (island) {
     case "orientation":
-      return [
-        "Move to Patch only when the request is to fix an error in existing code, files, or history — the defect is in an existing artifact.",
-        "Move to Research when the request is a situation — the required result must be recovered or derived from the material or the specification.",
-        "Move to Construction when the request is to build a new artifact from a specification.",
-      ];
+      return [...START_RULE];
     case "research":
       return [
         "Choose End when the required result exists in its declared form and matches the material or the request.",
@@ -132,7 +94,7 @@ function transitionRule(island?: IslandId): string[] {
       ];
     case "patch":
       return [
-        "Choose Verification when the change holds — the artifact and every other file the task needs are updated and the result has the declared form.",
+        "Choose Verification when the change is applied — the differing expression is at the target, and the edited lines read back.",
         "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
       ];
     case "verification":
@@ -181,6 +143,28 @@ export function transitionInstruction(island?: IslandId): string {
     ...transitionRule(island),
     ...tail,
   ].join("\n\n");
+}
+
+// The working prompt: the state's goal, criterion and plan as one `user` turn, appended after
+// the state's turns so the goal is the last thing the model reads. The doxa's `what` is an
+// unverified guess about the concrete subject, shown as advice, never as the state's goal; the
+// original request stays reference. Empty for a state with no criterion (End).
+export function workingInstruction(island: IslandId, guess?: string, done?: string): string {
+  const criterion = done !== undefined && done !== "" ? done : ISLANDS[island].criterion;
+  if (criterion === "") return "";
+  const goal = ISLANDS[island].what.replace(/[.!?]\s*$/, "");
+  const lines = [`Goal: ${goal}.`];
+  if (guess !== undefined && guess !== "") {
+    lines.push(`Your earlier guess (may be wrong): ${guess}`);
+  }
+  lines.push(
+    `Done when: "${criterion.replace(/\.\s*$/, "")}". When it holds, reply with the result as text only — no tool call.`,
+  );
+  if (ISLANDS[island].instruction !== "") {
+    lines.push(`Plan:\n${ISLANDS[island].instruction}`);
+  }
+  lines.push("The original user request is context for this state, not its goal.");
+  return lines.join("\n\n");
 }
 
 const assemble = (blocks: readonly PromptBlock[]): string => blocks.map((block) => block.text).join("\n\n");

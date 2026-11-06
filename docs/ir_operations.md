@@ -370,6 +370,8 @@ by the engine (`src/tools/index.ts`): its non-execution is recorded as an `actio
 | Reason (token) | Trigger | Operator | ID |
 |---|---|---|---|
 | `empty_state` | malformed `move` (unknown `state`) | `move` | `REF-MV-EMPTY` |
+| `not_startable` | `move` to a live state that cannot start a request | `move` | `REF-MV-NOT-STARTABLE` |
+| `unreachable` | `move` outside the finished state's `next` neighbours | `move` | `REF-MV-UNREACHABLE` |
 | `no_state` | `apply` when the focus is not an open state (the request, or a finished state) | apply | `REF-AP-NO-STATE` |
 | `no_state` | `apply` when the focus is not an open state | apply | `REF-NO-STATE` |
 | `not_in_state` | `apply` choosing a tool outside the focused state's island `applies` | apply | `REF-NOT-IN-STATE` |
@@ -443,7 +445,7 @@ of the live model's next move (each step retries `SKEIN_STEP_REPEATS=3`).
 | `OP-SR-1..7` | `tests/ops/search.test.ts` | scenario `retrieve-at-scale` |
 | `TR-1..9` | `tests/ops/traversal.test.ts` | steps `apply-next-action`, `continue-open-goal` |
 | `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-MV-EMPTY`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
+| `REF-MV-EMPTY`, `REF-MV-NOT-STARTABLE`, `REF-MV-UNREACHABLE`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
 | `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
 | `REF-NOT-IN-STATE` | `tests/ops/applicable.test.ts` | — |
 | `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RC-STATE` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |

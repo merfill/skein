@@ -1,10 +1,10 @@
 // The islands of work a goal can be entered in — a closed vocabulary, single-sourced the way
-// `FRAGMENT` was (docs/prompt_state_machine_concept.md). `ISLAND_IDS` is the source of truth:
-// the `create_goal` tool's `state` enum expands from it (`src/llm/schemas.ts`), and the base
-// prompt renders the state graph, the per-state instructions and their transitions from
-// `ISLANDS` (`src/loop/prompt/blocks.ts`), so the model's call contract and the prompt map
-// cannot drift. A goal's `state` is authored by the doxa at `create_goal` and never changes; it
-// is a label, never a gate (docs/ir_semantics.md §2.5, §8).
+// `FRAGMENT` was (docs/prompt_state_machine_concept.md). `ISLAND_IDS` includes the legacy
+// states so old journals still render; `LIVE_ISLAND_IDS` is the source of truth for the `move`
+// tool's `state` enum (`src/llm/schemas.ts`) and `START_ISLAND_IDS` for the request's startable
+// states, so the model's call contract and the prompt map cannot drift. A goal's `state` is
+// authored by the doxa at `create_goal` and never changes; it is a label, never a gate
+// (docs/ir_semantics.md §2.5, §8).
 
 export const ISLAND_IDS = [
   "orientation",
@@ -18,10 +18,11 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
-// The islands a live `move` may target. `recovery` stays in `ISLANDS` so journals written before
-// its merge still render, but it is no longer reachable: it merged into Research (2026-11-03).
+// The islands a live `move` may target. `recovery` and `orientation` stay in `ISLANDS` so
+// journals written before they were removed still render, but they are no longer live:
+// `recovery` merged into Research (2026-11-03), and `orientation` was removed because the
+// engine-recorded environment already carries the root and the repository status (2026-11-06).
 export const LIVE_ISLAND_IDS = [
-  "orientation",
   "research",
   "patch",
   "construction",
@@ -30,6 +31,10 @@ export const LIVE_ISLAND_IDS = [
 ] as const;
 
 export type LiveIslandId = (typeof LIVE_ISLAND_IDS)[number];
+
+// The states a fresh request can start in. There is no START node in the graph, so the list is
+// explicit: a request moves directly into the work, not into an orientation pass.
+export const START_ISLAND_IDS: readonly LiveIslandId[] = ["patch", "research", "construction"];
 
 // A general-unit work segment is not a coding island; it is one generic state in the IR.
 export const GENERAL_STATE = "general" as const;
@@ -42,7 +47,8 @@ export interface Island {
   what: string;
   // The state of knowledge that shows you are done here.
   criterion: string;
-  // How to act in this state — the engine's instruction, rendered once when the state is entered.
+  // How to act in this state — the engine's instruction. Rendered in the per-turn working
+  // prompt as the `Plan`, after the state's goal and criterion.
   instruction: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
@@ -65,18 +71,17 @@ const RECOVER_TOOLS: readonly string[] = [...INSPECT, "write"];
 const CONSTRUCT_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 
 export const ISLANDS: Record<IslandId, Island> = {
+  // Legacy: no longer live or startable (2026-11-06). Kept so journals written before the
+  // removal still render their `Start state Orientation` entry.
   orientation: {
     id: "orientation",
     label: "Orientation",
-    what: "name the workspace root, the repository status, and the acceptance the request declares",
-    criterion:
-      "the reply names the workspace root, the repository status, and the acceptance the request " +
-      "declares",
+    what: "name the workspace root and the repository status",
+    criterion: "the reply names the workspace root and the repository status",
     instruction:
-      "Write one reply with three lines: the workspace root, the repository status, and the " +
-      "acceptance. The root and the status are already in the tape; the acceptance is the " +
-      "request's own words. Nothing else is needed — the files, the build targets and the " +
-      "history belong to the next state.",
+      "Write one reply with the workspace root and the repository status. They are already in " +
+      "the tape; nothing else is needed — the files, the build targets and the history belong " +
+      "to the next state.",
     applies: INSPECT,
     next: [
       {

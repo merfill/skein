@@ -11,19 +11,23 @@ afterEach(cleanupSandboxes);
 // (docs/testing_ru.md §3). The trajectory is a scripted `Action` sequence, so a failure
 // points at the engine (classify / refusal / termination), not at the model's wording.
 
-const toWork: Action = { operator: "move", state: "orientation", what: "fix the RLE sweep regression so the compiler bootstraps", done: "the fix is in" };
+const toWork: Action = { operator: "move", state: "patch", what: "fix the RLE sweep regression so the compiler bootstraps", done: "the fix is in" };
 const goal: Action = {
   operator: "apply",
   action: { tool: "bash", command: "grep -n RLE-SWEEP-BUG ocaml/runtime/shared_heap.c" },
 };
 const stopState: Action = { operator: "stop", why: "the state is done" };
-// Orientation is reconnaissance: the write-class belongs to Patch, so the trajectory closes
-// Orientation and moves to Patch before the edit (docs/ir_semantics.md §2.5).
-const toPatch: Action = {
+// Patch makes the change; Verification checks it. The request starts directly in Patch
+// (there is no orientation pass).
+const toVerification: Action = {
   operator: "move",
-  state: "patch",
-  what: "apply the located RLE-sweep fix",
-  done: "the fix is applied",
+  state: "verification",
+  what: "check the RLE-sweep fix",
+};
+const toResearch: Action = {
+  operator: "move",
+  state: "research",
+  what: "inspect the RLE sweep",
 };
 const toEnd: Action = { operator: "move", state: "end", what: "" };
 const stopRequest: Action = { operator: "stop", why: "the goal is done" };
@@ -31,10 +35,10 @@ const stopRequest: Action = { operator: "stop", why: "the goal is done" };
 const objective: Action[] = [
   toWork,
   goal,
-  stopState,
-  toPatch,
   FIX_EDIT,
   { operator: "apply", action: { tool: "bash", command: "make -C testsuite one DIR=tests/basic" } },
+  stopState,
+  toVerification,
   stopState,
   toEnd,
   stopRequest,
@@ -54,7 +58,7 @@ describe("fix-ocaml-gc sandbox (engine, scripted proposer)", () => {
     const { result } = await runSandbox(
       fixOcamlGc,
       FIX_OCAML_REQUEST,
-      scripted([toWork, goal, stopState, toEnd, stopRequest], stopRequest),
+      scripted([toResearch, goal, stopState, toEnd, stopRequest], stopRequest),
       { maxTurns: 6 },
     );
     expect(result.stopReason).toBe("request_addressed");

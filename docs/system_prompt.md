@@ -46,17 +46,17 @@ L2 is under the gate, L3 is acceptance.
 
 ## 1. Assembly model
 
-- The prompt has a stable **base** (`BASE_PROMPT`, true on any move) and per-situation **node
-  instructions** (`NODE_INSTRUCTIONS`, keyed by `Situation`: `request` / `plan` / `working` /
-  `transition` / `terminal`), assembled in `src/loop/prompt/blocks.ts` (re-exported by
-  `src/loop/prompt/index.ts`): each is its blocks' texts joined with `\n\n`.
-- A block is `{ id: string; text: string }`; the base block IDs are `B1`…`B4` and set the order
-  in the system prompt. Situation prompts are named (`request`, `plan`, `working`, `transition`,
+- The prompt has a stable **base** (`BASE_PROMPT`, true on any move) and per-situation prompts
+  (`request` / `working` / `transition` / `terminal`), assembled in `src/loop/prompt/blocks.ts`
+  (re-exported by `src/loop/prompt/index.ts`): each is its blocks' texts joined with `\n\n`.
+- A block is `{ id: string; text: string }`; the base block IDs are `B1`…`B2` and set the order
+  in the system prompt. Situation prompts are named (`request`, `working`, `transition`,
   `terminal`), never `B…`.
 - `src/loop/propose.ts` builds the message list as: `BASE_PROMPT`, the constraints, the tape
-  (the history), then, only outside a state, the situation's prompt **appended last** —
-  temporary, re-derived from the situation each turn, never stored in the history
-  (`docs/ir_semantics.md` §6).
+  (the history), then the situation's prompt **appended last** — temporary, re-derived from the
+  situation each turn, never stored in the history (`docs/ir_semantics.md` §6). `working`
+  appends one `user` turn (goal, guess, criterion, plan, request reference); `request`,
+  `transition` and `terminal` append a `system` turn.
 - The tool contract (names, parameters, descriptions) is **not** copied into the prompt text:
   it is sent as the request's `tools` field (native function-calling), generated from the
   single registry `PROPOSAL_TOOLS` (`src/llm/tools.ts`). The prompt only tells the model to
@@ -80,15 +80,15 @@ Current blocks:
 |---|---|---|---|---|
 | B1 | `role` | A coding agent; exactly one state at a time; the state is its goal with its own `done` criterion; tool calls each turn, run in order, independent calls batched; the state's tool calls are its steps | `prompt_state_machine_concept` | in code |
 | B2 | `principles` | Understand before acting (code, tests, imports, configs; search; read; neighbors; sibling comparison); follow the project's conventions and patterns; comments sparingly; work only the state's goal; the source is the only reference (no external version); provenance; no secrets; concise output | `specializing`/`keep-going` (opencode), `docs/ir_semantics.md` §6 | in code |
-| B3 | `states` | The state map: `label — what`, rendered from `ISLANDS` | `src/ir/islands.ts` | in code |
-| B4 | `moves` | The transitions grouped by source, rendered from `ISLANDS`; `End` is terminal | `docs/prompt_state_machine_concept.md` §4.3 | in code |
 
-Situation prompts are **named**, not numbered. Only two are appended, and only outside a state:
+Situation prompts are **named**, not numbered:
 
 | Name | Situation | Role |
 |---|---|---|
 | `request` | fresh request | `system` |
+| `working` | open state, after its turns | `user` |
 | `transition` | after a `Finish state` line | `system` |
+| `terminal` | End | `system` |
 
 ### State tape
 
@@ -98,14 +98,14 @@ A state is rendered on the tape, in order:
 |---|---|---|
 | `start` | `Start state <Label>` — the state marker | `system` |
 | `brief` | the probe facts for the island (`stateBrief`) | `system` |
-| `instruction` | the island `instruction` — how to act | `system` |
-| `goal` | `Goal: <island.what>` — the state's goal, with `Your earlier guess (may be wrong): <move.what>` when set (open state only) | `user` |
+| `turns` | the state's apply calls and their results | `assistant` / `tool` |
+| `working` | one turn appended after the turns: `Goal: <island.what>`, `Your earlier guess (may be wrong): <move.what>` when set, `Done when`, `Plan: <instruction>`, and the request marked as reference | `user` |
 | `finish` | `Finish state <Label> — <why>` | `system` |
 
 The request **leads** the tape — the second message, right after the base prompt — on every
-turn. `start`/`brief`/`instruction`/`goal` are shown once when the state is entered and only
-while it is open. Nothing is appended after its turns: the goal and `Done when` live in the
-state's entry. When the state closes, only `start` + `finish` remain.
+turn. `start`/`brief` are shown once when the state is entered and only while it is open; the
+`working` turn is recomputed each turn and never stored. When the state closes, only `start` +
+`finish` remain.
 The old `Previous failed attempt` block is gone: the previous states' `finish` lines carry the
 record.
 
@@ -121,13 +121,13 @@ record.
   comment sparingly. Work only the state's goal; plan, make small changes, debug from evidence.
   Provenance: the source is the only reference; the result comes from the source/spec, never
   synthesized; acceptance compares against the source. No secrets; concise output.
-- **B3 — states.** The state map: `label — what`.
-- **B4 — moves.** The transitions: `from → to — when`; `End` is terminal.
-
 ### Situation prompts
 
 - **`request`** — choose the starting state (`move`) or `decline`; the startable states.
+- **`working`** — the open state's `Goal`, guess, `Done when`, `Plan`, and the request marked as
+  reference (one `user` turn after the state's turns).
 - **`transition`** — after `Finish state`: the next states and the rule among them.
+- **`terminal`** — End's text completion rule.
 
 ## 3. Cross-cutting invariants
 

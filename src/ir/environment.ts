@@ -40,8 +40,7 @@ export interface EnvironmentFact {
   partial?: boolean;
 }
 
-// Orientation establishes the inputs and the acceptance, not the toolchain: it gets no
-// environment block. Patch needs the VCS tools and the interpreters that can run a search
+// Legacy Orientation gets no environment block. Patch needs the VCS tools and the interpreters that can run a search
 // script, plus the toolchain the change is built with; Research needs the interpreters and
 // package managers that can produce the result; Construction and Verification run the project's
 // build and its declared check, and Construction reads and checks history as well.

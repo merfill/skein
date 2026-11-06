@@ -4,6 +4,118 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-06 — `fix-ocaml-gc`: user-route, Orientation removed, K=3 net off/on
+
+- **Маршрут — `user`-сообщение.** Request instruction больше не `system`, а последний `user`
+  turn (`src/loop/propose.ts`); порядок: `system(base)` / `user(request)` /
+  `system(workspace)` / `user(route)`. Текст:
+  `Choose exactly one of three values:`; `- Patch when the task is to find an error in the
+  existing code and fix it by editing an existing file.`; `- Construction when the task is to
+  write new file(s) explicitly.`; `- Research in all other cases.`; последняя строка —
+  `The original user request is context for this choice, not the goal.` Список состояний, их
+  описания, `what`-подсказка и `decline` из request-инструкции убраны. Это дало
+  `fix-ocaml-gc` **Patch 5/5** на первом ходу (до user-route было Research 5/5).
+- **Workspace на request-ходу.** `requestBrief` = `researchBrief` (координаты + environment
+  Research, без `entries/paths/files`), рендерится перед route. `Explored workspace` пробовали
+  и убрали — не помогло. B2 не менялся. `patchBrief` — координаты + environment Patch, без map.
+  Полную workspace map (`entries/paths/files`) пробовали вернуть и убрали: в `5b8943d` она уже
+  удалена, возвращать не надо.
+- **Orientation удалён из live.** `LIVE_ISLAND_IDS` без `orientation`; в `ISLANDS` оставлен
+  legacy для старых журналов. `START_ISLAND_IDS = ["patch","research","construction"]`;
+  request стартует сразу в продуктивное состояние. `classify`: `not_startable` на request и
+  `unreachable` после `Finish` (цель должна быть в `next`).
+- **Working prompt.** Один `user`-ход после turns: `Goal`, guess, `Done when`, `Plan`;
+  `The original user request is context for this state, not its goal.` `renderState` больше не
+  пишет instruction/goal в state entry; `Island.tail` удалён.
+- **Patch восстановлен из `HEAD` `5b8943d`.** `what` = `find the defect in the existing
+  artifact and make the change it needs`; старые criterion/instruction/next. Это вернуло
+  «поиск» в Patch.
+- **`bench/turn.ts --rebuild`**: срезает старый state entry, использует текущий criterion,
+  читает `island/what/done` из трейсов; `tests/sandbox/live.ts`/`live-trace.ts` эти поля пишут.
+- **Docs:** обновлены `AGENTS.md`, `ir`/`ir_semantics`/`projection`/`system_prompt`/
+  `state_testing`/`states_ru`, `walkthrough` (исторические примеры помечены),
+  `ir_operations` (`not_startable`/`unreachable`).
+- **Тесты:** `npm run typecheck` чисто; offline
+  `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **603 passed / 40 skipped**.
+
+**Route probe 13 задач × 5 (реальный probe, финальный user-route):**
+
+| task | факт |
+|---|---|
+| `fix-ocaml-gc` | **Patch 5** |
+| `custom-memory-heap-crash` | **Patch 4**, Research 1 |
+| `fix-code-vulnerability` | **Patch 3**, Research 2 |
+| `regex-log` | **Construction 5** |
+| `log-summary-date-ranges` | **Construction 5** |
+| `openssl-selfsigned-cert` | **Construction 5** |
+| `cobol-modernization` | **Construction 5** |
+| `modernize-scientific-stack` | **Construction 5** |
+| `fix-git` | **Research 5** |
+| `password-recovery` | **Research 5** |
+| `db-wal-recovery` | Research 3, Construction 2 |
+| `git-leak-recovery` | Research 2, Construction 3 |
+| `crack-7z-hash` | Construction 4, Research 1 |
+
+**Живые прогоны `fix-ocaml-gc`:**
+
+- K=1, старый prompt (13:12): `reward=0`, `max_turns`, 65 ходов, 8.996₽; ложные observer
+  hints, включая «Remove line 628» — прогон загрязнён.
+- K=3 `--net off` (финальный prompt): **3/3 reward=1**, `request_addressed`, ходы 41/25/31,
+  стоимость 7.981₽; путь `Patch → Verification → End`, edits 2/1/1, build+testsuite.
+  Observer: 1 trigger/run, hint правильный, но повторялся 25/7/13 ходов.
+- K=3 `--net on`: **1/3 reward=1**. runs 1/3: `check.code=124`, verifier timeout на
+  `Cloning into 'ocaml-original'`, `rewardSource=missing`; run 2: `reward=1`, `40 tests
+  passed`. run 1 стартовал Research, runs 2/3 — Patch. runs 1/3 ходили за upstream
+  `shared_heap.c` (`curl`/`wget`), run 2 — нет. Стоимость 7.422₽, ходы 40/28/28. Нули —
+  таймаут verifier’а, не провал тестов; для чистого net-on замера runs 1/3 надо перезапустить.
+
+**Открытое:** перезапустить net-on runs 1/3 (verifier timeout); observer hint всё ещё липкий
+(повтор каждый ход), хотя в net-off прогонах был корректен; recovery-задачи (`db-wal`,
+`git-leak`, `crack-7z`) иногда уходят в Construction, потому что правило «write new file(s)
+explicitly» буквально совпадает с их output-файлом.
+
+## 2026-11-05 — `fix-ocaml-gc`: ложный липкий hint, observer on/off
+
+- **Симптом.** K=3, `--net off`, observer on (retry 15:47,
+  `/tmp/opencode/fix-ocaml-gc-k3-netoff-retry/`): 50+ ходов вместо вчерашних 25–30, два
+  прогона дошли до t50/t54, третий до t49. Трейсы:
+  `bench/runs/sandbox-tasks/2026-11-05T12-47-55-*` (`N6MXdy`, `92OV0a`, `mMdLPA`).
+- **Дефект — не диагноз, а hint.** Настоящую причину (`pool_sweep`: `p += Whsize_hd(hd)`
+  вместо `p += wh`) все три нашли сами на t7/t8/t26. На t12 наблюдатель выдал **неверный**
+  hint, и дальше 26–33 хода ушли на «the hint is false/stale» и повторную проверку ложного
+  следа: «в compaction две одинаковые ветки» (ложь — ветки разные), «ты ещё не собирал, иди
+  собирай» (уже собирал), «diff `/tmp/.skein/trees/0`» (снапшоты байт-в-байт равны).
+  Правку `p += wh` применили только на t48–t54, после чего прогоны были остановлены.
+- **Корень.** У hint нет актуальности: он не сверяется с ходами после триггера и не
+  отзывается. Пока состояние открыто, `advisoriesOf` рендерит его **каждый ход**
+  (`src/ir/project.ts:442-467`), поэтому модель вынуждена снова и снова его опровергать.
+  Триггер `state_long` срабатывает на t12 (порог 9, `src/config/settings.ts:50`).
+  Это тот же дефект, что записан в разделе «Перезамер 2026-11-04», но там hint был
+  **правильным**: в прогоне
+  `bench/runs/sandbox-tasks/2026-11-04T17-18-17-428Z-fix-ocaml-gc-sTIh2b` (29 ходов)
+  hint t12 называл ту же строку, которую агент вывел сам на t11, и потому не мешал.
+- **Почему 50+, а не 29.** Вчера `--turns 24` (стоп на 29); retry шёл без `--turns`, поэтому
+  сработал `fix-ocaml-gc.maxTurns = 60` (`tests/sandbox/tasks/fix-ocaml-gc.ts:15`) и ничто
+  не ограничивало цикл. Плюс с `5b8943d` из брифа убрана карта workspace (остались только
+  root/repository/cwd), так что разведка дерева тоже подорожала — но это единицы ходов,
+  не десятки.
+- **Связанные правки промптов (между вчерашними 25–30 и сегодняшними 50+).**
+  `1d71637` — `localization` слит в `Patch` (Patch теперь locate+change, критерий требует
+  «siblings ruled out + cause named»); `5b8943d` — `Island.hint` слит в `instruction`,
+  карта workspace убрана из брифов, переписаны `Orientation`/`Verification`/`End`, удалён
+  terminal-промпт. Диагноз от этого не сломался: агент по-прежнему находил фикс за ~8 ходов.
+- **Контрольный батч observer off.** `SKEIN_OBSERVER=false`, K=3, `--net off`, тот же дефолт
+  60 ходов (`/tmp/opencode/fix-ocaml-gc-k3-netoff-observeroff/`, 16:03–16:15): в контекстах
+  **0** строк `Tape-agent hint`. Два прогона закрыли агентский цикл на t40 и t30 (End),
+  третий был на t27 и ещё шёл; один transient `llm call failed` на t24 в r1, ретрай прошёл.
+  Дальше r2/r3 ушли на верификатор (`bash /tests/test.sh`, в r2 свой `tests/basic` — 40
+  тестов, 0 failed); батч **погашен до summary**, поэтому финального reward нет.
+  Ходов 27–40 против 50+ — hint-loop исчез, но полного K=3-финала с reward пока не снято.
+- **Не сделано.** (1) Доснять observer-off до reward, чтобы утверждать «25–30 восстановлены».
+  (2) Решить, как чинить hint: отзыв/expiry после N ходов или после противоречащих ходов,
+  рендер только в ход инъекции, либо валидация цитируемых evidence в logos. (3) Проверить
+  вклад prompt-правок отдельно от hint (observer off уже почти изолирует его).
+
 ## 2026-11-05 — Переформат промптов состояний, фикс Orientation, полные прогоны
 
 - **`hint` слит в `instruction`.** Поле `Island.hint` удалено: подсказка состояния — это его же

@@ -1,5 +1,5 @@
 import { currentFocus, hasStopped, unactionableOf, type State } from "../ir/graph";
-import { ISLANDS, isIsland } from "../ir/islands";
+import { ISLANDS, START_ISLAND_IDS, isIsland } from "../ir/islands";
 import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import { nativeToolName } from "../llm/tools";
 import type { Action } from "../llm/schemas";
@@ -35,10 +35,24 @@ export function classify(action: Action, state: State): Classification {
       if (unactionableOf(state, current as string) !== undefined) {
         return reject("interpreted: the request is already declined");
       }
+      if (!(START_ISLAND_IDS as readonly string[]).includes(action.state)) {
+        return reject(`not_startable: ${action.state} is not a startable state`);
+      }
       return accept;
     }
     // A move is legal at a finished state (the transition); otherwise the state is still open.
-    if (node?.kind === "move" && isMoveFinished(state, current as string)) return accept;
+    if (node?.kind === "move" && isMoveFinished(state, current as string)) {
+      // Reachability: the target must be one of the finished state's `next` neighbours. The
+      // move surface and the prompt are built from the same edges; this is the engine guard.
+      const island = moveIsland(state, current as string);
+      if (island !== undefined) {
+        const targets = ISLANDS[island].next.map((edge) => edge.to);
+        if (!(targets as readonly string[]).includes(action.state)) {
+          return reject(`unreachable: ${ISLANDS[island].label} cannot move to ${action.state}`);
+        }
+      }
+      return accept;
+    }
     return reject("state_open: the current state is still open; a move applies after it finishes");
   }
 

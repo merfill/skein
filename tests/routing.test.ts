@@ -42,7 +42,7 @@ describe("routing: the corrective Patch ↔ Research edge", () => {
     expect(context.island).toBe("patch");
 
     const instruction = tail(context);
-    expect(instruction).toContain("Choose Verification when the change holds");
+    expect(instruction).toContain("Choose Verification when the change is applied");
     expect(instruction).toContain(
       "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
     );

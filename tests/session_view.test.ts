@@ -13,10 +13,15 @@ afterEach(cleanupWorkspaces);
 
 const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
-const proposer: Proposer = async (context: Context): Promise<Proposals> =>
-  context.situation === "request"
-    ? { thought: "", actions: [move("end", "finish")] }
-    : { thought: "", actions: [{ operator: "stop", why: "done" }] };
+const proposer: Proposer = async (context: Context): Promise<Proposals> => {
+  if (context.situation === "request") {
+    return { thought: "", actions: [move("research", "finish")] };
+  }
+  if (context.situation === "transition") {
+    return { thought: "", actions: [move("end", "finish")] };
+  }
+  return { thought: "", actions: [{ operator: "stop", why: context.island === "end" ? "done" : "nothing to do" }] };
+};
 
 function unreachable(): SessionTurnDeps["task"] {
   return {
@@ -108,7 +113,7 @@ describe("session view", () => {
     const lines = renderTurn(result);
     const text = lines.join("\n");
 
-    expect(text).toContain("task r1: request_addressed after 2 turns");
+    expect(text).toContain("task r1: request_addressed after 4 turns");
     expect(text).toContain("move: end");
     expect(text).toContain("stop: done");
     expect(lines).toContain("task answer: done");

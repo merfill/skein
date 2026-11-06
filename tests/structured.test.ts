@@ -373,13 +373,13 @@ describe("tool calling", () => {
   });
 
   it("invokeTools binds only the allowed tools", async () => {
-    const model = mockModel(() => toolReply([{ name: "move", args: { state: "orientation" } }]));
+    const model = mockModel(() => toolReply([{ name: "move", args: { state: "patch" } }]));
     const proposal = await agent(model, [{ role: "user", content: "go" }], {
       allowedTools: ["move", "recall"],
     });
     const bound = (model.doGenerateCalls[0]?.tools ?? []).map((tool) => tool.name);
     expect(bound).toEqual(["move", "recall"]);
-    expect(proposal.actions[0]).toEqual({ operator: "move", state: "orientation", what: "" });
+    expect(proposal.actions[0]).toEqual({ operator: "move", state: "patch", what: "" });
   });
 
   it("invokeTools repairs once when the model called no tool", async () => {

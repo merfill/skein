@@ -165,16 +165,11 @@ describe("projection (the message tape)", () => {
     expect(context.history.map((message) => message.role)).toEqual([
       "user",
       "system",
-      "system",
-      "user",
       "assistant",
       "tool",
     ]);
     expect(context.history[1]?.text).toBe("Start state Orientation");
-    expect(context.history[3]?.text).toContain(
-      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
-    );
-    expect(context.history[3]?.text).toContain("Your earlier guess (may be wrong): green");
+    expect(context.what).toBe("green");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
     expect(texts.some((text) => text.includes("exit 1") && text.includes("boom"))).toBe(true);

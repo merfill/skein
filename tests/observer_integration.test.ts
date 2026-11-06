@@ -14,7 +14,7 @@ function loopingPropose() {
     turn += 1;
     return {
       thought: "",
-      actions: [turn === 1 ? move("orientation", "look around") : run("echo a")],
+      actions: [turn === 1 ? move("patch", "look around") : run("echo a")],
     };
   };
 }

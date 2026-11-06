@@ -2,10 +2,10 @@
 // returning the finished text. Nothing is assembled from titled blocks elsewhere — the label,
 // the order and the wording live here, so a state's brief is read in one place.
 //
-// Orientation names the acceptance and needs the coordinates only. The states that work on the
-// material (Patch, Research, Construction) get the coordinates plus the toolchain their work
-// runs on; Verification gets the build and its test tools; Recovery gets the interpreters and
-// package managers that can produce the output.
+// Every live working state gets the coordinates plus the toolchain its work runs on (Patch,
+// Research, Construction, Verification, Recovery). Legacy Orientation gets the coordinates only;
+// End gets nothing. The engine already records the root and the repository status, so the request
+// starts directly in a productive state.
 
 import { environmentBrief } from "./environment";
 import { workspaceLines } from "./material";
@@ -28,6 +28,12 @@ function compose(probe: SessionProbe, island: IslandId): string {
     if (environment !== "") lines.push(environment);
   }
   return lines.join("\n");
+}
+
+// The request turn's brief: the same procedure the Research state uses (coordinates plus its
+// environment subset), so the first `move` is not blind. No listing.
+export function requestBrief(probe: SessionProbe): string {
+  return researchBrief(probe);
 }
 
 export function orientationBrief(probe: SessionProbe): string {

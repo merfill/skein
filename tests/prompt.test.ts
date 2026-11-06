@@ -30,13 +30,13 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toBe(BASE_BLOCKS.map((block) => block.text).join("\n\n"));
   });
 
-  it("carries the state-machine preamble and the state graph", () => {
+  it("carries the state-machine preamble without the state map", () => {
     expect(BASE_PROMPT).toContain("exactly one state");
-    expect(BASE_PROMPT).toContain("Orientation");
-    expect(BASE_PROMPT).toContain("Research");
-    expect(BASE_PROMPT).not.toContain("Recovery");
-    expect(BASE_PROMPT).toContain("Construction");
-    expect(BASE_PROMPT).toContain("Verification");
+    expect(BASE_PROMPT).toContain("the state is its goal");
+    expect(BASE_PROMPT).not.toContain("Orientation");
+    expect(BASE_PROMPT).not.toContain("Research");
+    expect(BASE_PROMPT).not.toContain("Construction");
+    expect(BASE_PROMPT).not.toContain("Verification");
   });
 
   it("forbids reconstructing upstream from memory while keeping a fetched reference a lead", () => {
@@ -44,28 +44,25 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).toContain("treat it as a lead to verify, not as the oracle");
   });
 
-  it("states the state-change mechanism, the States and conditioned Transitions once in the base", () => {
+  it("states the state-change mechanism without carrying the state map or transitions", () => {
     expect(BASE_PROMPT).toContain("the state is its goal");
     expect(BASE_PROMPT).not.toContain("create_goal");
-    expect(BASE_PROMPT).toContain("States:");
-    // The map lists each state's kind of work; the criterion is delivered per turn, not here.
-    expect(BASE_PROMPT).toMatch(/- Orientation — .+\./);
-    expect(BASE_PROMPT).not.toMatch(/- Orientation — .*Done:/);
-    expect(BASE_PROMPT).toContain("Transitions —");
-    expect(BASE_PROMPT).toMatch(/- Orientation → Patch — the request is to fix an error in existing code, files, or history/);
-    expect(BASE_PROMPT).toMatch(/- Patch → Research — the work turns out to be a situation, not a defect to locate and fix/);
-    expect(BASE_PROMPT).toMatch(/- Research → Patch — the work is a code defect to locate and fix/);
+    expect(BASE_PROMPT).not.toContain("States:");
+    expect(BASE_PROMPT).not.toContain("Transitions —");
     expect(BASE_PROMPT).not.toMatch(/Localization/);
-    expect(BASE_PROMPT).toMatch(/- Orientation → Research — the request is a situation — the required result must be recovered or derived from the material or the specification/);
-    expect(BASE_PROMPT).toMatch(/- Orientation → Construction — the request is to build a new artifact from a specification/);
-    expect(BASE_PROMPT).toMatch(/End is terminal/);
+    expect(BASE_PROMPT).not.toMatch(/End is terminal/);
+    // The map and the moves are scoped to the request/transition situation prompts.
+    expect(REQUEST_INSTRUCTION).toContain("Choose exactly one of three values:");
+    expect(transitionInstruction("patch")).toContain("Next states");
   });
 
   it("gives the request situation its own instruction", () => {
-    expect(REQUEST_INSTRUCTION.length).toBeGreaterThan(0);
-    expect(REQUEST_INSTRUCTION).toMatch(/move \{ state|decline/);
-    expect(REQUEST_INSTRUCTION).toContain("- Orientation —");
-    expect(REQUEST_INSTRUCTION).not.toContain("- Localization —");
+    expect(REQUEST_INSTRUCTION).toBe(`Choose exactly one of three values:
+- Patch when the task is to find an error in the existing code and fix it by editing an existing file.
+- Construction when the task is to write new file(s) explicitly.
+- Research in all other cases.
+
+The original user request is context for this choice, not the goal.`);
     expect(REQUEST_INSTRUCTION).not.toMatch(/previous message/i);
     expect(transitionInstruction("orientation")).toMatch(/move to the next state/i);
   });
@@ -75,8 +72,8 @@ describe("system prompt: base + node assembly", () => {
     expect(fromOrientation).toContain("Patch"); // a reachable candidate
     expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
     expect(fromOrientation).not.toContain("Verification"); // only the focused state's `next` targets
-    expect(fromOrientation).toContain("fix an error in existing code, files, or history");
-    expect(fromOrientation).toContain("Move to Research when the request is a situation");
+    expect(fromOrientation).toContain("find an error in the existing code and fix it by editing an existing file");
+    expect(fromOrientation).toContain("Otherwise move to Research");
     expect(fromOrientation).toContain("Next states: Patch, Research, Construction.");
     expect(fromOrientation).toContain("Construction");
     expect(fromOrientation).toMatch(/`what`.*`done`/i);
@@ -180,9 +177,9 @@ describe("system prompt: tool contract", () => {
     expect(BASE_PROMPT).toMatch(/reply with text only, no tool calls/i);
   });
 
-  it("numbers the base blocks B1..B4 in system-prompt order and names the request prompt", () => {
-    expect(BASE_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2", "B3", "B4"]);
-    expect(PROMPT_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2", "B3", "B4", "request"]);
+  it("numbers the base blocks B1..B2 in system-prompt order and names the request prompt", () => {
+    expect(BASE_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2"]);
+    expect(PROMPT_BLOCKS.map((block) => block.id)).toEqual(["B1", "B2", "request"]);
   });
 
   it("exposes the move vocabulary and no removed fields", () => {
@@ -337,19 +334,21 @@ describe("context format: tape", () => {
     expect(messages).toHaveLength(5);
   });
 
-  it("appends nothing on plan and working: the state's hint and criterion live in its header", () => {
-    for (const situation of ["working"] as const) {
-      const withIsland: Context = { ...context, situation, island: "patch" };
-      const messages = buildMessages(withIsland);
-      expect(messages).toHaveLength(withIsland.history.length + 2);
-      expect(withIsland.history.at(-1)).toMatchObject({ role: "tool" });
-      expect(messages.at(-1)).toMatchObject({ role: "tool" });
-    }
+  it("appends the working prompt as one user turn after the tape", () => {
+    const withIsland: Context = { ...context, situation: "working", island: "patch" };
+    const messages = buildMessages(withIsland);
+    expect(messages).toHaveLength(withIsland.history.length + 3);
+    expect(withIsland.history.at(-1)).toMatchObject({ role: "tool" });
+    expect(messages.at(-1)).toMatchObject({ role: "user" });
+    expect(String(messages.at(-1)?.content)).toContain(
+      `Goal: ${ISLANDS.patch.what}.`,
+    );
+    expect(String(messages.at(-1)?.content)).toContain(`Plan:\n${ISLANDS.patch.instruction}`);
   });
 
   it("keeps the request and transition prompts; End carries its instruction on the tape", () => {
     const request = buildMessages({ ...context, situation: "request", island: "patch" }).at(-1);
-    expect(request).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
+    expect(request).toMatchObject({ role: "user", content: REQUEST_INSTRUCTION });
     const transition = buildMessages({ ...context, situation: "transition", island: "patch" }).at(-1);
     expect(transition).toMatchObject({
       role: "system",
@@ -368,7 +367,7 @@ describe("context format: tape", () => {
 
   it("appends the request instruction after the request (scopes the first move's goal)", () => {
     const messages = buildMessages({ ...context, history: [], situation: "request" });
-    expect(messages.at(-1)).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
+    expect(messages.at(-1)).toMatchObject({ role: "user", content: REQUEST_INSTRUCTION });
   });
 
   it("appends the transition instruction, naming the focused state's reachable next states", () => {

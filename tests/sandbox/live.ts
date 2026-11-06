@@ -106,7 +106,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     const chars = promptText(context).length;
     writeFileSync(
       join(dir, "contexts.ndjson"),
-      `${JSON.stringify({ turn, chars, situation: context.situation, constraints: context.constraints, history: context.history, messages: rendered })}\n`,
+      `${JSON.stringify({ turn, chars, situation: context.situation, island: context.island, what: context.what, done: context.done, constraints: context.constraints, history: context.history, messages: rendered })}\n`,
       { flag: "a" },
     );
     mkdirSync(join(dir, "contexts"), { recursive: true });

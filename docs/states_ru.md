@@ -89,38 +89,16 @@ records. Это **не** declared form и **не** «кандидат буква
 
 ## 2. Конкретные состояния
 
-> **Orientation result vs probe.** Orientation устанавливает входы и acceptance и даёт карту
-> workspace (`root`, repo, entries/paths). Эта карта показывается в **Patch** и
-> **Research** как `Orientation result`; другие состояния получают `Probe` (environment/tools)
-> отдельным заголовком. Probe — сессионный факт; Orientation result — результат предыдущего
-> состояния, не environment-бриф. Закрытые состояния и request-ход этих блоков не несут.
+> **Brief.** Каждое рабочее состояние получает координаты (`Workspace root`, `Workspace
+> repository`, `Working directory`, если шелл стартует вне корня) и свой набор environment;
+> закрытые состояния и request-ход этих блоков не несут.
 
-### 2.1 Orientation
+### 2.1 Orientation — удалён (2026-11-06)
 
-- **Предмет:** материал и способ судить успех.
-- **Цель:** назвать, где проект и что в нём есть, и какая приёмка объявлена в запросе.
-- **`what`:** `name the workspace root, its top-level entries, the repository status, and the acceptance the request declares`
-- **`done`:** `the material is known — what exists (files, records, images, a repository) — and
-  how success is judged (an in-workspace command, an external verifier, or declared
-  constraints); whether it is under version control is noted when relevant`
-- **Предположения запроса:** область, подсистема, файлы — проверить по фактам, не принимать на
-  веру.
-- **Координаты:** `Workspace root`, статус `Workspace repository` (none или
-  branch/head/dirty), `Working directory`, если шелл стартует вне корня. Списка файлов нет —
-  состояние, которому нужны файлы, запрашивает их через `list`. В Orientation не показываются
-  environment, расширения, конфиги, команды сборки и build state: это не её цель.
-- **Границы:** не ищет дефект, не воспроизводит сбой, не описывает ситуацию глубоко, не
-  сверяется с upstream и не разбирает историю версий глубже VCS-статуса из probe. Сбой,
-  замеченный по ходу, — в итог, не задерживаясь. Не пересказывает, не интерпретирует
-  и не решает задачу; запрос — только источник acceptance. Не создаёт и не меняет файлы.
-- **Переход:**
-  - → **Patch**, когда запрос — найти и исправить ошибку в существующем коде или файлах;
-  - → **Construction**, когда запрос полностью задаёт новый артефакт — его можно писать сразу;
-  - иначе → **Research**.
-- **Пример (fix-ocaml-gc):** корень `ocaml/`; сборка `./configure && make`, приёмка
-  `make -C testsuite one DIR=tests/basic`; VCS — из material map → контроля версий нет.
-- **Пример (password-recovery):** `/app` — tmpfs с `varsea`; VCS/сборки нет; успех — файл
-  `/app/recovered_passwords.txt`.
+Состояние удалено: оно только повторяло `Workspace root` и `Workspace repository`, которые
+движок уже кладёт в brief. Запрос стартует сразу в **Patch**, **Research** или
+**Construction**. `orientation` остаётся в `ISLANDS` как legacy, чтобы старые журналы
+рендерились; в живом `move` его нет.
 
 ### 2.2 Research
 
@@ -229,16 +207,16 @@ records. Это **не** declared form и **не** «кандидат буква
 
 | класс | маршрут |
 |---|---|
-| **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `O → P → V → End` |
-| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `O → R → End` |
-| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `O → C → End`; провал Construction может уйти в `R` |
-| **History** (fix-git) | `O → P → V → End` |
-| **Hybrid** (git-leak-recovery) | `O → R → P → V → End` (шаг `R → P` — явный `move`) |
+| **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `P → V → End` |
+| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `R → End` |
+| **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `C → End`; провал Construction может уйти в `R` |
+| **History** (fix-git) | `P → V → End` |
+| **Hybrid** (git-leak-recovery) | `R → P → V → End` (шаг `R → P` — явный `move`) |
 
-`O` — Orientation, `R` — Research, `P` — Patch, `V` — Verification, `C` — Construction.
+`R` — Research, `P` — Patch, `V` — Verification, `C` — Construction.
 
 Рёбра `P ⇄ R` — **коррекционные**, не штатные: они нужны, когда стартовая классификация
-`O → P`/`O → R` неверна (Patch выясняет, что работа — ситуация; Research — что это дефект кода).
+`P`/`R` неверна (Patch выясняет, что работа — ситуация; Research — что это дефект кода).
 Штатные маршруты выше их не содержат.
 
 Пояснения:
@@ -247,10 +225,10 @@ records. Это **не** declared form и **не** «кандидат буква
   предполагаемая причина добываются в том же состоянии, где вносится правка, чтобы причина
   пересматривалась по результату, а не передавалась дальше непроверенной.
 - **Research обходится без отдельного шага поиска**: он сам выведет результат из материала и
-  запишет output. Маршрут — `O → R → End`.
+  запишет output. Маршрут — `R → End`.
 - **db-wal**: WAL — артефакт, но его проблема — ситуация (кодировка/фреймы); Research декодирует
   и пишет `recovered.json`, затем `End`. Прогон 2026-11-03 (K=3, `--turns 24`) — 3/3, median
-  24 хода, 0.966₽; маршрут не единственный: часть прогонов решает через `O → P → V`.
+  24 хода, 0.966₽; маршрут не единственный: часть прогонов решает через `P → V`.
 - **git-leak**: Research извлекает секрет; Patch делает purge; Verification проверяет и то, и
   другое. Ребра `R → P` в `next` нет — шаг делается явным `move`; это открытый вопрос (см. §7).
 - **fix-git**: потерянный коммит — артефакт; Patch находит и делает merge, Verification
@@ -264,7 +242,7 @@ records. Это **не** declared form и **не** «кандидат буква
   - не тот объект/источник → **Research** (пересмотреть материал).
 - **Patch:** Verification не прошёл: провал может быть и в изменении, и в причине, на которую оно
   опиралось → **Patch**: пересмотреть причину и менять снова от неё.
-- **Неверная стартовая классификация (`O → P` или `O → R`):**
+- **Неверная стартовая классификация (`P` или `R`):**
   - Patch обнаружил ситуацию, а не дефект кода → **Research**;
   - Research обнаружил дефект кода → **Patch**;
   это коррекция рода работы, а не обычный выход: условие — «работа оказалась другого рода»,

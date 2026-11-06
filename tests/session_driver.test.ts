@@ -28,9 +28,12 @@ const tools: SessionTools = {
 // without touching the workspace.
 const proposer: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
+    return { thought: "", actions: [move("research", "finish")] };
+  }
+  if (context.situation === "transition") {
     return { thought: "", actions: [move("end", "finish")] };
   }
-  return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+  return { thought: "", actions: [{ operator: "stop", why: context.island === "end" ? "done" : "nothing to do" }] };
 };
 
 function deps(operations: SessionOperation[]): SessionTurnDeps {
@@ -99,8 +102,8 @@ describe("session driver: one utterance turn", () => {
     const stops = result.task?.result.events.filter(
       (event) => event.type === "add_node" && event.node.kind === "stop",
     );
-    expect(stops).toHaveLength(1);
-    const stop = stops?.[0];
+    expect(stops).toHaveLength(2);
+    const stop = stops?.at(-1);
     expect(stop?.type === "add_node" ? stop.node.label : undefined).toBe("done");
     expect(sessionOutline(session)).not.toContain("report:");
   });

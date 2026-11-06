@@ -307,7 +307,7 @@ describe("executeAction", () => {
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
     ]);
     const outcome = executeAction(
-      { operator: "move", state: "orientation", what: "map", done: "mapped" },
+      { operator: "move", state: "patch", what: "map", done: "mapped" },
       root,
       workspace,
       0,
@@ -315,7 +315,7 @@ describe("executeAction", () => {
     const state = fold(outcome.events, root);
     const moveNode = [...state.nodes.values()].find((node) => node.kind === "move");
     expect(moveNode).toBeDefined();
-    expect((moveNode?.payload as { state?: string }).state).toBe("orientation");
+    expect((moveNode?.payload as { state?: string }).state).toBe("patch");
     expect(currentFocus(state)).toBe(moveNode?.id);
     const edge = [...state.edges.values()].find((edge) => edge.kind === "move");
     expect(edge?.from).toBe("r1");
@@ -637,7 +637,7 @@ describe("the message tape", () => {
       roles.push(context.history.map((message) => message.role));
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+        return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -652,16 +652,14 @@ describe("the message tape", () => {
       { request: { id: "r1", text: "green" } },
     );
 
-    // A fresh request is a single user turn; the move adds the `Start state` marker, the
-    // instruction and the state's own goal (the request leads the tape); the first apply seeds
-    // the plan.
+    // A fresh request is a single user turn; the move adds only the `Start state` marker (the
+    // request leads the tape); the first apply seeds the plan. The goal/criterion/plan are
+    // appended per turn by `buildMessages`, not stored in history.
     expect(roles[0]).toEqual(["user"]);
-    expect(roles[1]).toEqual(["user", "system", "system", "user"]);
+    expect(roles[1]).toEqual(["user", "system"]);
     expect(roles[2]).toEqual([
       "user",
       "system",
-      "system",
-      "user",
       "assistant",
       "tool",
     ]);
@@ -669,8 +667,6 @@ describe("the message tape", () => {
     expect(roles[3]).toEqual([
       "user",
       "system",
-      "system",
-      "user",
       "assistant",
       "tool",
       "assistant",
@@ -685,7 +681,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       if (index === 3) {
         // One doxa move, two independent probes (a batch).
@@ -707,7 +703,9 @@ describe("the message tape", () => {
           ],
         };
       }
-      if (index === 5) return proposal({ operator: "move", state: "end", what: "" });
+      if (index === 5) return proposal({ operator: "move", state: "verification", what: "" });
+      if (index === 6) return proposal({ operator: "stop", why: "verified" });
+      if (index === 7) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "done" });
     };
     const result = await runAgent(
@@ -733,7 +731,7 @@ describe("the message tape", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       contexts.push(context);
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -752,7 +750,6 @@ describe("the message tape", () => {
 
 describe("text stop", () => {
   const NEXT: Partial<Record<IslandId, LiveIslandId>> = {
-    orientation: "patch",
     patch: "verification",
     verification: "end",
   };
@@ -763,7 +760,7 @@ describe("text stop", () => {
     const propose = async (context: Context): Promise<Proposals> => {
       situations.push(context.situation);
       if (context.situation === "request") {
-        return proposal({ operator: "move", state: "orientation", what: "green" });
+        return proposal({ operator: "move", state: "patch", what: "green" });
       }
       if (context.situation === "transition") {
         const next = context.island !== undefined ? NEXT[context.island] : undefined;
@@ -786,15 +783,12 @@ describe("text stop", () => {
       "transition",
       "working",
       "transition",
-      "working",
-      "transition",
       "terminal",
     ]);
     const stops = result.events
       .filter((event) => event.type === "add_node" && event.node.kind === "stop")
       .map((event) => (event as { node: { label: string } }).node.label);
     expect(stops).toEqual([
-      "finished orientation",
       "finished patch",
       "finished verification",
       "finished end",
@@ -806,7 +800,7 @@ describe("text stop", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green" });
       if (index === 2) return { thought: "mapped", actions: [] };
       return { thought: "I think we are done", actions: [] };
     };
@@ -909,7 +903,9 @@ describe("runAgent", () => {
         return proposal({ operator: "apply", action: { tool: "bash", command: "node --test" } });
       }
       if (index === 5) return proposal({ operator: "stop", why: "node --test passes" });
-      if (index === 6) return proposal({ operator: "move", state: "end", what: "" });
+      if (index === 6) return proposal({ operator: "move", state: "verification", what: "" });
+      if (index === 7) return proposal({ operator: "stop", why: "verified" });
+      if (index === 8) return proposal({ operator: "move", state: "end", what: "" });
       return proposal({ operator: "stop", why: "node --test passes" });
     };
     const result = await runAgent(
@@ -928,7 +924,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (_context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "make the suite pass", done: "the suite passes" });
+      if (index === 1) return proposal({ operator: "move", state: "research", what: "make the suite pass", done: "the suite passes" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -961,7 +957,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "interpret the request", done: "the request is interpreted" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "interpret the request", done: "the request is interpreted" });
       if (index === 2) {
         return proposal({
           operator: "apply",
@@ -991,7 +987,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+        return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -1015,7 +1011,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+        return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -1046,7 +1042,7 @@ describe("runAgent", () => {
       contexts.push(context);
       index += 1;
       if (index === 1) {
-        return proposal({ operator: "move", state: "orientation", what: "read the long file", done: "the file is read" });
+        return proposal({ operator: "move", state: "research", what: "read the long file", done: "the file is read" });
       }
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
@@ -1106,10 +1102,8 @@ describe("runAgent", () => {
     expect(context.history[1]?.text).toContain("Start state Orientation");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
-    // The state IS its goal: the state's own `what` rides a `user` turn after the entry.
-    const goal =
-      context.history.map((message) => message.text).find((text) => text.includes("name the workspace root")) ?? "";
-    expect(goal).toContain("name the workspace root");
+    // The state's goal is projected from the move, not stored as a tape turn.
+    expect(context.what).toBe("green");
   });
 
   it("refuses a repeated read and names the stored result", async () => {
@@ -1117,7 +1111,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1155,7 +1149,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) {
         return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       }
@@ -1181,7 +1175,7 @@ describe("runAgent", () => {
     let index = 0;
     const propose = async (context: Context): Promise<Proposals> => {
       index += 1;
-      if (index === 1) return proposal({ operator: "move", state: "orientation", what: "green", done: "green" });
+      if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) {
         return proposal({
           operator: "apply",

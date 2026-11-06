@@ -16,9 +16,12 @@ const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 const proposer: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
+    return { thought: "", actions: [move("research", "finish")] };
+  }
+  if (context.situation === "transition") {
     return { thought: "", actions: [move("end", "finish")] };
   }
-  return { thought: "", actions: [{ operator: "stop", why: "done" }] };
+  return { thought: "", actions: [{ operator: "stop", why: context.island === "end" ? "done" : "nothing to do" }] };
 };
 
 function agentFor(operations: SessionOperation[]): SessionAgent {
@@ -55,7 +58,7 @@ describe("session REPL", () => {
     expect(output).toContain("answer:");
     expect(output).toContain("hi");
     expect(output).toContain('session: start("fix it")');
-    expect(output).toContain("task r1: request_addressed after 2 turns");
+    expect(output).toContain("task r1: request_addressed after 4 turns");
     expect(session.utteranceSeq).toBe(2);
     expect(session.units.has("r1")).toBe(true);
   });

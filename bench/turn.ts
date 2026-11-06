@@ -49,6 +49,10 @@ interface Row {
   // `--rebuild` sources (present in `sandbox-tasks` traces, `tests/sandbox/live.ts`).
   history?: TapeMessage[];
   constraints?: { id: string; forbid: string[] }[];
+  // Newer traces record the projection's focus explicitly; older ones are parsed from history.
+  island?: IslandId;
+  what?: string;
+  done?: string;
 }
 
 type PatchOp =
@@ -220,14 +224,25 @@ function lastMoveOf(history: TapeMessage[]):
     if (marker === null) continue;
     const island = ISLAND_BY_LABEL[marker[1]!];
     if (island === undefined) continue;
-    const goal = history[i + 1]?.text ?? "";
-    const parsed = /^(.*?)\nDone when: (.*?)\.?\s*$/s.exec(goal);
-    const what = parsed?.[1]?.trim();
-    const done = parsed?.[2]?.trim();
+    // The goal is the first `user` turn after the marker; the brief and the (old) instruction
+    // are `system` turns in between. Stop at the first turn if there is no goal.
+    let goal = "";
+    for (let j = i + 1; j < history.length; j += 1) {
+      const next = history[j]!;
+      if (next.role === "user") {
+        goal = next.text;
+        break;
+      }
+      if (next.role !== "system") break;
+    }
+    // The old state entry was `Goal: …`, `Your earlier guess (may be wrong): …`,
+    // `Done when: "…"`. The goal itself is the island's `what`; only the guess is taken from
+    // the recorded turn. The criterion is re-read from the current island so `--rebuild`
+    // tests the current prompt, not the criterion that was current when the run was recorded.
+    const what = /Your earlier guess \(may be wrong\): (.+?)(?:\n|$)/.exec(goal)?.[1]?.trim();
     return {
       island,
       ...(what !== undefined && what !== "" ? { what } : {}),
-      ...(done !== undefined && done !== "" ? { done } : {}),
     };
   }
   return undefined;
@@ -237,21 +252,52 @@ function lastMoveOf(history: TapeMessage[]):
 // state description (from the island of the last `move` and its concretized what/done) and the
 // situation/observation instructions are recomputed, so a prompt edit can be tested on a
 // recorded run without a new run. Needs a `sandbox-tasks` trace (it carries `history`).
+// The current projection renders an open state as `Start state <label>`, then the brief and the
+// turns; the goal/criterion/plan are appended by `buildMessages`. Older traces still carry the
+// old instruction and goal as tape turns, so `--rebuild` drops both before re-rendering.
+function trimStateEntry(history: readonly TapeMessage[]): TapeMessage[] {
+  let start = -1;
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const message = history[i]!;
+    if (message.role === "system" && message.text.startsWith("Start state ")) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return [...history];
+  let goal = -1;
+  for (let i = start + 1; i < history.length; i += 1) {
+    if (history[i]!.role === "user") {
+      goal = i;
+      break;
+    }
+  }
+  if (goal < 0) return history.map((message) => ({ ...message }));
+  const instruction = goal - 1;
+  return history
+    .filter((_, i) => i !== goal && !(i === instruction && i > start && history[i]!.role === "system"))
+    .map((message) => ({ ...message }));
+}
+
 function rebuildMessages(row: Row): ModelMessage[] {
   if (row.history === undefined) throw new Error("--rebuild needs a trace with `history` (sandbox-tasks)");
   const move = lastMoveOf(row.history);
-  const island = move?.island;
+  const island = row.island ?? move?.island;
+  const what = row.what ?? move?.what;
+  const done = row.done ?? move?.done;
   const history: TapeMessage[] = row.history.map((message) =>
     island !== undefined && message.role === "system" && message.text.startsWith("State: ")
-      ? { ...message, text: stateDescription(ISLANDS[island], move?.what, move?.done) }
+      ? { ...message, text: stateDescription(ISLANDS[island], what, done) }
       : message,
   );
+  const trimmed = island !== undefined ? trimStateEntry(history) : history;
   const context: Context = {
-    history,
+    history: trimmed,
     situation: row.situation,
     constraints: row.constraints ?? [],
     ...(island !== undefined ? { island } : {}),
-    ...(move?.done !== undefined && move.done !== "" ? { done: move.done } : {}),
+    ...(what !== undefined && what !== "" ? { what } : {}),
+    ...(done !== undefined && done !== "" ? { done } : {}),
   };
   return buildMessages(context);
 }
@@ -403,6 +449,8 @@ for (const turn of turns) {
         usageHandlers: [meter],
         allowedTools,
         toolDescriptions: toolDescriptionsFor(move?.island),
+        // Match `propose`: a text reply closes an open state (the engine records it as `stop`).
+        allowText: row.situation === "working" || row.situation === "terminal",
         onResponse: respond,
       });
       console.log(

@@ -90,8 +90,8 @@ describe("islands: the closed vocabulary", () => {
 
 describe("islands: the doxa authors the state at move", () => {
   it("maps a move call with its goal text into the IR", () => {
-    const proposal = toProposal("move", { state: "orientation", what: "map the repo" }, "");
-    expect(proposal.action).toEqual({ operator: "move", state: "orientation", what: "map the repo" });
+    const proposal = toProposal("move", { state: "patch", what: "map the repo" }, "");
+    expect(proposal.action).toEqual({ operator: "move", state: "patch", what: "map the repo" });
   });
 
   it("refuses an unknown island at parse (a structural error, not a gate)", () => {
@@ -113,31 +113,28 @@ describe("islands: the doxa authors the state at move", () => {
 });
 
 describe("islands: the projection highlights the state", () => {
-  it("projects the state's goal onto the tape once (as a user turn after the move)", () => {
+  it("appends the state's goal as one user turn, not the state entry", () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const res = execAll(withGoal("recon", "true"), [request()], ws);
     const context = project(res.state);
     expect(context.situation).toBe("working");
     expect(context.island).toBe("orientation");
     expect(islandOf(res.state)).toBe("orientation");
-    // The entry is a `Start state` marker, the island instruction, and the state's own goal +
-    // criterion as a `user` turn.
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
     expect(start).toBe("Start state Orientation");
-    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.instruction)).toBe(true);
-    expect(
-      context.history.some(
-        (m) =>
-          m.role === "user" &&
-          m.text.startsWith(
-            "Goal: name the workspace root, the repository status, and the acceptance the request declares",
-          ) &&
-          m.text.includes("Your earlier guess (may be wrong): recon") &&
-          m.text.includes(`Done when: "${ISLANDS.orientation.criterion}".`),
-      ),
-    ).toBe(true);
+    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.instruction)).toBe(false);
     const messages = buildMessages(context);
-    expect(messages.some((message) => String(message.content) === start)).toBe(true);
+    const last = messages.at(-1);
+    expect(last?.role).toBe("user");
+    expect(String(last?.content)).toContain(
+      "Goal: name the workspace root and the repository status.",
+    );
+    expect(String(last?.content)).toContain("Your earlier guess (may be wrong): recon");
+    expect(String(last?.content)).toContain(`Done when: "${ISLANDS.orientation.criterion}".`);
+    expect(String(last?.content)).toContain(`Plan:\n${ISLANDS.orientation.instruction}`);
+    expect(String(last?.content)).toContain(
+      "The original user request is context for this state, not its goal.",
+    );
   });
 
   it("has no island on a fresh request", () => {

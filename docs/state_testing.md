@@ -172,10 +172,9 @@ environment-brief message after the request.
 
 The **probe** is one session `fact` (`id: fact:session`, payload `{ environment, material }`),
 recorded at request start (`src/loop/probe.ts`). `material` is the workspace map (`root`, repo,
-entries/paths, files), with no configs, build commands or extensions. The projection shows it as
-`Workspace` in Orientation; in Patch/Research the same map is `Orientation result` plus `Probe`
-(environment) under its own heading; other states get `Probe` alone. Closed states carry no block
-and the request turn has none. The probe's
+entries/paths, files), with no configs, build commands or extensions. The projection shows the
+coordinates (`Workspace root`, repository status) plus the focused island's environment subset;
+the request turn and closed states carry no block. The probe's
 raw output never reaches the tape; a replay reads the recorded fact instead of probing again.
 `environment` also carries `network: on|off` — the agent's mode, recorded by the harness (not
 guessed by a shell); it tells a state whether a missing runtime can be installed.
@@ -184,11 +183,13 @@ guessed by a shell); it tells a state whether a missing runtime can be installed
 
 ```
 system   — Start state <Label>
-system   — <focused brief: Workspace map / Orientation result / Probe>
-system   — <island instruction: how to act in this state>
-user     — Goal: <island.what> (+ "Your earlier guess (may be wrong): <move.what>" when set)
-…plan…
-system   — <per-turn tail: hint, criterion, closure>  [not stored]
+system   — <focused brief: coordinates + environment subset>
+…turns…
+user     — Goal: <island.what>
+           Your earlier guess (may be wrong): <move.what>   [when set]
+           Done when: <criterion>. When it holds, reply with the result as text only — no tool call.
+           Plan: <island.instruction>
+           The original user request is context for this state, not its goal.   [not stored]
 ```
 
 **Returning to Patch after a failure.** The current implementation renders **no**
@@ -218,8 +219,7 @@ system — Finish state <Label> — <why from stop>
 | situation | what is appended |
 |---|---|
 | `request` | `REQUEST_INSTRUCTION` — pick the starting state (`move`) or `decline` |
-| `plan` | `planInstruction` — "Call a tool…" + the tail: hint → done criterion → closure |
-| `working` | `turnInstruction` — the same tail (per turn, never stored) |
+| `working` | `workingInstruction` — one `user` turn: goal, guess, criterion, plan, request reference (per turn, never stored) |
 | `transition` | `transitionInstruction` — read the `Finish state` line, pick the next state |
 | `terminal` | `NODE_INSTRUCTIONS.terminal` — "This is End. …" |
 
@@ -230,9 +230,9 @@ system — Finish state <Label> — <why from stop>
 
 **What is added:**
 - the request — at the top, once;
-- state entry — `ai(Start)` + `system(instruction)` + `user(what)`;
-- the turn's tail — the open state's per-turn tail (`plan`/`working`) or the situation
-  instruction (never stored; rebuilt on the next turn);
+- state entry — `system(Start)` + `system(brief)` + its turns;
+- the turn's prompt — the open state's per-turn `working` user turn (goal, guess, criterion,
+  plan, request reference) or the situation instruction (never stored; rebuilt on the next turn);
 - tool calls — as `tool_calls` in `ai`; one doxa turn's steps go **in one batch**
   (`ai` with an array of `tool_calls` + N `tool`), not one pair per call.
 

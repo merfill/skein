@@ -128,7 +128,7 @@ function buildSteps(): Step[] {
 
   // A moved-and-opened state: its island instruction names the state.
   {
-    const events = stateIn("orientation");
+    const events = stateIn("patch");
     steps.push({
       name: "goal-island-known",
       context: projectAt(events),

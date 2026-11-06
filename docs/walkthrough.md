@@ -1,9 +1,13 @@
 # Skein — walkthrough: states and the dynamic tape
 
-> **Current as of 2026-10-29.** A state is the unit of work. The context is a deterministic
+> **Current as of 2026-11-06.** A state is the unit of work. The context is a deterministic
 > projection of the IR; the engine rebuilds it on every turn. The journal only grows, while the
 > tape changes: a closed state disappears from it but stays in the journal and remains
 > addressable by `id`.
+>
+> The tape shape is current (§4.2). The recorded examples below still show the old per-state
+> entry (instruction + goal on the tape); the current projection collapses them into the
+> trailing working `user` turn (`Goal`, guess, `Done when`, `Plan`, request reference).
 >
 > Source of truth — `docs/ir_semantics.md`; the projection — `docs/projection.md`; the
 > states — `docs/states_ru.md`; as-built — `docs/ir.md`. Russian mirror — `docs/walkthrough_ru.md`.
@@ -78,31 +82,41 @@ Then come the states. An open state looks like this:
 ```
 system   Start state <label>
 system   <coordinates and/or environment facts>
-system   <instruction: how to act in this state>
-user     Goal: <state goal>
-         Your earlier guess (may be wrong): <guess>   ← when the model set it
 assistant [id] <tool call> + reasoning
 tool      [id] <result>
 assistant [id] <next call> + reasoning
 tool      [id] <result>
+user     Goal: <island.what>
+         Your earlier guess (may be wrong): <guess>   ← when the model set it
+         Done when: <criterion>. When it holds, reply with the result as text only — no tool call.
+         Plan: <island.instruction>
+         The original user request is context for this state, not its goal.
 ```
 
-Calls and results accumulate: they are what the model has already done in this state. Nothing is
-appended after them: the goal and `Done when` live in the state's entry.
+Calls and results accumulate: they are what the model has already done in this state. The
+working prompt is appended after them, recomputed each turn and never stored.
 
 An example of an open Patch after two calls:
 
 ```
 system   Start state Patch
 system   Workspace root: /app / Workspace repository: ... / environment
-system   Locate the defect and change the artifact in one loop ...
-user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... window 40-90 ...
-system   Choose the candidate files from the workspace ... Done when: "the defect is located ..."
-         When it holds, `stop` — and nothing else.
+user     Goal: apply the change the suspected cause implies to the existing artifact.
+         Your earlier guess (may be wrong): the sweep advances by the wrong size
+         Done when: "the target is named with its coordinates, the sibling that performs the same
+         operation and the differing expression are named; that expression is applied at the
+         target; the edited lines read back". When it holds, reply with the result as text only —
+         no tool call.
+         Plan:
+         1. Find the target and the sibling that performs the same operation. Name the target's
+            coordinates and the expression, step, or encoding that differs. A suspected cause is enough.
+         2. Apply that difference at the target, read the edited lines, and finish with the result:
+            the target, the change, and the suspected cause.
+         The original user request is context for this state, not its goal.
 ```
 
 When a state is closed, two `system` messages remain — its trace:

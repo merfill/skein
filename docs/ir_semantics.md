@@ -403,21 +403,22 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
 **States and their messages:**
 
 - `fact` — a session fact, not a call and not a separate message after the request. The
-  projection emits the block as a `system` turn before the **current** state's instruction. One
+  projection emits the block as a `system` turn in the **current** state's entry. One
   `fact:session` carries `{ environment, material }`: available tools (with versions where they
-  are cheap), VCS status, top-level entries/paths and the file count. Orientation gets
-  `Workspace` (the map); Patch and Research get the same map as `Orientation result`, plus
-  `Probe` (environment) under its own heading; other states get `Probe` alone.
-  Configs, build commands, extensions and build state are not shown in Orientation; a declared
-  command is not presented as the acceptance. Closed states carry no block. The source is an
-  `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
+  are cheap), VCS status, the coordinates and the file count. A live working state gets the
+  coordinates (`Workspace root`, repository status, the shell's working directory when it differs)
+  plus its environment subset; the tree listing is not shown — a state that needs the files lists
+  them. Configs, build commands, extensions and build state are not shown; a declared command is
+  not presented as the acceptance. The request turn and closed states carry no block. The source
+  is an `add_node kind:"fact"` event recorded once at request start (`src/loop/probe.ts`); replay
   reads the recorded fact instead of probing again;
 - `move` — a state is a decision, not a tool call, so it has **no tool call**: it renders as a
-  `Start state <label>` marker (a `system` turn), then the state's `instruction` (a `system`
-  turn), then — while open — its goal as a `user` turn (`Goal: <island.what>`) together with,
-  when set, the doxa's guess (`Your earlier guess (may be wrong): <move.what>`). The
-  request is the second message of the tape (right after the base prompt), on **every** turn —
-  never dropped;
+  `Start state <label>` marker (a `system` turn) and, while open, the state's brief and its
+  turns. The state's goal, criterion and plan are not stored on the tape: `buildMessages`
+  appends them as one `user` working prompt after the turns (`Goal: <island.what>`, the doxa's
+  guess `Your earlier guess (may be wrong): <move.what>` when set, `Done when: <criterion>`,
+  `Plan: <instruction>`, and the request marked as reference). The request is the second
+  message of the tape (right after the base prompt), on **every** turn — never dropped;
 - **returning to Patch.** The failure stays on the tape in the closed `patch` and `verification`
   `Finish` lines (the literal `stop.why`, not a code diagnosis). On the `Verification → Patch`
   transition the engine writes a `revert` event and restores the files to pre-patch; the current
@@ -434,16 +435,17 @@ maps the reverse, so the tape and the callable schema share one vocabulary (the 
   with the reason (`rejected <move>: <reason>`, next turn; no node). A `recall`/`search` is a
   regular step: an `action` + its `observation` on the state's tape (see above).
 
-So an **open state** is `Start state <label>` / `instruction` (`system`) /
-goal + criterion (`user`) and its turns (the `apply` calls and their results, in append order);
-a **closed state** is only `Start state <label>` / `Finish state <label> — <why>`. There is no
-alternative marker: every call is its own turn. Each `apply` result exposes the node id
-(`[id] …`) so it can be addressed by id with `recall`/`search`.
+So an **open state** is `Start state <label>` / brief (`system`) / its turns (the `apply` calls
+and their results, in append order), and `buildMessages` appends one `user` working prompt
+(goal + guess + `Done when` + `Plan` + request reference) after the turns; a **closed state**
+is only `Start state <label>` / `Finish state <label> — <why>`. There is no alternative
+marker: every call is its own turn. Each `apply` result exposes the node id (`[id] …`) so it
+can be addressed by id with `recall`/`search`.
 
 **The tape is not monotone.** A finished state — the current one awaiting the transition, or one
 already left behind — collapses to `Start state <label>` / `Finish state <label> — <why>`; its
-brief, instruction, goal and turn messages leave the tape. Only the view goes, not the data: the
-tree stays complete.
+brief and turn messages leave the tape (the working prompt was never stored). Only the view
+goes, not the data: the tree stays complete.
 
 **The doxa's reasoning is not stored**: raw `thought` is not in the tree and does not enter
 the tape; its meaning lives in the `why` fields.
@@ -463,13 +465,14 @@ identifier, not by path: read a fragment with `recall { id, start, end }`, searc
 nonzero exit.
 
 **The system part** is assembled per situation, not as a monolith: the base prompt holds only
-what is true on any turn (the role, the principles, the contract, the state set and its
-transitions); appended last each turn (temporary, never stored) is the current situation's
-instruction: `request` (choose the first state, or `decline`; `what`/`done` — from the request),
-`transition` (`transitionInstruction(island)`: the source of `what`/`done` is the
-`Finish state <label>` line of the just-finished state; the `next` neighbours are listed; choose
-the next state), `terminal` ("This is End." + the text completion rule). An open state appends
-nothing: its `Done when` criterion lives in its `Start state` entry. The tool
+what is true on any turn (the role, the principles, the contract); appended last each turn
+(temporary, never stored) is the current situation's instruction: `request` (choose the first
+state, or `decline`; `what`/`done` — from the request), `transition`
+(`transitionInstruction(island)`: the source of `what`/`done` is the `Finish state <label>` line
+of the just-finished state; the `next` neighbours are listed; choose the next state),
+`terminal` ("This is End." + the text completion rule). An open state appends one `user`
+working prompt: `Goal`, the doxa's guess, `Done when`, `Plan`, and the original request marked
+as reference. The tool
 names/parameters/descriptions are **not** in the prompt — they ship in the request's `tools`
 field, and that field is **bound from `Context.applicable`**: on a `request`/`transition` only
 `move` is offered (plus read-only `recall`/`search`), while a state is open the apply tools are

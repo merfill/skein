@@ -8,6 +8,7 @@ import {
   BASE_PROMPT,
   REQUEST_INSTRUCTION,
   transitionInstruction,
+  workingInstruction,
 } from "./prompt";
 
 export type Proposer = (
@@ -84,10 +85,10 @@ export function historyMessages(history: readonly TapeMessage[]): ModelMessage[]
 }
 
 // The context the model sees is the tape, assembled as: the stable base prompt, the constraints,
-// the tape itself, then the situation's prompt (the request or transition instruction). An open
-// state carries its instruction and criterion in the tape itself (at its `Start state` entry), so
-// nothing is appended per turn: the projection is the whole context. The base prompt carries the
-// contract and the tape carries the state (docs/ir_semantics §7).
+// the tape itself, then the situation's prompt. An open state carries only its `Start state`
+// marker, brief and turns; buildMessages appends one `user` working prompt (goal, criterion,
+// plan, request reference) after the turns. The base prompt is only the contract; the state
+// map/moves live in the request/transition prompts (docs/ir_semantics §7).
 export function buildMessages(context: Context): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "system", content: BASE_PROMPT }];
   for (const constraint of context.constraints) {
@@ -99,13 +100,16 @@ export function buildMessages(context: Context): ModelMessage[] {
   messages.push(...historyMessages(context.history));
   // The transition rule is a `system` turn: it is the engine's rule for choosing the next
   // state, not a user request. The tape already ends with the finished state's `Finish` line,
-  // so the rule follows it as another system turn (docs/ir_semantics §7). An open state's
-  // situation appends nothing: its instruction and criterion live in the state header. End
-  // appends nothing either: its instruction is on the tape with the state.
+  // so the rule follows it as another system turn (docs/ir_semantics §7). The request's route
+  // and an open state's working prompt are `user` turns: the choice/goal must be the last thing
+  // the model reads, with the original request marked as reference, not the goal.
   if (context.situation === "request") {
-    messages.push({ role: "system", content: REQUEST_INSTRUCTION });
+    messages.push({ role: "user", content: REQUEST_INSTRUCTION });
   } else if (context.situation === "transition") {
     messages.push({ role: "system", content: transitionInstruction(context.island) });
+  } else if (context.situation === "working" && context.island !== undefined) {
+    const working = workingInstruction(context.island, context.what, context.done);
+    if (working !== "") messages.push({ role: "user", content: working });
   }
   return messages;
 }

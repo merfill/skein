@@ -33,7 +33,7 @@ describe("TUI progress events", () => {
       if (index === 1) {
         return {
           thought: "",
-          actions: [{ operator: "move", state: "orientation", what: "map the repo" }],
+          actions: [{ operator: "move", state: "research", what: "map the repo" }],
         };
       }
       if (index === 2) {
@@ -85,7 +85,7 @@ describe("TUI progress events", () => {
     ).toBe(true);
     expect(
       progress.some(
-        (event) => event.type === "state_changed" && event.state === "orientation" && !event.closed,
+        (event) => event.type === "state_changed" && event.state === "research" && !event.closed,
       ),
     ).toBe(true);
     expect(

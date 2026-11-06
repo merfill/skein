@@ -368,6 +368,8 @@ upstream-изменение, полученное через `fetch`.
 | Причина (токен) | Триггер | Оператор | ID |
 |---|---|---|---|
 | `empty_state` | некорректный `move` (неизвестный `state`) | `move` | `REF-MV-EMPTY` |
+| `not_startable` | `move` в живое состояние, которое не может стартовать запрос | `move` | `REF-MV-NOT-STARTABLE` |
+| `unreachable` | `move` вне `next`-соседей завершённого состояния | `move` | `REF-MV-UNREACHABLE` |
 | `no_state` | `apply`, когда фокус — не открытое состояние (запрос или завершённое состояние) | apply | `REF-AP-NO-STATE` |
 | `no_state` | `apply`, когда фокус — не открытое состояние | apply | `REF-NO-STATE` |
 | `state_open` | `move`, пока текущее состояние ещё открыто (не остановлено) | move | `REF-STATE-OPEN` |
@@ -441,7 +443,7 @@ upstream-изменение, полученное через `fetch`.
 | `TR-1..9` | `tests/ops/traversal.test.ts` | шаги `apply-next-action`, `continue-open-goal` |
 | `OP-CG-1` | `tests/ops/apply.test.ts` | шаг `move-concretize` |
 | `DER-MOVE/STATE/REQ/ACT/STALE` | `tests/ops/derivation.test.ts` | — |
-| `REF-MV-EMPTY`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
+| `REF-MV-EMPTY`, `REF-MV-NOT-STARTABLE`, `REF-MV-UNREACHABLE`, `REF-STATE-OPEN` | `tests/ops/move.test.ts` | — |
 | `REF-AP-NO-STATE`, `REF-NO-STATE` | `tests/ops/apply.test.ts`, `tests/ops/applicable.test.ts` | — |
 | `REF-RUN-EMPTY`, `REF-REPEAT`, `REF-RC-STATE` | `tests/ops/apply.test.ts`, `tests/ops/recall.test.ts` | — |
 | `REF-EDIT` | `tests/ops/apply.test.ts` | сценарий `constraint-honored` |

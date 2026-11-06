@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ISLANDS } from "../src/ir/islands";
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import { project, type Context } from "../src/ir/project";
 import type { Action } from "../src/llm/schemas";
 import { modelCall } from "../src/llm/schemas";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
-import { REQUEST_INSTRUCTION } from "../src/loop/prompt";
+import { REQUEST_INSTRUCTION, workingInstruction } from "../src/loop/prompt";
 import type { Workspace } from "../src/tools/workspace";
 import {
   DEFAULT_FILES,
@@ -49,15 +48,18 @@ afterEach(cleanupWorkspaces);
 async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   assertTapeContract(context.history);
   // Strip the leading system prefix (base + one message per constraint) and the appended
-  // situation prompt: `request`/`transition` a system turn. `plan`/`working`/`terminal` append
-  // nothing — the state's instruction and criterion are in its entry, which is on the tape and
-  // must stay.
+  // situation prompt: `request`/`transition` a system turn, `working` a `user` turn carrying
+  // the state's goal/criterion/plan. This leaves the tape itself: the states and their turns.
   const all = compact(await wire(buildMessages(context)));
   const start = 1 + context.constraints.length;
   let end = all.length;
   const appended = context.situation === "request" ? REQUEST_INSTRUCTION : undefined;
   if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "system") end -= 1;
+  if (context.situation === "working" && context.island !== undefined) {
+    const working = workingInstruction(context.island, context.what, context.done);
+    if (end > start && all[end - 1]?.content === working) end -= 1;
+  }
   return all.slice(start, end);
 }
 
@@ -83,16 +85,11 @@ const REQ = { role: "user", content: "solve the task" };
 
 // The tape of `request` + `move("orientation","do it")` + its first plan item (`true`):
 // the state every state-level op starts from. The request leads the tape; a state is a
-// `Start state` marker, the state's instruction and the goal as a `user` turn; the plan items
-// are native call/result pairs.
+// `Start state` marker and its turns as native call/result pairs. The state's goal,
+// criterion and plan are appended after the turns by `buildMessages`, not stored on the tape.
 const GOAL_PREFIX = [
   REQ,
   { role: "system", content: "Start state Orientation" },
-  { role: "system", content: ISLANDS.orientation.instruction },
-  {
-    role: "user",
-    content: `Goal: name the workspace root, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): do it\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
-  },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -115,11 +112,6 @@ describe("move: before [request] -> delta -> after", () => {
     expect(await tapeOf(after)).toEqual([
       REQ,
       { role: "system", content: "Start state Orientation" },
-      { role: "system", content: ISLANDS.orientation.instruction },
-      {
-        role: "user",
-        content: `Goal: name the workspace root, the repository status, and the acceptance the request declares\n\nYour earlier guess (may be wrong): green\n\nDone when: "${ISLANDS.orientation.criterion}". When it holds, reply with the result as text only — no tool call.`,
-      },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -526,6 +518,6 @@ describe("crash (mock node) and prefix", () => {
     expect(String(msgs[1]?.content)).toContain("k1");
     expect(msgs[2]).toMatchObject({ role: "user", content: "fix" });
     // The request-step instruction is appended after the request (it scopes the first move's goal).
-    expect(msgs.at(-1)).toMatchObject({ role: "system", content: REQUEST_INSTRUCTION });
+    expect(msgs.at(-1)).toMatchObject({ role: "user", content: REQUEST_INSTRUCTION });
   });
 });

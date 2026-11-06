@@ -1,8 +1,12 @@
 # Skein — сквозной пример: состояния и динамическая лента
 
-> **Актуально на 2026-10-29.** Состояние — единица работы. Контекст — детерминированная
+> **Актуально на 2026-11-06.** Состояние — единица работы. Контекст — детерминированная
 > проекция IR; движок собирает её заново на каждом ходу. Журнал только дополняется, а лента
 > меняется: закрытое состояние исчезает из неё, но остаётся в журнале и доступно по `id`.
+>
+> Форма ленты актуальна (§4.2). Записанные ниже примеры ещё показывают старую запись состояния
+> (инструкция + цель на ленте); текущая проекция сворачивает их в завершающий working-ход
+> `user` (`Goal`, догадка, `Done when`, `Plan`, запрос как reference).
 >
 > Источник истины — `docs/ir_semantics_ru.md`; проекция — `docs/projection_ru.md`;
 > состояния — `docs/states_ru.md`; as-built — `docs/ir_ru.md`. Английское зеркало —
@@ -79,31 +83,41 @@ Skein держится на четырёх понятиях:
 ```
 system   Start state <label>
 system   <карта workspace или факты окружения>
-system   <инструкция: как действовать в этом состоянии>
-user     Goal: <цель состояния>
-         Your earlier guess (may be wrong): <догадка>   ← если модель её задала
 assistant [id] <вызов инструмента> + reasoning
 tool      [id] <результат>
 assistant [id] <следующий вызов> + reasoning
 tool      [id] <результат>
+user     Goal: <island.what>
+         Your earlier guess (may be wrong): <догадка>   ← если модель её задала
+         Done when: <criterion>. When it holds, reply with the result as text only — no tool call.
+         Plan: <island.instruction>
+         The original user request is context for this state, not its goal.
 ```
 
-Вызовы и результаты накапливаются: это то, что модель уже сделала в этом состоянии. После них
-ничего не добавляется: цель и `Done when` живут в записи состояния.
+Вызовы и результаты накапливаются: это то, что модель уже сделала в этом состоянии.
+Working-промпт добавляется после них, пересобирается каждый ход и не хранится.
 
 Пример открытой Patch после двух вызовов:
 
 ```
 system   Start state Patch
 system   Workspace root: /app / Workspace repository: ... / environment
-system   Locate the defect and change the artifact in one loop ...
-user     Goal: find the defect in the existing artifact and make the change it needs
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... окно 40-90 ...
-system   Choose the candidate files from the workspace ... Done when: "the defect is located ..."
-         When it holds, `stop` — and nothing else.
+user     Goal: apply the change the suspected cause implies to the existing artifact.
+         Your earlier guess (may be wrong): the sweep advances by the wrong size
+         Done when: "the target is named with its coordinates, the sibling that performs the same
+         operation and the differing expression are named; that expression is applied at the
+         target; the edited lines read back". When it holds, reply with the result as text only —
+         no tool call.
+         Plan:
+         1. Find the target and the sibling that performs the same operation. Name the target's
+            coordinates and the expression, step, or encoding that differs. A suspected cause is enough.
+         2. Apply that difference at the target, read the edited lines, and finish with the result:
+            the target, the change, and the suspected cause.
+         The original user request is context for this state, not its goal.
 ```
 
 Когда состояние закрыто, от него остаются два `system`-сообщения — след:

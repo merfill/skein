@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fold } from "../src/ir/graph";
-import { ISLANDS } from "../src/ir/islands";
 import { project, type Context, type TapeMessage } from "../src/ir/project";
 import { BASE_PROMPT, buildMessages } from "../src/loop/propose";
 import {
@@ -52,32 +51,21 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     expect(project(fold([request()])).history.map(shape)).toEqual([{ role: "user", text: "solve the task" }]);
   });
 
-  it("move -> Start state marker, brief, instruction, `what`; action/observation -> call + tool pairs", () => {
+  it("move -> Start state marker and turns; action/observation -> call + tool pairs", () => {
     const w = makeWorkspace(DEFAULT_FILES).ws;
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec(read("src/sum.mjs"), first.events, w, 1).state);
-    // The state entry is the `Start state` marker, the island instruction, and the state's own
-    // goal + criterion as a `user` turn. Nothing is appended after the tape: the whole context
-    // is the projection.
+    // The state entry is the `Start state` marker and its turns. The goal, criterion and plan
+    // are not stored on the tape: `buildMessages` appends them as one `user` turn.
     expect(ctx.history.map((m) => [m.role, m.call?.name ?? null, Boolean(m.callId)])).toEqual([
       ["user", null, false],
       ["system", null, false],
-      ["system", null, false],
-      ["user", null, false],
       ["assistant", "bash", false],
       ["tool", null, true],
       ["assistant", "read", false],
       ["tool", null, true],
     ]);
     expect(ctx.history[1]?.text).toBe("Start state Orientation");
-    expect(ctx.history[2]?.text).toBe(ISLANDS.orientation.instruction);
-    expect(ctx.history[3]?.text).toContain(
-      "Goal: name the workspace root, the repository status, and the acceptance the request declares",
-    );
-    expect(ctx.history[3]?.text).toContain("Your earlier guess (may be wrong): do it");
-    expect(ctx.history[3]?.text).toContain(
-      `Done when: "${ISLANDS.orientation.criterion}".`,
-    );
   });
 
   it("stop -> the state collapses to its Start and Finish markers", () => {

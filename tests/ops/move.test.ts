@@ -19,11 +19,11 @@ afterEach(cleanupWorkspaces);
 describe("move", () => {
   it("OP-MV-1 opens a state as a flat child of the request, descends into it, with no turns yet", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const { state } = exec(move("orientation", "map the repo"), [request()], ws);
+    const { state } = exec(move("patch", "map the repo"), [request()], ws);
     const moveNode = currentMove(state);
     expect(moveNode).toBeDefined();
     expect(state.nodes.get(moveNode as string)?.kind).toBe("move");
-    expect(moveIsland(state, moveNode as string)).toBe("orientation");
+    expect(moveIsland(state, moveNode as string)).toBe("patch");
     // The edge is request → move (`move` relation); the request has no goal of its own.
     expect(
       [...state.edges.values()].some(
@@ -39,7 +39,7 @@ describe("move", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
-    const moved = exec(move("patch", "apply the fix"), stopped.events, ws);
+    const moved = exec(move("verification", "apply the fix"), stopped.events, ws);
 
     const moves = [...moved.state.nodes.values()]
       .filter((node) => node.kind === "move")
@@ -74,6 +74,22 @@ describe("move", () => {
     expect(verdict.reason).toContain("empty_state");
   });
 
+  it("REF-MV-NOT-STARTABLE rejects a live state that cannot start a request", () => {
+    const verdict = classification(move("end"), [request()]);
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("not_startable");
+  });
+
+  it("REF-MV-UNREACHABLE rejects a move outside the finished state's next", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
+    const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
+    const verdict = classification(move("construction", "new artifact"), stopped.events);
+    expect(verdict.accept).toBe(false);
+    expect(verdict.reason).toContain("unreachable");
+    expect(classification(move("verification", "check"), stopped.events).accept).toBe(true);
+  });
+
   it("DER-STATE-1 a state is finished only when it is stopped", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
@@ -87,9 +103,9 @@ describe("move", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const opened = execAll([move("patch", "find it"), run("true")], [request()], ws);
     const stopped = exec({ operator: "stop", why: "done" }, opened.events, ws);
-    const moved = exec(move("patch", "apply the fix"), stopped.events, ws);
+    const moved = exec(move("verification", "apply the fix"), stopped.events, ws);
     const ids = [...moved.state.nodes.values()].filter((n) => n.kind === "move").map((n) => n.id);
     expect(currentMove(moved.state)).toBe(ids[ids.length - 1]);
-    expect(moveIsland(moved.state, currentMove(moved.state)!)).toBe("patch");
+    expect(moveIsland(moved.state, currentMove(moved.state)!)).toBe("verification");
   });
 });

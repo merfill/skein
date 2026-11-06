@@ -424,10 +424,17 @@ describe("session probe projection", () => {
     expect(brief?.text).not.toContain("Test tools:");
   });
 
-  it("has no workspace or probe on the request turn", () => {
+  it("shows the workspace coordinates on the request turn, before the move", () => {
     const probe: SessionProbe = { environment, material };
     const context = project(fold([request(), probeEvent(probe)]));
-    expect(context.history).toEqual([{ role: "user", text: "task" }]);
+    expect(context.history[0]).toEqual({ role: "user", text: "task" });
+    const brief = context.history[1];
+    expect(brief?.role).toBe("system");
+    expect(brief?.text).toContain("Workspace root: /app");
+    expect(brief?.text).toContain("Workspace repository: git at /app/ocaml");
+    expect(brief?.text).not.toContain("entries:");
+    expect(brief?.text).toContain("Installed interpreters:");
+    expect(brief?.text).toContain("Available package managers:");
   });
 
   it("elides the brief from older closed states", () => {

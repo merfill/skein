@@ -8,7 +8,7 @@ import {
 } from "./graph";
 import type { EnvironmentFact } from "./environment";
 import { ISLANDS, isTerminalIsland, type IslandId } from "./islands";
-import { briefFor } from "./briefs";
+import { briefFor, requestBrief } from "./briefs";
 import { SESSION_PROBE_ID, type SessionProbe } from "./session";
 import {
   applicable,
@@ -61,8 +61,11 @@ export interface Context {
   situation: Situation;
   // The island of the focused state, when there is one (an authored label, §2.5).
   island?: IslandId;
+  // The doxa's `what` from the focused `move`: an unverified guess at the concrete subject,
+  // not the state's goal. Rendered by the per-turn working prompt as advice.
+  what?: string;
   // The focused state's stop condition, concretized by the doxa on the `move` (falls back to
-  // the island's generic criterion in the renderer). Used by the per-turn tail.
+  // the island's generic criterion in the renderer). Used by the per-turn working prompt.
   done?: string;
   // The frontier: the moves admissible at the focus. The model surface is bound from it, so
   // the offered tools cannot include a move the engine would refuse (§2.6). Absent on a
@@ -269,9 +272,9 @@ function stateBrief(state: State, island: IslandId): string {
 
 // Render a state: its boundaries. A state is a decision, not a tool call, so it is two markers:
 // `Start state <label>` and — once closed — `Finish state <label>` (the `stop` reason). A closed
-// state is exactly that pair: no brief, instruction, goal, or turns. An open state carries the
-// focused brief, the instruction, its goal as a `user` turn, and its turns; `buildMessages`
-// appends only the situation prompt (docs/ir_semantics §7).
+// state is exactly that pair: no brief or turns. An open state carries the focused brief and
+// its turns; the goal, criterion and plan are restated in the per-turn working prompt that
+// `buildMessages` appends after the turns (docs/ir_semantics §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
@@ -286,36 +289,6 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const focused = moveId === currentMove(state);
   const brief = focused && island !== undefined ? stateBrief(state, island) : "";
   if (brief !== "") out.push({ role: "system", text: brief });
-  if (island !== undefined) {
-    out.push({ role: "system", text: ISLANDS[island].instruction });
-  }
-
-  const payload = movePayload(state, moveId);
-  const goal = island !== undefined ? ISLANDS[island].what : (payload?.what ?? "");
-  // The doxa's `what` is an unverified guess about the concrete subject, not the goal: it is
-  // shown as advice only, never as the state's own goal (docs/ir_semantics.md §7).
-  const guess = island !== undefined ? payload?.what : undefined;
-  const done = typeof payload?.done === "string" ? payload.done : undefined;
-  const criterion =
-    done !== undefined && done !== ""
-      ? done
-      : island !== undefined
-        ? ISLANDS[island].criterion
-        : "";
-  const lines: string[] = [];
-  if (goal !== "") lines.push(`Goal: ${goal}`);
-  if (typeof guess === "string" && guess !== "") {
-    lines.push(`Your earlier guess (may be wrong): ${guess}`);
-  }
-  // The state IS its goal: its criterion rides the state entry, not a per-turn tail. The
-  // state prompt says how to close it: a text reply with no tool call, which the engine
-  // records as the `stop` relation.
-  if (criterion !== "") {
-    lines.push(
-      `Done when: "${criterion.replace(/\.\s*$/, "")}". When it holds, reply with the result as text only — no tool call.`,
-    );
-  }
-  if (lines.length > 0) out.push({ role: "user", text: lines.join("\n\n") });
   renderTurns(state, moveId, out);
 }
 
@@ -415,7 +388,7 @@ export function situationOf(state: State): Situation {
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
 // the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
-// surface has no write tool (Orientation) is told to reply with its result, never to edit.
+// surface has no write tool (legacy Orientation) is told to reply with its result, never to edit.
 // The island of the focused state (the current `move`), when it has one. An authored label
 // (docs/ir_semantics.md §2.5), never a gate.
 export function islandOf(state: State): IslandId | undefined {
@@ -487,6 +460,13 @@ export function project(state: State, options: ProjectOptions = {}): Context {
           text: `declined: ${typeof why === "string" && why !== "" ? why : "not actionable"}`,
         });
       } else {
+        // A fresh request has no state to carry the probe: show the workspace coordinates
+        // before the `move`. The state that opens gets its own brief (coordinates + environment).
+        if (childrenOf(state, rootId).length === 0) {
+          const probe = probeOf(state);
+          const brief = probe !== undefined ? requestBrief(probe) : "";
+          if (brief !== "") history.push({ role: "system", text: brief });
+        }
         // The probe lives in the state entry, not in a preamble after the request: each
         // state gets the facts it needs, at the point where it works.
         for (const moveId of childrenOf(state, rootId)) renderState(state, moveId, history);
@@ -504,6 +484,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
   }
   const focusedMove = currentMove(state);
   const focusedPayload = focusedMove !== undefined ? movePayload(state, focusedMove) : undefined;
+  const what = focusedPayload?.what;
   const done = focusedPayload?.done;
   const situation = situationOf(state);
   const frontier = applicable(state, currentFocus(state));
@@ -512,6 +493,7 @@ export function project(state: State, options: ProjectOptions = {}): Context {
     history,
     situation,
     island,
+    ...(what !== undefined && what !== "" ? { what } : {}),
     ...(done !== undefined && done !== "" ? { done } : {}),
     applicable: frontier,
     constraints: constraintsOf(state),
