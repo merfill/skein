@@ -37,8 +37,8 @@ export interface Settings {
   // when a near-end state reaches max_turns.
   budgetTurns: number;
   graceTurns: number;
-  // Whether the request observer is wired into live/bench runs. On by default; set
-  // SKEIN_OBSERVER=false to run the task loop without it.
+  // Whether the request observer is wired into live/bench runs. Off by default; set
+  // SKEIN_OBSERVER=true to run the task loop with it.
   observer: boolean;
   // Cap on a foreground `run`; a long verifier build may need more than the default
   // (background jobs are uncapped and polled instead, docs/tools.md §4.7).
@@ -79,7 +79,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     stateLongTurns: num(env.SKEIN_STATE_LONG_TURNS, DEFAULT_STATE_LONG_TURNS),
     budgetTurns: num(env.SKEIN_BUDGET_TURNS, DEFAULT_BUDGET_TURNS),
     graceTurns: num(env.SKEIN_GRACE_TURNS, DEFAULT_GRACE_TURNS),
-    observer: (env.SKEIN_OBSERVER ?? "true").toLowerCase() !== "false",
+    observer: (env.SKEIN_OBSERVER ?? "false").toLowerCase() === "true",
     runTimeoutMs: num(env.SKEIN_RUN_TIMEOUT_MS, 120_000),
     live: (env.SKEIN_LIVE ?? "false").toLowerCase() === "true",
   };

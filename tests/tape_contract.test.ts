@@ -57,7 +57,7 @@ async function tapeOf(context: Context): Promise<ReturnType<typeof compact>> {
   if (appended !== undefined && end > start && all[end - 1]?.content === appended) end -= 1;
   if (context.situation === "transition" && end > start && all[end - 1]?.role === "system") end -= 1;
   if (context.situation === "working" && context.island !== undefined) {
-    const working = workingInstruction(context.island, context.what, context.done);
+    const working = workingInstruction(context.island, context.what);
     if (end > start && all[end - 1]?.content === working) end -= 1;
   }
   return all.slice(start, end);

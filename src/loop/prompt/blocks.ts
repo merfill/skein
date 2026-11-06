@@ -149,8 +149,8 @@ export function transitionInstruction(island?: IslandId): string {
 // the state's turns so the goal is the last thing the model reads. The doxa's `what` is an
 // unverified guess about the concrete subject, shown as advice, never as the state's goal; the
 // original request stays reference. Empty for a state with no criterion (End).
-export function workingInstruction(island: IslandId, guess?: string, done?: string): string {
-  const criterion = done !== undefined && done !== "" ? done : ISLANDS[island].criterion;
+export function workingInstruction(island: IslandId, guess?: string): string {
+  const criterion = ISLANDS[island].criterion;
   if (criterion === "") return "";
   const goal = ISLANDS[island].what.replace(/[.!?]\s*$/, "");
   const lines = [`Goal: ${goal}.`];

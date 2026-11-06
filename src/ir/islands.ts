@@ -128,26 +128,15 @@ export const ISLANDS: Record<IslandId, Island> = {
     id: "patch",
     label: "Patch",
     what: "find the defect in the existing artifact and make the change it needs",
-    criterion:
-      "the defect is located — the target named with its coordinates, its siblings ruled out, " +
-      "and the cause named as a suspicion — and the change is complete: the located artifact " +
-      "and every other file the task needs are created or updated, and the result has the " +
-      "declared form",
+    criterion: "the plan is complete: the error is found and fixed",
     instruction:
-      "Choose the candidate files from the workspace and the request; compare the " +
-      "target against the sibling that performs the same operation and name the cause before " +
-      "you edit — the expression, step, or encoding that looks wrong and the invariant it " +
-      "breaks. Mark it a suspicion, then change it and read the result. Read the definition of " +
-      "every symbol the change uses — the file that defines it, not a usage. If the result has " +
-      "a declared form, print it and check it in the same step; derive its values from the " +
-      "material — do not fabricate them.",
+      "1. Find the file with the coordinates and the cause of the error.\n" +
+      "2. Fix the error and stop with a report about it.",
     applies: PATCH_TOOLS,
     next: [
       {
         to: "verification",
-        when:
-          "the change is complete — the located artifact and every other file the task needs " +
-          "are created or updated — and the result has the declared form",
+        when: "the plan is complete — the error is found and fixed",
       },
       {
         to: "research",

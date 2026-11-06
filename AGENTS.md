@@ -77,6 +77,11 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
   Harbor cache and launches real containers/verifiers, regardless of `SKEIN_LIVE`), any
   `SKEIN_LIVE=true` run (gate, live scenarios, live step tests), `npm run bench*`, and Harbor.
   They cost minutes and money — never start one on your own initiative.
+- **Sandbox batch protocol (owner).** The original benchmark is Harbor; our runner is the
+  containerized `tests/sandbox/**`. For a K-run batch: run the cells **in parallel** (matrix.ts
+  or parallel `sandbox-run.ts` processes — never a sequential shell loop), cap by **turns**
+  (the task's `maxTurns`, 60 for `fix-ocaml-gc`), and impose **no wall-clock timeout** (do not
+  pass/enforce `--timeout`, `VERIFIER_TIMEOUT_MS`, `DEFAULT_RUN_TIMEOUT_MS`).
 - see `docs/testing.md` for the live gate and benches
 
 ## Bench / replay tools (do not reinvent)

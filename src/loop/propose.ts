@@ -108,7 +108,7 @@ export function buildMessages(context: Context): ModelMessage[] {
   } else if (context.situation === "transition") {
     messages.push({ role: "system", content: transitionInstruction(context.island) });
   } else if (context.situation === "working" && context.island !== undefined) {
-    const working = workingInstruction(context.island, context.what, context.done);
+    const working = workingInstruction(context.island, context.what);
     if (working !== "") messages.push({ role: "user", content: working });
   }
   return messages;

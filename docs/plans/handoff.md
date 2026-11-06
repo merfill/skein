@@ -4,6 +4,59 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-06 (вечер) — observer off, `move.done` убран, End без инструкции, двойная сборка
+
+- **Наблюдатель выключен по умолчанию.** `SKEIN_OBSERVER` включает его только при `true`
+  (`src/config/settings.ts`); иначе observer не подключается. Причина — net-on hint'ы:
+  ложный git-совет и неполная правка `wh*(1+W)` (см. запись ниже). `tests/triggers.test.ts`
+  обновлён: default false, явный `true` — true.
+- **`move.done` убран с поверхности модели, критерий снова рукописный.**
+  `workingInstruction` всегда берёт `ISLANDS[island].criterion`; `done` больше нет в `move`
+  (schema, `toProposal`, описание), в IR остался только для старых журналов/фикстур. Patch:
+  criterion = `the plan is complete: the error is found and fixed`; instruction — два пункта:
+  1) найти файл с координатами и причину; 2) исправить и остановиться с отчётом. Раньше
+  модель писала `done` сама и тащила в Patch приёмку запроса («compiler builds and testsuite
+  passes»), из-за чего Verification повторяла testsuite.
+- **Net-on K=3, observer off, `done` убран (запуски остановлены).** Агенты: 40/27/36 ходов
+  (второй батч) и 34/26/34 (первый, прерванный). Все три сделали одну правку
+  `p += Whsize_hd(hd)` → `p += wh` в `pool_sweep`, собрали компилятор и прогнали
+  `make -C testsuite one DIR=tests/basic`: **40/40, 0 failed** в каждом (`/tmp/*.log`
+  в контейнерах). Harbor-reward не снят: верификатор был прерван/остановлен до `reward.txt`.
+  То есть «net-on 1/3» из записи ниже — про таймаут верификатора, не про провал правки.
+- **Проблема: охота за upstream.** С сетью r1/r3 тратят 10–15 ходов на
+  `webfetch`/`git clone` версий 5.4/5.5/5.0/master и diff, чтобы решить, была ли `p += wh`
+  «оригинальной» строкой; workspace — `5.5.0+dev0-2025-04-28`, версии расходятся структурно.
+  r2 без upstream: edit на t15, 27 ходов; r1/r3: edit на t25/t23, 40/36 ходов. Локальные
+  sibling-циклы (`calc_pool_stats`, `pool_allocate`, compaction, verify) уже дают ответ;
+  upstream — законная зацепка в общем случае, но не оракул для этой задачи. Кандидат: явная
+  граница в плане/B2 «причина названа — правь; fetched reference не оракул».
+- **Баг: End не получает инструкцию.** В `buildMessages` (`src/loop/propose.ts`) нет ветки
+  `terminal`, а `workingInstruction` делает ранний `return ""` при пустом `criterion`
+  (`src/loop/prompt/blocks.ts`). Поэтому `ISLANDS.end.instruction` («write the report…»,
+  `src/ir/islands.ts:222`) **не рендерится**. Модель в End видит только
+  `Finish state Patch/Verification` + `Start state End`; reasoning r1 t40 / r3 t36: «the
+  states are already finished?… I'm in End state», r2 t27 пытается ещё раз прочитать файл.
+  Текст последнего хода при этом **записывается**: в terminal текстовый ответ синтезируется
+  в `stop { why }` (`src/loop/graph.ts:305-309`) и рисуется как `Finish state End — <why>`
+  (`src/ir/project.ts:213`). Теряется он только в артефактах прерванного прогона:
+  `session.json`/`result.json` пишутся после `runTask`, т.е. после верификатора.
+- **Проблема: двойная сборка.** Агент уже собрал компилятор и прогнал testsuite; затем Harbor
+  `test.sh` заново делает `git clone sadiqj/ocaml`, `make clean && ./configure && make -j4`
+  и testsuite. Это и есть «тишина» 5–15 минут после последнего хода и причина старых
+  `code=124`: ходов у верификатора нет, его stdout/stderr попадают только в `result.json`
+  после завершения; клон в старых прогонах занимал 13–14 минут. Клон нужен Harbor'у против
+  подмены testsuite, но для нашего замера можно прогнать acceptance в контейнере агента по
+  уже собранному дереву, а не пересобирать всё. Решение — отдельным шагом.
+- **Таймауты.** `VERIFIER_TIMEOUT_MS` = 0 (no limit) по умолчанию
+  (`SKEIN_VERIFIER_TIMEOUT_MS` > 0 включает), `matrix.ts --timeout` по умолчанию 0
+  («none»), `DEFAULT_RUN_TIMEOUT_MS` = 0. Протокол батча записан в `AGENTS.md`: параллельно,
+  лимит по ходам (60 для `fix-ocaml-gc`), без wall-clock.
+- **Ошибка запуска.** K=3 гонялись shell-loop'ом последовательно (13–14 минут на прогон);
+  matrix умеет параллельно (`--concurrency`). При SIGINT родителя `docker exec test.sh`
+  продолжает жить в контейнере; контейнеры пришлось снимать `docker rm -f`.
+- **Проверено офлайн:** `npm run typecheck` чисто; `SKEIN_LIVE=false npx vitest run
+  --exclude 'tests/sandbox/**'` — **603 passed / 40 skipped**.
+
 ## 2026-11-06 — `fix-ocaml-gc`: user-route, Orientation removed, K=3 net off/on
 
 - **Маршрут — `user`-сообщение.** Request instruction больше не `system`, а последний `user`

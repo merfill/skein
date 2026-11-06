@@ -13,8 +13,9 @@ import { TASKS } from "./tasks/registry";
 //     [--out <dir>] [--resume] [--only-failed] [--dry]
 // The task is an argument, not a baked-in list: the full campaign is one invocation per task
 // (a shell loop outside). Each cell runs the existing single-run CLI in its own process, so
-// the `--net off` proxy env stays isolated and a wall-clock timeout can kill the whole cell.
-// Cost discipline: docs/task_testing.md §7. Live runs need the owner's go-ahead.
+// the `--net off` proxy env stays isolated. No wall-clock cap by default (`--timeout 0`);
+// a positive `--timeout` bounds a whole cell. Cost discipline: docs/task_testing.md §7.
+// Live runs need the owner's go-ahead.
 
 export type Agent = "skein" | "opencode";
 export type CellStatus = "pending" | "running" | "ok" | "reward0" | "error" | "timeout" | "unsupported";
@@ -297,7 +298,13 @@ function parseOptions(argv: string[]): Options {
   const nets = (flag("--nets") === undefined ? NETS : parseList(flag("--nets") as string, NETS, "--nets")) as NetworkMode[];
   const repeat = flag("--repeat") === undefined ? 1 : Math.floor(positive(flag("--repeat") as string, "--repeat"));
   const concurrency = flag("--concurrency") === undefined ? 5 : Math.floor(positive(flag("--concurrency") as string, "--concurrency"));
-  const timeoutSeconds = flag("--timeout") === undefined ? 1800 : Math.floor(positive(flag("--timeout") as string, "--timeout"));
+  // No wall-clock cap by default: a cell ends on its turn budget or the verifier. `--timeout 0`
+  // means the same; a positive value bounds the whole cell.
+  const timeoutRaw = flag("--timeout");
+  const timeoutSeconds =
+    timeoutRaw === undefined || timeoutRaw === "0"
+      ? 0
+      : Math.floor(positive(timeoutRaw, "--timeout"));
   const turns = flag("--turns") === undefined ? undefined : Math.floor(positive(flag("--turns") as string, "--turns"));
   const maxSteps = flag("--max-steps") === undefined ? undefined : Math.floor(positive(flag("--max-steps") as string, "--max-steps"));
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -396,17 +403,20 @@ async function runCell(task: SandboxTask, cell: CellResult, options: Options): P
   child.stderr?.on("data", capture);
 
   let timedOut = false;
-  const deadline = setTimeout(() => {
-    timedOut = true;
-    child.kill("SIGTERM");
-    setTimeout(() => child.kill("SIGKILL"), 10_000).unref();
-  }, options.timeoutSeconds * 1000);
+  const deadline =
+    options.timeoutSeconds > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+          setTimeout(() => child.kill("SIGKILL"), 10_000).unref();
+        }, options.timeoutSeconds * 1000)
+      : undefined;
 
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((done) => {
     child.once("close", (code, signal) => done({ code, signal }));
     child.once("error", () => done({ code: null, signal: null }));
   });
-  clearTimeout(deadline);
+  if (deadline !== undefined) clearTimeout(deadline);
   await new Promise<void>((done) => log.end(done));
   killContainers(prefix);
   const elapsedMs = Date.now() - started;
@@ -503,14 +513,14 @@ async function main(): Promise<void> {
   };
 
   if (options.dry) {
-    console.info(`dry: ${task.id} — ${results.length} cells, ${queue.length} to run, concurrency ${options.concurrency}, timeout ${options.timeoutSeconds}s`);
+    console.info(`dry: ${task.id} — ${results.length} cells, ${queue.length} to run, concurrency ${options.concurrency}, timeout ${options.timeoutSeconds > 0 ? `${options.timeoutSeconds}s` : "none"}`);
     for (const result of results) console.info(formatRow(result));
     return;
   }
 
   mkdirSync(options.out, { recursive: true });
   writeManifest(options.out, manifest);
-  console.info(`${task.id}: ${queue.length}/${results.length} cells, concurrency ${options.concurrency}, timeout ${options.timeoutSeconds}s, out ${options.out}`);
+  console.info(`${task.id}: ${queue.length}/${results.length} cells, concurrency ${options.concurrency}, timeout ${options.timeoutSeconds > 0 ? `${options.timeoutSeconds}s` : "none"}, out ${options.out}`);
 
   // Ctrl-C stops the in-flight cells and does not start the queued ones. The cells already
   // written to `manifest.json` keep their status, so `--resume` picks up where this stopped.

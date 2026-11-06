@@ -196,7 +196,8 @@ describe("triggers: thresholds", () => {
     expect(settings.stateLongTurns).toBe(30);
     expect(settings.budgetTurns).toBe(2);
     expect(settings.graceTurns).toBe(7);
-    expect(loadSettings({}).observer).toBe(true);
+    expect(loadSettings({}).observer).toBe(false);
+    expect(loadSettings({ SKEIN_OBSERVER: "true" }).observer).toBe(true);
     expect(loadSettings({ SKEIN_OBSERVER: "false" }).observer).toBe(false);
   });
 });

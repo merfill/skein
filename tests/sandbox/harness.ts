@@ -137,7 +137,11 @@ function stageSolutionInContainer(workspace: Workspace, task: SandboxTask, taskD
 }
 
 const TEST_SH = "bash /tests/test.sh";
-const VERIFIER_TIMEOUT_MS = 900_000;
+// The verifier re-clones the task's reference and rebuilds the compiler; that can exceed any
+// short cap, so it is not wall-clock bounded by default. Set SKEIN_VERIFIER_TIMEOUT_MS to a
+// positive value to bound it (0/absent = no timeout).
+const verifierTimeoutMs = Number(process.env.SKEIN_VERIFIER_TIMEOUT_MS ?? 0);
+const VERIFIER_TIMEOUT_MS = Number.isFinite(verifierTimeoutMs) ? verifierTimeoutMs : 0;
 
 // Stage the task's own `tests/` at `/tests` INSIDE the agent's container, exactly where
 // Harbor puts them. Called only after the agent has run, so the verifier is never visible

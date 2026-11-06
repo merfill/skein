@@ -64,9 +64,10 @@ export interface DockerWorkspace extends Workspace {
   detachNetwork(network: string): void;
 }
 
-// Generous by default: a task's own build (fix-ocaml-gc, crack-7z-hash) runs inside the
-// container and can take minutes.
-const DEFAULT_RUN_TIMEOUT_MS = 600_000;
+// No wall-clock cap by default: a task's own build (fix-ocaml-gc, crack-7z-hash) runs inside
+// the container and can take minutes. 0 means spawnSync does not time out; pass a positive
+// `runTimeoutMs` when a caller needs a bound.
+const DEFAULT_RUN_TIMEOUT_MS = 0;
 
 // Containers created here, removed by `cleanupContainers` (called from the test/CLI teardown).
 // `root`/`mount` are kept so cleanup can first wipe the (root-owned) mount from inside the
