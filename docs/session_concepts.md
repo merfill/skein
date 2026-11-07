@@ -239,9 +239,13 @@ closes no state, changes no focus and does not fill `pending`.
 - The unit stays open and keeps its focus; the committed turns are the resume point. Resume
   re-enters the loop from the unit's journal (`seed`/`startTurn`), so the projection is rebuilt
   from the same events and no committed step is re-executed.
-- **Cancel** is the separate command: it rolls back to the session level (the paused units stay
-  in the session as traces), so the next utterance is interpreted by the session agent. It does
-  not close a state either.
+- After a pause the interface offers **resume**, **leave to the session**, or **cancel**. Leaving
+  drops the focus (the paused unit stays in the session as a trace), keeps the work, writes
+  nothing to the unit journal, and derives `suspended`; the next utterance is interpreted by the
+  session agent. A read-only general unit is still restored.
+- **Cancel** is the destructive choice: it rolls back the world to the task-entry snapshot, records
+  the `rollback` fact, and marks the unit `abandoned`, so it cannot be resumed. It does not close
+  a state either. A paused session unit offers resume/discard instead of leave.
 - The same rules hold for the session agent, the task agent and the observer; the user sees
   "working" or "paused", not which agent is running. The observer is a sub-step of the task's
   progress: on resume the paused observer is finished first, then the task continues.
@@ -316,8 +320,9 @@ the workspace.
 
 - resuming work is a separate strategy to be discussed later; for now "continue" means `start`
   with a new formulation;
-- there is no separate cancel: a user utterance is interpreted, and Esc is a task interruption,
-  not an IR operation, and changes nothing;
+- resume and cancel are interface actions on a paused unit, not session operations: Esc pauses;
+  the pause menu can resume, leave (the unit becomes `suspended`), or cancel (rollback and
+  `abandoned`). Esc itself is not an IR operation and writes nothing;
 - revising a task's input (`revise`) is deferred;
 - `query` is unnecessary: `respond` already answers from the history with the outline tools.
 

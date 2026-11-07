@@ -467,7 +467,7 @@ export function Footer(props: { paused: boolean; historyOpen: boolean }) {
   if (props.paused) {
     return (
       <Box paddingX={1}>
-        <T color={theme.error}>paused · r resume · c cancel · q quit</T>
+        <T color={theme.error}>paused · r resume · s session · c cancel · q quit</T>
       </Box>
     );
   }
@@ -526,7 +526,8 @@ export function CompletionPanel(props: {
 export function PauseOverlay(props: { paused: PausedState; width: number; height: number }) {
   const { paused, width, height } = props;
   const boxWidth = Math.max(30, Math.min(64, width - 8));
-  const boxHeight = 7;
+  // The keys line may wrap on a narrow terminal.
+  const boxHeight = 8;
   return (
     <Box
       position="absolute"
@@ -550,7 +551,11 @@ export function PauseOverlay(props: { paused: PausedState; width: number; height
         {oneLine(paused.utterance, boxWidth - 4)}
       </T>
       <T> </T>
-      <T>[r] resume · [c] cancel · [q] quit</T>
+      <T>
+        {paused.agent === "session"
+          ? "[r] resume · [c] discard · [q] quit"
+          : "[r] resume · [s] session · [c] cancel & roll back · [q] quit"}
+      </T>
     </Box>
   );
 }

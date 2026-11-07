@@ -69,6 +69,7 @@ export type MetricEvent =
     }
   | { type: "pause"; sessionId: string; unitId: string; at: number }
   | { type: "resume"; sessionId: string; unitId: string; at: number }
+  | { type: "leave"; sessionId: string; unitId: string; at: number }
   | {
       type: "cancel";
       sessionId: string;
@@ -254,6 +255,7 @@ export interface SessionSummary {
   toolCalls: number;
   paused: number;
   resumed: number;
+  left: number;
   cancelled: number;
   rollbackOk: number;
   rollbackUnavailable: number;
@@ -267,6 +269,7 @@ export function sessionSummary(events: readonly MetricEvent[]): SessionSummary {
     toolCalls: 0,
     paused: 0,
     resumed: 0,
+    left: 0,
     cancelled: 0,
     rollbackOk: 0,
     rollbackUnavailable: 0,
@@ -283,6 +286,8 @@ export function sessionSummary(events: readonly MetricEvent[]): SessionSummary {
       summary.paused += 1;
     } else if (event.type === "resume") {
       summary.resumed += 1;
+    } else if (event.type === "leave") {
+      summary.left += 1;
     } else if (event.type === "cancel") {
       summary.cancelled += 1;
       if (event.rollback === "ok") summary.rollbackOk += 1;

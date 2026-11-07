@@ -1,6 +1,11 @@
 import type { Event } from "../ir/events";
 import { observationText } from "../ir/project";
-import type { CancelResult, SessionTurnResult } from "./driver";
+import type {
+  CancelResult,
+  LeaveResult,
+  PausedState,
+  SessionTurnResult,
+} from "./driver";
 
 // The terminal view is a deterministic projection of a driver turn, not a second store: the
 // session-unit journal supplies the tool calls/results, the task events supply the work, and
@@ -157,9 +162,25 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
   }
   if (result.paused !== undefined) {
-    lines.push("paused: [r]esume  [c]ancel  [q]uit");
+    lines.push(renderPauseMenu(result.paused));
   }
   return lines;
+}
+
+// The pause menu is the same fact for both interfaces; the session agent cannot "leave to
+// itself", and leaving keeps the work while cancel is the destructive choice.
+export function renderPauseMenu(paused: PausedState): string {
+  if (paused.agent === "session") {
+    return "paused session: [r]esume  [c]discard  [q]uit";
+  }
+  return `paused ${paused.agent} ${paused.unitId}: [r]esume  [s]ession  [c]ancel & roll back  [q]uit`;
+}
+
+export function renderLeave(result: LeaveResult): string[] {
+  return [
+    `left ${result.unitId} open (suspended); work kept`,
+    "next message goes to the session agent",
+  ];
 }
 
 export function renderCancel(result: CancelResult): string[] {

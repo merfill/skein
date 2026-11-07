@@ -31,6 +31,7 @@ import type {
   SessionOperation,
   SessionState,
   Trigger,
+  Unit,
 } from "./types";
 
 // One dialogue turn: interpret the user's line, apply the operation, and, for `start`, run the
@@ -97,6 +98,12 @@ export interface CancelResult {
   session: SessionState;
   // Set when the world could not be restored; the task's changes are kept.
   warning?: string;
+}
+
+export interface LeaveResult {
+  session: SessionState;
+  // The unit that left the focus (the task when an observer was paused on top of it).
+  unitId: string;
 }
 
 function nextRequestId(session: SessionState): string {
@@ -187,12 +194,9 @@ function generalSnapshotFor(deps: SessionTurnDeps, unitId: string): string | und
 
 // The general unit is read-only by contract. If a command changed the tree anyway, put only
 // those paths back and record the fact; unchanged paths are left untouched.
-function restoreGeneral(deps: SessionTurnDeps, session: SessionState, unitId: string): void {
-  const unit = session.units.get(unitId);
-  if (unit === undefined) return;
+function restoreGeneralChanges(workspace: Workspace, unit: Unit): void {
   const checkpoint = unit.checkpoint;
   if (checkpoint === undefined) return;
-  const workspace = generalWorkspace(deps);
   if (workspace.restoreChanged === undefined) return;
   try {
     const changed = workspace.restoreChanged(checkpoint);
@@ -206,6 +210,12 @@ function restoreGeneral(deps: SessionTurnDeps, session: SessionState, unitId: st
       reason: `general-read-only restore failed: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
+}
+
+function restoreGeneral(deps: SessionTurnDeps, session: SessionState, unitId: string): void {
+  const unit = session.units.get(unitId);
+  if (unit === undefined) return;
+  restoreGeneralChanges(generalWorkspace(deps), unit);
 }
 
 function recordPause(deps: SessionTurnDeps, paused: PausedState): void {
@@ -569,16 +579,46 @@ export async function resumeTurn(
   return result;
 }
 
+// Leaving is not cancel: the paused unit loses focus, its work is kept and nothing is written to
+// a task journal. The unit is derived `suspended`, so a later session `resume` can revive it.
+// A read-only general unit is still restored, because it must never mutate the tree.
+export function leaveTurn(
+  workspace: Workspace,
+  session: SessionState,
+  paused: PausedState,
+  telemetry?: TelemetrySink,
+): LeaveResult {
+  if (paused.agent === "observer" && sessionFocus(session)?.unitId === paused.unitId) {
+    popUnit(session);
+  }
+  if (paused.agent === "general") {
+    const unit = unitOf(session, paused.unitId);
+    restoreGeneralChanges(workspace, unit);
+  }
+  const unitId =
+    paused.agent === "observer" ? (paused.taskUnitId ?? paused.unitId) : paused.unitId;
+  if (sessionFocus(session)?.unitId === unitId) popUnit(session);
+  telemetry?.record({
+    type: "leave",
+    sessionId: LOCAL_SESSION_ID,
+    unitId,
+    at: Date.now(),
+  });
+  return { session, unitId };
+}
+
 // Cancel is not an IR operation for the session: it pops the paused units and, for a task with
-// a checkpoint, restores the world and records the `rollback` fact in the task journal.
+// a checkpoint, restores the world and records the `rollback` fact in the task journal. Unlike
+// leaving, a cancelled unit cannot be resumed, so it is marked `abandoned`.
 export function cancelTurn(
   workspace: Workspace,
   session: SessionState,
   paused: PausedState,
   telemetry?: TelemetrySink,
 ): CancelResult {
-  if (paused.agent === "observer" && sessionFocus(session)?.unitId === paused.unitId) {
-    popUnit(session);
+  if (paused.agent === "observer") {
+    if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
+    abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
   }
   if (paused.agent === "session" || paused.agent === "general") {
     let rollback: "ok" | "unavailable" | "error" = "unavailable";
@@ -600,6 +640,7 @@ export function cancelTurn(
       }
     }
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
+    abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
     telemetry?.record({
       type: "cancel",
       sessionId: LOCAL_SESSION_ID,
@@ -632,6 +673,7 @@ export function cancelTurn(
     }
   }
   if (sessionFocus(session)?.unitId === taskUnit.id) popUnit(session);
+  abandonUnit(session, taskUnit.id, taskUnit.turn);
   telemetry?.record({
     type: "cancel",
     sessionId: LOCAL_SESSION_ID,

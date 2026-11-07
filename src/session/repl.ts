@@ -1,12 +1,19 @@
 import {
   cancelTurn,
+  leaveTurn,
   resumeTurn,
   runSessionTurn,
   type PausedState,
   type SessionTurnDeps,
   type SessionTurnResult,
 } from "./driver";
-import { renderCancel, renderTurn, type RenderOptions } from "./view";
+import {
+  renderCancel,
+  renderLeave,
+  renderPauseMenu,
+  renderTurn,
+  type RenderOptions,
+} from "./view";
 import { createSession } from "./session";
 import type { SessionState } from "./types";
 
@@ -38,9 +45,15 @@ export async function runRepl(
   const print = (lines: readonly string[]): void => {
     for (const line of lines) output(line);
   };
+  const workspaceFor = (state: PausedState) =>
+    state.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
   const cancel = (state: PausedState): void => {
-    const workspace = state.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
-    print(renderCancel(cancelTurn(workspace, session, state, deps.telemetry)));
+    print(renderCancel(cancelTurn(workspaceFor(state), session, state, deps.telemetry)));
+    paused = undefined;
+    options.onPauseChanged?.(false);
+  };
+  const leave = (state: PausedState): void => {
+    print(renderLeave(leaveTurn(workspaceFor(state), session, state, deps.telemetry)));
     paused = undefined;
     options.onPauseChanged?.(false);
   };
@@ -76,18 +89,21 @@ export async function runRepl(
   for await (const raw of input) {
     const line = raw.trim();
     if (paused !== undefined) {
-      if (line === "" || line === "c" || line === "cancel") {
-        cancel(paused);
-        continue;
-      }
       if (line === "r" || line === "resume") {
         await resume(paused);
         continue;
       }
-      if (line === "q" || line === "quit") break;
-      // Any other line cancels the paused work and is interpreted as a new utterance.
-      cancel(paused);
-      await run(session, line);
+      if ((line === "s" || line === "session") && paused.agent !== "session") {
+        leave(paused);
+        continue;
+      }
+      if (line === "c" || line === "cancel") {
+        cancel(paused);
+        continue;
+      }
+      if (line === "q" || line === "quit" || line === "exit") break;
+      // A pause is resolved explicitly: never cancel or reinterpret implicitly.
+      print([renderPauseMenu(paused)]);
       continue;
     }
     if (line === "") continue;

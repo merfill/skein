@@ -7,6 +7,7 @@ import { runAgent } from "../src/loop/graph";
 import type { Proposer } from "../src/loop/propose";
 import {
   cancelTurn,
+  leaveTurn,
   resumeTurn,
   runSessionTurn,
   type SessionTurnDeps,
@@ -119,6 +120,7 @@ describe("task pause, resume and cancel", () => {
     const task = session.units.get("r1");
     expect(task?.journal.some((event) => event.type === "rollback")).toBe(true);
     expect(session.stack.some((ref) => ref.unitId === "r1")).toBe(false);
+    expect(attentionOf(session, "r1")).toBe("abandoned");
 
     expect(telemetry.events.some((event) => event.type === "pause")).toBe(true);
     const cancelEvent = telemetry.events.find((event) => event.type === "cancel");
@@ -129,6 +131,27 @@ describe("task pause, resume and cancel", () => {
     expect(
       telemetry.events.some((event) => event.type === "tool_call" && event.agent === "task"),
     ).toBe(true);
+  });
+
+  it("leave keeps the work, drops the focus, and suspends the task", async () => {
+    const { ws } = makeWorkspace({ "src/app.txt": "old\n" }, { checkpoints: true });
+    const controller = new AbortController();
+    const deps = taskDeps(pausingProposer(controller), ws);
+    const telemetry = memoryTelemetry();
+    deps.telemetry = telemetry.sink;
+    const session = createSession();
+
+    const first = await runSessionTurn(deps, session, "edit it", { signal: controller.signal });
+    expect(first.paused?.agent).toBe("task");
+    expect(ws.read("src/app.txt")).toBe("new");
+
+    const left = leaveTurn(ws, session, first.paused!, telemetry.sink);
+    expect(left.unitId).toBe("r1");
+    expect(ws.read("src/app.txt")).toBe("new");
+    expect(session.stack.some((ref) => ref.unitId === "r1")).toBe(false);
+    expect(attentionOf(session, "r1")).toBe("suspended");
+    expect(session.units.get("r1")?.journal.some((event) => event.type === "rollback")).toBe(false);
+    expect(telemetry.events.some((event) => event.type === "leave")).toBe(true);
   });
 
   it("warns and keeps the changes when the workspace has no snapshot store", async () => {
@@ -230,9 +253,48 @@ describe("REPL pause menu", () => {
         },
       },
     );
-    expect(output.some((line) => line.startsWith("paused:"))).toBe(true);
+    expect(output.some((line) => line.startsWith("paused"))).toBe(true);
     expect(output.some((line) => line.includes("answer:"))).toBe(true);
     expect(output.some((line) => line.includes("done"))).toBe(true);
+  });
+
+  it("leaves a paused task on 's'; the next utterance goes to the session", async () => {
+    const { ws } = makeWorkspace({ "src/app.txt": "old\n" }, { checkpoints: true });
+    const controller = new AbortController();
+    let signals = 0;
+    let sessionCalls = 0;
+    const agent: SessionAgent = async () => {
+      sessionCalls += 1;
+      if (sessionCalls === 1) {
+        return { operation: { kind: "start", text: "edit src/app.txt" } };
+      }
+      return { operation: { kind: "respond", text: "the task is open" } };
+    };
+    const deps: SessionTurnDeps = {
+      sessionAgent: { agent, tools: createSessionTools() },
+      task: { propose: pausingProposer(controller), workspace: ws, maxTurns: 20 },
+    };
+    const output: string[] = [];
+    await runRepl(
+      (async function* () {
+        yield "edit it";
+        yield "s";
+        yield "hello";
+        yield "exit";
+      })(),
+      deps,
+      (line) => output.push(line),
+      createSession(),
+      {
+        createSignal: () => {
+          signals += 1;
+          return signals === 1 ? controller.signal : new AbortController().signal;
+        },
+      },
+    );
+    expect(output.some((line) => line.startsWith("left r1 open (suspended)"))).toBe(true);
+    expect(output.some((line) => line.includes("the task is open"))).toBe(true);
+    expect(ws.read("src/app.txt")).toBe("new");
   });
 });
 

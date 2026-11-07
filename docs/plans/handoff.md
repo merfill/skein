@@ -4,6 +4,23 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-07 — Esc: пауза, выход в сессию, отмена
+
+- **Esc — пауза, не IR-операция.** Модельный вызов абортится, выполняющийся tool доходит до
+  конца, committed turns — точка возобновления. В журнал задачи ничего не пишется.
+- **Меню паузы** (`renderPauseMenu`): `[r] resume`, `[s] session`, `[c] cancel & roll back`,
+  `[q] quit`; для session-unit'а — `[r] resume`, `[c] discard`, `[q] quit`. Произвольная строка
+  в REPL больше не отменяет задачу неявно.
+- **Leave (`s`)** — `leaveTurn`: снимает фокус (наблюдателя, затем задачу), работа сохраняется,
+  в журнал unit'а ничего не пишется; статус производный `suspended`. Следующая реплика уходит
+  агенту сессии. Read-only general при выходе восстанавливает случайные изменения.
+- **Cancel (`c`)** — `cancelTurn`: откат к снапшоту входа + `rollback`-факт, unit помечается
+  `abandoned` (возобновлять нельзя). Для наблюдателя помечаются оба unit'а.
+- **Телеметрия:** новое событие `leave`, `SessionSummary.left`.
+- **Тесты:** `tests/session_pause.test.ts` — leave сохраняет файл и даёт `suspended`, cancel даёт
+  `abandoned`, REPL по `s` уходит в session. Offline: **607 passed / 40 skipped**, typecheck чистый.
+- **Доки:** `session_concepts`/`_ru` §3.
+
 ## 2026-11-07 — End-инструкция, снос Orientation/Recovery, `R→V` добавлен и убран, error-closure, короткие задачи
 
 - **End получил инструкцию.** `terminalInstruction` (`src/loop/prompt/blocks.ts`) рендерит

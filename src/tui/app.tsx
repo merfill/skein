@@ -7,6 +7,7 @@ import { currentMove } from "../ir/traversal";
 import { createSession } from "../session/session";
 import {
   cancelTurn,
+  leaveTurn,
   resumeTurn,
   runSessionTurn,
   type PausedState,
@@ -673,6 +674,18 @@ export function TuiApp(props: TuiAppProps) {
     setTick((value) => value + 1);
   };
 
+  const leave = (): void => {
+    const current = paused;
+    if (current === undefined) return;
+    const workspace =
+      current.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
+    const result = leaveTurn(workspace, sessionRef.current, current, deps.telemetry);
+    setPaused(undefined);
+    appendNotice(`left ${result.unitId} open (suspended); work kept`);
+    appendNotice("next message goes to the session agent");
+    setTick((value) => value + 1);
+  };
+
   const resetInput = (): void => {
     setInput("");
     setCursor(0);
@@ -869,6 +882,8 @@ export function TuiApp(props: TuiAppProps) {
     if (paused !== undefined) {
       if (value === "r") {
         void resume();
+      } else if (value === "s" && paused.agent !== "session") {
+        leave();
       } else if (value === "c") {
         cancel();
       } else if (value === "q") {
