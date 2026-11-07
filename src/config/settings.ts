@@ -10,7 +10,7 @@ export interface Settings {
   maxTokens: number;
   // When a structured call is cut by the completion cap, retry with a higher cap
   // (up to `maxTokensCeiling`, at most `maxTokensBumps` times) before falling back to
-  // plain JSON parsing (docs/testing_ru.md §8.1).
+  // plain JSON parsing (docs/ru/testing.md §8.1).
   maxTokensCeiling: number;
   maxTokensBumps: number;
   // A thrown model call (provider/network hiccup) is retried with the same request this many
@@ -43,7 +43,7 @@ export interface Settings {
   // SKEIN_OBSERVER=true to run the task loop with it.
   observer: boolean;
   // Cap on a foreground `run`; a long verifier build may need more than the default
-  // (background jobs are uncapped and polled instead, docs/tools.md §4.7).
+  // (background jobs are uncapped and polled instead, docs/en/tools.md §4.7).
   runTimeoutMs: number;
   live: boolean;
 }

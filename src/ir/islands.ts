@@ -1,9 +1,9 @@
 // The islands of work a goal can be entered in — a closed vocabulary, single-sourced the way
-// `FRAGMENT` was (docs/prompt_state_machine_concept.md). `ISLAND_IDS` is the source of truth for
+// `FRAGMENT` was (docs/en/system_prompt.md). `ISLAND_IDS` is the source of truth for
 // the `move` tool's `state` enum (`src/llm/schemas.ts`) and `START_ISLAND_IDS` for the request's
 // startable states, so the model's call contract and the prompt map cannot drift. A goal's
 // `state` is authored by the doxa at `create_goal` and never changes; it is a label, never a
-// gate (docs/ir_semantics.md §2.5, §8).
+// gate (docs/en/ir.md §2.5, §8).
 
 export const ISLAND_IDS = [
   "research",
@@ -43,10 +43,10 @@ export interface Island {
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
   // existing artifact, Research writes a derived result, Construction builds a new artifact.
   // The island still never closes a state and never gates a `move` — it delimits the ACTION
-  // surface only (docs/ir_semantics.md §2.5).
+  // surface only (docs/en/ir.md §2.5).
   applies: readonly string[];
   // The transitions out of this state: a target and the precondition ("when"). A floating or
-  // terminal state carries none (docs/prompt_state_machine_concept.md §4.3).
+  // terminal state carries none (docs/en/system_prompt.md §4.3).
   next: readonly { to: IslandId; when: string }[];
 }
 
@@ -183,7 +183,7 @@ export function stateDescription(island: Island, what?: string, done?: string): 
 }
 
 // The terminal state: reaching it is the sign of the end; it carries no goal and is closed
-// directly by the doxa's text reply (recorded as `stop`; docs/plans/archive/state_protocol_plan.md §2, §6.7).
+// directly by the doxa's text reply (recorded as `stop`).
 export const TERMINAL_ISLAND: IslandId = "end";
 
 export function isTerminalIsland(value: string): boolean {

@@ -5,7 +5,7 @@ import type { CommandResult } from "../src/tools/workspace";
 
 // The crash diagnostics are environment-dependent (core_pattern, gdb), so they are
 // tested against a fake environment: a signal alone, a fresh core, a stale core, gdb
-// present/absent. A real OCaml segfault is not reproducible offline (docs/tools.md §4.3).
+// present/absent. A real OCaml segfault is not reproducible offline (docs/en/tools.md §4.3).
 
 function fakeEnv(
   signatures: Record<string, string>,

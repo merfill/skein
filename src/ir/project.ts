@@ -21,16 +21,16 @@ import {
 import type { Node } from "./types";
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
-// (docs/ir_semantics.md §7). The request is the only `user` turn; a state renders as
+// (docs/en/ir.md §7). The request is the only `user` turn; a state renders as
 // `Start state` / instruction markers and, while open, its turns' call/observation pairs. Once
 // the state is stopped its turns are elided and the `Finish state` marker carries the stop
-// reason read from the `move.stop` relation (docs/plans/archive/goal_into_move_plan.md). There
+// reason read from the `move.stop` relation. There
 // is no goal node: the state IS its goal.
 
 export type Situation = "request" | "working" | "transition" | "terminal";
 
 // A native tool call the model made, carried so `buildMessages` can emit
-// `assistant.tool_calls` / `tool` messages rather than a flat text tape (docs/ir_semantics §7).
+// `assistant.tool_calls` / `tool` messages rather than a flat text tape (docs/en/ir.md §7).
 export interface ToolCall {
   id: string;
   name: string;
@@ -43,7 +43,7 @@ export interface TapeMessage {
   // An assistant turn that is a single tool call (`[id] …` was the model's move this turn).
   call?: ToolCall;
   // An assistant turn that is a batch: the calls of one doxa move, in order. The following N
-  // `tool` messages answer them by id (docs/ir_semantics §7).
+  // `tool` messages answer them by id (docs/en/ir.md §7).
   calls?: ToolCall[];
   // A tool result: the id of the assistant call it answers.
   callId?: string;
@@ -136,7 +136,7 @@ function mutatedPaths(state: State, actionId: string): string[] {
 }
 
 // A tool result rendered for the tape, from the bounded inline body (the full body stays
-// addressable by id via `recall`/`search`, docs/ir_semantics.md §7).
+// addressable by id via `recall`/`search`, docs/en/ir.md §7).
 export function observationText(node: Node): string {
   const payload = nodePayload(node) ?? {};
   const parts: string[] = [];
@@ -218,7 +218,7 @@ function closureLine(state: State, moveId: string): string {
   return `${line}\nArtifacts: ${shown.join(", ")}${more}`;
 }
 
-// The state's action nodes, in turn order (docs/ir_semantics §2.3).
+// The state's action nodes, in turn order (docs/en/ir.md §2.3).
 export function actionsOfMove(state: State, moveId: string): string[] {
   const turns = turnsOf(state, moveId);
   if (turns === undefined) return [];
@@ -274,7 +274,7 @@ function stateBrief(state: State, island: IslandId): string {
 // `Start state <label>` and — once closed — `Finish state <label>` (the `stop` reason). A closed
 // state is exactly that pair: no brief or turns. An open state carries the focused brief and
 // its turns; the goal, criterion and plan are restated in the per-turn working prompt that
-// `buildMessages` appends after the turns (docs/ir_semantics §7).
+// `buildMessages` appends after the turns (docs/en/ir.md §7).
 function renderState(state: State, moveId: string, out: TapeMessage[]): void {
   const move = state.nodes.get(moveId);
   const island = moveIsland(state, moveId);
@@ -293,10 +293,10 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
 }
 
 // Render a state's turns: its actions in append order (the turns container hangs directly off
-// the `move` — there is no goal node, docs/plans/archive/goal_into_move_plan.md). Calls a
+// the `move` — there is no goal node). Calls a
 // single doxa move made together (`payload.turn`) render as ONE assistant `tool_calls` message
 // followed by their results, in order; a lone call keeps the plain `call` shape
-// (docs/ir_semantics §7).
+// (docs/en/ir.md §7).
 function renderTurns(state: State, moveId: string, out: TapeMessage[]): void {
   const turns = turnsOf(state, moveId);
   if (turns === undefined) return;
@@ -387,10 +387,10 @@ export function situationOf(state: State): Situation {
 // The observation step: right after a tool result inside an open state, the doxa must read the
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
-// the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
+// the edit. It is island-aware: a state whose
 // surface has no write tool is told to reply with its result, never to edit.
 // The island of the focused state (the current `move`), when it has one. An authored label
-// (docs/ir_semantics.md §2.5), never a gate.
+// (docs/en/ir.md §2.5), never a gate.
 export function islandOf(state: State): IslandId | undefined {
   const move = currentMove(state);
   if (move === undefined) return undefined;

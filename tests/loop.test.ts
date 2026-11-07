@@ -102,7 +102,7 @@ describe("classify", () => {
   tempDirs.push(cmdDir);
   const cmdWs = fsWorkspace(cmdDir);
 
-  // A command's non-execution is an observation with a reason (docs/ir_revision.md §3.3,
+  // A command's non-execution is an observation with a reason (docs/en/ir.md §2.7,
   // §4): run it and report the failed observation's reason.
   function runApply(action: Action, events: readonly Event[], workspace = cmdWs) {
     const outcome = executeAction(action, fold(events), workspace, 0);
@@ -1131,7 +1131,7 @@ describe("runAgent", () => {
         node.kind === "action" &&
         (node.payload as { command?: string } | undefined)?.command === "read src/sum.mjs",
     );
-    // Each attempt leaves an action node (docs/ir_revision.md §4): the read and its refused
+    // Each attempt leaves an action node (docs/en/ir.md §4): the read and its refused
     // repeat.
     expect(reads).toHaveLength(2);
     const firstRead = [...state.nodes.values()].find(

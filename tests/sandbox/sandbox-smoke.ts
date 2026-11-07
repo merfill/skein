@@ -6,7 +6,7 @@ import { cleanupSandboxes } from "./workspace";
 // Smoke the ported tasks with the live model, in parallel:
 //   npx tsx tests/sandbox/sandbox-smoke.ts [task-ids…] [--concurrency N] [--turns N]
 // Default: all registered tasks, 5 at a time. Writes a trace dir per task and prints a
-// summary table (reward, calls, tokens, cost). Money: docs/testing.md §3.6.
+// summary table (reward, calls, tokens, cost). Money: docs/en/testing.md §3.6.
 
 // Parse `--flag value` pairs; everything else is a positional task id.
 function parseArgs(argv: string[]): { flags: Map<string, string>; positional: string[] } {

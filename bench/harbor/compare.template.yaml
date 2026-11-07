@@ -11,12 +11,11 @@ environment:
   delete: true
   # Both agents run under identical resources, so the comparison is fair. 5
   # concurrent trials x 4 CPU oversubscribes the 16-CPU host slightly (the OCaml
-  # build is CPU-bound); 5 x 5120 MB = 25.6 GB fits the 30 GB host. See
-  # docs/benches/bench_report.md §4.4.
+  # build is CPU-bound); 5 x 5120 MB = 25.6 GB fits the 30 GB host.
   override_cpus: 4
   override_memory_mb: 5120
 agents:
-  # Skein: context is a projection of the IR (docs/concepts.md).
+  # Skein: context is a projection of the IR (docs/en/concepts.md).
   - name: langgraph
     model_name: routerai/~deepseek/deepseek-v4-flash-latest
     kwargs:
@@ -50,8 +49,7 @@ agents:
             models:
               "~deepseek/deepseek-v4-flash-latest":
                 name: DeepSeek V4 Flash
-                # Match Skein's reasoning effort (F1 in
-                # docs/benches/engine_fixes_found.md: the reasoning toggle decides).
+                # Match Skein's reasoning effort: the reasoning toggle decides.
                 options:
                   reasoningEffort: high
 datasets:

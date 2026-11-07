@@ -89,7 +89,7 @@ export function historyMessages(history: readonly TapeMessage[]): ModelMessage[]
 // the tape itself, then the situation's prompt. An open state carries only its `Start state`
 // marker, brief and turns; buildMessages appends one `user` working prompt (goal, criterion,
 // plan, request reference) after the turns. The base prompt is only the contract; the state
-// map/moves live in the request/transition prompts (docs/ir_semantics §7).
+// map/moves live in the request/transition prompts (docs/en/ir.md §7).
 export function buildMessages(context: Context): ModelMessage[] {
   const messages: ModelMessage[] = [{ role: "system", content: BASE_PROMPT }];
   for (const constraint of context.constraints) {
@@ -101,7 +101,7 @@ export function buildMessages(context: Context): ModelMessage[] {
   messages.push(...historyMessages(context.history));
   // The transition rule is a `system` turn: it is the engine's rule for choosing the next
   // state, not a user request. The tape already ends with the finished state's `Finish` line,
-  // so the rule follows it as another system turn (docs/ir_semantics §7). The request's route
+  // so the rule follows it as another system turn (docs/en/ir.md §7). The request's route
   // and an open state's working prompt are `user` turns: the choice/goal must be the last thing
   // the model reads, with the original request marked as reference, not the goal. At End there
   // is no next state and no criterion, so its own instruction is the completion rule: reply

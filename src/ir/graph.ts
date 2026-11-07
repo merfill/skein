@@ -80,7 +80,7 @@ export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefi
 
 // The `stop` node a state is closed by (`stop` relation, move → stop), if any. This is a
 // control fact (the arm is done), not truth. The closure (and its `why`) lives on the state's
-// `move`; it is not a turn (docs/ir_semantics.md §2.2).
+// `move`; it is not a turn (docs/en/ir.md §2.2).
 export function stopOf(state: State, moveId: string): string | undefined {
   for (const edge of state.edges.values()) {
     if (edge.kind === "stop" && edge.from === moveId) return edge.to;
@@ -93,7 +93,7 @@ export function hasStopped(state: State, moveId: string): boolean {
 }
 
 // The request's `unactionable` node, if the doxa declined to formulate a goal for it
-// (`unactionable` relation). A declined request is terminal (docs/plans/request_goal_plan.md).
+// (`unactionable` relation). A declined request is terminal.
 export function unactionableOf(state: State, requestId: string): string | undefined {
   for (const edge of state.edges.values()) {
     if (edge.kind === "unactionable" && edge.from === requestId) return edge.to;
@@ -116,7 +116,7 @@ export function actionExecuted(state: State, actionId: string): boolean {
   return false;
 }
 
-// The outcome of an action (docs/ir_revision.md §4): a command that mutated a file is a
+// The outcome of an action (docs/en/ir.md §4): a command that mutated a file is a
 // success; otherwise its result observation decides — `failed: true` is a failure, a
 // non-zero `exitCode` is a failure (a missing `exitCode` is a timeout, no verdict), and a
 // read/grep/list result is a success. An unexecuted action is not a success.

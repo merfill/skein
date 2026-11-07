@@ -53,7 +53,7 @@ describe.skipIf(!settings.live)("fix-ocaml-gc sandbox (live model)", () => {
       );
 
       // The engine invariant under test: the run terminates on the doxa's move, not by
-      // burning the budget on refused `stop` (bench_report.md §4.4.2).
+      // burning the budget on refused `stop`.
       expect(result.done).toBe(true);
       expect(result.stopReason).not.toBe("max_turns");
       // `fixed` is a model-quality signal, not an engine invariant: logged for the run.

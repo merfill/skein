@@ -33,7 +33,7 @@ export interface ExecOutcome {
   stopReason: string | null;
 }
 
-// Per-tool inline budgets (docs/ir_semantics.md §7). The `read` window holds a whole small file
+// Per-tool inline budgets (docs/en/ir.md §7). The `read` window holds a whole small file
 // (README-scale docs) so the model does not page what it can read at once; a larger body is
 // paged with explicit `start`/`end` or pulled by `recall` (which keeps a big budget).
 // `grep`/`list`/`run` are small too, because they are pointers, not content. A body still over
@@ -423,7 +423,7 @@ function bashSignature(command: string, workdir?: string, timeout?: number): str
 }
 
 // The extra payload a tool keeps on its action node, so the calls index / repeat guard can
-// read it back (docs/ir_revision.md §4).
+// read it back (docs/en/ir.md §4).
 function actionExtra(apply: Apply): Record<string, unknown> {
   switch (apply.tool) {
     case "edit":
@@ -448,7 +448,7 @@ export interface CommandRefusal {
   stale?: { path: string; ref: string; version: string };
 }
 
-// Non-execution of a command (docs/ir_revision.md §3.3, §4): a repeat, a stale base, a
+// Non-execution of a command (docs/en/ir.md §2.7, §4): a repeat, a stale base, a
 // forbidden path or an empty command is a reason, returned here so the engine records it as
 // an observation rather than refusing without a node. The checks are state-only.
 function commandRefusal(state: State, apply: Apply, command: string): CommandRefusal | undefined {
@@ -664,7 +664,7 @@ export function executeAction(
   workspace: Workspace,
   turn: number,
   // The doxa's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
-  // action nodes so the projection can show it back on the tape next turn (`docs/ir_semantics §7`).
+  // action nodes so the projection can show it back on the tape next turn (`docs/en/ir.md §7`).
   reasoning?: string,
 ): ExecOutcome {
   let counter = state.seq;
@@ -786,8 +786,8 @@ export function executeAction(
 
   // A state: the doxa declared the island of work it will work in AND the state's goal text
   // (`what`). The states are the request's flat children (`move` edges); a new move is a
-  // sibling of the previous state (docs/ir_semantics.md §4.1). The turns container hangs directly off
-  // the `move` — there is no goal node (docs/plans/archive/goal_into_move_plan.md) — and is seeded
+  // sibling of the previous state (docs/en/ir.md §4.1). The turns container hangs directly off
+  // the `move` — there is no goal node — and is seeded
   // by the first `apply`.
   const buildMove = (
     spec: MovePayload & { call?: unknown },
@@ -812,7 +812,7 @@ export function executeAction(
     return id;
   };
 
-  // Append a command to the focused state's monotone turns (docs/ir_semantics.md §2.7): the
+  // Append a command to the focused state's monotone turns (docs/en/ir.md §2.7): the
   // first `apply` creates the container, every later one is just the next turn.
   const appendTurn = (moveId: string, nodeId: string): void => {
     const turnsId = ensureTurns(moveId);
@@ -820,7 +820,7 @@ export function executeAction(
   };
 
   // One plain foreground shell command: recorded as an observation with its exit code,
-  // stdout and stderr (docs/ir_revision.md §3.3, §4). A command that changes a forbidden
+  // stdout and stderr (docs/en/ir.md §2.7, §4). A command that changes a forbidden
   // file is reverted and recorded as a violation.
   const runShell = (command: string, actionId: string, options: RunOptions = {}): ExecOutcome => {
     const shellFailure = (text: string): ExecOutcome => {
@@ -975,7 +975,7 @@ export function executeAction(
       // A recall/search reads a stored body and now leaves a node (an action + its observation,
       // placed under the state's turns like any turn), so the fetched window stays on the state's
       // tape until the state is stopped — no transient pair and no working-set TTL
-      // (docs/ir_semantics.md §7).
+      // (docs/en/ir.md §7).
       const focus = currentFocus(state);
       if (focus === undefined) return fail(`${action.operator} failed: no current state`);
       const text = clip(
@@ -1004,8 +1004,8 @@ export function executeAction(
     case "move": {
       // Declare the state: a `move` node (carrying the state's goal text) hung off the
       // request as a flat child (`move` relation). The states are siblings, never nested;
-      // the focus descends into the new state (docs/ir_semantics.md §4.1). The turns are left
-      // empty — the next turn's first `apply` seeds them (docs/plans/archive/goal_into_move_plan.md).
+      // the focus descends into the new state (docs/en/ir.md §4.1). The turns are left
+      // empty — the next turn's first `apply` seeds them.
       const root = state.rootId;
       if (root === undefined) return fail("move failed: no request");
       // A Patch may change files in ways its call records cannot reverse (`bash`, `write`,
@@ -1042,8 +1042,7 @@ export function executeAction(
 
     case "decline": {
       // Decline to formulate a state: the request's intent is not actionable. Records an
-      // `unactionable` node under the request (edge `unactionable`) and ends the run
-      // (docs/plans/request_goal_plan.md).
+      // `unactionable` node under the request (edge `unactionable`) and ends the run.
       const seq = next();
       const id = `w:unactionable:${seq}`;
       events.push({
@@ -1071,7 +1070,7 @@ export function executeAction(
       // The doxa's closure. On an open state a `stop` node hung off the `move` via the `stop`
       // relation records the closure; the engine returns to the state and the doxa makes the
       // transition decision. On the terminal state (`finish`, which has no turns) the `stop`
-      // ends the request (docs/ir_semantics.md §4.4).
+      // ends the request (docs/en/ir.md §4.4).
       const focus = currentFocus(state);
       if (focus === undefined) return fail("not admissible here");
       const focusNode = state.nodes.get(focus);
@@ -1121,7 +1120,7 @@ export function executeAction(
       const focus = currentFocus(state);
       if (focus === undefined) return fail("apply failed: no current state");
       const command = commandOf(apply);
-      // Every action leaves a turn node (docs/ir_revision.md §4); it is appended to the
+      // Every action leaves a turn node (docs/en/ir.md §4); it is appended to the
       // state's monotone turns list.
       const actionId = buildActionItem(command, command, {
         ...actionExtra(apply),
@@ -1146,7 +1145,7 @@ export function executeAction(
         return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
       };
       // Non-execution of a command is an observation with a reason, not a refusal without a
-      // node (docs/ir_revision.md §3.3, §4).
+      // node (docs/en/ir.md §2.7, §4).
       const refusal = commandRefusal(state, apply, command);
       if (refusal !== undefined) {
         const stale = refusal.stale;
@@ -1196,7 +1195,7 @@ export function executeAction(
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
         // throws `path escapes workspace`, and the loop must turn that into a fail
-        // observation like `grep`/`list` do (docs/benches/bench_report.md §4.4, problem 5).
+        // observation like `grep`/`list` do.
         let present: boolean;
         try {
           present = workspace.exists(apply.path);
@@ -1340,7 +1339,7 @@ export function executeAction(
         const start = Math.min(Math.max(from - 1, 0), total);
         const page = files.slice(start, start + limit);
         // The window is bounded by dropping whole trailing files (never mid-JSON), so the
-        // listing the model asked for is shown whole (docs/ir_semantics.md §7).
+        // listing the model asked for is shown whole (docs/en/ir.md §7).
         const build = (kept: number): string => {
           const result: Record<string, unknown> = {
             root: apply.path ?? ".",
@@ -1557,7 +1556,7 @@ export function executeAction(
         return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
       }
 
-      // apply.tool === "bash": one plain foreground command (docs/ir_revision.md §3.3).
+      // apply.tool === "bash": one plain foreground command (docs/en/ir.md §2.7).
       const runCommand = apply.command;
       if (runCommand === undefined || runCommand.trim() === "") {
         return failed("run failed: no command");

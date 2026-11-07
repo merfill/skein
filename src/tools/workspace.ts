@@ -38,19 +38,19 @@ export interface PathFilter {
 
 // A command's outcome. stdout and stderr are kept separate (never concatenated): the
 // error stream is the primary signal of a failed run, and merging the two hides which
-// stream carried the failure (docs/tools.md §4.3).
+// stream carried the failure (docs/en/tools.md §4.3).
 export interface CommandResult {
   code: number;
   stdout: string;
   stderr: string;
   timedOut?: boolean;
   // The signal that killed the command (SIGSEGV, SIGABRT, …), if any. A crash is a
-  // stronger fact than the exit code and must not be lost (docs/tools.md §4.3).
+  // stronger fact than the exit code and must not be lost (docs/en/tools.md §4.3).
   signal?: string;
 }
 
 // A command started in the background: `run` returns at once with this handle, and the
-// model polls it by id instead of blocking a whole turn on a long build (docs/tools.md
+// model polls it by id instead of blocking a whole turn on a long build (docs/en/tools.md
 // §4.7). The child writes stdout and stderr to separate logs under `.skein/jobs/`.
 export interface JobHandle {
   id: string;
@@ -86,7 +86,7 @@ export interface WorkspaceOptions {
   // when to stop polling); this exists so a slow verifier can be allowed to finish.
   runTimeoutMs?: number;
   // How long `startJob` blocks for a just-started job to finish before handing back a
-  // handle (docs/tools.md §4.7). A genuinely long/open-ended command returns `running`.
+  // handle (docs/en/tools.md §4.7). A genuinely long/open-ended command returns `running`.
   jobGraceMs?: number;
   // Keep a workspace checkpoint store under `.skein/checkpoints` (task rollback). Off by
   // default so tests and benches do not pay for snapshots unless they ask.
@@ -197,7 +197,7 @@ const JOB_TAIL_BYTES = 8_000;
 // A just-started background job is given this long to finish before `startJob` hands back
 // a handle. This collapses a short command (the common case) into the start turn: the
 // engine waits the way a foreground `run` would, and only a genuinely long/open-ended
-// command is left to poll (docs/tools.md §4.7).
+// command is left to poll (docs/en/tools.md §4.7).
 const JOB_START_GRACE_MS = 10_000;
 
 interface JobRecord extends JobHandle {
@@ -218,7 +218,7 @@ function shellQuote(value: string): string {
 }
 
 // A shell reports a signal death as 128 + signum; map it back to the name so the crash
-// path (core + backtrace) still fires for a backgrounded command (docs/tools.md §4.3).
+// path (core + backtrace) still fires for a backgrounded command (docs/en/tools.md §4.3).
 function signalName(number: number): string | null {
   for (const [name, value] of Object.entries(osConstants.signals)) {
     if (value === number) return name;

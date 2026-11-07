@@ -8,8 +8,6 @@
 //   - opencode: agent/opencode.txt, one `step-finish` per LLM call carrying
 //     `tokens.{input,output,reasoning,cache.read}` and one `tool_use` per tool call.
 //     Its `trajectory.json` final_metrics has no reasoning/step breakdown.
-//
-// The report this feeds: docs/benches/bench_report.md §4.4.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

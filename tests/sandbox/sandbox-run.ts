@@ -9,7 +9,7 @@ import { cleanupSandboxes } from "./workspace";
 // Live run of a ported terminal-bench task (no Harbor):
 //   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off] [--dir <dir>]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>/ and prints the token breakdown.
-// For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/testing.md §3.6.
+// For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/en/testing.md §3.6.
 
 function arg(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);

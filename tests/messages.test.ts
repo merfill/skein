@@ -17,7 +17,7 @@ import { wire } from "./wire";
 // The exact wire messages the provider receives, produced by the real code path
 // (`buildMessages` → `ChatOpenAI` message conversion). The transport is a stub `fetch` that
 // captures the request body — no network, deterministic. This pins the native tool-calling
-// contract (docs/ir_semantics §7): assistant moves are `assistant.tool_calls`, results are
+// contract (docs/en/ir.md §7): assistant moves are `assistant.tool_calls`, results are
 // `tool` messages with `tool_call_id`, and only the request is a `user` turn.
 
 const llm: Provenance = { kind: "llm" };

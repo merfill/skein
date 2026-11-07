@@ -36,7 +36,7 @@ export function moveIsland(state: State, id: string): IslandId | undefined {
 
 // Is the state of this `move` finished? A state (including the terminal End state, which
 // has no turns) is finished when the doxa closes it — by a text reply, which the engine records
-// as the `stop` relation (docs/ir_semantics.md §2.5).
+// as the `stop` relation (docs/en/ir.md §2.5).
 export function isMoveFinished(state: State, id: string): boolean {
   return hasStopped(state, id);
 }
@@ -51,7 +51,7 @@ export function isFinished(state: State, id: string): boolean {
 
 // The path from the root the focus should sit on: the request and its current state (`move`),
 // while the state is still open; a finished state stays focused on the `move` so the doxa can
-// make the transition (docs/ir_semantics.md §2.6). The states are flat children of the request.
+// make the transition (docs/en/ir.md §2.6). The states are flat children of the request.
 function desiredPath(state: State): string[] {
   const root = state.rootId;
   if (root === undefined) return [];
@@ -64,7 +64,7 @@ function desiredPath(state: State): string[] {
 
 // Deterministic logos moves that bring the stack to the focus: descend into the current
 // state, or return out of a finished state. One computation feeds both the projection and
-// `classify` (docs/ir_semantics.md §2.6).
+// `classify` (docs/en/ir.md §2.6).
 export function focusEvents(state: State): Event[] {
   const root = state.rootId;
   if (root === undefined) return [];
@@ -98,7 +98,7 @@ export interface Applicable {
 
 // The frontier: the moves admissible at the focus. One computation feeds both the
 // projection (the model surface is bound from it) and `classify`, so the two cannot drift
-// (docs/ir_semantics.md §2.6). `return` is an engine-internal move, never a doxa operator.
+// (docs/en/ir.md §2.6). `return` is an engine-internal move, never a doxa operator.
 export function applicable(state: State, focusId: string | undefined): Applicable {
   const none: Applicable = {
     move: false,

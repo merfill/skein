@@ -1,0 +1,405 @@
+# Skein — tools and the calling contract (proposal)
+
+> **Note (IR revision folded).** The tool input shapes below still hold, but the effects
+> changed: `stop` records a relation on the state's `move` (it no longer appends a turn),
+> and the context is a message tape (`docs/en/ir.md` §7, `docs/en/projection.md`). The
+> as-built is `docs/en/ir.md`.
+
+> Russian mirror — `docs/ru/tools.md`.
+>
+> **Status: §4 is implemented.** §3 is historical context (the defects are fixed).
+> Open questions are in §7, the backlog in §8.
+
+Related: `docs/en/ir.md` (operator semantics), `docs/en/projection.md` (what the
+model sees), `docs/en/testing.md` (runs).
+
+The goal is to pin down an **honest tool contract**: what the model may call, what a
+tool undertakes to return, and what instructions to give it. Below: principles, then
+the current state (as-built), then the proposed changes.
+
+---
+
+## 1. Principles
+
+1. **A tool honestly does what it declares.** If it declares "read a window of lines",
+   the whole window is returned. If there is a limit, it is **declared** in the
+   description and in the result ("showing lines X–Y of Z"), not silently cut.
+2. **The context is all of the model's memory.** So it must receive:
+   - the **full result of the latest call** (within the tool's honestly declared
+     limits);
+   - a **summary of previous calls without their results** (what was called, its
+     status, size).
+3. **A failure is a result too.** A failed command, a gate refusal, "no such file" is
+   knowledge; it is shown and/or lands in the summary/`negative`, never dropped.
+4. **No context budget for now.** We remove `SKEIN_CTX_TOTAL`: first let the tools
+   work honestly, measure later. (Separately decide whether an emergency cap is
+   needed.)
+5. **A move is a batch.** The model proposes one or more actions in a turn; the engine
+   decides to accept or refuse (see the semantics).
+
+---
+
+## 2. Interface overview
+
+The model proposes an action through **native tool calls** (one flat function tool per
+operation, no forced `tool_choice`); `src/llm/tools.ts` maps the call into the IR
+`action`, one of the operators:
+
+| Operator | Purpose |
+|---|---|
+| `move` | declare the state (island of work) to work in AND its goal `what` — the automaton's transition; the turns hang off the `move` |
+| `apply` | work with the workspace: `read` / `grep` / `list` / `edit` / `write` / `bash` / `webfetch` / `apply_patch`; the first `apply` after a `move` seeds the state's turns |
+| `stop` | the sole closure: the tool description is state-agnostic; the state's hint defines what `why` must contain; the engine accepts it on an open state (no criterion gate) |
+| `decline` | decline a non-actionable request: records an `unactionable` node, ends the run |
+| `recall` / `search` | read / search a stored result by id (does not change state) |
+
+### 2.1 `move { state, what }`
+
+- `state` — the island of work to work in, one of the names the base prompt lists
+  (`reconnaissance`, `localization`, `patch`, `verification`, …); an authored label, never a
+  gate. The first `move` picks the opening state; later moves pick the next one (only after the
+  current state is finished).
+- `what` — the concrete outcome for **this** state: a state IS its goal. Required, except at
+  the terminal `end` state (which has no goal).
+
+Instruction: at a request (or at a finished state) `move` declares the state AND its goal; the
+focus becomes a `move` node and the turns hang directly off it. The next move is the state's
+**first turn** — an ordinary tool call (`apply`), not a dedicated operator. A `bash` turn
+runs **from the workspace root** and takes a `cd <dir> &&` prefix in a subdirectory
+(`cd ocaml && make -C testsuite one DIR=tests/basic`); the rule is stated in the request
+instruction and in the `move` `description`. The states are **flat children of the request**
+(`move` relation) — never nested. A `move` while a state is open is refused (`state_open`).
+
+### 2.2 `apply { action }`
+
+The model calls one **flat tool per operation**; `toProposal` maps the native call into the
+IR `apply` (and `modelCall` renders the tape back with the same native names). The
+model-facing names/params match a coding model's priors, so the IR vocabulary stays
+internal: `read { filePath, offset?, limit? }`, `edit { filePath, oldString, newString }`,
+`write { filePath, content }`, `grep { pattern, path?, include?, from? }`,
+`list { path?, include?, from? }`, `bash { command, workdir?, timeout? }`,
+`webfetch { url, path? }`, `apply_patch { patch, strip? }`.
+
+| IR tool | Native tool | Fields (native) | Meaning |
+|---|---|---|---|
+| `read` | `read` | `{ filePath, offset?, limit? }` | read a file, or a window of lines (`offset` 1-indexed, `limit` lines) |
+| `grep` | `grep` | `{ pattern, path?, include?, from? }` | search the workspace, paginated over matches (`from`); plain text (see §4.2) |
+| `list` | `list` | `{ path?, include?, from? }` | list files by mask, JSON (see §4.6); the engine also accepts `exclude`/`limit`, which the model tool does not expose |
+| `edit` | `edit` | `{ filePath, oldString, newString }` | exact substring replacement (only the first occurrence) |
+| `write` | `write` | `{ filePath, content }` | create a new file or fully overwrite one (overwrite needs a fresh read) |
+| `fetch` | `webfetch` | `{ url, path? }` | download a URL into the workspace as read-only reference evidence (default `.skein/ref/<hash>-<slug>`), to read alongside the tree; refused on a path outside the workspace / already existing / forbidden / download failure |
+| `apply_patch` | `apply_patch` | `{ patch, strip? }` | apply a unified diff (`patch -p<strip>`, default 1), e.g. an upstream change obtained with `webfetch` |
+| `bash` | `bash` | `{ command, workdir?, timeout? }` | one plain **foreground** shell command; `workdir` runs it in a workspace subdirectory, `timeout` caps it (ms). An **observation** carries `command` and `exitCode` (0 = pass, non-zero = fail, absent on a timeout) plus the output (stdout and stderr separate, §4.3) |
+
+### 2.3 `recall { id, start?, end? }` and `search { id, pattern, before?, after? }`
+
+Two read-only tools address a **stored result** by `id` (a small body from the payload, a
+large one behind `outputRef`). `recall` opens the body — optionally a line window
+(`start`/`end`) with a `continue from N` cursor. `search` finds a regex **inside** the body —
+stdout **and** stderr — with `before`/`after` context (default 3/3) and no paging (a broad
+pattern is truncated with a "narrow the pattern" note, never a dangling cursor). Neither
+changes state. They are separate so reading a result is never confused with searching one, or
+with `read`/`grep` (which target the workspace). The old tree selectors (`kind`/`edgesOf`) are
+gone — the model never used them.
+
+### 2.4 `stop { why? }`
+
+The doxa's terminal move and the sole closure. The tool description is **state-agnostic**:
+`Call stop to stop. why = a detailed account of why you are stopping — up to ~50 words.` The
+state's hint on the tape says what the `why` must contain — it must satisfy the `Done when`
+declared in the state's `Start state`. On an open state it finishes that state: the engine hangs
+a `stop` node off the state's `move` (a `stop` relation, not a turn; `hasStopped` is the
+derived fact); the next decision is the transition. On the **terminal move** (`end`, which has no
+`what`) it hangs the `stop` node off the `move` and ends the request.
+There is **no criterion gate**: `stop` is accepted on an open state (cycle / premature-stop
+detection is deferred). There is **no** `stop` on the request: the run ends when the terminal
+move is stopped, never by a `stop` of its own.
+
+### 2.5 `decline { why? }`
+
+Declines to formulate a goal: the request's intent is genuinely not actionable (chit-chat,
+no task). It records an `unactionable` node under the request (`unactionable` relation) and ends
+the run. Available only while the request has no `move` yet (before the first state); give
+`why`. Never invent a state just to close such a request.
+
+---
+
+## 3. Current behavior (as-built) and its defects
+
+| tool | What it declares | What it actually returns | Defect |
+|---|---|---|---|
+| `read {path,start?,end?}` | a window of lines | the window content → **transient** text, clipped at 8000, then by the projection — **400 chars from the start**; the observation stores only `{ref,version,bytes}` | content is **not stored**; different windows of one file used to count as a repeat (fixed: the range is in the signature) |
+| `grep {pattern}` | a search | matches `path:line:text` → transient text, then 400 chars; the observation stores only `{count}` | matches are **not stored**; it used to not see `.c` at all (fixed: text by content) |
+| `run {command}` | run a command | output → transient text; the observation stores `{command, target?, exitCode, output}` (up to 8000, head+tail) | the projection still shows 400 chars from the start |
+| `edit {path,find,replace}` | replacement | the fact of the edit | — |
+| `query {...}` | a tree read | up to 50 rows per selector | cannot reach `read`/`grep` content (it is not there) |
+
+Root defect: **the work result is thrown away, and only a 400-char excerpt is shown.**
+The prompt meanwhile advises "read again or query if you need it"
+(`src/loop/propose.ts:27`), though re-reading is not allowed and `query` returns no
+content. The model asks for 120 lines — it sees ~8.
+
+---
+
+## 4. Proposed changes
+
+> **Historical block names.** §4.1–4.3 predate the tape: `lastResult`/`shown` there are the old
+> blocks. The current projection is a message tape — see §4.4 and `docs/en/projection.md`.
+
+### 4.1 `read`: a window with a declared maximum (decided)
+
+- `read { path, start?, end? }`:
+  - without `start/end` — from the start of the file;
+  - with `start/end` — a window of lines (1-based, `end` inclusive).
+- The window is bounded by the **32K byte cap** (`READ_LIMIT`), declared in the tool
+  description: the model knows the limit in advance (there is no separate line cap). A body
+  longer than the window comes back as the next `read` window or via `recall` (budget
+  `QUERY_BODY_LIMIT` = 64K).
+- If more than the maximum is requested, or the file is longer than the window, the
+  tool returns the maximum and **explicitly reports**: "showing lines 1–400 of 3000;
+  continue from 401".
+- The result is shown **fully** (this is `lastResult`, not cut to 400 chars).
+- Consequence: the window content lives in `lastResult` for **one turn**; a previous
+  read on the current branch is kept in `shown` (and can be pulled back via
+  `recall {id}`). An **identical** re-read (the same window, with an unchanged world) is
+  refused as `repeated_action`; a **different** window is a new read. If the needed part
+  is at a window boundary (read 1–100 and 101–200, but the code is at 80–120), read a
+  window with margin (say 60–160). A **thrash** is also refused: once an unchanged file has
+  been read twice with no edit in between, a further read is `repeated_action` — the body is
+  already addressable, so name the cause and edit; an edit resets the count (`OP-AP-READ-6`).
+
+### 4.2 `grep`: scope, windows over matches (decided)
+
+- `grep { pattern, path?, include?, exclude?, before?, after?, from?, count? }`:
+  - `path` — a file or a directory (the workspace root by default); the scope is part
+    of the action signature;
+  - `include`/`exclude` — glob filters over paths (`**/*.c`, `runtime/**`,
+    `**/.depend` as an exclude); choosing "where to search" (code/logs/tests) is the model's job;
+    there is no language→extension table in the engine;
+  - `before`/`after` — context lines above/below, **`3/3` by default**;
+  - `from`/`count` — a window **over matches** (1-based, like lines in `read`);
+    `count` defaults to `50`, maximum **`MAX_GREP_MATCHES = 100`**;
+- the result is **plain text with line numbers** (like `grep -n`): the matched line is
+  `path:line:match`, context lines are `path-line-text`, match blocks separated by `--`.
+  There is no JSON scaffolding: the model reads lines, it does not parse fields;
+- byte limit (**`GREP_LIMIT = 8192`**, 8K: a localization pointer, not content): when
+  exceeded, whole trailing matches are dropped, and the trailer
+  `[showing N of M matches; continue from K]` points to the continuation (the middle is never cut);
+- pagination is the same `grep` with a new `from`: recomputation is deterministic (like
+  re-reading a window in `read`); the window body is kept via `storeOutput`, so recall
+  via `shown`/`recall {id}` works exactly as for `read`;
+- default skips: `SKIP_DIRS` directories + dot files/directories (`.depend`,
+  `.mailmap`); `.gitignore` filtering comes later.
+
+### 4.3 `run`: the full output, stdout and stderr separate (decided)
+
+- Show the command's output; when **`RUN_LIMIT = 8192`** (8K) is exceeded — the **tail**
+  with an explicit note + `outputRef`/`errorRef` (the error and exit sit at the end).
+- **stdout and stderr are captured separately and never concatenated** (`spawnSync`).
+  The result carries `output` (stdout) and `error` (stderr) as distinct fields; `error`
+  is always kept on a failure. A command that runs `2>&1`/`&>` merges the streams before
+  the engine sees them; the `bash` tool description says to keep them separate and that a
+  pipe hides the exit code (add `set -o pipefail`), but does not forbid pipes: the engine,
+  not the shell, decides how the two streams are shown.
+- Store both in the observation (already the case) for `recall`/`search`: a small body inline, a
+  large one behind `outputRef`/`errorRef`, and `recall {id}` reads the full body, not the
+  inline excerpt (the error stream stays the bounded inline tail).
+- A failed `edit` (`find` not found) materializes the file's **current content** in the
+  failure observation and keeps it in `shown`, so the model copies `find` verbatim from
+  there instead of re-reading a file it already read (which the repeat guard refuses).
+- A run that produced **no `exitCode`** (a timeout) is **not** a repeat: the timeout brought
+  no knowledge, so the same command may be repeated. Its `exitCode` is ordinary output, not
+  a closure oracle — a state is closed only by `stop`.
+- A run killed by a **signal** (a crash, not a controlled exit) carries `signal` (e.g.
+  `SIGSEGV`) — never a bare nonzero exit. The wrapper raises `ulimit -c unlimited`, so
+  when the platform writes a core the engine finds the newest `core*` in the workspace
+  and, if `gdb` is installed, attaches `gdb --batch -c <core> -ex bt -ex "info locals"`
+  as `backtrace`. When no core was written, the engine reports the kernel's
+  `core_pattern` so the absence is explained, not silently swallowed. `lastResult`
+  carries `signal`/`core`/`corePattern`/  `backtrace`, and the observation names the signal.
+
+### 4.4 Projection: the message tape (folded)
+
+**Folded into `docs/en/ir.md` §7 and `docs/en/projection.md`.** The `lastResult`/`calls`/
+`shown` blocks are gone: the context is a **message tape** rebuilt from the tree each turn. A
+result is addressed by id with `recall`/`search`; a body is shown whole up to its **per-tool**
+limit — `read` window 32K (`recall` 64K), `grep`/`list`/`run` 8K — an inspection result's **head**, a command's
+**tail**; only a body beyond that is bounded (with an omission note), behind `outputRef`. A refused structural move is a
+transient `tool` reason on the next turn; a command's non-execution is an observation. There is
+no per-file read cap: distinct windows are new knowledge, only an identical window is a repeat.
+
+### 4.5 `recall` / `search`: read or search a result by `id` (folded)
+
+**Folded into `docs/en/ir.md` §4.5, §7.** `recall { id, start?, end? }` returns a line
+window of a stored result's body (a small one inline, a large one behind `outputRef`);
+`search { id, pattern, before?, after? }` returns matching line windows over its stdout and
+stderr. Either leaves a node (an `action` + its `observation`) on the state's tape, like any
+step, and elides with the state on `stop`. A `recall` window is
+shrunk by whole lines so its JSON-escaped form fits `QUERY_BODY_LIMIT` (valid JSON, never
+clipped mid-string).
+
+### 4.6 `list`: file listing (decided)
+
+- `list { path?, include?, from? }` (the model tool; the engine schema also accepts
+  `exclude`/`limit`, not exposed):
+  - scope and filters (`path`/`include`) — as for `grep`; the same default
+    skips (`SKIP_DIRS` + dot files/directories);
+  - `from`/`limit` — a window **over files** (1-based); the engine defaults `limit` to
+    `LIST_LIMIT_DEFAULT` (100), capped at `MAX_LIST_FILES` (200);
+- the result is JSON: `{ root, total, from, returned, next?, files: [] }`;
+- read-only and idempotent (a repeat is not a refusal); it gives the model visibility
+  of extensions so it can set `include` for `grep` meaningfully.
+
+### 4.7 `bash`: one plain foreground command (decided; reduced)
+
+- A `bash` **blocks** until the command exits or the cap (`SKEIN_RUN_TIMEOUT_MS`, default
+  120 s) elapses; a timeout yields no `exitCode` (no verdict, just output). A build or a test
+  suite is run this way: the turn waits for it, one turn for the whole command.
+- The model-facing `bash` is `{ command, workdir?, timeout? }`. `workdir` runs the command
+  in a workspace subdirectory (instead of a `cd <dir> &&` prefix) and `timeout` caps this
+  single command in milliseconds; both are part of the repeat signature, so the same text
+  under a different directory or cap is a new action (`OP-AP-RUN-3`). `target` (a criterion
+  check) and the `background`/`job` machinery are **removed from the model path**: there is no
+  criterion to check and no job to
+  poll. The `fsWorkspace` job API (`startJob`/`pollJob`, `.skein/jobs/<id>.{out,err,code}`)
+  remains an engine/test seam but is not reachable from a proposal.
+- stdout and stderr stay in **separate** logs (the §4.3 rule holds). A run is never a
+  closure oracle; a state is closed only by `stop`.
+
+---
+
+## 5. Prompt: instructions and strategy
+
+The prompt currently describes the interface but **sets no strategy** and does not
+reflect the real limits. Proposed:
+
+1. **Honest limits** of each tool (from §4) in its description.
+2. **An explicit strategy** for bugfix tasks:
+   1) **reproduce** the failure (usually via `run` of the verification command or a
+      build/test) and get a concrete error;
+   2) localize by the error/code;
+   3) fix (`edit`);
+   4) re-run the same command; close the state with `stop` once it passes.
+3. **The workspace is the source of truth.** Do not assume VCS/history/diff. If `git`
+   (or another history tool) is unavailable — **do not hunt for it**, work with files
+   and behavior (see §6).
+4. **What to do with a failure/refusal**: look at `calls`/`negative`, do not repeat;
+   change the approach, not the phrasing of the command. A failure that says the command
+   or path is missing (`No such file or directory`, `can't cd`, `No rule to make target`)
+   is a wrong working directory, not bad code: apply the spelling with a `cd <dir> &&`
+   prefix (the project directory), or a state whose command carries it, instead of
+   repeating the bare command.
+5. **How to read code**: `grep` to localize, `read` a window; the whole file when
+   needed; do not re-read the same window without a change to the world.
+6. **The context holds only the latest result.** Previous results (including read
+   windows) are **not** stored — there is only a summary of calls (`calls`). If an
+   earlier fragment is needed (including at a window boundary), **re-read the
+   window**, with overlap if necessary; do not rely on memory of a previous result.
+7. **Where to search.** Pick the scope from the evidence: logic is in the sources
+   (`include` by the project's language), a failure/log is in the output and log files.
+   Set `path` when a file/directory is named in the error, the first `command` or the
+   hypothesis; grep the whole tree only to localize. A `grep` result is windows over
+   matches: if there are more matches than the window, continue with `next`/`from`
+   **without** changing the `pattern`.
+
+### 5.1 How to determine the state's goal from the request (and not reach for `git`)
+
+This is a mandatory separate part of the prompt: without it the model applies a coding
+agent's default reflex ("look at the diff").
+
+1. `request.text` is **raw motivation**, not a ready-made task. The first move is
+   `move { state, what }` (declare the state to start in AND its goal); the next call is
+   the state's first turn — an ordinary tool call (`apply`).
+2. If the request names a **verification command** — take it verbatim as the first
+   turn — but the engine runs it from the **workspace root**, not a
+   project subdirectory. A named command is authoritative; its working directory is
+   resolved from the tree. If the project lives in a subdirectory, the literal command
+   must carry the `cd <dir> &&` prefix (`cd ocaml && make -C testsuite one DIR=tests/basic`),
+   never the bare command. The rule is stated in B6 and echoed in the `move` tool
+   `description` (the schema the model sees on every call); the live test
+   `tests/live/root-cd.test.ts` guards it with one call per layout.
+3. After the move, the first step is to **reproduce** the failure (run the
+   verification/build), not to look for a change history.
+4. **The workspace is the source of truth.** Do **not** assume a VCS, `git`, a diff,
+   or history. If `git` (or similar) fails — **do not try again**; move on to files
+   and reproduction.
+5. **Example (matching).** Request: "I broke the GC build (the project is in `ocaml/`),
+   the compiler crashes during bootstrap; verify with
+   `make -C testsuite one DIR=tests/basic`". Correct:
+   - move: `move { state: "reproduction", what: "fix the GC regression so the basic
+     testsuite passes" }`, then the first turn
+     `bash { command: "cd ocaml && make -C testsuite one DIR=tests/basic" }` (the project is
+     in a subdirectory, so the literal command carries the `cd` prefix);
+   - a list of **turns**: `reproduce` and `locate` are plain **actions** (run the command,
+     read/grep/diff); `fix` is a state of its own, and the state is closed by
+     the doxa's `stop` once the work is done (there is no separate `verify`, no `complete`
+     and no criterion check), not a list of bare commands.
+6. **Anti-example.** `git diff`, `git log`, hunting for `.git` — a dead end without a
+   VCS; do not do it. A `git` failure in `calls` is a signal to change the approach,
+   not the command.
+
+Keep the examples in the prompt **short** (one correct move + one anti-example):
+the principle "do not assume a VCS" alone is not enough against a strong reflex.
+
+---
+
+## 6. Analysis: where `git` came from
+
+This is not a call to a nonexistent tool — `run` can run `git`. It is an
+**unverified assumption** that the environment refutes and the prompt does not
+correct.
+
+The chain:
+
+1. The task text: "**I have been making some changes** to the OCaml garbage
+   collector… I seem to have broken things". The phrasing "I was making changes"
+   makes a human/agent reflex to "look at the uncommitted changes" → `git diff`.
+2. Neither the prompt nor the task says whether a VCS exists. The prompt is silent
+   about VCS.
+3. The task harness **removed `.git`**. `git` fails: `fatal: not a git repository`.
+4. The failure lands in `negative`, but the **belief** "there must be a diff
+   somewhere" is not refuted — only a specific invocation is. The model tries another
+   root/command (`git status`, `git log`, `cd … && git diff`), fails again.
+5. The right move is to **reproduce** the crash (`make`), not to look for history.
+
+Conclusion: an **explicit prompt clause** is needed — "do not rely on VCS; if there
+is no history, work with files and reproduce the failure" — plus the strategy from
+§5.
+
+---
+
+## 7. Open questions
+
+- **Whether to store `read`/`grep` content** in the IR (observation payload) or
+  behind a workspace reference; how that squares with the invariant "file content is
+  not stored in the IR". With the §4.1–4.4 decisions there is no pressing need.
+- **The format of the instructions and strategy** in the prompt (how hard to
+  prescribe an order).
+- **Whether `edit` by line number/range and other tools** (e.g., `list`) are needed,
+  or `run ls` is enough.
+- **Bringing the budget back:** when and in what form if the context becomes a problem
+  again (not applied for now).
+
+---
+
+## 8. For the future (backlog, not now)
+
+An extension of the tool set, recorded so it is not lost. Ordered by the size of the
+capability gap; **not part of the current implementation**.
+
+1. **`write`** — create/overwrite a whole file: `{ path, content }` — **done**
+   (`docs/en/ir.md` §2.2.6): a new file is created; overwriting an existing one
+   requires a fresh read; writes a `mutate` with the new version.
+2. **`list`** (a.k.a. `glob`) — **done**, see §4.6. Removes parsing of `run ls/find`
+   (unstructured, unbounded output) and gives the model visibility of extensions.
+3. **`edit` by range / `multiedit`** — editing by line numbers and atomic grouped
+   edits: `find/replace` breaks on ambiguous/duplicated fragments.
+4. **`fetch`** (URL → workspace as read-only reference) — **done** (Phase 4):
+   `{ url, path? }`, default `.skein/ref/<hash>-<slug>`; it enables B9 (obtain a
+   reference and diff). **`apply_patch`** (unified diff) — **done** (Phase 4):
+   `{ patch, strip? }`.
+5. **Later:** `web_fetch`/`websearch` (docs, error analysis) and LSP operations
+   `symbol` (definition/references/rename) — heavy, a separate stage.
+
+**Non-goals (deliberately):** VCS (`git`), a `todo` tool (the turns live in the IR),
+browser/screenshots, subagents, MCP — outside the current design.

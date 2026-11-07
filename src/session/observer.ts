@@ -43,7 +43,7 @@ export interface ObserverReply {
   // The doxa proposes; the state the hint applies to is not its to name — the engine knows the
   // trigger's anchor and stamps it when the proposal becomes a reaction.
   decision?: ReactionProposal;
-  // Side-channel telemetry (docs/plans/session_interrupt_plan §5).
+  // Side-channel telemetry.
   usage?: Usage;
   model?: string;
 }

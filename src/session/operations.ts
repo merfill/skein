@@ -1,7 +1,7 @@
 import { popUnit, recordOperation, sessionFocus, setPending } from "./session";
 import type { SessionOperation, SessionState } from "./types";
 
-// The SessionAgent's operations (docs/session_concepts.md §4.3): the doxa proposes one, logos
+// The SessionAgent's operations (docs/en/session_concepts.md §4.3): the doxa proposes one, logos
 // checks the preconditions and applies it as a session event. No task journal is touched.
 // The vocabulary is `respond` and `start`; resume/cancel strategies and `revise` are deferred.
 

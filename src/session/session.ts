@@ -240,7 +240,7 @@ function unitCompleted(session: SessionState, unit: Unit): boolean {
   return false;
 }
 
-// The attention status is a deterministic read of the journals (docs/session_concepts.md §2):
+// The attention status is a deterministic read of the journals (docs/en/session_concepts.md §2):
 // `abandoned` beats a closure, `completed` is the unit's own terminal fact, `active` is the
 // focus. Nothing is stored.
 export function attentionOf(session: SessionState, unitId: string): Attention {

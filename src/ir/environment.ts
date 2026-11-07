@@ -1,7 +1,7 @@
 import type { IslandId } from "./islands";
 
 // An engine-owned environment fact, recorded once in the journal when the request starts
-// (docs/state_testing.md §3). The probe itself lives in `src/loop/probe.ts`; this module is
+// (docs/en/state_testing.md §3). The probe itself lives in `src/loop/probe.ts`; this module is
 // pure so the projection can select and format the subset a state needs.
 
 export const ALL_ENVIRONMENT_GROUPS = [

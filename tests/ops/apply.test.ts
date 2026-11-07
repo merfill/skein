@@ -68,7 +68,7 @@ describe("apply: the first turn", () => {
   });
 });
 
-// A command's non-execution is now an observation with a reason (docs/ir_revision.md §3.3,
+// A command's non-execution is now an observation with a reason (docs/en/ir.md §2.7,
 // §4): run it and return the reason, or undefined when it executed.
 function refusalText(action: Action, events: readonly Event[], ws: Workspace): string | undefined {
   const { state, outcome } = exec(action, events, ws);

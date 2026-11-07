@@ -60,8 +60,9 @@ stored history. Do not reason about the context as an append-only chat transcrip
 
 ## Documents
 
-Start at `docs/README.md` — the documentation index (concepts, the IR, the model
-surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
+Start at `docs/README.md` — it links the English (`docs/en/`) and Russian (`docs/ru/`) trees.
+The two trees mirror each other by base name; the handoff log is RU-only at
+`docs/ru/handoff.md`.
 
 ## Commands
 
@@ -69,7 +70,7 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 - `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — offline tests (`.env` sets
   `SKEIN_LIVE=true`)
 - `npm run cli -- auth login|list|logout`, `... models`, `... doctor` — provider setup and
-  probes; `docs/providers.md`. Provider tests use a mock fetch; no live calls without go-ahead.
+  probes; `docs/en/providers.md`. Provider tests use a mock fetch; no live calls without go-ahead.
 - **NEVER run bare `npx vitest run`.** It collects `tests/sandbox/**`, which self-enable on any
   machine with Docker + the task images + the Harbor cache and launch real containers and
   verifiers (300 s timeouts, 120 s cleanup) — minutes of runtime and apparent hangs, not the
@@ -84,7 +85,7 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
   or parallel `sandbox-run.ts` processes — never a sequential shell loop), cap by **turns**
   (the task's `maxTurns`, 60 for `fix-ocaml-gc`), and impose **no wall-clock timeout** (do not
   pass/enforce `--timeout`, `VERIFIER_TIMEOUT_MS`, `DEFAULT_RUN_TIMEOUT_MS`).
-- see `docs/testing.md` for the live gate and benches
+- see `docs/en/testing.md` for the live gate and benches
 
 ## Bench / replay tools (do not reinvent)
 
@@ -103,8 +104,7 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 ## Invariants (do not break)
 
 - a state is closed only by the doxa's `stop` (a `has_stopped` edge on the `move`); there is
-  no criterion gate — cycle / premature-stop detection is deferred
-  (`docs/plans/archive/goal_reduction_plan.md`);
+  no criterion gate — cycle / premature-stop detection is deferred;
 - the request ends when its goal is stopped (there is no `stop` on the request);
 - a `stale` fact is never shown as active content;
 - `project` is deterministic: same events → same `Context`;
@@ -117,4 +117,4 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 
 Plan first, then code (see the global `~/.config/opencode/AGENTS.md`). The
 current stage, order of work, and open questions are in
-`docs/plans/implementation_plan.md`.
+`docs/ru/handoff.md`.

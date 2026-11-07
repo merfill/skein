@@ -34,7 +34,7 @@ function report(run: ScenarioRun, missing: string[], repeat = 0): void {
   const peak = chars.reduce((max, value) => Math.max(max, value), 0);
   const used = [...branchesOf(run.turns)];
   // The context is the message tape: report its peak length (the old bounded working set
-  // is gone; docs/ir_revision.md §5).
+  // is gone; docs/en/ir.md §5).
   const peakHistory = run.turns.reduce((max, turn) => Math.max(max, turn.context.history.length), 0);
   const parts = [
     `turns=${run.result.turns}`,

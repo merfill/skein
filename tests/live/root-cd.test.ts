@@ -11,7 +11,7 @@ import { exec, makeWorkspace, request } from "../ops/helpers";
 // criterion command. The state's first plan item must run that command FROM the workspace
 // root, i.e. carry a `cd <dir> &&` prefix; the control lives at the root and must
 // NOT be prefixed. This is the online layer for the rule in B6 and the `move` description
-// (docs/tools.md §5.1). Run deliberately:
+// (docs/en/tools.md §5.1). Run deliberately:
 //   SKEIN_LIVE=true npx vitest run tests/live/root-cd.test.ts
 
 const settings = loadSettings();

@@ -2,8 +2,8 @@ import type { LanguageModelUsage, ModelMessage } from "ai";
 
 import type { UnitType } from "./types";
 
-// Telemetry is an append-only side channel, not IR and not the projection (docs/plans/
-// session_interrupt_plan.md §5). Keys are stable across a resume: session, unit, turn and call.
+// Telemetry is an append-only side channel, not IR and not the projection. Keys are stable
+// across a resume: session, unit, turn and call.
 
 export interface Usage {
   inputTokens?: number;

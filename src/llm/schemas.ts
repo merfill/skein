@@ -51,7 +51,7 @@ export const applySchema = z.discriminatedUnion("tool", [
   }),
   z.object({
     // Fetch a URL into the workspace as read-only reference evidence, so it can be read
-    // and diffed (docs/system_prompt.md B9).
+    // and diffed (docs/en/system_prompt.md B9).
     tool: z.literal("fetch"),
     url: z.string(),
     path: z.string().optional(),
@@ -70,8 +70,8 @@ export type Apply = z.infer<typeof applySchema>;
 export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
     // Declare the state (island of work) the doxa will work in — the automaton's transition —
-    // AND the state's goal text (`what`); the state IS its goal (docs/ir_semantics.md §4.1,
-    // docs/plans/archive/goal_into_move_plan.md). `what` is required except for the terminal
+    // AND the state's goal text (`what`); the state IS its goal (docs/en/ir.md §4.1).
+    // `what` is required except for the terminal
     // End state, which has no turns.
     operator: z.literal("move"),
     state: z.enum(LIVE_ISLAND_IDS),
@@ -81,7 +81,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
   z.object({ operator: z.literal("apply"), action: applySchema }),
   z.object({ operator: z.literal("stop"), why: z.string().optional() }),
   // Decline to formulate a state: the request's intent is not actionable. Creates an
-  // `unactionable` node under the request and ends the run (docs/plans/request_goal_plan.md).
+  // `unactionable` node under the request and ends the run.
   z.object({ operator: z.literal("decline"), why: z.string().optional() }),
   z.object({
     // Read a stored result (an earlier observation) by id — a read/grep/run's output —
@@ -105,14 +105,14 @@ export type Action = z.infer<typeof actionSchema>;
 
 // The native tool call a move corresponds to. The model emits one tool call per turn
 // (`PROPOSAL_TOOLS`), so the tape can render the assistant's own history as
-// `assistant.tool_calls` + `tool` messages instead of plain text (docs/ir_semantics §7).
+// `assistant.tool_calls` + `tool` messages instead of plain text (docs/en/ir.md §7).
 export interface ModelCall {
   name: string;
   args: Record<string, unknown>;
 }
 
 // IR `Apply` → the native tool call the model emitted/expects. The reverse of `toProposal`
-// (docs/ir_semantics §7): the tape renders the model's own history with these names/args, so
+// (docs/en/ir.md §7): the tape renders the model's own history with these names/args, so
 // it sees the same vocabulary it calls with (`filePath`/`offset`/`limit`, `webfetch`).
 function nativeApply(action: Apply): ModelCall {
   switch (action.tool) {
@@ -217,7 +217,7 @@ export interface Proposals {
   // The model's hidden reasoning for this move, when the provider surfaced it (`structured.ts`).
   // Journalled on the turn's action nodes and shown back on the tape next turn.
   reasoning?: string;
-  // Side-channel telemetry: the provider's usage and model id (docs/plans/session_interrupt_plan §5).
+  // Side-channel telemetry: the provider's usage and model id.
   usage?: Usage;
   model?: string;
 }

@@ -19,7 +19,7 @@ afterEach(cleanupWorkspaces);
 
 // The island vocabulary is single-sourced: the `move` `state` enum, the base prompt's
 // state graph and the per-island criteria all derive from `src/ir/islands.ts`
-// (docs/prompt_state_machine_concept.md).
+// (docs/en/system_prompt.md).
 describe("islands: the closed vocabulary", () => {
   it("is closed, complete and self-consistent", () => {
     expect(new Set(ISLAND_IDS).size).toBe(ISLAND_IDS.length);

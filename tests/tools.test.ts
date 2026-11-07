@@ -10,7 +10,7 @@ import { executeAction, resolveBody } from "../src/tools";
 import { fsWorkspace } from "../src/tools/workspace";
 
 // stdout and stderr are separate streams: a failed run's error must never be glued onto
-// stdout nor dropped (docs/tools.md §4.3, docs/projection.md §3.1).
+// stdout nor dropped (docs/en/tools.md §4.3, docs/en/projection.md §3.1).
 
 const roots: string[] = [];
 
@@ -94,7 +94,7 @@ describe("workspace background jobs", () => {
   });
 
   // A short command finishes during `startJob`'s right to a grace period, so it costs the
-  // start turn, not a poll (docs/tools.md §4.7).
+  // start turn, not a poll (docs/en/tools.md §4.7).
   it("completes a short command in the start turn", () => {
     const workspace = fsWorkspace(tempRoot(), { jobGraceMs: 2000 });
     const handle = workspace.startJob("echo quick");

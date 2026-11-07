@@ -15,7 +15,7 @@ import type { SandboxTask } from "./task";
 
 // One live run of a ported task with the real model, writing a trace dir and returning the
 // metrics. Shared by the single-task CLI (`sandbox-run.ts`) and the parallel batch
-// (`sandbox-smoke.ts`). Cost discipline: docs/testing.md §3.5–3.6.
+// (`sandbox-smoke.ts`). Cost discipline: docs/en/testing.md §3.5–3.6.
 
 export interface LiveTaskResult {
   task: string;

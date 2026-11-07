@@ -32,7 +32,7 @@ import {
 import { assertTapeContract } from "./tape_invariant";
 import { compact, wire } from "./wire";
 
-// End-to-end tape contract, in three explicit steps per case (docs/ir_semantics.md §7):
+// End-to-end tape contract, in three explicit steps per case (docs/en/ir.md §7):
 //
 //   1. IR_before = fold(events)              -> projection(IR_before)  = tape BEFORE
 //   2. op = executeAction(op, IR_before)     -> `nodes` = IR delta, then fold

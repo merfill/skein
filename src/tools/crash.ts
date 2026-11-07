@@ -5,7 +5,7 @@ import type { CommandResult } from "./workspace";
 // The environment the crash diagnostics need: list the workspace, stat a file by its
 // signature, run the debugger, and (optionally) report the kernel's core_pattern so a
 // missing core can be explained. `Workspace` satisfies this structurally; tests pass a
-// minimal fake (docs/tools.md §4.3).
+// minimal fake (docs/en/tools.md §4.3).
 export interface CrashEnv {
   list(): string[];
   signature(path: string): string;
@@ -18,7 +18,7 @@ export interface CrashReport {
   // The core file a crash left, if any (best effort: `core_pattern` may not write one).
   core?: string;
   // Why there is no core file: the kernel's core_pattern, present only when it is not a
-  // plain file name in the workspace (docs/tools.md §4.3).
+  // plain file name in the workspace (docs/en/tools.md §4.3).
   corePattern?: string;
   backtrace?: string;
   backtraceError?: string;

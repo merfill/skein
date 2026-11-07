@@ -14,7 +14,7 @@ import {
 } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
-// The system part is assembled from named behavior blocks (docs/system_prompt_ru.md): a
+// The system part is assembled from named behavior blocks (docs/ru/system_prompt.md): a
 // stable base (true on any move) and node instructions (a fresh request / an open goal).
 // These tests guard the assembly and the tool contract.
 
@@ -274,7 +274,7 @@ describe("system prompt: stream discipline", () => {
 });
 
 // The context the model sees is the tape: a stable system prefix (base + the situation's
-// instruction + constraints) and then the history as role-tagged turns (docs/ir_revision.md §5).
+// instruction + constraints) and then the history as role-tagged turns (docs/en/ir.md §5).
 describe("context format: tape", () => {
   const context: Context = {
     history: [

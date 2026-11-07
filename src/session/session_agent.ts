@@ -57,7 +57,7 @@ export interface SessionReply {
   operation?: SessionOperation;
   // The session agent's hidden reasoning for this reply, shown back on its tape.
   reasoning?: string;
-  // Side-channel telemetry (docs/plans/session_interrupt_plan §5).
+  // Side-channel telemetry.
   usage?: Usage;
   model?: string;
 }

@@ -19,7 +19,7 @@ import { PROVIDER_NAME } from "./client";
 import type { Proposals } from "./schemas";
 import { proposalTools, toProposal, type ExtraToolDefinition } from "./tools";
 
-// Structured output via native tool calls (docs/testing_ru.md §8.1). The AI SDK owns the
+// Structured output via native tool calls (docs/ru/testing.md §8.1). The AI SDK owns the
 // provider wire format, streaming, reasoning parts and usage; this module owns the skein
 // contract around it: the frontier's tool surface, the one-repair round, the completion-cap
 // retries, and the mapping of a call back into the IR `Proposal`.
@@ -358,7 +358,7 @@ export async function invokeStructured<T extends z.ZodTypeAny>(
   }
 }
 
-// --- Native tool-calling path (docs/testing_ru.md §8.1) ----------------------
+// --- Native tool-calling path (docs/ru/testing.md §8.1) ----------------------
 // Flat function tools instead of a JSON schema in the prompt: the provider holds the
 // call far better and the JSON-mode overhead disappears. The engine rebuilds the
 // projection every turn, so there is no tool-result loop — a call is only the

@@ -37,7 +37,7 @@ npm run cli -- auth login
 npm run cli -- doctor
 ```
 
-See `docs/providers.md` for the full provider catalog, config precedence and free options.
+See `docs/en/providers.md` for the full provider catalog, config precedence and free options.
 
 ## Commands
 
@@ -94,19 +94,19 @@ src/
   tui/        Ink UI
 bench/        replay, rollout, live-step and comparison tools
 tests/        offline tests; tests/live and tests/sandbox are opt-in
-docs/         concepts, IR, providers, sessions, plans, benchmarks
+docs/         en/ and ru/ documentation trees (concepts, IR, providers, sessions, testing)
 ```
 
 ## Documents
 
 Start at `docs/README.md`. The core reading:
 
-- `docs/concepts.md` — doxa/logos and the projection.
-- `docs/ir_semantics.md` — the IR semantics (source of truth).
-- `docs/projection.md` — what the model sees each turn.
-- `docs/session_concepts.md` — sessions, units and the session agent.
-- `docs/providers.md` — providers, auth and free options.
-- `docs/plans/implementation_plan.md` — roadmap and status.
+- `docs/en/concepts.md` — doxa/logos and the projection.
+- `docs/en/ir.md` — the IR semantics (source of truth).
+- `docs/en/projection.md` — what the model sees each turn.
+- `docs/en/session_concepts.md` — sessions, units and the session agent.
+- `docs/en/providers.md` — providers, auth and free options.
+- `docs/ru/handoff.md` — the working handoff log (RU-only).
 
 ## License
 

@@ -59,9 +59,9 @@ export type Provenance =
     }
   | { kind: "list"; path?: string; include?: string; exclude?: string };
 
-// The state the doxa declared it will work in (docs/ir_semantics.md §2.5). `state` is
+// The state the doxa declared it will work in (docs/en/ir.md §2.5). `state` is
 // authored and never changes; `what` is the state's own goal text (a state IS its goal —
-// there is no separate goal node, docs/plans/archive/goal_into_move_plan.md).
+// there is no separate goal node).
 export interface MovePayload {
   state: StateId;
   what: string;
@@ -71,7 +71,7 @@ export interface MovePayload {
   turn?: number;
 }
 
-// Relation names are the role the child plays for its owner (docs/ir_revision.md §2.2):
+// Relation names are the role the child plays for its owner (docs/en/ir.md §2.2):
 // a request's states hang off it via `move`; a state's turns container hangs off the `move`
 // via `turns`; each turn (action) hangs off the container via `turn`; a state's (the terminal
 // move's) closure hangs off it via `stop`.

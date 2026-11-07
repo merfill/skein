@@ -34,7 +34,7 @@ const tail = (context: ReturnType<typeof project>): string =>
   String(buildMessages(context).at(-1)?.content);
 
 // The corrective edges are a transition choice only: a state still open cannot use them, and
-// the in-state conduct stays free of transition text (docs/states_ru.md §2.3-2.4, §4).
+// the in-state conduct stays free of transition text (docs/ru/states.md §2.3-2.4, §4).
 describe("routing: the corrective Patch ↔ Research edge", () => {
   it("a finished Patch offers Research only as a situation, not as a routine exit", () => {
     const { context } = finished("patch", "this is a situation, not a defect to locate");

@@ -9,14 +9,13 @@ import { createChatModel } from "../../src/llm/client";
 import { propose } from "../../src/loop/propose";
 
 // A live check of the fix-ocaml-gc shape without running the whole task: replay saved
-// projections from decision points of a real `fix-ocaml-gc` run
-// (`bench/runs/sandbox-tasks/2026-10-13T11-51-44-681Z-fix-ocaml-gc`) through the live model
+// projections from decision points of a recorded `fix-ocaml-gc` run through the live model
 // with the current prompt and the current surface (`propose`). It verifies two behaviours of
 // the projection, not the OCaml fix itself:
 //   * a proposed run must not merge stdout and stderr (`2>&1`);
 //   * after a command failed for a missing project path, the revised command must resolve the
 //     project directory (`ocaml/`), not repeat the bare workspace-root path.
-// See docs/system_prompt.md and docs/projection.md. Run deliberately:
+// See docs/en/system_prompt.md and docs/en/projection.md. Run deliberately:
 //   SKEIN_LIVE=true npx vitest run tests/live/fix_ocaml_step.test.ts
 
 interface Step {

@@ -15,7 +15,7 @@ import { FIX_OCAML_REQUEST, fixOcamlGc } from "./specs/fix-ocaml-gc";
 // Runs the fix-ocaml-gc sandbox with the live model and dumps a detailed per-turn trace,
 // for looking at model behaviour without Docker:
 //   npx tsx tests/sandbox/live-trace.ts
-// Cost discipline and the metric definitions are in docs/testing.md §3.5 (sandbox).
+// Cost discipline and the metric definitions are in docs/en/testing.md §3.5 (sandbox).
 
 function brief(value: unknown, max = 240): string {
   const text = typeof value === "string" ? value : JSON.stringify(value);

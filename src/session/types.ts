@@ -46,7 +46,7 @@ export type ReactionProposal =
   | { kind: "memo"; text: string; evidence: string[] }
   | { kind: "halt"; reason: string };
 
-// A structured action of the SessionAgent on the session (docs/session_concepts.md §4.3).
+// A structured action of the SessionAgent on the session (docs/en/session_concepts.md §4.3).
 // The doxa proposes it; logos checks and applies it as a session event. The vocabulary is
 // deliberately minimal: answer, or start a task from a reformulated request. Resume/cancel
 // strategies and `revise` are deferred.
@@ -57,7 +57,7 @@ export type SessionOperation =
 
 // The session's attention for a unit. Derived from the journals, never stored as a field:
 // `completed` is a terminal marker of the unit journal, `abandoned` is a session fact, and
-// neither closes a state (docs/session_concepts.md §2).
+// neither closes a state (docs/en/session_concepts.md §2).
 export type Attention = "active" | "suspended" | "abandoned" | "completed";
 
 // Why an interpretation turn ended without an operation: the model gave nothing, or the loop

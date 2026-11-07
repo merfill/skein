@@ -4,7 +4,7 @@ import { z } from "zod";
 import { LIVE_ISLAND_IDS, type IslandId } from "../ir/islands";
 import { actionSchema, applySchema, type Action, type Apply, type Proposal } from "./schemas";
 
-// Structured output via native tool calls (docs/testing_ru.md §8.1). The provider does
+// Structured output via native tool calls (docs/ru/testing.md §8.1). The provider does
 // not hold tool calling well when the schema is ONE deeply nested discriminated union
 // (the operator came back flat). So every operation is its own FLAT function tool, which
 // the model calls by name; `toProposal` maps the call back into the IR `Action`. The
@@ -63,7 +63,7 @@ const patchParams = z.object({
   strip: z.number().int().nonnegative().optional(),
 });
 // The state: the island of work the doxa will work in AND the state's goal text (`what`) and its
-// goal text (`what`) — the state IS its goal (docs/plans/archive/goal_into_move_plan.md).
+// goal text (`what`) — the state IS its goal.
 // Only `state` is required: `what` is optional and falls back to the island's goal. The
 // state's criterion is the engine's handwritten island text, not a model-supplied field.
 const moveParams = z.object({
@@ -308,7 +308,7 @@ export const APPLY_TOOL_NAMES = new Set([
 
 // The tools the model surface offers for a given frontier (`applicable`): the doxa only ever
 // sees the moves the engine would accept, so a refused move cannot be called at all
-// (docs/ir_semantics.md §2.6). `recall`/`search` are read-only and always available. The apply
+// (docs/en/ir.md §2.6). `recall`/`search` are read-only and always available. The apply
 // vocabulary is the frontier's `applies` (the focused island's tools): when omitted, the full
 // registry is bound (direct `invokeTools` callers, tests).
 // `stop` is engine-owned: the doxa closes a state with a text reply (no tool call), and the

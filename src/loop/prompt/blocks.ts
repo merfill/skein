@@ -49,7 +49,7 @@ Never expose or commit secrets or keys. Report concisely; no preamble or summary
 
 // The request prompt (`request`): the request scenario (a fresh request: choose the first state, or
 // decline). `what` names the object or situation the state will work on; the state's own goal and
-// criterion stand as-is (docs/ir_semantics.md §2.5). Appended as a system message at the end of the
+// criterion stand as-is (docs/en/ir.md §2.5). Appended as a system message at the end of the
 // request turn (never stored).
 const REQUEST_BLOCKS: readonly PromptBlock[] = [
   {

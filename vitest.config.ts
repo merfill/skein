@@ -5,7 +5,7 @@ export default defineConfig({
     include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
     environment: "node",
     // Cap concurrent `it.concurrent` tests (the live scenarios run in parallel): the
-    // provider handles ~5 in flight, matching the Harbor comparison (docs/testing_ru.md).
+    // provider handles ~5 in flight, matching the Harbor comparison (docs/ru/testing.md).
     maxConcurrency: 5,
   },
 });

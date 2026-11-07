@@ -8,7 +8,7 @@ import { cleanupSandboxes } from "./workspace";
 afterEach(cleanupSandboxes);
 
 // Deterministic engine tests over a virtual workspace — no model, no Docker
-// (docs/testing_ru.md §3). The trajectory is a scripted `Action` sequence, so a failure
+// (docs/ru/testing.md §3). The trajectory is a scripted `Action` sequence, so a failure
 // points at the engine (classify / refusal / termination), not at the model's wording.
 
 const toWork: Action = { operator: "move", state: "patch", what: "fix the RLE sweep regression so the compiler bootstraps", done: "the fix is in" };

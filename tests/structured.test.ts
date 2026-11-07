@@ -25,7 +25,7 @@ import { fsWorkspace } from "../src/tools/workspace";
 
 // Structured output is plain JSON: the schema is in the prompt and the reply is parsed
 // manually, with a raised cap on a completion cut and one repair round on a schema
-// violation (docs/testing_ru.md §8.1). These tests drive it with an AI SDK mock model — no
+// violation (docs/ru/testing.md §8.1). These tests drive it with an AI SDK mock model — no
 // network.
 
 const schema = z.object({
@@ -195,7 +195,7 @@ describe("runAgent on a broken model", () => {
   });
 });
 
-// Native tool calling: the flat tool call is mapped into the IR Action (docs/testing_ru.md §8.1).
+// Native tool calling: the flat tool call is mapped into the IR Action (docs/ru/testing.md §8.1).
 describe("tool calling", () => {
   it("maps a flat tool call into the IR Action", () => {
     expect(toProposal("write", { filePath: "a.txt", content: "hi" }, "t").action).toEqual({
@@ -487,7 +487,7 @@ describe("tool calling", () => {
   });
 });
 
-// The model surface follows the frontier (docs/ir_semantics §2.6): only the admissible moves
+// The model surface follows the frontier (docs/en/ir.md §2.6): only the admissible moves
 // are offered, so a refused move cannot be called at all.
 describe("tool surface (toolNamesFor)", () => {
   const frontier = (over: Partial<Record<"move" | "createGoal" | "apply" | "stop" | "decline", boolean>>) => ({
@@ -535,7 +535,7 @@ describe("tool surface (toolNamesFor)", () => {
   });
 });
 
-// modelCall is the reverse of toProposal (docs/ir_semantics §7): the tape shows the model
+// modelCall is the reverse of toProposal (docs/en/ir.md §7): the tape shows the model
 // its own history in the native vocabulary it calls with.
 describe("modelCall: IR -> native call", () => {
   it("renders read/edit/write/bash/webfetch with their native names and args", () => {

@@ -11,7 +11,7 @@ import { fsWorkspace } from "../src/tools/workspace";
 
 // Under a long horizon the context is the tape: it grows with the tree (each command is an
 // assistant/tool pair) and is monotone while a state is open. The old bounded working set
-// (cap/TTL) is gone — the only reduction is the cut when a state closes (docs/ir_revision.md §5).
+// (cap/TTL) is gone — the only reduction is the cut when a state closes (docs/en/ir.md §5).
 
 const tempDirs: string[] = [];
 

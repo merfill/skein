@@ -18,7 +18,7 @@ import { fsWorkspace } from "../../src/tools/workspace";
 // Live scenario harness: run the agent on a tiny fixture project and keep the full
 // per-turn projection so a run can be analysed after the fact (which information the
 // model had, what it fetched with `query`, which branches it hit). See
-// docs/testing_ru.md §3.
+// docs/ru/testing.md §3.
 
 export interface ScenarioConstraint {
   id: string;
@@ -91,7 +91,7 @@ function dumpRun(
   const dir = join(RUNS, `live-${ts}-${name}-${uniq}`);
   mkdirSync(dir, { recursive: true });
   // The run's verdict: without it a trace only shows the trajectory, not whether the task
-  // was actually solved (docs/testing_ru.md §3).
+  // was actually solved (docs/ru/testing.md §3).
   writeFileSync(
     join(dir, "run.json"),
     JSON.stringify(
@@ -119,7 +119,7 @@ function dumpRun(
     turns.map((turn) => JSON.stringify({ turn: turn.turn, action: turn.action })).join("\n"),
   );
 
-  // Tape telemetry (docs/testing_ru.md §3): the context is the message tape, so an offline
+  // Tape telemetry (docs/ru/testing.md §3): the context is the message tape, so an offline
   // analyser reads its length, per-turn tool-message volume and the ids the model queried.
   const requested = turns.map((turn) =>
     turn.action.operator === "recall"
@@ -287,7 +287,7 @@ export function mutationsOf(events: readonly Event[]): string[] {
 
 // Goal criterion runs: an observation with a `target` and an exit code. Used to tell
 // whether a run recovered from a refuted fix (a real programmer keeps trying;
-// docs/testing_ru.md §3).
+// docs/ru/testing.md §3).
 export function checksOf(events: readonly Event[]): { command: string; verdict: string }[] {
   const out: { command: string; verdict: string }[] = [];
   for (const event of events) {

@@ -1,6 +1,6 @@
 import type { Branch, ScenarioConstraint } from "./harness";
 
-// Live scenarios: each targets one branch of the loop (see docs/testing_ru.md §3).
+// Live scenarios: each targets one branch of the loop (see docs/ru/testing.md §3).
 // Soft `uses` are reported but do not fail; hard fields are asserted.
 
 export interface Scenario {

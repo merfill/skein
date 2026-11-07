@@ -25,7 +25,7 @@ import { compact, wire } from "./wire";
 //   hop 1: IR node kind  -> TapeMessage (role/shape)        [project]
 //   hop 2: TapeMessage   -> provider wire JSON (role/shape)  [buildMessages -> ChatOpenAI]
 //
-// docs/ir_semantics.md §7.
+// docs/en/ir.md §7.
 
 afterEach(cleanupWorkspaces);
 

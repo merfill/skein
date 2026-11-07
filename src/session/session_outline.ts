@@ -9,7 +9,7 @@ import {
 } from "./session";
 import type { NoDecisionReason, SessionOperation, SessionState, Unit } from "./types";
 
-// The hierarchical outline of a session (docs/session_concepts.md §5): L0 — the units,
+// The hierarchical outline of a session (docs/en/session_concepts.md §5): L0 — the units,
 // L1 — a unit's states. It is a deterministic read of the session and unit journals, not a
 // separate model of "knowledge"; every level is bounded and its truncation is explicit.
 

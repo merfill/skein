@@ -21,7 +21,7 @@ import type { SandboxTask } from "./task";
 //
 //   npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off]
 //
-// Cost discipline: docs/testing.md §3.6.
+// Cost discipline: docs/en/testing.md §3.6.
 
 const DEFAULT_MODEL = "routerai/~deepseek/deepseek-v4-flash-latest";
 const DEFAULT_OPENCODE_BIN = join(homedir(), ".opencode", "bin", "opencode");

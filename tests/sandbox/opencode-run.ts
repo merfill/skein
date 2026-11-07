@@ -7,7 +7,7 @@ import { cleanupSandboxes } from "./workspace";
 //   npx tsx tests/sandbox/opencode-run.ts <task-id> [--net on|off] [--seconds N] [--steps N] [--dir <dir>]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>-opencode-<net>/ and prints the token breakdown.
 // `--net off` still reaches the model API but denies the agent the rest of the internet
-// (docs/testing.md §3.6).
+// (docs/en/testing.md §3.6).
 
 function arg(name: string, fallback: string): string {
   const index = process.argv.indexOf(name);

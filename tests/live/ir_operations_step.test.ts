@@ -22,7 +22,7 @@ import {
 // Live, one-LLM-call checks of the operation families: build a projection OFFLINE (so it
 // is exactly what the engine would show), then assert the SHAPE of the next move the live
 // model proposes. No task is solved here — this is the online layer of
-// docs/ir_operations.md §5. Run deliberately:
+// docs/en/ir.md (the coverage matrix). Run deliberately:
 //   SKEIN_REASONING_EFFORT=low SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts
 
 const settings = loadSettings();

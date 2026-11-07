@@ -4,7 +4,7 @@ import type { SessionState } from "./types";
 
 // A reading unit is a one-step session fact: path -> observation. It has no states or plan.
 // The observation carries a bounded preview and the address of the full body (path + version);
-// the full text is not copied onto the tape (docs/session_concepts.md §5).
+// the full text is not copied onto the tape (docs/en/session_concepts.md §5).
 
 export interface ReadFileResult {
   text: string;

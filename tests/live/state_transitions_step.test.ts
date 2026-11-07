@@ -20,7 +20,7 @@ import {
   run,
 } from "../ops/helpers";
 
-// The synthetic live gate for the state protocol (docs/plans/archive/state_protocol_plan.md §12).
+// The synthetic live gate for the state protocol.
 // Build a projection OFFLINE (exactly what the engine would show) and assert the SHAPE of the
 // live model's next move at each focus: a fresh request chooses a state (`move`); a fresh
 // state gets its first plan item (`apply`); an open state whose criterion holds is stopped;

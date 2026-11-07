@@ -14,7 +14,7 @@ import { readingText, type ReadFile } from "./reading";
 import { unitOf } from "./session";
 import type { SessionState } from "./types";
 
-// Read-only queries over a past unit's journal (docs/session_concepts.md §5). These are the
+// Read-only queries over a past unit's journal (docs/en/session_concepts.md §5). These are the
 // session agent's tools for L2 (state), turns, L4 (body) and content search; they never write
 // to a unit journal. The result is returned as text with the ids needed for the next query.
 

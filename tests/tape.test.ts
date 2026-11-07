@@ -15,7 +15,7 @@ function focused(state: State): State {
 }
 
 // The context the model sees is a tape of messages, rebuilt from the tree every turn
-// (docs/ir_semantics.md §7). These tests pin every construction situation: roles and order
+// (docs/en/ir.md §7). These tests pin every construction situation: roles and order
 // per move, the state/command pairing, the alternative marker, the compaction of a
 // finished state, decline, the transient retrieval, ids exposed for addressability, and
 // determinism.

@@ -14,7 +14,7 @@ import { TASKS } from "./tasks/registry";
 // The task is an argument, not a baked-in list: the full campaign is one invocation per task
 // (a shell loop outside). Each cell runs the existing single-run CLI in its own process, so
 // the `--net off` proxy env stays isolated. No wall-clock cap by default (`--timeout 0`);
-// a positive `--timeout` bounds a whole cell. Cost discipline: docs/task_testing.md §7.
+// a positive `--timeout` bounds a whole cell. Cost discipline: docs/en/testing.md §7.
 // Live runs need the owner's go-ahead.
 
 export type Agent = "skein" | "opencode";
