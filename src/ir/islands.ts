@@ -1,16 +1,13 @@
 // The islands of work a goal can be entered in — a closed vocabulary, single-sourced the way
-// `FRAGMENT` was (docs/prompt_state_machine_concept.md). `ISLAND_IDS` includes the legacy
-// states so old journals still render; `LIVE_ISLAND_IDS` is the source of truth for the `move`
-// tool's `state` enum (`src/llm/schemas.ts`) and `START_ISLAND_IDS` for the request's startable
-// states, so the model's call contract and the prompt map cannot drift. A goal's `state` is
-// authored by the doxa at `create_goal` and never changes; it is a label, never a gate
-// (docs/ir_semantics.md §2.5, §8).
+// `FRAGMENT` was (docs/prompt_state_machine_concept.md). `ISLAND_IDS` is the source of truth for
+// the `move` tool's `state` enum (`src/llm/schemas.ts`) and `START_ISLAND_IDS` for the request's
+// startable states, so the model's call contract and the prompt map cannot drift. A goal's
+// `state` is authored by the doxa at `create_goal` and never changes; it is a label, never a
+// gate (docs/ir_semantics.md §2.5, §8).
 
 export const ISLAND_IDS = [
-  "orientation",
   "research",
   "patch",
-  "recovery",
   "construction",
   "verification",
   "end",
@@ -18,22 +15,14 @@ export const ISLAND_IDS = [
 
 export type IslandId = (typeof ISLAND_IDS)[number];
 
-// The islands a live `move` may target. `recovery` and `orientation` stay in `ISLANDS` so
-// journals written before they were removed still render, but they are no longer live:
-// `recovery` merged into Research (2026-11-03), and `orientation` was removed because the
-// engine-recorded environment already carries the root and the repository status (2026-11-06).
-export const LIVE_ISLAND_IDS = [
-  "research",
-  "patch",
-  "construction",
-  "verification",
-  "end",
-] as const;
+// Every island is live; the request starts directly in the work. Kept as a named alias so the
+// `move` surface and the request stay explicit.
+export const LIVE_ISLAND_IDS = ISLAND_IDS;
 
 export type LiveIslandId = (typeof LIVE_ISLAND_IDS)[number];
 
 // The states a fresh request can start in. There is no START node in the graph, so the list is
-// explicit: a request moves directly into the work, not into an orientation pass.
+// explicit: a request moves directly into the work.
 export const START_ISLAND_IDS: readonly LiveIslandId[] = ["patch", "research", "construction"];
 
 // A general-unit work segment is not a coding island; it is one generic state in the IR.
@@ -52,9 +41,9 @@ export interface Island {
   instruction: string;
   // The apply-tools admissible in this state (native names). The model surface is bound from it
   // (`toolNamesFor`), so a state only offers the tools that belong to its work: Patch changes an
-  // existing artifact, Recovery writes the output and scratch copies, Construction builds a new
-  // artifact. The island still never closes a state and never gates a `move` — it delimits the
-  // ACTION surface only (docs/ir_semantics.md §2.5).
+  // existing artifact, Research writes a derived result, Construction builds a new artifact.
+  // The island still never closes a state and never gates a `move` — it delimits the ACTION
+  // surface only (docs/ir_semantics.md §2.5).
   applies: readonly string[];
   // The transitions out of this state: a target and the precondition ("when"). A floating or
   // terminal state carries none (docs/prompt_state_machine_concept.md §4.3).
@@ -62,7 +51,7 @@ export interface Island {
 }
 
 // The tool sets a state's `applies` is drawn from. The write-class belongs to the productive
-// states only — Patch (existing artifact), Recovery (output/scratch copies), Construction (new
+// states only — Patch (existing artifact), Research (derived output), Construction (new
 // artifact); inspection states never get it.
 const INSPECT: readonly string[] = ["read", "grep", "list", "bash", "webfetch"];
 const WRITE: readonly string[] = ["edit", "write", "apply_patch"];
@@ -71,33 +60,6 @@ const RECOVER_TOOLS: readonly string[] = [...INSPECT, "write"];
 const CONSTRUCT_TOOLS: readonly string[] = [...INSPECT, ...WRITE];
 
 export const ISLANDS: Record<IslandId, Island> = {
-  // Legacy: no longer live or startable (2026-11-06). Kept so journals written before the
-  // removal still render their `Start state Orientation` entry.
-  orientation: {
-    id: "orientation",
-    label: "Orientation",
-    what: "name the workspace root and the repository status",
-    criterion: "the reply names the workspace root and the repository status",
-    instruction:
-      "Write one reply with the workspace root and the repository status. They are already in " +
-      "the tape; nothing else is needed — the files, the build targets and the history belong " +
-      "to the next state.",
-    applies: INSPECT,
-    next: [
-      {
-        to: "patch",
-        when: "the request is to fix an error in existing code, files, or history — the defect is in an existing artifact",
-      },
-      {
-        to: "research",
-        when: "the request is a situation — the required result must be recovered or derived from the material or the specification",
-      },
-      {
-        to: "construction",
-        when: "the request is to build a new artifact from a specification",
-      },
-    ],
-  },
   research: {
     id: "research",
     label: "Research",
@@ -116,11 +78,11 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "end",
-        when: "the required result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains",
+        when: "the required result exists in its declared form and matches the material or the request",
       },
       {
         to: "patch",
-        when: "the work is a code defect to locate and fix",
+        when: "the work is a code defect not yet located or fixed",
       },
     ],
   },
@@ -136,35 +98,11 @@ export const ISLANDS: Record<IslandId, Island> = {
     next: [
       {
         to: "verification",
-        when: "the plan is complete — the error is found and fixed",
+        when: "the change is applied, and the edited lines read back",
       },
       {
         to: "research",
         when: "the work turns out to be a situation, not a defect to locate and fix",
-      },
-    ],
-  },
-  recovery: {
-    id: "recovery",
-    label: "Recovery",
-    what: "recover the required output from the material",
-    criterion:
-      "the required output exists in its declared form, is derived from the material, and " +
-      "matches what the material contains",
-    instruction:
-      "Reconstruct the required output from the material. Create the output and any working " +
-      "copies; keep the material read-only.\n\n" +
-      "Keep the material read-only; write the required output and working copies. Do not " +
-      "fabricate. If a tool is missing, fix the environment before replacing it.",
-    applies: RECOVER_TOOLS,
-    next: [
-      {
-        to: "end",
-        when: "the required output exists in its declared form, is derived from the material, and matches what the material contains",
-      },
-      {
-        to: "research",
-        when: "the method failed, or the output does not match the material",
       },
     ],
   },
@@ -187,7 +125,7 @@ export const ISLANDS: Record<IslandId, Island> = {
       },
       {
         to: "research",
-        when: "the method or specification did not hold — the check failed for a method reason",
+        when: "the check failed for a method reason: the method or specification did not hold",
       },
     ],
   },
@@ -210,8 +148,8 @@ export const ISLANDS: Record<IslandId, Island> = {
       "not interpret the code and do not propose a fix — that is the next state's work.",
     applies: INSPECT,
     next: [
-      { to: "end", when: "the acceptance holds" },
-      { to: "patch", when: "it fails — the defect is still in the artifact, or the change or result was wrong; revise the cause and change again" },
+      { to: "end", when: "the required result exists, and the acceptance holds" },
+      { to: "patch", when: "the acceptance fails" },
     ],
   },
   end: {

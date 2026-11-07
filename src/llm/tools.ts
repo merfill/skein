@@ -171,9 +171,6 @@ export const PROPOSAL_TOOLS: OpenAITool[] = DEFINITIONS.map((definition) => ({
 const PATCH_BASH_SUFFIX =
   "This state changes the target: make the change specific and targeted; do not use wildcard " +
   "edits or deletes and do not touch unrelated files.";
-const RECOVERY_BASH_SUFFIX =
-  "This state reconstructs data from the material: you may create and modify files (the output, " +
-  "working copies); keep the material read-only; do not edit the material.";
 const RESEARCH_BASH_SUFFIX =
   "This state may reconstruct the result from the material: create and modify the output and the " +
   "working copies; change the material only where the task says to; do not build the next " +
@@ -192,7 +189,6 @@ function baseDescription(name: string): string {
 export function bashDescriptionFor(island?: IslandId): string {
   const base = baseDescription("bash");
   if (island === "patch") return `${PATCH_BASH_SUFFIX} ${base}`;
-  if (island === "recovery") return `${RECOVERY_BASH_SUFFIX} ${base}`;
   if (island === "research") return `${RESEARCH_BASH_SUFFIX} ${base}`;
   if (island === "construction") return `${CONSTRUCTION_BASH_SUFFIX} ${base}`;
   return base;
@@ -216,9 +212,6 @@ const PATCH_WRITE_SUFFIX =
 const PATCH_APPLY_PATCH_SUFFIX =
   "This state changes the target: apply only the diff the goal names; do not delete or rename " +
   "files outside the goal; check the patch paths; a wrong patch may not be revertible.";
-const RECOVERY_WRITE_SUFFIX =
-  "This state reconstructs data from the material: write the required output or working copies; " +
-  "do not overwrite the material.";
 const RESEARCH_WRITE_SUFFIX =
   "This state may reconstruct the result from the material: write the required output or working " +
   "copies; change the material only where the task says to; do not build the next state's artifact.";
@@ -233,9 +226,9 @@ const CONSTRUCTION_APPLY_PATCH_SUFFIX =
   "material or unrelated files.";
 
 // The state-specific tool contract: `bash` is dual-use; `webfetch` creates a file; the write
-// tools belong to the productive states — Patch (existing artifact), Recovery (output/search
-// script), Construction (new artifact) — and never to the inspection states. The map is empty
-// when no island is known (direct callers/tests), which keeps the global descriptions.
+// tools belong to the productive states — Patch (existing artifact), Research (derived output),
+// Construction (new artifact) — and never to the inspection states. The map is empty when no
+// island is known (direct callers/tests), which keeps the global descriptions.
 export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
   if (island === undefined) return {};
   const webfetch =
@@ -252,8 +245,6 @@ export function toolDescriptionsFor(island?: IslandId): Record<string, string> {
     descriptions.edit = `${PATCH_EDIT_SUFFIX} ${baseDescription("edit")}`;
     descriptions.write = `${PATCH_WRITE_SUFFIX} ${baseDescription("write")}`;
     descriptions.apply_patch = `${PATCH_APPLY_PATCH_SUFFIX} ${baseDescription("apply_patch")}`;
-  } else if (island === "recovery") {
-    descriptions.write = `${RECOVERY_WRITE_SUFFIX} ${baseDescription("write")}`;
   } else if (island === "research") {
     descriptions.write = `${RESEARCH_WRITE_SUFFIX} ${baseDescription("write")}`;
   } else if (island === "construction") {

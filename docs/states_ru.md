@@ -4,8 +4,9 @@
 > конкретные состояния. Цель документа: так описать предмет, цель и критерий каждого состояния,
 > чтобы они не смешивались друг с другом и не «перетекали» одно в другое.
 >
-> `recovery` слит в `research` (2026-11-03), `localization` — в `patch` (2026-11-04). Живых
-> состояний шесть: `orientation`, `research`, `patch`, `construction`, `verification`, `end`.
+> `recovery` слит в `research` (2026-11-03), `localization` — в `patch` (2026-11-04),
+> `orientation` удалён (2026-11-06). Живых состояний пять: `research`, `patch`,
+> `construction`, `verification`, `end`.
 >
 > Реализовано в `src/ir/islands.ts`. Документ описывает цели, критерии и маршруты. Live/tape-
 > валидация: `password-recovery`, `fix-code-vulnerability` и `db-wal-recovery` — 3/3 (K=3,
@@ -58,7 +59,7 @@
 
 - **Patch** — найти артефакт с дефектом (вместе с причиной/нарушенным инвариантом) и внести в
   него правку: знание и действие здесь — один цикл, а не два состояния.
-- **Research** (включает бывший Recovery) — описать ситуацию и установить метод: вывести
+- **Research** — описать ситуацию и установить метод: вывести
   требуемый результат из материала или спецификации и, если нужно, записать output;
   source-проверка на копии.
 - **Construction** — создать новый артефакт/программу из спецификации или поведения source.
@@ -93,14 +94,7 @@ records. Это **не** declared form и **не** «кандидат буква
 > repository`, `Working directory`, если шелл стартует вне корня) и свой набор environment;
 > закрытые состояния и request-ход этих блоков не несут.
 
-### 2.1 Orientation — удалён (2026-11-06)
-
-Состояние удалено: оно только повторяло `Workspace root` и `Workspace repository`, которые
-движок уже кладёт в brief. Запрос стартует сразу в **Patch**, **Research** или
-**Construction**. `orientation` остаётся в `ISLANDS` как legacy, чтобы старые журналы
-рендерились; в живом `move` его нет.
-
-### 2.2 Research
+### 2.1 Research
 
 - **Вход:** координаты (`Workspace root`, `Workspace repository`) + environment (network/interpreters/package managers).
 - **Предмет:** ситуация, результат которой выводится из материала или спецификации.
@@ -117,9 +111,9 @@ records. Это **не** declared form и **не** «кандидат буква
   доделать результат здесь (у Research есть `write`) или перейти дальше; если это дефект кода —
   уйти в Patch.
 - **Переход:**
-  - → **End**, когда результат есть в объявленной форме и совпадает с материалом/запросом;
-  - → **Patch**, когда выяснилось, что ситуация — это дефект кода (коррекция неверной
-    стартовой классификации).
+  - → **End**, когда требуемый результат есть в объявленной форме и совпадает с материалом или
+    запросом;
+  - → **Patch**, когда работа — дефект кода, ещё не найденный или не исправленный.
 - **Пример (password-recovery):** файл удалён; в 4 MiB образе фрагментированный ZIP: local
   header на ~1 MiB, хвост данных на ~3 MiB; кандидат проверяется по CRC32; пароль — 23 символа,
   `8XD…W54`, uppercase/цифры.
@@ -188,9 +182,8 @@ records. Это **не** declared form и **не** «кандидат буква
   внешнюю). Если acceptance внешний/скрытый, модель делает сильнейшую доступную проверку и
   честно называет границы. Проверка, читающая только свой output, — не acceptance.
 - **Переход:**
-  - → **End**, когда acceptance держится;
-  - → **Patch**, когда изменение неверно или объект/координаты в сомнении: и то и другое
-    пересматривается в Patch (слито 2026-11-04).
+  - → **End**, когда результат полон и acceptance держится;
+  - → **Patch**, когда acceptance не держится: и изменение, и причина пересматриваются в Patch.
 - **Пример (fix-ocaml-gc):** `make -C testsuite one DIR=tests/basic` → 40 passed.
 - **Пример (fix-code-vulnerability):** `pytest -rA` + `report.jsonl`.
 - **Пример (custom-memory-heap-crash):** release/debug + valgrind без утечек.
@@ -208,7 +201,7 @@ records. Это **не** declared form и **не** «кандидат буква
 | класс | маршрут |
 |---|---|
 | **Repair** (fix-ocaml-gc, fix-code-vulnerability, custom-memory-heap-crash) | `P → V → End` |
-| **Recovery** (password-recovery, db-wal-recovery, crack-7z-hash) | `R → End` |
+| **Research** (password-recovery, db-wal-recovery, crack-7z-hash) | `R → End` (проверка результата — в критерии Research) |
 | **Construction** (regex-log, openssl-selfsigned-cert, log-summary, cobol, modernize) | `C → End`; провал Construction может уйти в `R` |
 | **History** (fix-git) | `P → V → End` |
 | **Hybrid** (git-leak-recovery) | `R → P → V → End` (шаг `R → P` — явный `move`) |
@@ -231,8 +224,8 @@ records. Это **не** declared form и **не** «кандидат буква
   24 хода, 0.966₽; маршрут не единственный: часть прогонов решает через `P → V`.
 - **git-leak**: Research извлекает секрет; Patch делает purge; Verification проверяет и то, и
   другое. Ребра `R → P` в `next` нет — шаг делается явным `move`; это открытый вопрос (см. §7).
-- **fix-git**: потерянный коммит — артефакт; Patch находит и делает merge, Verification
-  проверяет. Research нужен, только если метод merge/конфликта неочевиден.
+- **fix-git**: потерянный коммит — артефакт; Research находит и делает merge, проверка
+  результата входит в его критерий; отдельного Verification нет.
 
 ## 4. Циклы и ошибки
 
@@ -289,8 +282,8 @@ source-проверки нет, проверка не выдумывается.
 ## 7. Открытые вопросы
 
 1. **Реализация:** `recovery` слит в `research` (2026-11-03), `localization` — в `patch`
-   (2026-11-04); живой `ISLAND_IDS` без обоих. Обновлены `applies`/`next`, базовый промт,
-   transition-инструкции, Environment, Finish-строка (`Artifacts:`).
+   (2026-11-04), `orientation` удалён (2026-11-06); живой `ISLAND_IDS` — пять состояний.
+   Переходный промпт рендерится из `next[].when`, без описаний `island.what`.
 2. **Граница Construction/Research:** log-summary — Construction (видимые данные), db-wal —
    Research (скрытые). Проверить на живых прогонах, нет ли смешения.
 3. **fix-git:** нужен ли Research для merge/конфликта или достаточно Patch.

@@ -56,7 +56,7 @@ function turns(id: string, moveId: string, actionIds: string[], seq: number): Ev
 
 describe("events", () => {
   it("accepts a valid move node", () => {
-    const event = move("m1", "orientation", "make test green", 0);
+    const event = move("m1", "patch", "make test green", 0);
     expect(eventSchema.safeParse(event).success).toBe(true);
   });
 
@@ -90,7 +90,7 @@ describe("events", () => {
 describe("fold", () => {
   const events: Event[] = [
     request("r1", "do it", 0),
-    move("m1", "orientation", "make test green", 1),
+    move("m1", "patch", "make test green", 1),
     { type: "add_node", node: workNode("a1", "action", "read src/a.ts", 2) },
     { type: "add_node", node: artifactNode("file:src/a.ts", "file", "src/a.ts", 3) },
   ];
@@ -116,7 +116,7 @@ describe("fold", () => {
   it("derives executed for an action with a produced child", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "orientation", "make test green", 1),
+      move("m1", "patch", "make test green", 1),
       { type: "add_node", node: workNode("a1", "action", "read", 2) },
       { type: "add_node", node: workNode("o1", "observation", "read", 3) },
       { type: "add_edge", edge: edge("e1", "a1", "o1", "result", { kind: "read", ref: "file:x", version: "v1" }) },
@@ -127,7 +127,7 @@ describe("fold", () => {
   it("keeps turn order from the turn edge order", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
+      move("m1", "patch", "green", 1),
       { type: "add_node", node: workNode("a1", "action", "one", 2) },
       { type: "add_node", node: workNode("a2", "action", "two", 3) },
       ...turns("p1", "m1", ["a2", "a1"], 4),
@@ -138,7 +138,7 @@ describe("fold", () => {
 
 describe("closure", () => {
   it("a state is closed by a stop: a `stop` relation to the stop node", () => {
-    const base: Event[] = [request("r1", "do it", 0), move("m1", "orientation", "green", 1)];
+    const base: Event[] = [request("r1", "do it", 0), move("m1", "patch", "green", 1)];
     expect(hasStopped(fold(base), "m1")).toBe(false);
     const stopped = fold([
       ...base,
@@ -153,7 +153,7 @@ describe("projection (the message tape)", () => {
   it("renders the state and the first command as a tape (the request is dropped)", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
+      move("m1", "patch", "green", 1),
       { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
       { type: "add_node", node: workNode("a1", "action", "make test", 3, { command: "make test" }) },
       { type: "add_node", node: workNode("o1", "observation", "make test", 4, { command: "make test", exitCode: 1, output: "boom" }) },
@@ -168,7 +168,7 @@ describe("projection (the message tape)", () => {
       "assistant",
       "tool",
     ]);
-    expect(context.history[1]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toBe("Start state Patch");
     expect(context.what).toBe("green");
     const texts = context.history.map((message) => message.text);
     expect(texts.some((text) => text.includes("make test"))).toBe(true);
@@ -212,7 +212,7 @@ describe("projection (the message tape)", () => {
   it("renders every turn in order without an alternative marker", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
+      move("m1", "patch", "green", 1),
       { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
       { type: "add_node", node: workNode("a1", "action", "run one", 3, { command: "run one" }) },
       { type: "add_node", node: workNode("o1", "observation", "run one", 4, { command: "run one", exitCode: 1 }) },
@@ -233,7 +233,7 @@ describe("projection (the message tape)", () => {
   it("reports the frontier at the current point", () => {
     const state = fold([
       request("r1", "do it", 0),
-      move("m1", "orientation", "green", 1),
+      move("m1", "patch", "green", 1),
       { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
       { type: "add_node", node: workNode("a1", "action", "run build", 2) },
       { type: "add_node", node: workNode("o1", "observation", "done", 3) },
@@ -251,7 +251,7 @@ describe("projection (the message tape)", () => {
 describe("record_rejection", () => {
   const base: Event[] = [
     request("r1", "do it", 0),
-    move("m1", "orientation", "green", 1),
+    move("m1", "patch", "green", 1),
     { type: "add_node", node: workNode("k1", "constraint", "do not edit tests", 2) },
   ];
   const refusal = (turn: number): Event => ({
@@ -283,7 +283,7 @@ describe("record_rejection", () => {
 describe("traversal focus", () => {
   const stateWith = (extra: Event[] = []): Event[] => [
     request("r1", "go", 0),
-    move("m1", "orientation", "interp", 1),
+    move("m1", "patch", "interp", 1),
     { type: "add_edge", edge: edge("em", "r1", "m1", "move", llm) },
     { type: "descend", node: "m1" },
     ...extra,

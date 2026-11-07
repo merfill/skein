@@ -5,9 +5,10 @@
 > tape changes: a closed state disappears from it but stays in the journal and remains
 > addressable by `id`.
 >
-> The tape shape is current (§4.2). The recorded examples below still show the old per-state
-> entry (instruction + goal on the tape); the current projection collapses them into the
-> trailing working `user` turn (`Goal`, guess, `Done when`, `Plan`, request reference).
+> The example below is updated for the current projection: the request starts directly in Patch,
+> and the goal, criterion and plan arrive as the trailing working `user` turn (`Goal`, guess,
+> `Done when`, `Plan`, request reference). `Orientation` and `Recovery` are removed; `Research`
+> completes the request in `End`, its own criterion carries the result check.
 >
 > Source of truth — `docs/ir_semantics.md`; the projection — `docs/projection.md`; the
 > states — `docs/states_ru.md`; as-built — `docs/ir.md`. Russian mirror — `docs/walkthrough_ru.md`.
@@ -34,8 +35,8 @@ but a state of knowledge: for example, "find the defect in the existing artifact
 change it needs" or "check the change against the acceptance". Every state has a goal (what
 should be known), a criterion (the observable sign that the goal is reached) and a way to act
 (which tools are available and how to behave). The model enters a state with a `move`, works in
-it and closes it with a `stop` when the criterion holds. The set of states is fixed: Orientation,
-Research, Patch, Construction, Verification, End. The current state determines what the
+it and closes it with a `stop` when the criterion holds. The set of states is fixed: Research,
+Patch, Construction, Verification, End. The current state determines what the
 tape shows: its goal, its material information, its instruction and its plan. Once a state is
 closed, the tape keeps only `Start`/`Finish` from it, and the focus moves on.
 
@@ -135,20 +136,21 @@ After `stop` only `move` is available; there are no other tools. A temporary `sy
 is appended:
 
 ```
-system   Your result is the line `Finish state Patch — …` above — read it.
-         Next states from Patch:
-         - Verification — ...
-         - Research — ...
-         Choose Verification when the change holds ...
-         Choose Research only when ...
-         Call `move` alone. ...
+system   The engine recorded this state's result on the `Finish state Patch — …` line above.
+
+         Choose exactly one next state:
+         - Verification — the change is applied, and the edited lines read back.
+         - Research — the work turns out to be a situation, not a defect to locate and fix.
+
+         Call `move` alone with `what` = the object or situation the next state works on
+         (≤20 words), not the task; leave `done` out, and do not do that state's work on this turn.
 ```
 
-After the `move` this instruction is erased. The next state opens with its own `Start state`, its
-own instruction, its own material information and its own goal; the previous state's plan is not
-carried.
-The corrective `P↔R` edges are described only here, in the transition rule; they do not affect
-behavior inside a state.
+The states in the list are given by their **entry condition** (`next[].when`), not by their
+description: the list is the single source, and `transitionRule` is gone. After the `move` this
+instruction is erased. The next state opens with its own `Start state`, its own brief and its own
+goal; the previous state's plan is not carried. The corrective edges (`P ↔ R`, `V → P`) appear
+only here, in the conditions; they do not affect behavior inside a state.
 
 ## 2. A state is the unit of work
 
@@ -178,12 +180,11 @@ work.
 
 | Island | Goal (`island.what`) | Criterion (briefly) | Material information | `next` |
 |---|---|---|---|---|
-| **Orientation** | name the root, repo status and acceptance | root known; repo noted; acceptance named | coordinates | P, R, C |
 | **Research** | solve a situation: derive the required result from the material or the specification | the result exists in its declared form, is derived from the material or the specification, and matches what the material or the request contains | coordinates + environment | End, P¹ |
 | **Patch** | find the defect in the existing artifact and make the change it needs | target and coordinates; siblings ruled out; the cause named as a suspicion; complete change (located artifact + every other file the task needs) in its declared form | coordinates + environment | V, R¹ |
 | **Construction** | build the new artifact from the specification or the material's behaviour | artifact exists; acceptance check passes | coordinates + environment | End, R |
 | **Verification** | check the changed artifact against the goal's acceptance | the acceptance holds (command or constraints) | environment | End, P¹ |
-| **End** | complete the request | the finished state's check is the verification; do not re-verify | — | — |
+| **End** | complete the request | none: a text report completes the request | — | — |
 
 Coordinates are the `Workspace root`, the `Workspace repository` status and the `Working
 directory` when the shell starts outside the root.
@@ -194,16 +195,19 @@ defect to locate and fix; `Research → Patch` when the situation turns out to b
 the cause it acted on. These correct a wrong start classification or a wrong cause; they are not
 a routine exit.
 
+Verification checks a **changed artifact** after Patch; Research's result check is part of its own
+criterion, so there is no `Research → Verification`.
+
 Besides the goal and the criterion, an island defines `instruction` (how to act; shown once at
 entry) and `applies` (which apply-tools are available). The instruction does not replace the
 goal: the goal is `island.what`.
 
 ### 2.2 Routes
 
-- **Repair:** `O → P → V → End`.
-- **Recovery:** `O → R → End` (Research does the reconstruction; there is no separate Recovery).
-- **Construction:** `O → C → End`; a failed Construction may move to `R` on a method failure.
-- **Hybrid:** `O → R → P → V → End` for a task that recovers a secret and then changes an artifact
+- **Repair:** `P → V → End`.
+- **Research:** `R → End` (the result check is in Research's criterion).
+- **Construction:** `C → End`; a failed Construction may move to `R` on a method failure.
+- **Hybrid:** `R → P → V → End` for a task that recovers a secret and then changes an artifact
   (`git-leak-recovery`); the `R → P` step is an explicit `move`, not a prompted edge.
 - **Corrective:** `V → P` on failure; `P ↔ R` on a wrong start classification; `C → R` on a
   method failure.
@@ -215,10 +219,10 @@ ends when the terminal `End` state is closed.
 
 ### 3.1 Material information
 
-The material information depends on the island: the coordinates alone (Orientation), the
-coordinates + environment (Research, Patch, Construction), and the environment alone
-(Verification). The tree itself is not listed: a state that needs the files lists them. These
-are already recorded facts; there is no need to re-probe them.
+The material information depends on the island: the coordinates + environment (Research, Patch,
+Construction), and the environment alone (Verification). The tree itself is not listed: a state
+that needs the files lists them. These are already recorded facts; there is no need to re-probe
+them.
 
 ### 3.2 Reasoning
 
@@ -247,78 +251,48 @@ One constraint applies, `k1` — do not touch the tests. The acceptance is `make
 
 ### 4.2 The start: the opening block
 
-The first turn has not chosen a state yet. The tape holds the base prompt and the request. The
-prompt, schematically (full text — `src/loop/prompt/blocks.ts`):
+The first turn has not chosen a state yet. The tape holds the base prompt, the request and the
+request instruction:
 
 ```
-system   # Role ... ## States ... ## Transitions ...
+system   # Role ... ## How you work ... ## General instructions ...
 user     "I broke the build; make `make test` pass."
-system   Choose the state to start in ... (request instruction)
+user     Choose exactly one of three values:
+         - Patch when the task is to find an error in the existing code and fix it by editing an existing file.
+         - Construction when the task is to write new file(s) explicitly.
+         - Research in all other cases.
+         The original user request is context for this choice, not the goal.
 ```
 
-Only `move` and `decline` are available. For this task the first step is Orientation: the project
-and the acceptance must be known.
+Only `move` and `decline` are available. The request is to find and fix an error in an existing
+file, so the first step is Patch. (A situation would go to Research; a new artifact to
+Construction.)
 
-### 4.3 Orientation
+### 4.3 Patch
 
-The doxa calls `move {state:"orientation"}`. The Orientation entry appears on the tape:
-
-```
-system   Start state Orientation
-system   Workspace root: /app
-system   The workspace root and the repository status are already in the tape ... (state instruction)
-user     Goal: name the workspace root, the repository status, and the acceptance the request declares
-system   ... Done when: "..." ... When it holds, `stop` — and nothing else.
-```
-
-The map and the request already give the goal and the acceptance, so the move is
-`stop {why:"root /app; acceptance: make test"}`.
-
-Orientation leaves a trace:
-
-```
-system   Start state Orientation
-system   Finish state Orientation — root /app; acceptance: make test
-```
-
-### 4.4 The transition to Patch
-
-The tape now holds the request, the Orientation trace and a temporary transition instruction:
-
-```
-system   Your result is the line `Finish state Orientation — …` above — read it.
-         Next states: Patch, Research, Construction.
-         Move to Patch when the request is to fix an error in existing code or files.
-         ...
-```
-
-Only `move` is available. The request is to find and fix an error in existing code, so Patch is
-chosen. (A situation would go to Research; a fully specified artifact to Construction.) The doxa
-calls:
-
-```
-move {state:"patch", what:"the parse loop that breaks on the last token"}
-```
-
-### 4.5 Patch
-
-After the `move` the transition instruction is erased; the tape holds the request, the Orientation
-trace and the open Patch:
+The doxa calls `move {state:"patch", what:"the parse loop that breaks on the last token"}`.
+The tape holds the request and the open Patch:
 
 ```
 system   Start state Patch
-system   Workspace root: /app / Workspace repository: ...; acceptance: make test
-system   Locate the defect and change the artifact in one loop ... (state instruction)
-user     Goal: find the defect in the existing artifact and make the change it needs
-         Your earlier guess (may be wrong): the parse loop that breaks on the last token
+system   Workspace root: /app / Workspace repository: ... / environment
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... (window 40-90) ...
-system   ... Done when: "the defect is located ..." ... `stop` — and nothing else.
+assistant [a3] edit {path:"src/parse.py", find:..., replace:...} + reasoning
+tool      [m] mutated src/parse.py
+user     Goal: find the defect in the existing artifact and make the change it needs.
+         Your earlier guess (may be wrong): the parse loop that breaks on the last token
+         Done when: "the plan is complete: the error is found and fixed". When it holds,
+         reply with the result as text only — no tool call.
+         Plan:
+         1. Find the file with the coordinates and the cause of the error.
+         2. Fix the error and stop with a report about it.
+         The original user request is context for this state, not its goal.
 ```
 
-The target and the cause are found and the change is made in the same state; the move is
+The target and the cause are found and the change is made; the move is
 `stop {why:"line 63 drops the last token — off-by-one in the loop, boundary moved"}`.
 
 The trace:
@@ -328,7 +302,7 @@ system   Start state Patch
 system   Finish state Patch — line 63 drops the last token ...
 ```
 
-### 4.6 Verification
+### 4.4 Verification
 
 Next comes the acceptance. The Patch already made the whole change: not only the located artifact,
 but every other file the task needs.
@@ -371,26 +345,36 @@ tool      [o6] exit 0
 ... (stop → Finish state Verification — ...)
 ```
 
-### 4.7 End
+### 4.5 End
 
 When the acceptance passes, only the request remains:
 
 ```
 system   Start state End
-system   This is End. Call `stop` when the request is complete; the finished state's check is the verification — do not re-verify here.
+system   This is End.
+
+         The work is done; complete the request. Reply with the final report as text only,
+         with no tool calls.
+
+         Read the tape — the request, the states the task passed, what each of them did,
+         the files it changed, and how the result was checked — and write the report from
+         those records in GitHub-flavored Markdown: what was done and where, how it was
+         verified, and what is still open. Your reply is shown to the user as-is.
 ```
 
-The doxa calls `stop {why:"request complete"}`. The run is complete (`request_addressed`). The IR keeps every state, including the failed
-Verification; the tape keeps only their traces.
+End has no criterion and no next state, so its instruction is the turn's goal. There are no
+tools at End: the doxa replies with text (no tool call), and the engine records that text as
+`stop {why:<report>}`. The run is complete (`request_addressed`). The IR keeps every state,
+including the failed Verification; the tape keeps only their traces (`Finish` lines), so the
+report is assembled from them, not from the raw turns.
 
-### 4.8 What remains in the IR
+### 4.6 What remains in the IR
 
 States are separate steps of the request. Each is linked to the request by a `move` edge, and a
 plan hangs on the state itself. The tape removed them from view, but the IR kept everything:
 
 ```
 R  request
-├─ I0 orientation   stopped   (on the tape only Start/Finish)
 ├─ I1 patch         stopped   plan: a1 grep, a2 read, a3 edit (v1→v2)
 ├─ I2 verification  stopped   plan: a4 bash (exit 1)     ← failed
 │  ┆ revert v2→v1 (on the I2→I3 transition)
@@ -402,7 +386,7 @@ R  request
 This is why `recall`/`search` matter: a closed state is not visible on the tape, but its results
 are available by `id`.
 
-### 4.9 What to notice
+### 4.7 What to notice
 
 - **A state is the unit of work.** The goal is `island.what`; `move.what` is a guess; `move.done`
   overrides the criterion.
@@ -418,7 +402,7 @@ are available by `id`.
   closure.
 - **The surface is the frontier.** On the request, `move`/`decline`; in an open state, the
   apply-tools, `stop`, `recall`/`search`; in a closed state, only `move`; in the terminal state,
-  `stop`.
+  no tools at all: the doxa replies with text and the engine writes the `stop`.
 - **A failed Verification goes to Patch.** `revert` rolls the last Patch back; the failure may be
   in the change or in the cause it acted on, and both are revised in Patch.
 
@@ -479,7 +463,7 @@ active. `recall`/`search` are available only while a state is open.
 - **The focus is non-monotone.** The tape is a view, not a transcript. A focus change removes the
   irrelevant, but knowledge stays available by `id`.
 - **Transitions cost money.** A prefix cache miss (prefill), an extra turn per transition, and
-  re-orientation reasoning. The last part is variable and reflects the quality of the state's
+  re-framing reasoning. The last part is variable and reflects the quality of the state's
   spec. See `docs/projection.md` §8. Price the result (rubles per task, turns per task), not the
   transition. Provider noise (different subcontractors, turns without reasoning) is a statistical
   fluctuation, not a design property.

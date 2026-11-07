@@ -11,7 +11,9 @@
 > `docs/prompt_state_machine_concept_ru.md` (граф состояний), `docs/testing_ru.md`,
 > `docs/ir_semantics_ru.md` §7 (лента), `AGENTS.md`.
 >
-> **2026-11-03:** `Recovery` больше не живое состояние; его работа входит в `Research`.
+> **2026-11-06:** `Orientation` и `Recovery` удалены. Живые состояния — Research, Patch,
+> Construction, Verification и End. Датированные разделы ниже, где они упоминаются, —
+> исторические записи, а не текущая модель.
 
 ## 0. Цель
 
@@ -172,8 +174,8 @@ system   — инструкция текущей ситуации (plan/working/
 записанный на старте запроса (`src/loop/probe.ts`). `material` — карта workspace (`root`, `cwd`
 если shell стартует не в root, repo, entries/paths, files), без конфигов, команд сборки и
 расширений. Проекция показывает её как
-`Workspace` в Orientation; в Patch/Research та же карта идёт как `Orientation result` плюс
-`Probe` (environment) отдельным заголовком; остальные состояния получают только `Probe`.
+координаты в рабочем состоянии (Patch/Research/Construction) плюс `Probe` (environment);
+Verification получает только environment, End — ничего.
 Закрытые состояния блоков не несут, на request-ходу их нет. `environment` также несёт
 `network: on|off` — режим агента, записанный harness (не угаданный shell); он говорит, можно ли
 ставить отсутствующий рантайм. Полный вывод probe на
@@ -222,7 +224,7 @@ system — Finish state <Label> — <why из stop>
 | `request` | `REQUEST_INSTRUCTION` — выбрать стартовое состояние (`move`) или `decline` |
 | `working` | `workingInstruction` — один `user`-ход: цель, догадка, критерий, план, запрос как reference (per-turn, не хранится) |
 | `transition` | `transitionInstruction` — прочитать строку `Finish state`, выбрать следующее состояние |
-| `terminal` | `NODE_INSTRUCTIONS.terminal` — «This is End. …» |
+| `terminal` | `terminalInstruction` — «This is End.» + инструкция состояния: итоговый отчёт текстом, без инструментов |
 
 **Что затирается (не показывается):**
 - `what` из `move` — не цель состояния (в блоке `island.what` как `Goal:`); если докса задала

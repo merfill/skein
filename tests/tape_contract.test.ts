@@ -69,7 +69,7 @@ const kinds = (res: ReturnType<typeof exec>): (string | undefined)[] =>
 const ws = () => makeWorkspace(DEFAULT_FILES).ws;
 // A state plus its first plan item: the shape every state-level op starts from.
 const opened = (w: Workspace) =>
-  execAll([move("orientation", "do it"), run("true")], [request()], w);
+  execAll([move("patch", "do it"), run("true")], [request()], w);
 
 // before/after/nodes for an op applied to an existing state.
 function goalStep(op: Action, w: Workspace) {
@@ -83,13 +83,13 @@ function goalStep(op: Action, w: Workspace) {
 
 const REQ = { role: "user", content: "solve the task" };
 
-// The tape of `request` + `move("orientation","do it")` + its first plan item (`true`):
+// The tape of `request` + `move("patch","do it")` + its first plan item (`true`):
 // the state every state-level op starts from. The request leads the tape; a state is a
 // `Start state` marker and its turns as native call/result pairs. The state's goal,
 // criterion and plan are appended after the turns by `buildMessages`, not stored on the tape.
 const GOAL_PREFIX = [
   REQ,
-  { role: "system", content: "Start state Orientation" },
+  { role: "system", content: "Start state Patch" },
   { role: "assistant", call: { name: "bash", args: { command: "true" } } },
   {
     role: "tool",
@@ -111,7 +111,7 @@ describe("move: before [request] -> delta -> after", () => {
     expect(after.situation).toBe("working");
     expect(await tapeOf(after)).toEqual([
       REQ,
-      { role: "system", content: "Start state Orientation" },
+      { role: "system", content: "Start state Patch" },
       { role: "assistant", call: { name: "bash", args: { command: "echo hi" } } },
       {
         role: "tool",
@@ -457,8 +457,8 @@ describe("stop / decline: non-monotone cut and terminal turn", () => {
     expect(s.nodes).toEqual(["stop"]);
     expect(await tapeOf(s.after)).toEqual([
       REQ,
-      { role: "system", content: "Start state Orientation" },
-      { role: "system", content: "Finish state Orientation — done" },
+      { role: "system", content: "Start state Patch" },
+      { role: "system", content: "Finish state Patch — done" },
     ]);
   });
 
@@ -477,7 +477,7 @@ describe("crash (mock node) and prefix", () => {
     const llm = { kind: "llm" as const };
     const events: Event[] = [
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix" }, seq: 0 } },
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "orientation", payload: { state: "orientation", what: "green", call: { name: "move", args: { state: "orientation", what: "green" } } }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "patch", payload: { state: "patch", what: "green", call: { name: "move", args: { state: "patch", what: "green" } } }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: llm } },
       { type: "add_node", node: { id: "p1", space: "work", kind: "turns", label: "turns", seq: 3 } },
       { type: "add_edge", edge: { id: "hp", from: "m1", to: "p1", kind: "turns", provenance: llm } },

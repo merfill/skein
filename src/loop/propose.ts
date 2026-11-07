@@ -7,6 +7,7 @@ import { toolDescriptionsFor, toolNamesFor } from "../llm/tools";
 import {
   BASE_PROMPT,
   REQUEST_INSTRUCTION,
+  terminalInstruction,
   transitionInstruction,
   workingInstruction,
 } from "./prompt";
@@ -102,11 +103,15 @@ export function buildMessages(context: Context): ModelMessage[] {
   // state, not a user request. The tape already ends with the finished state's `Finish` line,
   // so the rule follows it as another system turn (docs/ir_semantics §7). The request's route
   // and an open state's working prompt are `user` turns: the choice/goal must be the last thing
-  // the model reads, with the original request marked as reference, not the goal.
+  // the model reads, with the original request marked as reference, not the goal. At End there
+  // is no next state and no criterion, so its own instruction is the completion rule: reply
+  // with the report as text, no tool call.
   if (context.situation === "request") {
     messages.push({ role: "user", content: REQUEST_INSTRUCTION });
   } else if (context.situation === "transition") {
     messages.push({ role: "system", content: transitionInstruction(context.island) });
+  } else if (context.situation === "terminal") {
+    messages.push({ role: "system", content: terminalInstruction(context.island) });
   } else if (context.situation === "working" && context.island !== undefined) {
     const working = workingInstruction(context.island, context.what);
     if (working !== "") messages.push({ role: "user", content: working });

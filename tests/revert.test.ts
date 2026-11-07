@@ -27,7 +27,7 @@ afterEach(cleanupWorkspaces);
 
 function failedAttempt() {
   const { ws } = makeWorkspace(DEFAULT_FILES);
-  let step = execAll(withGoal("do it", "true"), [request()], ws);
+  let step = execAll(withGoal("do it", "true", "research"), [request()], ws);
   step = exec({ operator: "stop", why: "mapped" }, step.events, ws);
   step = execAll([move("patch", "find it"), read("src/sum.mjs")], step.events, ws);
   step = exec({ operator: "stop", why: "named" }, step.events, ws);

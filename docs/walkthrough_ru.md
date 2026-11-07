@@ -4,9 +4,10 @@
 > проекция IR; движок собирает её заново на каждом ходу. Журнал только дополняется, а лента
 > меняется: закрытое состояние исчезает из неё, но остаётся в журнале и доступно по `id`.
 >
-> Форма ленты актуальна (§4.2). Записанные ниже примеры ещё показывают старую запись состояния
-> (инструкция + цель на ленте); текущая проекция сворачивает их в завершающий working-ход
-> `user` (`Goal`, догадка, `Done when`, `Plan`, запрос как reference).
+> Пример ниже обновлён под текущую проекцию: запрос стартует прямо в Patch, а цель, критерий и
+> план приходят завершающим working-ходом `user` (`Goal`, догадка, `Done when`, `Plan`, запрос
+> как reference). `Orientation` и `Recovery` удалены; `Research` завершает запрос в `End`,
+> проверка результата входит в его собственный критерий.
 >
 > Источник истины — `docs/ir_semantics_ru.md`; проекция — `docs/projection_ru.md`;
 > состояния — `docs/states_ru.md`; as-built — `docs/ir_ru.md`. Английское зеркало —
@@ -35,7 +36,7 @@
 есть цель (что должно быть известно), критерий (по какому наблюдаемому признаку видно, что цель
 достигнута) и способ действовать (какие инструменты доступны и как себя вести). Модель входит
 в состояние ходом `move`, работает в нём и закрывает его ходом `stop`, когда критерий выполнен.
-Набор состояний фиксирован: Orientation, Research, Patch, Construction, Verification, End.
+Набор состояний фиксирован: Research, Patch, Construction, Verification, End.
 Текущее состояние задаёт, что видно в ленте: его цель,
 сведения о материале, инструкцию и план. Когда состояние закрыто,
 лента оставляет от него только `Start`/`Finish`, а фокус переходит к следующему.
@@ -136,19 +137,21 @@ system   Finish state Patch — line 63 drops the last token ...
 `system`-инструкция:
 
 ```
-system   Your result is the line `Finish state Patch — …` above — read it.
-         Next states from Patch:
-         - Verification — ...
-         - Research — ...
-         Choose Verification when the change holds ...
-         Choose Research only when ...
-         Call `move` alone. ...
+system   The engine recorded this state's result on the `Finish state Patch — …` line above.
+
+         Choose exactly one next state:
+         - Verification — the change is applied, and the edited lines read back.
+         - Research — the work turns out to be a situation, not a defect to locate and fix.
+
+         Call `move` alone with `what` = the object or situation the next state works on
+         (≤20 words), not the task; leave `done` out, and do not do that state's work on this turn.
 ```
 
-После `move` эта инструкция стирается. Следующее состояние открывается своим `Start state`,
-своей инструкцией, своим блоком факта и своей целью; план предыдущего не переносится.
-Коррекционные рёбра `L↔R` описаны только здесь, в правиле перехода; на поведение внутри
-состояний они не влияют.
+Состояния в списке заданы **условием входа** (`next[].when`), а не описанием работы: список —
+единственный источник, `transitionRule` больше нет. После `move` эта инструкция стирается.
+Следующее состояние открывается своим `Start state`, своим брифом и своей целью; план
+предыдущего не переносится. Коррекционные рёбра (`P ↔ R`, `V → P`) видны только здесь, в
+условиях; на поведение внутри состояний они не влияют.
 
 ## 2. Состояние — единица работы
 
@@ -176,12 +179,11 @@ move { state, what?, done? }
 
 | Остров | Цель (`island.what`) | Критерий (кратко) | Сведения о материале | `next` |
 |---|---|---|---|---|
-| **Orientation** | назвать корень, статус репозитория и приёмку | корень известен; repo отмечен; приёмка названа | координаты | P, R, C |
 | **Research** | решить ситуацию: вывести требуемый результат из материала или спецификации | результат есть в объявленной форме, выведен из материала или спецификации и совпадает с тем, что содержит материал или запрос | координаты + environment | End, P¹ |
 | **Patch** | найти дефект в существующем артефакте и внести изменение, которое он требует | цель и координаты; сиблинги исключены; причина названа как подозрение; полное изменение (найденный артефакт + остальные нужные файлы) в объявленной форме | координаты + environment | V, R¹ |
 | **Construction** | построить новый артефакт из спецификации или поведения материала | артефакт есть; acceptance-проверка прошла | координаты + environment | End, R |
 | **Verification** | проверить изменённый артефакт против приёмки | приёмка держится (команда или ограничения) | environment | End, P¹ |
-| **End** | завершить запрос | проверка сделана в закрытом состоянии; не перепроверять | — | — |
+| **End** | завершить запрос | нет: текстовый отчёт завершает запрос | — | — |
 
 Координаты — это `Workspace root`, статус `Workspace repository` и `Working directory`, когда
 шелл стартует вне корня.
@@ -192,16 +194,19 @@ move { state, what?, done? }
 в причине, на которую оно опиралось. Так исправляют неверную стартовую классификацию или
 неверную причину; обычным выходом эти рёбра не являются.
 
+Verification проверяет **изменённый артефакт** после Patch; у Research проверка результата
+входит в его собственный критерий, поэтому `Research → Verification` нет.
+
 Кроме цели и критерия, остров задаёт `instruction` (как действовать; показывается один раз при
 входе) и `applies` (какие apply-инструменты доступны). Инструкция не заменяет цель: цель — это
 `island.what`.
 
 ### 2.2 Маршруты
 
-- **Repair:** `O → P → V → End`.
-- **Recovery:** `O → R → End` (реконструкцию делает Research; отдельного Recovery нет).
-- **Construction:** `O → C → End`; неудачный Construction может уйти в `R` при провале метода.
-- **Hybrid:** `O → R → P → V → End` для задачи, где сначала добывается секрет, а потом меняется
+- **Repair:** `P → V → End`.
+- **Research:** `R → End` (проверка результата — в критерии Research).
+- **Construction:** `C → End`; неудачный Construction может уйти в `R` при провале метода.
+- **Hybrid:** `R → P → V → End` для задачи, где сначала добывается секрет, а потом меняется
   артефакт (`git-leak-recovery`); шаг `R → P` — явный `move`, а не подсказанное ребро.
 - **Коррекционные:** `V → P` при провале; `P ↔ R` при неверной стартовой классификации;
   `C → R` при провале метода.
@@ -213,8 +218,8 @@ move { state, what?, done? }
 
 ### 3.1 Сведения о материале
 
-Сведения о материале зависят от острова: только координаты (Orientation), координаты +
-environment (Research, Patch, Construction), только environment (Verification). Само дерево не
+Сведения о материале зависят от острова: координаты + environment (Research, Patch,
+Construction), только environment (Verification). Само дерево не
 перечисляется: состояние, которому нужны файлы, запрашивает их через `list`. Это уже записанные
 факты; перепроверять их не нужно.
 
@@ -245,77 +250,46 @@ environment (Research, Patch, Construction), только environment (Verificat
 
 ### 4.2 Начало: стартовый блок
 
-Первый ход ещё не выбрал состояние. На ленте лежат базовый промпт и запрос. Промпт схематично
-(полный текст — `src/loop/prompt/blocks.ts`):
+Первый ход ещё не выбрал состояние. На ленте базовый промпт, запрос и request-инструкция:
 
 ```
-system   # Role ... ## States ... ## Transitions ...
+system   # Role ... ## How you work ... ## General instructions ...
 user     «Я сломал сборку; сделай так, чтобы `make test` проходил.»
-system   Choose the state to start in ... (request-инструкция)
+user     Choose exactly one of three values:
+         - Patch when the task is to find an error in the existing code and fix it by editing an existing file.
+         - Construction when the task is to write new file(s) explicitly.
+         - Research in all other cases.
+         The original user request is context for this choice, not the goal.
 ```
 
-Доступны только `move` и `decline`. Для этой задачи первый шаг — Orientation: нужно понять,
-где проект и какая приёмка.
+Доступны только `move` и `decline`. Запрос — найти и исправить ошибку в существующем файле,
+поэтому первый шаг — Patch. (Для ситуации был бы Research, для нового артефакта — Construction.)
 
-### 4.3 Orientation
+### 4.3 Patch
 
-Докса вызывает `move {state:"orientation"}`. На ленте появляется вход в Orientation:
-
-```
-system   Start state Orientation
-system   Workspace root: /app
-system   The workspace root and the repository status are already in the tape ... (инструкция состояния)
-user     Goal: name the workspace root, the repository status, and the acceptance the request declares
-system   ... Done when: "..." ... When it holds, `stop` — and nothing else.
-```
-
-Карта и запрос уже дают цель и приёмку, поэтому ход —
-`stop {why:"root /app; acceptance: make test"}`.
-
-От Orientation остаётся след:
-
-```
-system   Start state Orientation
-system   Finish state Orientation — root /app; acceptance: make test
-```
-
-### 4.4 Переход в Patch
-
-Теперь на ленте запрос, след Orientation и временная transition-инструкция:
-
-```
-system   Your result is the line `Finish state Orientation — …` above — read it.
-         Next states: Patch, Research, Construction.
-         Move to Patch when the request is to fix an error in existing code or files.
-         ...
-```
-
-Доступен только `move`. Запрос — найти и исправить ошибку в существующем коде, поэтому выбираем
-Patch. (Для ситуации был бы Research, для полностью заданного артефакта — Construction.)
-Докса вызывает:
-
-```
-move {state:"patch", what:"the parse loop that breaks on the last token"}
-```
-
-### 4.5 Patch
-
-После `move` transition-инструкция стёрта; на ленте запрос, след Orientation и открытая Patch:
+Докса вызывает `move {state:"patch", what:"the parse loop that breaks on the last token"}`.
+На ленте — запрос и открытая Patch:
 
 ```
 system   Start state Patch
-system   Orientation result: root /app; acceptance: make test
-system   Locate the defect and change the artifact in one loop ... (инструкция состояния)
-user     Goal: find the defect in the existing artifact and make the change it needs
-         Your earlier guess (may be wrong): the parse loop that breaks on the last token
+system   Workspace root: /app / Workspace repository: ... / environment
 assistant [a1] grep "def parse" + reasoning
 tool      [o1] src/parse.py:63 ...
 assistant [a2] read src/parse.py 40-90 + reasoning
 tool      [o2] ... (окно 40-90) ...
-system   ... Done when: "the defect is located ..." ... `stop` — and nothing else.
+assistant [a3] edit {path:"src/parse.py", find:..., replace:...} + reasoning
+tool      [m] mutated src/parse.py
+user     Goal: find the defect in the existing artifact and make the change it needs.
+         Your earlier guess (may be wrong): the parse loop that breaks on the last token
+         Done when: "the plan is complete: the error is found and fixed". When it holds,
+         reply with the result as text only — no tool call.
+         Plan:
+         1. Find the file with the coordinates and the cause of the error.
+         2. Fix the error and stop with a report about it.
+         The original user request is context for this state, not its goal.
 ```
 
-Цель и причина найдены и изменение внесено в том же состоянии; ход —
+Цель и причина найдены, изменение внесено; ход —
 `stop {why:"line 63 drops the last token — off-by-one in the loop, boundary moved"}`.
 
 След:
@@ -325,7 +299,7 @@ system   Start state Patch
 system   Finish state Patch — line 63 drops the last token ...
 ```
 
-### 4.6 Verification
+### 4.4 Verification
 
 Дальше — приёмка. Patch уже сделал изменение целиком: не только найденный артефакт, но и
 остальные файлы, которые нужны задаче.
@@ -367,27 +341,36 @@ tool      [o6] exit 0
 ... (stop → Finish state Verification — ...)
 ```
 
-### 4.7 End
+### 4.5 End
 
 Когда приёмка прошла, остаётся завершить запрос:
 
 ```
 system   Start state End
-system   This is End. Call `stop` when the request is complete; the finished state's check is the verification — do not re-verify here.
+system   This is End.
+
+         The work is done; complete the request. Reply with the final report as text only,
+         with no tool calls.
+
+         Read the tape — the request, the states the task passed, what each of them did,
+         the files it changed, and how the result was checked — and write the report from
+         those records in GitHub-flavored Markdown: what was done and where, how it was
+         verified, and what is still open. Your reply is shown to the user as-is.
 ```
 
-Докса вызывает `stop {why:"request complete"}`. Прогон завершён
-(`request_addressed`). В IR остались все состояния, включая провалившуюся Verification; на
-ленте — только их следы.
+У End нет критерия и нет следующего состояния, поэтому его инструкция и есть цель хода.
+Инструментов на End нет: докса отвечает текстом (без tool call), и движок записывает этот
+текст как `stop {why:<отчёт>}`. Прогон завершён (`request_addressed`). В IR остались все
+состояния, включая провалившуюся Verification; на ленте — только их следы (`Finish`-строки),
+поэтому отчёт собирается из них, а не из сырых ходов.
 
-### 4.8 Что осталось в IR
+### 4.6 Что осталось в IR
 
 Состояния — это отдельные шаги запроса. Каждое соединено с запросом ребром `move`, а план
 висит на самом состоянии. Лента убрала их из вида, но IR сохранил всё:
 
 ```
 R  request
-├─ I0 orientation   stopped   (на ленте только Start/Finish)
 ├─ I1 patch         stopped   plan: a1 grep, a2 read, a3 edit (v1→v2)
 ├─ I2 verification  stopped   plan: a4 bash (exit 1)     ← провал
 │  ┆ revert v2→v1 (на переходе I2→I3)
@@ -399,7 +382,7 @@ R  request
 Поэтому `recall`/`search` и нужны: закрытого состояния не видно в ленте, но его результаты
 доступны по `id`.
 
-### 4.9 На что обратить внимание
+### 4.7 На что обратить внимание
 
 - **Состояние — единица работы.** Цель — `island.what`; `move.what` — догадка; `move.done` —
   переопределение критерия.
@@ -414,7 +397,7 @@ R  request
 - **Проверки критерия нет.** `stop` принимает докса; провал инструмента — факт, а не закрытие.
 - **Поверхность — фронтир.** На запросе доступны `move`/`decline`; в открытом состоянии —
   apply-инструменты, `stop`, `recall`/`search`; в закрытом — только `move`; в терминальном —
-  `stop`.
+  ни одного инструмента: докса отвечает текстом, а `stop` пишет движок.
 - **Провал Verification ведёт в Patch.** `revert` откатывает последний Patch; провал может быть
   и в изменении, и в причине, на которую оно опиралось, — и то и другое пересматривается в
   Patch.
@@ -476,7 +459,7 @@ R  request
 - **Фокус немонотонен.** Лента — это вид, а не транскрипт. Смена фокуса убирает лишнее, но
   знание остаётся доступным по `id`.
 - **Переходы стоят денег.** Промах кэша префикса (предзаполнение), лишний ход на переход и
-  рассуждения на переориентацию. Последняя часть переменная и показывает качество спеки
+  рассуждения на переосмысление. Последняя часть переменная и показывает качество спеки
   состояния. Подробнее — `docs/projection_ru.md` §8. Считать надо цену результата
   (₽ на задачу, ходы на задачу), а не цену перехода. Шум провайдера (разные субподрядчики,
   ходы без рассуждений) — статистическая флуктуация, а не свойство дизайна.

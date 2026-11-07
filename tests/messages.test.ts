@@ -35,7 +35,7 @@ const BIG = `edit failed: find not found in ocaml/x.c\n--- current content of oc
 function journal(): Event[] {
   return [
     { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "fix", payload: { text: "fix the bug" }, seq: 0 } },
-    node("m1", "move", "orientation", 1, { state: "orientation", what: "green", call: { name: "move", args: { state: "orientation", what: "green" } } }),
+    node("m1", "move", "patch", 1, { state: "patch", what: "green", call: { name: "move", args: { state: "patch", what: "green" } } }),
     edge("em", "r1", "m1", "move"),
     node("p1", "turns", "turns", 2),
     edge("hp", "m1", "p1", "turns"),
@@ -72,11 +72,11 @@ describe("message wrappers: the wire JSON of the tape", () => {
     const userTexts = msgs.filter((m) => m.role === "user").map((m) => String(m.content));
     expect(userTexts).toHaveLength(2);
     expect(userTexts[0]).toContain("fix the bug");
-    expect(userTexts[1]).toContain("Goal: name the workspace root and the repository status.");
+    expect(userTexts[1]).toContain("Goal: find the defect in the existing artifact and make the change it needs.");
     expect(userTexts[1]).toContain("Your earlier guess (may be wrong): green");
     expect(userTexts[1]).toContain("Done when: \"");
     const start = msgs.find((m) => m.role === "system" && String(m.content).includes("Start state"));
-    expect(String(start?.content)).toBe("Start state Orientation");
+    expect(String(start?.content)).toBe("Start state Patch");
     // A native call keeps its content empty (the call is in `tool_calls`).
     const callMsgs = msgs.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
     expect(callMsgs.every((m) => m.content === "")).toBe(true);

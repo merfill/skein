@@ -65,7 +65,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
       ["assistant", "read", false],
       ["tool", null, true],
     ]);
-    expect(ctx.history[1]?.text).toBe("Start state Orientation");
+    expect(ctx.history[1]?.text).toBe("Start state Patch");
   });
 
   it("stop -> the state collapses to its Start and Finish markers", () => {
@@ -73,8 +73,8 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const first = execAll(withGoal("do it", "true"), [request()], w);
     const ctx = project(exec({ operator: "stop", why: "done" }, first.events, w).state);
     expect(ctx.history.map((m) => m.role)).toEqual(["user", "system", "system"]);
-    expect(ctx.history[1]?.text).toBe("Start state Orientation");
-    expect(ctx.history[2]?.text).toBe("Finish state Orientation — done");
+    expect(ctx.history[1]?.text).toBe("Start state Patch");
+    expect(ctx.history[2]?.text).toBe("Finish state Patch — done");
   });
 
   it("lists the state's explicit file artifacts on the Finish line, not shell mutations", () => {
@@ -84,7 +84,7 @@ describe("hop 1 — IR node kind -> TapeMessage role", () => {
     const ran = exec(run("touch mut.txt"), wrote.events, w);
     const ctx = project(exec({ operator: "stop", why: "done" }, ran.events, w).state);
     const finish = ctx.history.find((m) => m.text?.startsWith("Finish state"));
-    expect(finish?.text).toContain("Finish state Orientation — done");
+    expect(finish?.text).toContain("Finish state Patch — done");
     expect(finish?.text).toContain("Artifacts: out/result.txt");
     expect(finish?.text).not.toContain("mut.txt");
   });

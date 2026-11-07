@@ -39,26 +39,21 @@ describe("islands: the closed vocabulary", () => {
   it("routes the epistemic and productive states", () => {
     const targets = (id: (typeof ISLAND_IDS)[number]): string[] =>
       ISLANDS[id].next.map((edge) => edge.to);
-    expect(targets("orientation")).toEqual(expect.arrayContaining(["patch", "research", "construction"]));
     expect(targets("research")).toEqual(["end", "patch"]);
     expect(targets("patch")).toEqual(["verification", "research"]);
-    expect(targets("recovery")).toEqual(expect.arrayContaining(["end", "research"]));
     expect(targets("construction")).toEqual(expect.arrayContaining(["end", "research"]));
     expect(targets("verification")).toEqual(expect.arrayContaining(["end", "patch"]));
   });
 
   it("scopes the write-class to the productive states: the island delimits the apply surface", () => {
     const write = new Set(["edit", "write", "apply_patch"]);
-    const productive = new Set(["research", "patch", "recovery", "construction"]);
+    const productive = new Set(["research", "patch", "construction"]);
     for (const id of ISLAND_IDS) {
       const hasWrite = ISLANDS[id].applies.some((tool) => write.has(tool));
       expect(hasWrite).toBe(productive.has(id));
     }
     expect(ISLANDS.research.applies).toContain("write");
     expect(ISLANDS.research.applies).not.toContain("edit");
-    expect(ISLANDS.recovery.applies).toContain("write");
-    expect(ISLANDS.recovery.applies).not.toContain("edit");
-    expect(ISLANDS.recovery.applies).not.toContain("apply_patch");
     expect(ISLANDS.construction.applies).toEqual(expect.arrayContaining(["edit", "write", "apply_patch"]));
     expect(ISLANDS.end.applies).toEqual([]);
   });
@@ -118,20 +113,20 @@ describe("islands: the projection highlights the state", () => {
     const res = execAll(withGoal("recon", "true"), [request()], ws);
     const context = project(res.state);
     expect(context.situation).toBe("working");
-    expect(context.island).toBe("orientation");
-    expect(islandOf(res.state)).toBe("orientation");
+    expect(context.island).toBe("patch");
+    expect(islandOf(res.state)).toBe("patch");
     const start = context.history.find((m) => m.role === "system" && m.text.startsWith("Start state"))?.text ?? "";
-    expect(start).toBe("Start state Orientation");
-    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.orientation.instruction)).toBe(false);
+    expect(start).toBe("Start state Patch");
+    expect(context.history.some((m) => m.role === "system" && m.text === ISLANDS.patch.instruction)).toBe(false);
     const messages = buildMessages(context);
     const last = messages.at(-1);
     expect(last?.role).toBe("user");
     expect(String(last?.content)).toContain(
-      "Goal: name the workspace root and the repository status.",
+      `Goal: ${ISLANDS.patch.what}.`,
     );
     expect(String(last?.content)).toContain("Your earlier guess (may be wrong): recon");
-    expect(String(last?.content)).toContain(`Done when: "${ISLANDS.orientation.criterion}".`);
-    expect(String(last?.content)).toContain(`Plan:\n${ISLANDS.orientation.instruction}`);
+    expect(String(last?.content)).toContain(`Done when: "${ISLANDS.patch.criterion.replace(/\.\s*$/, "")}".`);
+    expect(String(last?.content)).toContain(`Plan:\n${ISLANDS.patch.instruction}`);
     expect(String(last?.content)).toContain(
       "The original user request is context for this state, not its goal.",
     );

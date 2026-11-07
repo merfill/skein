@@ -5,16 +5,6 @@ export interface PromptBlock {
   text: string;
 }
 
-const renderStates = (ids: readonly IslandId[]): string =>
-  ids.map((id) => `- ${ISLANDS[id].label} — ${ISLANDS[id].what}.`).join("\n");
-
-// The legacy Orientation transition rule. The request now states its own routing literally.
-const START_RULE: readonly string[] = [
-  "Move to Patch when the task is to find an error in the existing code and fix it by editing an existing file.",
-  "Move to Construction when the task is to write new file(s) explicitly.",
-  "Otherwise move to Research.",
-];
-
 // The base: the stable system prompt, in block order. B1 is the role; B2 the principles. The
 // state map and the moves are not here: they are rendered in the request/transition situation
 // prompts, scoped to the choice at hand, so an open state never carries other states' goals.
@@ -73,82 +63,42 @@ The original user request is context for this choice, not the goal.`,
   },
 ];
 
-// The state-specific transition rule: the finished state's own instruction is not visible on
-// the transition turn, so the rule that decides among its reachable states lives here.
-function transitionRule(island?: IslandId): string[] {
-  switch (island) {
-    case "orientation":
-      return [...START_RULE];
-    case "research":
-      return [
-        "Choose End when the required result exists in its declared form and matches the material or the request.",
-        "Choose Patch when the work is a code defect to locate and fix.",
-      ];
-    case "recovery":
-      return [
-        "Choose End only when the output exists in its declared form, is derived from the material, and matches what the material contains. Otherwise choose Research — the method failed or the output does not match the material.",
-      ];
-    case "construction":
-      return [
-        "Choose End only when the artifact is derived from the specification or the material's behaviour and the acceptance check passes. If the check failed because the method or specification did not hold, choose Research.",
-      ];
-    case "patch":
-      return [
-        "Choose Verification when the change is applied — the differing expression is at the target, and the edited lines read back.",
-        "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
-      ];
-    case "verification":
-      return [
-        "When the acceptance holds, choose End.",
-        "When it fails, choose Patch: the result you just wrote names the failure, and the cause and the change are revised there.",
-      ];
-    default:
-      return [];
-  }
-}
-
-// The transition prompt (`transition`): the finished-state scenario: the tape above carries the
-// record (each finished state is a `Start state` / `Finish state` pair) and the user's request.
-// The rule names the states reachable from the focused one; the next state's OWN goal stands
-// as-is (never carried from the `Finish` line).
+// The transition prompt (`transition`): the finished-state scenario. Each reachable state is
+// rendered by its entry condition (`next[].when`) — the single source in `ISLANDS` — never by
+// its `what`, so a state's description cannot be misread as the condition for entering it.
 export function transitionInstruction(island?: IslandId): string {
-  const targets = island !== undefined ? ISLANDS[island].next.map((edge) => edge.to) : [];
-  const candidates = [...new Set<IslandId>(targets)];
-  const canFinish = candidates.includes(TERMINAL_ISLAND);
   const label = island !== undefined ? ISLANDS[island].label : undefined;
   const head =
     label !== undefined
-      ? `Your result is the line \`Finish state ${label} — …\` above — read it.`
-      : `Your result is the finished state's \`Finish\` line above — read it.`;
-  const reachable =
-    label !== undefined
-      ? `Only these states are reachable from ${label} — choose one of them.`
-      : `Only these states are reachable — choose one of them.`;
-  const tail = [
-    "Choose the next state only. Do not design, derive, or solve that state's work on this turn; its tools and instruction come after the move.",
-    `Call \`move\` alone. Set \`what\` to the object or situation the next state will work on — the artifact, record, or situation, not the task — in one short phrase, up to ~20 words. Do not restate the request, the finished state's result, or the plan. Leave \`done\` out: the state's own criterion applies.`,
-  ];
-  if (island === "orientation") {
-    return [
-      `${head} From it and the user's request, move to the next state: call \`move\` to enter it.`,
-      `Next states: ${candidates.map((id) => ISLANDS[id].label).join(", ")}.`,
-      ...transitionRule(island),
-      ...tail,
-    ].join("\n\n");
+      ? `The engine recorded this state's result on the \`Finish state ${label} — …\` line above.`
+      : `The engine recorded this state's result on the finished state's \`Finish\` line above.`;
+  const edges = island !== undefined ? ISLANDS[island].next : [];
+  if (edges.length === 0) {
+    return `${head}\n\nThis state has no next state.`;
   }
-  return [
-    `${head} From it and the user's request, choose the next state: call \`move\` to enter it.${canFinish ? " If the work is done, \`move\` to End." : ""}`,
-    `Next states${label !== undefined ? ` from ${label}` : ""}:\n${renderStates(candidates)}`,
-    reachable,
-    ...transitionRule(island),
-    ...tail,
-  ].join("\n\n");
+  const conditions = edges.map((edge) => `- ${ISLANDS[edge.to].label} — ${edge.when}.`);
+  const tail =
+    "Call `move` alone with `what` = the object or situation the next state works on (≤20 words), not the task; leave `done` out, and do not do that state's work on this turn.";
+  const choices = ["Choose exactly one next state:", ...conditions].join("\n");
+  return [head, choices, tail].join("\n\n");
+}
+
+// The terminal prompt (`terminal`): End has no criterion and no reachable next state, so its
+// own instruction IS the turn's goal. Appended as a `system` turn after the tape, like the
+// transition rule, so the completion rule is the last thing the model reads; the doxa replies
+// with the final report as text and the engine records it as the state's `stop`.
+export function terminalInstruction(island?: IslandId): string {
+  const target = island ?? TERMINAL_ISLAND;
+  return [`This is ${ISLANDS[target].label}.`, ISLANDS[target].instruction]
+    .filter((part) => part !== "")
+    .join("\n\n");
 }
 
 // The working prompt: the state's goal, criterion and plan as one `user` turn, appended after
 // the state's turns so the goal is the last thing the model reads. The doxa's `what` is an
 // unverified guess about the concrete subject, shown as advice, never as the state's goal; the
-// original request stays reference. Empty for a state with no criterion (End).
+// original request stays reference. Empty for a state with no criterion (End); the terminal
+// situation carries its own prompt (`terminalInstruction`).
 export function workingInstruction(island: IslandId, guess?: string): string {
   const criterion = ISLANDS[island].criterion;
   if (criterion === "") return "";

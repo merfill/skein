@@ -285,7 +285,7 @@ record.
   (`user`, only while open; `move.what` rides the per-turn tail — *superseded 2026-10-27: the tail
   no longer carries `what`; the goal is `island.what` and `move.what` is the guess*). New per-island
   `instruction`
-  (`src/ir/islands.ts`) says how to act in the state — Orientation reads the project's docs;
+  (`src/ir/islands.ts`) says how to act in the state — a state reads the project's docs it needs;
   Localization compares the suspect code with its **siblings** (the other loops over the same
   structure) and does not chase an upstream reference. The `turnInstruction` criterion and the
   `stop` description are also touched. The step-by-step method and rationale —
@@ -304,9 +304,9 @@ record.
     about the cause, so the cause is revised and the change is made again from it.
   - Removed on purpose: "the cause is the one the previous state's `Finish` line names", "do not
     re-derive the cause", "do not guess a different one". Those made a wrong cause unrecoverable.
-  - `patch.next` = Verification, Research (situation correction); `orientation.next` →
-    `patch`; `research.next` → `patch`; `verification.next` → `patch` only (the `Localization`
-    branch is gone). B4 renders this from `ISLANDS`, so it follows without a block edit.
+  - `patch.next` = Verification, Research (situation correction); `research.next` = End, Patch;
+    `verification.next` = End, Patch. The transition prompt renders these from `ISLANDS`, so it
+    follows without a block edit.
   - The probe block for Patch is `vcs, build, compilers, interpreters` (it both searches the
     material and builds the change); `src/ir/project.ts` renders the map + environment for
     `localization`/`research`/`patch` through one branch.

@@ -8,7 +8,9 @@ import {
   BASE_PROMPT,
   PROMPT_BLOCKS,
   REQUEST_INSTRUCTION,
+  terminalInstruction,
   transitionInstruction,
+  workingInstruction,
 } from "../src/loop/prompt";
 import { buildMessages } from "../src/loop/propose";
 
@@ -53,7 +55,7 @@ describe("system prompt: base + node assembly", () => {
     expect(BASE_PROMPT).not.toMatch(/End is terminal/);
     // The map and the moves are scoped to the request/transition situation prompts.
     expect(REQUEST_INSTRUCTION).toContain("Choose exactly one of three values:");
-    expect(transitionInstruction("patch")).toContain("Next states");
+    expect(transitionInstruction("patch")).toContain("Choose exactly one next state:");
   });
 
   it("gives the request situation its own instruction", () => {
@@ -64,47 +66,39 @@ describe("system prompt: base + node assembly", () => {
 
 The original user request is context for this choice, not the goal.`);
     expect(REQUEST_INSTRUCTION).not.toMatch(/previous message/i);
-    expect(transitionInstruction("orientation")).toMatch(/move to the next state/i);
   });
 
-  it("at a transition, points at the finished state's `Finish` line as the source of what/done", () => {
-    const fromOrientation = transitionInstruction("orientation");
-    expect(fromOrientation).toContain("Patch"); // a reachable candidate
-    expect(fromOrientation).toContain("Finish state Orientation"); // the source line, by label
-    expect(fromOrientation).not.toContain("Verification"); // only the focused state's `next` targets
-    expect(fromOrientation).toContain("find an error in the existing code and fix it by editing an existing file");
-    expect(fromOrientation).toContain("Otherwise move to Research");
-    expect(fromOrientation).toContain("Next states: Patch, Research, Construction.");
-    expect(fromOrientation).toContain("Construction");
-    expect(fromOrientation).toMatch(/`what`.*`done`/i);
-    expect(fromOrientation).toContain("Choose the next state only");
-    expect(fromOrientation).toContain("Call `move` alone");
-    expect(fromOrientation).not.toContain("notes");
-    expect(REQUEST_INSTRUCTION).not.toContain("notes");
+  it("at a transition, chooses one next state by its entry condition", () => {
     const fromVerification = transitionInstruction("verification");
     expect(fromVerification).toContain("Finish state Verification");
+    expect(fromVerification).toContain("End");
     expect(fromVerification).toContain("Patch"); // the corrective edge
-    expect(fromVerification).not.toContain("Localization"); // merged into Patch
+    expect(fromVerification).not.toContain("Localization");
+    expect(fromVerification).toContain("the required result exists");
+    expect(fromVerification).toContain("the acceptance holds");
+
     const fromPatch = transitionInstruction("patch");
     expect(fromPatch).toContain("Finish state Patch");
-    expect(fromPatch).toContain("locate");
-    // The corrective edge: Research is offered only for a situation, not as a routine exit.
-    expect(fromPatch).toContain("Research");
-    expect(fromPatch).toMatch(
-      /Choose Research only when the work turns out to be a situation, not a defect to locate and fix/,
+    expect(fromPatch).toContain("- Verification — the change is applied, and the edited lines read back.");
+    expect(fromPatch).toContain(
+      "- Research — the work turns out to be a situation, not a defect to locate and fix.",
     );
+
     const fromResearch = transitionInstruction("research");
     expect(fromResearch).toContain("Finish state Research");
-    expect(fromResearch).toMatch(/Choose End when the required result exists/);
-    expect(fromResearch).toMatch(/Choose Patch when the work is a code defect to locate and fix/);
+    expect(fromResearch).toContain(
+      "- End — the required result exists in its declared form and matches the material or the request.",
+    );
+    expect(fromResearch).toContain(
+      "- Patch — the work is a code defect not yet located or fixed.",
+    );
+    expect(fromResearch).not.toContain("Verification");
     expect(fromResearch).not.toContain("Construction");
-    const fromRecovery = transitionInstruction("recovery");
-    expect(fromRecovery).toContain("Finish state Recovery");
-    expect(fromRecovery).toMatch(/matches what the material contains/);
-    expect(fromRecovery).toContain("Research");
+    expect(fromResearch).toContain("Call `move` alone");
+
     const fromConstruction = transitionInstruction("construction");
     expect(fromConstruction).toContain("Finish state Construction");
-    expect(fromConstruction).toMatch(/specification or the material's behaviour/);
+    expect(fromConstruction).toContain("the acceptance check passes");
     expect(fromConstruction).toContain("Research");
   });
 });
@@ -146,12 +140,6 @@ describe("system prompt: tool contract", () => {
     expect(research.write).toMatch(/change the material only where the task says to/i);
     expect(research.edit).toBeUndefined();
 
-    const recovery = toolDescriptionsFor("recovery");
-    expect(recovery.bash).toMatch(/you may create and modify files/i);
-    expect(recovery.bash).toMatch(/keep the material read-only/i);
-    expect(recovery.write).toMatch(/do not overwrite the material/i);
-    expect(recovery.edit).toBeUndefined();
-
     const construction = toolDescriptionsFor("construction");
     expect(construction.bash).toMatch(/builds a new artifact/i);
     expect(construction.write).toMatch(/do not overwrite the material/i);
@@ -160,16 +148,6 @@ describe("system prompt: tool contract", () => {
     const verification = toolDescriptionsFor("verification");
     expect(verification.bash).not.toMatch(/Inspection only/);
 
-  });
-
-  it("keeps Recovery's prompt minimal", () => {
-    const text = ISLANDS.recovery.instruction;
-    expect(text).not.toMatch(/source check|accept a candidate|negative control|script|container|Research/i);
-    expect(text).toMatch(/do not fabricate/i);
-    expect(text).toMatch(/keep the material read-only/i);
-    expect(ISLANDS.recovery.criterion).toMatch(/matches what the material contains/i);
-    expect(toolDescriptionsFor("recovery").bash ?? "").not.toMatch(/script/i);
-    expect(toolDescriptionsFor("recovery").write ?? "").not.toMatch(/script/i);
   });
 
   it("offers no `stop` tool: the doxa closes a state with text", () => {
@@ -346,7 +324,7 @@ describe("context format: tape", () => {
     expect(String(messages.at(-1)?.content)).toContain(`Plan:\n${ISLANDS.patch.instruction}`);
   });
 
-  it("keeps the request and transition prompts; End carries its instruction on the tape", () => {
+  it("keeps the request and transition prompts; End appends its completion rule", () => {
     const request = buildMessages({ ...context, situation: "request", island: "patch" }).at(-1);
     expect(request).toMatchObject({ role: "user", content: REQUEST_INSTRUCTION });
     const transition = buildMessages({ ...context, situation: "transition", island: "patch" }).at(-1);
@@ -354,9 +332,14 @@ describe("context format: tape", () => {
       role: "system",
       content: transitionInstruction("patch"),
     });
-    // End appends no situation prompt: its instruction is part of the state's own entry.
-    const terminal = buildMessages({ ...context, situation: "terminal", island: "end" });
-    expect(terminal).toEqual(buildMessages({ ...context, situation: "working", island: "end" }));
+    // End is terminal: no next state and no criterion, so its own instruction is the turn's
+    // goal, appended as the engine's completion rule.
+    const terminal = buildMessages({ ...context, situation: "terminal", island: "end" }).at(-1);
+    expect(terminal).toMatchObject({ role: "system", content: terminalInstruction("end") });
+    expect(String(terminal?.content)).toContain("This is End.");
+    expect(String(terminal?.content)).toContain(ISLANDS.end.instruction);
+    // The working prompt stays empty for End (it has no criterion); only the terminal rule runs.
+    expect(workingInstruction("end")).toBe("");
   });
 
   it("rejects a tool turn without a callId instead of faking a user turn", () => {
@@ -373,21 +356,20 @@ describe("context format: tape", () => {
   it("appends the transition instruction, naming the focused state's reachable next states", () => {
     const transition: Context = {
       history: [
-        { role: "assistant", text: "Start state Orientation" },
-        { role: "user", text: "Learn the layout\nDone when: the layout is known." },
-        { role: "assistant", text: "Finish state Orientation — layout known" },
         { role: "user", text: "fix the failing test" },
+        { role: "system", text: "Start state Patch" },
+        { role: "system", text: "Finish state Patch — the change is applied" },
       ],
       situation: "transition",
-      island: "orientation",
+      island: "patch",
       constraints: [],
     };
     const messages = buildMessages(transition);
     // The transition rule is an engine `system` instruction, not a user request.
     expect(messages.at(-1)).toMatchObject({
       role: "system",
-      content: transitionInstruction("orientation"),
+      content: transitionInstruction("patch"),
     });
-    expect(String((messages.at(-1) as { content: string }).content)).toContain("Patch");
+    expect(String((messages.at(-1) as { content: string }).content)).toContain("Verification");
   });
 });

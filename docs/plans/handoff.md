@@ -4,6 +4,56 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-07 — End-инструкция, снос Orientation/Recovery, `R→V` добавлен и убран, error-closure, короткие задачи
+
+- **End получил инструкцию.** `terminalInstruction` (`src/loop/prompt/blocks.ts`) рендерит
+  `This is End.` + `ISLANDS.end.instruction`; `buildMessages` добавляет её `system`-ходом для
+  `situation === "terminal"`. Инструментов на End по-прежнему `[]`, текст уходит в `stop.why`.
+  Первый живой замер — `fix-code-vulnerability` K=3 net off: **3/3 reward=1**, 30/17/17 ходов,
+  1.793/0.820/0.823₽; End-отчёты 1.0–2.1k символов. У всех 3 в End-контексте ровно одна
+  terminal-инструкция.
+- **`Orientation` и `Recovery` удалены совсем** (не legacy): `ISLAND_IDS` — пять состояний
+  (`research`, `patch`, `construction`, `verification`, `end`); `ISLANDS`, `briefs`,
+  `environment`, `tools`, `graph`, тесты и доки синхронизированы. `LIVE_ISLAND_IDS` — алиас
+  `ISLAND_IDS`.
+- **Переходный промпт переписан.** Состояния рендерятся из `next[].when`, а не из
+  `island.what`; `transitionRule`/`START_RULE`/`renderStates` удалены. Шапка:
+  `The engine recorded this state's result on the \`Finish state X — …\` line above.` Затем
+  `Choose exactly one next state:` и условия; хвост — `move` + `what`. Это снимает
+  двусмысленность «Patch — find the defect…», которую модель читала как условие перехода.
+- **`Research → Verification` добавляли и убрали.** Добавили из-за `fix-git` (Research делает
+  merge, нужна проверка), но `password-recovery` показал, что это категориальная ошибка:
+  результата-изменения нет, Verification нечего делать, и она уходит в цикл перепроверок
+  (28–30 ходов, 1.88–2.25₽). Итог: Verification — только после Patch; `research.next` =
+  `End`, `Patch`; условие End — «результат есть в объявленной форме и совпадает с материалом
+  или запросом».
+- **Error-closure.** `llm_error` больше не обрывает ленту: движок пишет engine-owned `stop`
+  открытому состоянию (`payload.error: true`), делает engine-owned `move` в End и один раз
+  просит модель об отчёте (fallback из `Finish`-строк, если и этот вызов упал). `stopReason`
+  остаётся `llm_error`; End-`stop` помечен `error`, поэтому сессия выводит `abandoned`, а не
+  `completed`. Тесты: `tests/error_closure.test.ts`, `tests/session_attention.test.ts`.
+- **Бенчи после удаления `R→V` и сноса legacy (K=3, sandbox, официальный verifier):**
+  - `password-recovery` net off: **3/3**, 28/16/15 ходов (median **16**), 3.188/0.959/1.148₽,
+    все `R → End`; старый замер — median 17 / 1.433₽.
+  - `fix-git` net off: батч 1 — 2/3 (r3: преждевременный stop Research → `R→Patch`, merge не
+    сделан, reward=0, `max_turns`); батч 2 — **3/3**, 12/14/15 ходов (median 14),
+    0.517–0.717₽. Итог 5/6 `R→End`; старый median 22 / 0.804₽.
+  - `log-summary-date-ranges` net on/off: **6/6**, 9–11 ходов (median **9**),
+    0.446–0.733₽ (median ~0.47); все `C → End`; старый median 13–15 / 0.64–0.70₽.
+  - `openssl-selfsigned-cert` net on/off: **6/6**, 10–17 ходов (median 11–13),
+    0.415–0.740₽; старый 16–19 / 0.64–0.76₽.
+  - `regex-log` net on/off: **6/6 reward=1**, 8–15 ходов (median 8–10), 1.335–2.004₽; один
+    net-on прогон завершился `llm_error` **после** записи `/app/regex.txt` (reward=1, нет End),
+    что и стало мотивом error-closure. Дорого не ходами, а reasoning (12–21k).
+  - Сеть нигде не использовалась; net on/off — шум. Против opencode (2026-10-24): log-summary
+    9 против 4–5 шагов, openssl 11–13 против 7–8, regex-log 8–10 против 6–8; по wall time
+    Skein уже на уровне.
+- **Проверено офлайн:** `npm run typecheck` чистый; **605 passed / 40 skipped**
+  (`SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'`).
+- **Доки:** walkthrough (пример стартует в Patch), states_ru, system_prompt, session_concepts,
+  projection, ir_semantics (error-closure), state_testing (legacy-разделы помечены
+  историческими), `best_bench_ru`/`best_bench`, `task_benchmarks_ru`/`task_benchmarks`.
+
 ## 2026-11-06 (вечер) — observer off, `move.done` убран, End без инструкции, двойная сборка
 
 - **Наблюдатель выключен по умолчанию.** `SKEIN_OBSERVER` включает его только при `true`

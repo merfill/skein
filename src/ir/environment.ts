@@ -40,27 +40,21 @@ export interface EnvironmentFact {
   partial?: boolean;
 }
 
-// Legacy Orientation gets no environment block. Patch needs the VCS tools and the interpreters that can run a search
-// script, plus the toolchain the change is built with; Research needs the interpreters and
+// Patch locates the defect and makes the change, so it needs the search tools (vcs,
+// interpreters) and the toolchain the change is built with; Research needs the interpreters and
 // package managers that can produce the result; Construction and Verification run the project's
 // build and its declared check, and Construction reads and checks history as well.
-const ORIENTATION_GROUPS: readonly EnvironmentGroup[] = [];
-// Patch locates the defect and makes the change, so it needs the search tools (vcs,
-// interpreters) and the toolchain the change is built with.
 const PATCH_GROUPS: readonly EnvironmentGroup[] = ["vcs", "build", "compilers", "interpreters"];
 const RESEARCH_GROUPS: readonly EnvironmentGroup[] = ["interpreters", "pkg"];
-const RECOVERY_GROUPS: readonly EnvironmentGroup[] = RESEARCH_GROUPS;
 const CONSTRUCTION_GROUPS: readonly EnvironmentGroup[] = ["vcs", "build", "compilers", "test", "interpreters", "pkg"];
 const VERIFICATION_GROUPS: readonly EnvironmentGroup[] = ["build", "test", "pkg"];
 
 function groupsFor(island?: IslandId): readonly EnvironmentGroup[] {
   // The request turn has no island and carries no probe block; the first state that opens it
-  // (Orientation) gets the subset.
+  // gets the subset.
   if (island === undefined) return [];
-  if (island === "orientation") return ORIENTATION_GROUPS;
   if (island === "patch") return PATCH_GROUPS;
   if (island === "research") return RESEARCH_GROUPS;
-  if (island === "recovery") return RECOVERY_GROUPS;
   if (island === "construction") return CONSTRUCTION_GROUPS;
   if (island === "verification") return VERIFICATION_GROUPS;
   // End inspects nothing: its surface is the model's own reply.

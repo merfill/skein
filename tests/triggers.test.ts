@@ -64,9 +64,9 @@ describe("triggers: state cycle and long state", () => {
   it("fires state_cycle on the third entry into the same state", () => {
     const session = readySession();
     const state = stateWith(
-      ...moveTo("m1", "orientation", 1, 1),
-      ...moveTo("m2", "orientation", 2, 2),
-      ...moveTo("m3", "orientation", 3, 3),
+      ...moveTo("m1", "patch", 1, 1),
+      ...moveTo("m2", "patch", 2, 2),
+      ...moveTo("m3", "patch", 3, 3),
     );
     const triggers = detectTriggers({ state, session, unitId: "r1", turn: 3 });
     expect(triggers.map((trigger) => trigger.kind)).toEqual(["state_cycle"]);
@@ -76,15 +76,15 @@ describe("triggers: state cycle and long state", () => {
   it("does not fire state_cycle before the third entry or twice for the same move", () => {
     const session = readySession();
     const before = stateWith(
-      ...moveTo("m1", "orientation", 1, 1),
-      ...moveTo("m2", "orientation", 2, 2),
+      ...moveTo("m1", "patch", 1, 1),
+      ...moveTo("m2", "patch", 2, 2),
     );
     expect(detectTriggers({ state: before, session, unitId: "r1", turn: 2 })).toEqual([]);
 
     const third = stateWith(
-      ...moveTo("m1", "orientation", 1, 1),
-      ...moveTo("m2", "orientation", 2, 2),
-      ...moveTo("m3", "orientation", 3, 3),
+      ...moveTo("m1", "patch", 1, 1),
+      ...moveTo("m2", "patch", 2, 2),
+      ...moveTo("m3", "patch", 3, 3),
     );
     const [trigger] = detectTriggers({ state: third, session, unitId: "r1", turn: 3 });
     if (trigger === undefined) throw new Error("expected a trigger");
@@ -94,7 +94,7 @@ describe("triggers: state cycle and long state", () => {
 
   it("fires state_long when the current state exceeds the turn limit", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1));
     // The state was entered at turn 1; the default limit is 9, so a dwell of 9 is still fine.
     expect(detectTriggers({ state, session, unitId: "r1", turn: 10 })).toEqual([]);
     const triggers = detectTriggers({ state, session, unitId: "r1", turn: 11 });
@@ -104,7 +104,7 @@ describe("triggers: state cycle and long state", () => {
 
   it("does not repeat state_long for the same state entry", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1));
     const [trigger] = detectTriggers({ state, session, unitId: "r1", turn: 11 });
     if (trigger === undefined) throw new Error("expected a trigger");
     recordTrigger(session, "r1", 11, trigger);
@@ -115,7 +115,7 @@ describe("triggers: state cycle and long state", () => {
 describe("triggers: budget", () => {
   it("fires only when the remaining budget is within K", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1), observation("o1", "read", 2));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1), observation("o1", "read", 2));
     const input = { state, session, unitId: "r1", turn: 8 };
     expect(detectTriggers({ ...input, turn: 6 }, { maxTurns: 10, budgetTurns: 3 })).toEqual([]);
     const triggers = detectTriggers(input, { maxTurns: 10, budgetTurns: 3 });
@@ -126,7 +126,7 @@ describe("triggers: budget", () => {
 
   it("does not fire at the hard limit or at a terminal state", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1), observation("o1", "read", 2));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1), observation("o1", "read", 2));
     expect(
       detectTriggers({ state, session, unitId: "r1", turn: 10 }, { maxTurns: 10, budgetTurns: 3 }),
     ).toEqual([]);
@@ -140,7 +140,7 @@ describe("triggers: budget", () => {
 
   it("fires only once for the unit", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1), observation("o1", "read", 2));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1), observation("o1", "read", 2));
     const input = { state, session, unitId: "r1", turn: 8 };
     const [trigger] = detectTriggers(input, { maxTurns: 10, budgetTurns: 3 });
     if (trigger === undefined) throw new Error("expected a trigger");
@@ -151,7 +151,7 @@ describe("triggers: budget", () => {
   it("does not fire when the current state is closed", () => {
     const session = readySession();
     const state = stateWith(
-      ...moveTo("m1", "orientation", 1, 1),
+      ...moveTo("m1", "patch", 1, 1),
       {
         type: "add_node",
         node: { id: "s1", space: "work", kind: "stop", label: "done", seq: 2 },
@@ -174,7 +174,7 @@ describe("triggers: budget", () => {
 
   it("returns the same trigger for the same input", () => {
     const session = readySession();
-    const state = stateWith(...moveTo("m1", "orientation", 1, 1), observation("o1", "read", 2));
+    const state = stateWith(...moveTo("m1", "patch", 1, 1), observation("o1", "read", 2));
     const input = { state, session, unitId: "r1", turn: 8 };
     expect(detectTriggers(input, { maxTurns: 10 })).toEqual(detectTriggers(input, { maxTurns: 10 }));
   });

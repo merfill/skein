@@ -185,7 +185,7 @@ describe("session outline: L0 and L1", () => {
       },
     };
     const session = createSession();
-    openUnit(session, "r1", "task", [node, ...move("m1", "orientation", 1)]);
+    openUnit(session, "r1", "task", [node, ...move("m1", "patch", 1)]);
     expect(unitOutline(session, "r1")).toContain("Success Criteria: compare A, B and C.");
     expect(sessionOutline(session)).toContain(`"${"x".repeat(110)} `);
     expect(sessionOutline(session)).not.toContain("Success Criteria");
@@ -195,7 +195,7 @@ describe("session outline: L0 and L1", () => {
     const session = createSession();
     openUnit(session, "r1", "task", [
       request(),
-      ...move("m1", "orientation", 1),
+      ...move("m1", "patch", 1),
       ...move("m2", "localization", 2),
       ...move("m3", "patch", 3),
     ]);

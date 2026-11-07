@@ -371,6 +371,12 @@ hypothesis) is new records; only the derived view is recomputed.
 | the terminal state (`end`) | `stop` (no gate) | closed; the `stop` relation leads move → stop; the request ends (`request_addressed`) |
 | the request (root) | ends when the terminal state is stopped (`request_addressed`) or on `decline` (`request_unactionable`); the request has no `stop` | the run ends |
 
+**An error is a result.** On a persistent model error (`llm_error`) the engine closes the state
+where the call failed with an engine-owned `stop` (payload `error: true`), enters End, and writes
+the final report there — a deterministic fallback from the `Finish` lines when the report call
+also fails. `stopReason` stays `llm_error`, and the End stop is marked `error`, so the session
+derives `abandoned`, not `completed`.
+
 **The request is not closed in the IR.** There is no "accepted" node: the user's silence is
 agreement, and an objective harness judges the run from outside. The request ends when its
 terminal state is stopped or when the doxa declines it.

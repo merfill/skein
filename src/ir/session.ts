@@ -15,8 +15,8 @@ export interface SessionProbe {
   partial?: boolean;
 }
 
-// The environment part of the probe, under its own heading. The workspace map is rendered
-// separately: Orientation owns it, and Patch/Research receive it as the Orientation result.
+// The environment part of the probe, under its own heading. The workspace coordinates are
+// rendered separately by the focused state's brief.
 export function probeBrief(probe: SessionProbe, island?: IslandId): string {
   return probe.environment !== undefined ? environmentBrief(probe.environment, island) : "";
 }

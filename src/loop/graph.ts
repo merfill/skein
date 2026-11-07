@@ -9,7 +9,7 @@ import { isFailedVerificationMove, revertFailedPatch } from "../ir/attempts";
 import type { Event } from "../ir/events";
 import { actionExecuted, childrenOf, currentVersion, fold, lastChild, type State } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
-import { project } from "../ir/project";
+import { project, situationOf } from "../ir/project";
 import { SESSION_PROBE_ID, type SessionProbe } from "../ir/session";
 import { currentMove, focusEvents, isMoveFinished, moveIsland } from "../ir/traversal";
 import type { Action, Proposals } from "../llm/schemas";
@@ -46,6 +46,40 @@ import type { LoopState } from "./state";
 // everything the model emitted after it is dropped (the state it reasoned from is gone).
 const TERMINAL = new Set<Action["operator"]>(["move", "stop", "decline"]);
 
+// An error closure is an engine-owned result, not a doxa move: mark its stop so the projection
+// and the session attention can tell it from a normal closure.
+function markErrorStop(events: readonly Event[]): Event[] {
+  return events.map((event) => {
+    if (event.type !== "add_node" || event.node.kind !== "stop") return event;
+    const payload = event.node.payload;
+    return {
+      ...event,
+      node: {
+        ...event.node,
+        payload: {
+          ...(typeof payload === "object" && payload !== null ? payload : {}),
+          error: true,
+        },
+      },
+    };
+  });
+}
+
+// The report when the model cannot write one: the error itself plus the closed states' results.
+// The End state still closes with this text, so a failed call never leaves the request without
+// a result on the tape.
+function fallbackErrorReport(state: State, errorText: string): string {
+  const finishes = project(state).history
+    .filter((message) => message.role === "system" && message.text.startsWith("Finish state "))
+    .map((message) => `- ${message.text.replace(/\n+/g, " ")}`);
+  return [
+    "# Report",
+    "The run was interrupted by an error before the request was complete.",
+    errorText,
+    ...(finishes.length > 0 ? ["## States", ...finishes] : []),
+  ].join("\n\n");
+}
+
 function describeTarget(action: Action): string {
   let target: string;
   switch (action.operator) {
@@ -71,7 +105,7 @@ function describeTarget(action: Action): string {
   return target.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
-const NEAR_END_ISLANDS = new Set(["end", "research", "patch", "recovery", "construction"]);
+const NEAR_END_ISLANDS = new Set(["end", "research", "patch", "construction"]);
 
 function isNearEnd(state: State): boolean {
   const move = currentMove(state);
@@ -625,6 +659,80 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     return { events, session };
   };
 
+  // An `llm_error` is a result too: close the state where the call failed, enter End and ask
+  // the model once for the final report (a deterministic fallback if that call also fails).
+  // This is not a doxa move: it is the engine's error exit, marked on the stop (`error: true`).
+  const closeOnError = async (state: LoopState): Promise<LoopState> => {
+    const errorText = state.stopText ?? "llm_error";
+    const events = [...state.events];
+    let current = fold(events);
+    const situation = situationOf(current);
+    if (situation === "working") {
+      const stopped = executeAction(
+        { operator: "stop", why: errorText },
+        current,
+        deps.workspace,
+        state.turn,
+      );
+      events.push(...markErrorStop(stopped.events));
+      current = fold(events);
+    }
+    if (situation !== "terminal") {
+      const moved = executeAction(
+        { operator: "move", state: "end", what: "report the interrupted run" },
+        current,
+        deps.workspace,
+        state.turn,
+      );
+      events.push(...moved.events);
+      current = fold(events);
+    }
+    let report: string | undefined;
+    // A failure in End is a failed report call; retrying it would likely fail the same way.
+    if (situation !== "terminal") {
+      try {
+        const reportRun = await proposeNode({
+          ...state,
+          events,
+          context: project(current),
+          proposals: null,
+          done: false,
+          paused: false,
+          stopReason: null,
+          stopText: null,
+        });
+        if (
+          reportRun.proposals !== null &&
+          reportRun.proposals !== undefined &&
+          reportRun.proposals.actions.length === 0 &&
+          reportRun.proposals.thought.trim() !== ""
+        ) {
+          report = reportRun.proposals.thought.trim();
+        }
+      } catch {
+        report = undefined;
+      }
+    }
+    const text = report ?? fallbackErrorReport(current, errorText);
+    const closed = executeAction(
+      { operator: "stop", why: text },
+      current,
+      deps.workspace,
+      state.turn,
+    );
+    events.push(...markErrorStop(closed.events));
+    return {
+      ...state,
+      events,
+      context: null,
+      proposals: null,
+      done: true,
+      paused: false,
+      stopReason: "llm_error",
+      stopText: errorText,
+    };
+  };
+
   let state = initial;
   while (!state.done) {
     state = merge(state, projectNode(state));
@@ -633,6 +741,9 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     state = merge(state, executeNode(state));
     if (state.done) break;
     state = merge(state, await progressNode(state));
+  }
+  if (state.stopReason === "llm_error" && state.paused !== true) {
+    state = await closeOnError(state);
   }
   return state;
 }

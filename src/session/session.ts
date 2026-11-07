@@ -1,5 +1,5 @@
 import type { Event } from "../ir/events";
-import { fold, unactionableOf } from "../ir/graph";
+import { fold, stopOf, unactionableOf } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
 import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import type {
@@ -198,7 +198,14 @@ function taskEnded(journal: readonly Event[]): boolean {
   const move = currentMove(state);
   if (move === undefined) return false;
   const island = moveIsland(state, move);
-  return island !== undefined && isTerminalIsland(island) && isMoveFinished(state, move);
+  if (island === undefined || !isTerminalIsland(island) || !isMoveFinished(state, move)) {
+    return false;
+  }
+  // An engine error closure writes an End stop, but the run did not complete its goal: the
+  // session must see it as abandoned, not completed.
+  const stop = stopOf(state, move);
+  const payload = stop !== undefined ? (state.nodes.get(stop)?.payload as { error?: unknown } | undefined) : undefined;
+  return payload?.error !== true;
 }
 
 function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent | undefined {

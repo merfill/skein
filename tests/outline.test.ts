@@ -14,35 +14,35 @@ import { cleanupWorkspaces, exec, execAll, makeWorkspace, move, request, run, wr
 
 afterEach(cleanupWorkspaces);
 
-function orientationRun() {
+function patchRun() {
   const workspace = makeWorkspace({ "src/sum.mjs": "export const sum = 1;\n" });
   return {
-    run: execAll([move("orientation", "find the failure"), run("echo hi")], [request()], workspace.ws, 0),
+    run: execAll([move("patch", "find the failure"), run("echo hi")], [request()], workspace.ws, 0),
     workspace,
   };
 }
 
-function orientationState() {
-  return orientationRun().run.state;
+function patchState() {
+  return patchRun().run.state;
 }
 
 describe("outline: the deterministic survey", () => {
   it("summarizes the request and its states", () => {
-    const state = orientationState();
+    const state = patchState();
     const text = outline(state);
     expect(text).toContain("request r1:");
-    expect(text).toContain("orientation");
+    expect(text).toContain("patch");
     expect(text).toContain('what="find the failure"');
     expect(text).toContain("open");
     expect(text).toContain("turns=1");
   });
 
   it("summarizes a state's turns and transitions", () => {
-    const state = orientationState();
+    const state = patchState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
     const text = stateOutline(state, moveId);
-    expect(text).toContain(`state ${moveId}: orientation`);
+    expect(text).toContain(`state ${moveId}: patch`);
     expect(text).toContain("what: find the failure");
     expect(text).toContain("closure: open");
     expect(text).toContain("next:");
@@ -51,11 +51,11 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("reports an unknown anchor", () => {
-    expect(stateOutline(orientationState(), "missing")).toBe("unknown state: missing");
+    expect(stateOutline(patchState(), "missing")).toBe("unknown state: missing");
   });
 
   it("lists a state's turns and supports a range", () => {
-    const state = orientationState();
+    const state = patchState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
     const text = stateTurns(state, moveId);
@@ -67,7 +67,7 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("lists a turn with its status and result", () => {
-    const state = orientationState();
+    const state = patchState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
     const text = stateTurns(state, moveId);
@@ -77,7 +77,7 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("returns an observation body", () => {
-    const state = orientationState();
+    const state = patchState();
     const observation = [...state.nodes.values()].find(
       (node) => node.kind === "observation" && node.label.includes("echo hi"),
     );
@@ -87,12 +87,12 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("renders the observer's state tape as a chronology of reasoning, action and result", () => {
-    const state = orientationState();
+    const state = patchState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
     const text = stateTape(state, moveId);
     expect(text).toContain("request r1:");
-    expect(text).toContain(`state ${moveId}: orientation`);
+    expect(text).toContain(`state ${moveId}: patch`);
     expect(text).toContain("what: find the failure");
     expect(text).toContain("## ");
     expect(text).toContain("action: echo hi");
@@ -106,7 +106,7 @@ describe("outline: the deterministic survey", () => {
     // successful write look like a failed one — and the observer then told the agent to redo it.
     const workspace = makeWorkspace({});
     const executed = execAll(
-      [move("orientation", "write the answer"), write("answer.txt", "42\n")],
+      [move("patch", "write the answer"), write("answer.txt", "42\n")],
       [request()],
       workspace.ws,
       0,
@@ -129,7 +129,7 @@ describe("outline: the deterministic survey", () => {
       },
       {
         type: "add_node",
-        node: { id: "w:move:1", space: "work", kind: "move", label: "do it", payload: { state: "orientation", what: "do it" }, seq: 1 },
+        node: { id: "w:move:1", space: "work", kind: "move", label: "do it", payload: { state: "patch", what: "do it" }, seq: 1 },
       },
       {
         type: "add_edge",
@@ -236,7 +236,7 @@ describe("outline: the deterministic survey", () => {
 
   it("does not clip the state tape's observation bodies", () => {
     // The observer gets the whole body: clipping is insurance for the task tape, not a cap here.
-    const state = orientationState();
+    const state = patchState();
     const moveId = currentMove(state);
     if (moveId === undefined) throw new Error("expected a move");
     expect(stateTape(state, moveId)).not.toContain("chars omitted");
@@ -268,7 +268,7 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("renders the state tape, using the journal before a closure", () => {
-    const { run: opened, workspace } = orientationRun();
+    const { run: opened, workspace } = patchRun();
     const moveId = currentMove(opened.state);
     if (moveId === undefined) throw new Error("expected a move");
     expect(renderedState(opened.state, moveId)).toContain("echo hi");
@@ -279,6 +279,6 @@ describe("outline: the deterministic survey", () => {
   });
 
   it("reports a missing request", () => {
-    expect(outline({ ...orientationState(), rootId: undefined })).toBe("no request");
+    expect(outline({ ...patchState(), rootId: undefined })).toBe("no request");
   });
 });

@@ -6,7 +6,7 @@ import { cleanupWorkspaces, makeWorkspace, move, run } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-function proposer(island: "orientation" | "patch") {
+function proposer(island: "patch" | "verification") {
   let turn = 0;
   return async (): Promise<Proposals> => {
     turn += 1;
@@ -31,7 +31,7 @@ describe("budget grace", () => {
   it("does not extend in a far-from-end state", async () => {
     const workspace = makeWorkspace().ws;
     const result = await runAgent(
-      { propose: proposer("orientation"), workspace, maxTurns: 1, graceTurns: 5 },
+      { propose: proposer("verification"), workspace, maxTurns: 1, graceTurns: 5 },
       { request: { id: "r1", text: "look" } },
     );
     expect(result.stopReason).toBe("max_turns");

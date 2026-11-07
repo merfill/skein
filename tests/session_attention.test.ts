@@ -65,6 +65,32 @@ function stop(moveId: string, why: string, seq: number): Event[] {
   ];
 }
 
+function errorStop(moveId: string, why: string, seq: number): Event[] {
+  return [
+    {
+      type: "add_node",
+      node: {
+        id: `s:${moveId}`,
+        space: "work",
+        kind: "stop",
+        label: why,
+        payload: { why, error: true },
+        seq,
+      },
+    },
+    {
+      type: "add_edge",
+      edge: {
+        id: `es:${moveId}`,
+        from: moveId,
+        to: `s:${moveId}`,
+        kind: "stop",
+        provenance: { kind: "llm" },
+      },
+    },
+  ];
+}
+
 function closedTask(): Event[] {
   return [request(), ...move("m1", "end", 1), ...stop("m1", "make check passed", 2)];
 }
@@ -95,6 +121,18 @@ describe("session attention: derived statuses", () => {
     openUnit(session, "r1", "task", closedTask());
     pushUnit(session, "r1", 0);
     expect(attentionOf(session, "r1")).toBe("completed");
+  });
+
+  it("does not derive completed from an engine error stop", () => {
+    const session = createSession();
+    openUnit(session, "r1", "task", [
+      request(),
+      ...move("m1", "end", 1),
+      ...errorStop("m1", "llm_error: provider unavailable", 2),
+    ]);
+    pushUnit(session, "r1", 0);
+    expect(attentionOf(session, "r1")).toBe("active");
+    expect(attentionOf(session, "r1")).not.toBe("completed");
   });
 
   it("derives completed from a declined request", () => {

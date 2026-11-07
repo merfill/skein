@@ -262,8 +262,8 @@ function tailLines(text: string): string {
 }
 
 // The engine-owned facts for the focused state, rendered by the state's own brief
-// (`src/ir/briefs.ts`). Orientation and the material states get the coordinates plus their
-// environment subset; Verification and Recovery get the environment alone; End gets nothing.
+// (`src/ir/briefs.ts`). The working states get the coordinates plus their environment subset;
+// Verification gets the environment alone; End gets nothing.
 function stateBrief(state: State, island: IslandId): string {
   const probe = probeOf(state);
   if (probe === undefined) return "";
@@ -388,7 +388,7 @@ export function situationOf(state: State): Situation {
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
 // the edit (docs/plans/prompt_stall_investigation_ru.md §6). It is island-aware: a state whose
-// surface has no write tool (legacy Orientation) is told to reply with its result, never to edit.
+// surface has no write tool is told to reply with its result, never to edit.
 // The island of the focused state (the current `move`), when it has one. An authored label
 // (docs/ir_semantics.md §2.5), never a gate.
 export function islandOf(state: State): IslandId | undefined {

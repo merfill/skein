@@ -28,7 +28,7 @@ export function entryCycleScenario(): ObserverScenario {
   const workspace = makeWorkspace({ "src/a.txt": "one\n" }).ws;
   const stop = (why: string): Action => ({ operator: "stop", why });
   const actions: Action[] = [
-    move("orientation", "read the tree"),
+    move("research", "read the tree"),
     run("echo orient"),
     stop("oriented"),
     move("patch", "first fix"),
@@ -50,7 +50,7 @@ export function entryCycleScenario(): ObserverScenario {
 
 export function longStateScenario(): ObserverScenario {
   const workspace = makeWorkspace({ "src/a.txt": "one\n" }).ws;
-  const actions: Action[] = [move("orientation", "survey the files")];
+  const actions: Action[] = [move("patch", "survey the files")];
   for (let index = 1; index <= 14; index += 1) actions.push(run(`echo ${index}`));
   return { name: "long_state", workspace, ...build(actions, workspace) };
 }

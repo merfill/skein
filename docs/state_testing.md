@@ -9,7 +9,9 @@
 > `docs/prompt_state_machine_concept.md` (the state graph), `docs/testing.md`,
 > `docs/ir_semantics.md` §7 (the tape), `AGENTS.md`.
 >
-> **2026-11-03:** `Recovery` is no longer a live state; its work is part of `Research`.
+> **2026-11-06:** `Orientation` and `Recovery` were removed. The live states are Research,
+> Patch, Construction, Verification and End. Dated sections below that mention them are
+> historical records, not the current model.
 
 ## 0. Goal
 
@@ -221,7 +223,7 @@ system — Finish state <Label> — <why from stop>
 | `request` | `REQUEST_INSTRUCTION` — pick the starting state (`move`) or `decline` |
 | `working` | `workingInstruction` — one `user` turn: goal, guess, criterion, plan, request reference (per turn, never stored) |
 | `transition` | `transitionInstruction` — read the `Finish state` line, pick the next state |
-| `terminal` | `NODE_INSTRUCTIONS.terminal` — "This is End. …" |
+| `terminal` | `terminalInstruction` — "This is End." + the state's instruction: the final report as text, no tools |
 
 **What is erased (not shown):**
 - `what` from `move` — not the state's goal (the block shows `island.what` as `Goal:`); if the

@@ -16,6 +16,15 @@ Higher is better, in this order:
 One row per run. The run dir holds the trace (`metrics.json`, `result.json`; opencode also
 writes `opencode.txt`).
 
+> **2026-11-07, Orientation/Recovery removed, transitions from `next[].when`, error-closure, K=3:**
+> short tasks: `log-summary-date-ranges` — **6/6**, 9–11 turns (median **9**),
+> **0.446–0.733₽**; `openssl-selfsigned-cert` — **6/6**, 10–17 (median 11–13),
+> **0.415–0.740₽**; `regex-log` — **6/6 reward=1**, 8–15 (median 8–10), **1.335–2.004₽**;
+> `password-recovery` — **3/3**, 15–28 (median 16), **0.959–3.188₽**, all `R → End`;
+> `fix-git` — **3/3** in the second batch, 12–15 (median 14), **0.517–0.717₽** (the first
+> batch had 1/6 — a premature Research stop → Patch). There is no `Research → Verification`:
+> Verification follows Patch only. See the 2026-11-07 batch.
+
 > **2026-11-04, observer: `state_long` threshold 13 → 9, state-tape render fix, K=9:**
 > `password-recovery` — **9/9 reward=1**, 13–21 turns (median 17), **0.665–2.259₽**
 > (median **1.433₽**), all `request_addressed`. Versus opencode in the same sandbox
@@ -110,6 +119,70 @@ churns through `bash` and burns reasoning. Offline the gap is even wider: **open
 Skein 77,717 (≈5.9×)**. Skein's cost does not reduce to oracle access — it grows precisely from
 its absence. Both Skein columns are the same prompt (Phase 14), so this is an honest net on/off
 pair.
+
+## Batch 2026-11-07 — short Construction/Research after removing Orientation/Recovery
+
+`npx tsx tests/sandbox/matrix.ts <task> --agents skein --nets on,off --repeat 3 --concurrency 6
+--turns 30 --timeout 0`, official verifier. Code: five states (`research`, `patch`,
+`construction`, `verification`, `end`); the transition prompt is rendered from `next[].when`
+(`island.what` descriptions are no longer offered as entry conditions); there is no
+`Research → Verification` — Verification follows Patch only. On `llm_error` the error closure
+runs: the failed state gets a `Finish`, the engine moves to End and the End report is written
+(a fallback from the `Finish` lines if the report call fails). Cap 30, no wall-clock. The agent
+used the network on none of the tasks; net on/off is noise.
+
+### Construction
+
+| task | net | turns | median | ₽ median | route |
+|---|---|---:|---:|---:|---|
+| `log-summary-date-ranges` | on | 12 / 9 / 9 | **9** | 0.492 | C → End |
+| `log-summary-date-ranges` | off | 9 / 9 / 11 | **9** | 0.447 | C → End |
+| `openssl-selfsigned-cert` | on | 11 / 11 / 10 | **11** | 0.429 | C → End |
+| `openssl-selfsigned-cert` | off | 12 / 13 / 17 | 13 | 0.581 | C → End |
+| `regex-log` | on | 10 / 10 / 15 | **10** | 1.669 | C → End |
+| `regex-log` | off | 8 / 8 / 11 | **8** | 1.437 | C → End |
+
+All 18 cells — `reward=1`. `regex-log` neton r2 hit an `llm_error` on the transition **after**
+writing `/app/regex.txt` (invalid tool call, missing `path`) — reward=1 but no End report in that
+run; this motivated the error closure below. `regex-log` cost is reasoning (12–21k), not turns.
+
+Against the older 2026-10-24 measurements:
+
+| task | Skein 07.11 | Skein 24.10 | opencode 24.10 |
+|---|---|---|---|
+| `log-summary` | **9 turns / 0.45–0.49₽** | 13–15 / 0.64–0.70₽ | 4–5 steps |
+| `openssl` | **11–13 / 0.43–0.58₽** | 16–19 / 0.64–0.76₽ | 7–8 steps |
+| `regex-log` | **8–10 / 1.34–1.67₽** | 13–14 / 1.48–1.68₽ | 6–8 steps |
+
+Skein still has more turns than opencode (state boundaries), but wall time is on par
+(`log-summary` 49–53s vs 42–56s; `openssl` 53–64s vs 55–74s). Fresh input is higher (opencode
+caches the long stable transcript better).
+
+### Research
+
+| task | net | turns | median | ₽ median | route |
+|---|---|---:|---:|---:|---|
+| `password-recovery` | off | 28 / 16 / 15 | **16** | 1.148 | R → End |
+| `fix-git` (batch 1) | off | 14 / 15 / 35 | 15 | 0.666 | 2× R → End, 1× R → Patch |
+| `fix-git` (batch 2) | off | 12 / 14 / 15 | **14** | 0.658 | 3× R → End |
+
+- **`password-recovery`: 3/3**, all `R → End`; median 16 against the old 17 (9/9, 1.433₽);
+  opencode — 12 steps / 0.953₽. r1 (28 turns) is the same re-checking outlier inside Research.
+  With `R → V` it was median 28–30 / 1.88–2.25₽.
+- **`fix-git`: 5/6 `R → End`.** The r3 failure in batch 1 is a premature Research stop (found
+  `650dba4`, did not merge) → `R → Patch` → chasing a "defect" → `max_turns`, reward=0. Batch 2
+  is **3/3**, 12–15 turns; the old median was 22 / 0.804₽; opencode — 9 steps. The merge checks
+  (`merge-base`, `diff`, status) stay inside Research; `R → V` is not needed.
+
+### Error closure
+
+`regex-log` neton r2 was replayed offline from the recorded journal: the first call throws the
+same error, the terminal call returns a report. The tape gets
+`Finish state Construction — Saved the regex…`, `Start state End`,
+`Finish state End — <report>`; `stopReason=llm_error`, and the End `stop` carries
+`error: true` (the session sees `abandoned`). When the state is still open, a
+`Finish state X — llm_error: …` appears before End. If the report call also fails, End closes
+with a deterministic fallback report from the `Finish` lines.
 
 ## Batch 2026-11-04 — `password-recovery`: `state_long` threshold 9, state-tape render fix
 

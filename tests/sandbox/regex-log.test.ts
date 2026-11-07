@@ -48,7 +48,7 @@ const GOOD_REGEX = String.raw`(?=.*(?:^|[^0-9A-Za-z])(?:(?:25[0-5]|2[0-4]\d|1?\d
 const BAD_REGEX = String.raw`\d{4}-\d{2}-\d{2}`;
 
 function proposerFor(regex: string) {
-  // The write tool belongs to a productive state (Patch); a write in Orientation is refused.
+  // The write tool belongs to a productive state (Patch).
   const toWork: Action = { operator: "move", state: "patch", what: "write a regex matching the last date on lines with an IPv4 address", done: "the regex is written" };
   const goal: Action = {
     operator: "apply",

@@ -2,10 +2,9 @@
 // returning the finished text. Nothing is assembled from titled blocks elsewhere — the label,
 // the order and the wording live here, so a state's brief is read in one place.
 //
-// Every live working state gets the coordinates plus the toolchain its work runs on (Patch,
-// Research, Construction, Verification, Recovery). Legacy Orientation gets the coordinates only;
-// End gets nothing. The engine already records the root and the repository status, so the request
-// starts directly in a productive state.
+// Every working state gets the coordinates plus the toolchain its work runs on (Patch, Research,
+// Construction, Verification); End gets nothing. The engine already records the root and the
+// repository status, so the request starts directly in a productive state.
 
 import { environmentBrief } from "./environment";
 import { workspaceLines } from "./material";
@@ -36,20 +35,12 @@ export function requestBrief(probe: SessionProbe): string {
   return researchBrief(probe);
 }
 
-export function orientationBrief(probe: SessionProbe): string {
-  return compose(probe, "orientation");
-}
-
 export function patchBrief(probe: SessionProbe): string {
   return compose(probe, "patch");
 }
 
 export function researchBrief(probe: SessionProbe): string {
   return compose(probe, "research");
-}
-
-export function recoveryBrief(probe: SessionProbe): string {
-  return compose(probe, "recovery");
 }
 
 export function constructionBrief(probe: SessionProbe): string {
@@ -66,10 +57,8 @@ export function endBrief(_probe: SessionProbe): string {
 }
 
 export function briefFor(island: IslandId, probe: SessionProbe): string {
-  if (island === "orientation") return orientationBrief(probe);
   if (island === "patch") return patchBrief(probe);
   if (island === "research") return researchBrief(probe);
-  if (island === "recovery") return recoveryBrief(probe);
   if (island === "construction") return constructionBrief(probe);
   if (island === "verification") return verificationBrief(probe);
   return endBrief(probe);

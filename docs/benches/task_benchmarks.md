@@ -35,14 +35,15 @@ The tasks were chosen so that together they cover five kinds of work:
 
 Each task follows a route through Skein's states:
 
-- `O` — Orientation: read the workspace map and the declared acceptance, changing nothing;
-- `L` — Localization: name the artefact and a suspected cause;
-- `R` — Research: describe the situation and the method;
-- `P` — Patch: modify an existing artefact;
-- `Recovery` — recover hidden data with a script and a check;
+- `R` — Research: describe the situation and the method, derive the result from the material or
+  the specification;
+- `P` — Patch: locate the defect in an existing artefact and make the change;
 - `Construction` — build a new artefact and check it against the acceptance;
-- `V` — Verification: build and run the tests;
+- `V` — Verification: check the changed artefact against the acceptance;
 - `End` — close the request.
+
+`Orientation`, `Localization` and `Recovery` were removed (2026-11-03/06). The older sections below
+keep them as historical labels; the five current states are `R`, `P`, `Construction`, `V`, `End`.
 
 The route is not rigid: depending on the task, the agent may skip a state or return to an
 earlier one. The tables below show the typical route, not the exact path of every run.
@@ -141,19 +142,40 @@ number of repeats, and the comparison uses medians.
 
 | task | class | route | status |
 |---|---|---|---|
-| fix-ocaml-gc | Repair | `O→L→P→V→End` | **done** (§4; same-day 10-24, `net off`) |
-| modernize-scientific-stack | Construction | `O→R→Construction→End` | **done** (§5) |
-| regex-log | Construction | `O→R→Construction→End` | **done** (§6) |
-| log-summary-date-ranges | Construction | `O→R→Construction→End` | **done** (§7) |
-| openssl-selfsigned-cert | Construction | `O→R→Construction→End` | **done** (§8) |
-| fix-code-vulnerability | Repair | `O→L→P→V` | **done** (§9) |
-| fix-git | History | `O→L→P→V` | **done** (§10) |
-| git-leak-recovery | Hybrid | `O→R→Recovery→P→V→End` | **done** (§11) |
-| custom-memory-heap-crash | Repair | `O→L→P→V` | **done** (§12, `net off`) |
-| password-recovery | Recovery | `O→R→Recovery→End` | **done** (§13, K=1) |
-| db-wal-recovery | Recovery | `O→R→Recovery→End` | **done** (§14, K=1) |
-| crack-7z-hash | Recovery | `O→R→Recovery→End` | **done** (§15, K=1, `net on`) |
-| cobol-modernization | Construction | `O→R→Construction→End` | **done** (§16, K=1) |
+| fix-ocaml-gc | Repair | `P→V→End` | **done** (§4; 2026-11-06 net off) |
+| modernize-scientific-stack | Construction | `C→End` | **done** (§5) |
+| regex-log | Construction | `C→End` | **done** (§6; 2026-11-07) |
+| log-summary-date-ranges | Construction | `C→End` | **done** (§7; 2026-11-07) |
+| openssl-selfsigned-cert | Construction | `C→End` | **done** (§8; 2026-11-07) |
+| fix-code-vulnerability | Repair | `P→V→End` | **done** (§9) |
+| fix-git | History | `R→End` (sometimes `R→Patch` — premature stop) | **done** (§10; 2026-11-07) |
+| git-leak-recovery | Hybrid | `R→P→V→End` | **done** (§11) |
+| custom-memory-heap-crash | Repair | `P→V→End` | **done** (§12, `net off`) |
+| password-recovery | Recovery | `R→End` | **done** (§13; 2026-11-07) |
+| db-wal-recovery | Recovery | `R→End` | **done** (§14, K=1) |
+| crack-7z-hash | Recovery | `R→End` | **done** (§15, K=1, `net on`) |
+| cobol-modernization | Construction | `C→End` | **done** (§16, K=1) |
+
+The routes are current (five states); the older `O`/`L`/`Recovery` labels in the sections below
+are historical.
+
+### 3.1 Batch 2026-11-07 — short tasks after removing Orientation/Recovery
+
+`tests/sandbox/matrix.ts`, K=3 per network, official verifier, cap 30. Code: five states;
+transitions from `next[].when`; no `Research → Verification`; `llm_error` gets the error
+closure. The agent used no network. Details and the opencode comparison — `best_bench.md`.
+
+| task | net | turns | median | ₽ median | route |
+|---|---|---:|---:|---:|---|
+| `log-summary-date-ranges` | on / off | 9–12 / 9–11 | **9** | 0.447–0.492 | C → End |
+| `openssl-selfsigned-cert` | on / off | 10–11 / 12–17 | 11–13 | 0.429–0.581 | C → End |
+| `regex-log` | on / off | 10–15 / 8–11 | 8–10 | 1.335–1.669 | C → End |
+| `password-recovery` | off | 28 / 16 / 15 | **16** | 1.148 | R → End |
+| `fix-git` (batch 2) | off | 12 / 14 / 15 | **14** | 0.658 | R → End |
+
+All — `reward=1`. `regex-log` neton r2 hit an `llm_error` after writing the artefact (reward=1,
+no End in that run); the error closure now writes the End report. `fix-git` batch 1 was 2/3: one
+premature Research stop → `R→Patch`, no merge, reward=0.
 
 ## 4. fix-ocaml-gc
 

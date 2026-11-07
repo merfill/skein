@@ -45,7 +45,7 @@ function isEngineStatusLine(line: string): boolean {
 }
 
 // Top-level entries, with a file count for directories. No extension histogram and no
-// configuration parsing: both are noise for Orientation.
+// configuration parsing: both are noise for the request turn.
 function entriesOf(files: readonly string[], truncated: { value: boolean }): MaterialEntry[] {
   const kinds = new Map<string, "file" | "dir">();
   const counts = new Map<string, number>();

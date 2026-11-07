@@ -35,15 +35,15 @@
 
 Каждой задаче соответствует маршрут по состояниям Skein:
 
-- `O` — Orientation: прочитать карту рабочего пространства и объявленную приёмку, ничего не
-  меняя;
-- `L` — Localization: назвать артефакт и предполагаемую причину;
-- `R` — Research: описать ситуацию и метод;
-- `P` — Patch: изменить существующий артефакт;
-- `Recovery` — восстановить скрытые данные скриптом с проверкой;
+- `R` — Research: описать ситуацию и метод, вывести результат из материала или спецификации;
+- `P` — Patch: найти дефект в существующем артефакте и внести изменение;
 - `Construction` — построить новый артефакт и проверить его на приёмке;
-- `V` — Verification: собрать и прогнать тесты;
+- `V` — Verification: проверить изменённый артефакт против приёмки;
 - `End` — завершить запрос.
+
+`Orientation`, `Localization` и `Recovery` удалены (2026-11-03/06). В старых разделах ниже они
+остаются историческими обозначениями; текущие пять состояний — `R`, `P`, `Construction`, `V`,
+`End`.
 
 Маршрут не жёсткий: в зависимости от задачи агент может пропустить состояние или вернуться
 назад. В таблицах ниже указан типичный маршрут, а не дословная траектория каждого прогона.
@@ -143,19 +143,39 @@ npx tsx tests/sandbox/opencode-run.ts fix-ocaml-gc --net off
 
 | задача | класс | маршрут | статус |
 |---|---|---|---|
-| fix-ocaml-gc | Repair | `O→L→P→V→End` | **готово** (§4; same-day 10-24, `net off`) |
-| modernize-scientific-stack | Construction | `O→R→Construction→End` | **готово** (§5) |
-| regex-log | Construction | `O→R→Construction→End` | **готово** (§6) |
-| log-summary-date-ranges | Construction | `O→R→Construction→End` | **готово** (§7) |
-| openssl-selfsigned-cert | Construction | `O→R→Construction→End` | **готово** (§8) |
-| fix-code-vulnerability | Repair | `O→L→P→V` | **готово** (§9) |
-| fix-git | History | `O→L→P→V` | **готово** (§10) |
-| git-leak-recovery | Hybrid | `O→R→Recovery→P→V→End` | **готово** (§11) |
-| custom-memory-heap-crash | Repair | `O→L→P→V` | **готово** (§12, `net off`) |
-| password-recovery | Recovery | `O→R→Recovery→End` | **готово** (§13, K=1) |
-| db-wal-recovery | Recovery | `O→R→Recovery→End` | **готово** (§14, K=1) |
-| crack-7z-hash | Recovery | `O→R→Recovery→End` | **готово** (§15, K=1, `net on`) |
-| cobol-modernization | Construction | `O→R→Construction→End` | **готово** (§16, K=1) |
+| fix-ocaml-gc | Repair | `P→V→End` | **готово** (§4; 2026-11-06 net off) |
+| modernize-scientific-stack | Construction | `C→End` | **готово** (§5) |
+| regex-log | Construction | `C→End` | **готово** (§6; 2026-11-07) |
+| log-summary-date-ranges | Construction | `C→End` | **готово** (§7; 2026-11-07) |
+| openssl-selfsigned-cert | Construction | `C→End` | **готово** (§8; 2026-11-07) |
+| fix-code-vulnerability | Repair | `P→V→End` | **готово** (§9) |
+| fix-git | History | `R→End` (иногда `R→Patch` — преждевременный stop) | **готово** (§10; 2026-11-07) |
+| git-leak-recovery | Hybrid | `R→P→V→End` | **готово** (§11) |
+| custom-memory-heap-crash | Repair | `P→V→End` | **готово** (§12, `net off`) |
+| password-recovery | Recovery | `R→End` | **готово** (§13; 2026-11-07) |
+| db-wal-recovery | Recovery | `R→End` | **готово** (§14, K=1) |
+| crack-7z-hash | Recovery | `R→End` | **готово** (§15, K=1, `net on`) |
+| cobol-modernization | Construction | `C→End` | **готово** (§16, K=1) |
+
+Маршруты — текущие (пять состояний); старые `O`/`L`/`Recovery` в разделах ниже — исторические.
+
+### 3.1 Батч 2026-11-07 — короткие задачи после сноса Orientation/Recovery
+
+`tests/sandbox/matrix.ts`, K=3 на сеть, официальный verifier, cap 30. Код: пять состояний;
+переход из `next[].when`; `Research → Verification` нет; на `llm_error` — error-closure.
+Сеть агентом не использовалась. Подробности и сравнение с opencode — `best_bench_ru.md`.
+
+| задача | net | ходы | median | ₽ median | маршрут |
+|---|---|---:|---:|---:|---|
+| `log-summary-date-ranges` | on / off | 9–12 / 9–11 | **9** | 0.447–0.492 | C → End |
+| `openssl-selfsigned-cert` | on / off | 10–11 / 12–17 | 11–13 | 0.429–0.581 | C → End |
+| `regex-log` | on / off | 10–15 / 8–11 | 8–10 | 1.335–1.669 | C → End |
+| `password-recovery` | off | 28 / 16 / 15 | **16** | 1.148 | R → End |
+| `fix-git` (батч 2) | off | 12 / 14 / 15 | **14** | 0.658 | R → End |
+
+Все — `reward=1`. `regex-log` neton r2 — `llm_error` после записи артефакта (reward=1, без End
+в том прогоне); error-closure теперь пишет End-отчёт. `fix-git` батч 1 — 2/3: один
+преждевременный stop Research → `R→Patch`, merge не сделан, reward=0.
 
 ## 4. fix-ocaml-gc
 

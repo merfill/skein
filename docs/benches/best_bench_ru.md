@@ -16,6 +16,15 @@
 Один прогон — одна строка. В каталоге прогона лежит трасса (`metrics.json`, `result.json`;
 opencode пишет ещё `opencode.txt`).
 
+> **2026-11-07, Orientation/Recovery удалены, переход из `next[].when`, error-closure, K=3:**
+> короткие задачи: `log-summary-date-ranges` — **6/6**, 9–11 ходов (median **9**),
+> **0.446–0.733₽**; `openssl-selfsigned-cert` — **6/6**, 10–17 (median 11–13),
+> **0.415–0.740₽**; `regex-log` — **6/6 reward=1**, 8–15 (median 8–10), **1.335–2.004₽**;
+> `password-recovery` — **3/3**, 15–28 (median 16), **0.959–3.188₽**, все `R → End`;
+> `fix-git` — **3/3** во втором батче, 12–15 (median 14), **0.517–0.717₽** (в первом батче
+> 1/6 — преждевременный stop Research → Patch). `Research → Verification` больше нет:
+> Verification только после Patch. См. «Батч 2026-11-07».
+
 > **2026-11-04, наблюдатель: порог `state_long` 13 → 9, фикс рендера ленты, K=9:**
 > `password-recovery` — **9/9 reward=1**, 13–21 ходов (median 17), **0.665–2.259₽**
 > (median **1.433₽**), все `request_addressed`. Против opencode в той же песочнице
@@ -96,6 +105,70 @@ goal-into-move, 49 шагов), **`19-02`** (net on, 46 шагов, 6.97₽), **
 opencode-строки: **`2026-10-09T16-01-20`** (net on, 33 шага, 434s), **`2026-10-11T06-30-03`**
 (net on, 33, 314s) и **`2026-10-11T06-52-33`** (net off, 24, 279s); их трассы остаются в
 каталогах.
+
+## Батч 2026-11-07 — короткие Construction/Research после сноса Orientation/Recovery
+
+`npx tsx tests/sandbox/matrix.ts <task> --agents skein --nets on,off --repeat 3 --concurrency 6
+--turns 30 --timeout 0`, официальный verifier. Код: пять состояний (`research`, `patch`,
+`construction`, `verification`, `end`); переходный промпт рендерится из `next[].when`
+(описания `island.what` больше не выдаются за условия); `Research → Verification` нет —
+Verification только после Patch. На `llm_error` работает error-closure: `Finish` павшего
+состояния + engine-owned `move` в End + End-отчёт (fallback из `Finish`-строк). Cap 30, без
+wall-clock. Сеть агент не использовал ни в одной задаче; net on/off — шум.
+
+### Construction
+
+| задача | net | ходы | median | ₽ median | маршрут |
+|---|---|---:|---:|---:|---|
+| `log-summary-date-ranges` | on | 12 / 9 / 9 | **9** | 0.492 | C → End |
+| `log-summary-date-ranges` | off | 9 / 9 / 11 | **9** | 0.447 | C → End |
+| `openssl-selfsigned-cert` | on | 11 / 11 / 10 | **11** | 0.429 | C → End |
+| `openssl-selfsigned-cert` | off | 12 / 13 / 17 | 13 | 0.581 | C → End |
+| `regex-log` | on | 10 / 10 / 15 | **10** | 1.669 | C → End |
+| `regex-log` | off | 8 / 8 / 11 | **8** | 1.437 | C → End |
+
+Все 18 клеток — `reward=1`. `regex-log` neton r2: `llm_error` на transition **после** записи
+`/app/regex.txt` (невалидный tool-call, `path` missing) — reward=1, но End-отчёта в том прогоне
+не было; это и стало мотивом error-closure (ниже). Стоимость `regex-log` — не ходы, а reasoning
+(12–21k): модель долго строит regex.
+
+Против старых замеров (2026-10-24, тот же класс задач):
+
+| задача | Skein 07.11 | Skein 24.10 | opencode 24.10 |
+|---|---|---|---|
+| `log-summary` | **9 ходов / 0.45–0.49₽** | 13–15 / 0.64–0.70₽ | 4–5 шагов |
+| `openssl` | **11–13 / 0.43–0.58₽** | 16–19 / 0.64–0.76₽ | 7–8 шагов |
+| `regex-log` | **8–10 / 1.34–1.67₽** | 13–14 / 1.48–1.68₽ | 6–8 шагов |
+
+По ходам Skein всё ещё выше opencode (state-boundaries), по wall time — уже на уровне
+(`log-summary` 49–53s против 42–56s; `openssl` 53–64s против 55–74s). Fresh input выше
+(opencode лучше кэширует длинный стабильный транскрипт).
+
+### Research
+
+| задача | net | ходы | median | ₽ median | маршрут |
+|---|---|---:|---:|---:|---|
+| `password-recovery` | off | 28 / 16 / 15 | **16** | 1.148 | R → End |
+| `fix-git` (батч 1) | off | 14 / 15 / 35 | 15 | 0.666 | 2× R → End, 1× R → Patch |
+| `fix-git` (батч 2) | off | 12 / 14 / 15 | **14** | 0.658 | 3× R → End |
+
+- **`password-recovery`: 3/3**, все `R → End`; median 16 против старых 17 (9/9, 1.433₽);
+  opencode — 12 шагов / 0.953₽. r1 (28 ходов) — тот же outlier повторных проверок внутри
+  Research. Отдельного Verification больше нет: с ним было median 28–30 / 1.88–2.25₽.
+- **`fix-git`: 5/6 `R → End`.** Провал r3 в первом батче — преждевременный stop Research
+  (нашёл `650dba4`, не сделал merge) → `R → Patch` → поиск «дефекта» → `max_turns`, reward=0.
+  Второй батч — **3/3**, 12–15 ходов; старый median 22 / 0.804₽; opencode — 9 шагов.
+  Merge-проверки (`merge-base`, `diff`, статус) остаются внутри Research; `R → V` не нужен.
+
+### Error-closure
+
+`regex-log` neton r2 воспроизведён офлайн на записанном журнале: первый вызов бросает ту же
+ошибку, terminal-вызов отдаёт отчёт. Лента получает
+`Finish state Construction — Saved the regex…`, `Start state End`,
+`Finish state End — <report>`; `stopReason=llm_error`, End-`stop` помечен `error: true`
+(сессия — `abandoned`). Если состояние открыто, перед End появляется ещё
+`Finish state X — llm_error: …`. Если падает и report-вызов — End закрывается детерминированным
+fallback-отчётом из `Finish`-строк.
 
 ## Батч 2026-11-04 — `password-recovery`: порог `state_long` 9, фикс рендера ленты
 

@@ -33,9 +33,9 @@ Memory inside one request works like this:
 - **"Read this file, we will need it."** Reading is an ordinary action, but after `stop` the file
   body leaves the tape. The next state or the next request does not see it: the fact is in the
   tree, but nothing points to it.
-- **Reading as a standalone request.** The startable state is `orientation`; the further path
-  depends on the result (an artifact or a situation). A request "read README" is either declined
-  or forced into a foreign goal.
+- **Reading as a standalone request.** The request starts directly in `patch`, `research` or
+  `construction`; the further path depends on the result (an artifact or a situation). A request
+  "read README" is either declined or forced into a foreign goal.
 - **"I changed my mind" / "the defect is not there".** Logos does not understand language: it
   cannot classify a free-form utterance and does not know what to do with it.
 - **"Cancel everything."** There is no session-level operation: cancel execution and leave the
@@ -186,6 +186,11 @@ same session unit as the `start`. A report closes nothing and starts nothing.
 tool call nor text (`empty_reply`), or the loop reaches its safety cap (`max_turns`). The session
 journal records the reason; the unit stays suspended and L0 shows `no decision: …`. It is not a
 silent drop.
+
+**Error closure.** A persistent model error still produces a result: the engine closes the state
+where the call failed, enters End and writes a report (a fallback from the `Finish` lines if the
+report call also fails). The stop is marked `error`, so the task unit is `abandoned`, not
+`completed`.
 
 **Request reformulation.** A semantic action of the session agent: based on the utterance and the
 traces, compose the text of the new task so that it carries the needed context. The result is an

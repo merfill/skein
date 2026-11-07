@@ -75,7 +75,7 @@ function buildSteps(): Step[] {
   // A fresh state (declared, no goal yet): concretize its work.
   {
     const { ws } = makeWorkspace(DEFAULT_FILES);
-    const moved = exec(move("orientation", "map the repo"), [request("Fix the failing test.")], ws);
+    const moved = exec(move("patch", "map the repo"), [request("Fix the failing test.")], ws);
     steps.push({
       name: "move-concretize",
       context: projectAt(moved.events),

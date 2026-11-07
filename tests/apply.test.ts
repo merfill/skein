@@ -10,7 +10,7 @@ afterEach(cleanupWorkspaces);
 
 function openState() {
   const workspace = makeWorkspace();
-  return execAll([move("orientation", "look around"), run("echo hi")], [request()], workspace.ws, 0);
+  return execAll([move("patch", "look around"), run("echo hi")], [request()], workspace.ws, 0);
 }
 
 describe("apply: hint and memo", () => {
@@ -147,7 +147,7 @@ describe("projection: hint and memo", () => {
 
   it("drops the hint after the state closes but keeps the memo", () => {
     const workspace = makeWorkspace();
-    const opened = execAll([move("orientation", "look around"), run("echo hi")], [request()], workspace.ws, 0);
+    const opened = execAll([move("patch", "look around"), run("echo hi")], [request()], workspace.ws, 0);
     const moveId = currentMove(opened.state);
     if (moveId === undefined) throw new Error("expected a move");
     const hint = applyReaction({

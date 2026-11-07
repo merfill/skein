@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   briefFor,
   constructionBrief,
-  orientationBrief,
   patchBrief,
   researchBrief,
 } from "../src/ir/briefs";
@@ -72,7 +71,7 @@ function probeEvent(probe: SessionProbe): Event {
   };
 }
 
-function move(state: "orientation" | "research" | "localization" | "patch" | "recovery" | "construction", id = "m1", from = "r1", seq = 2): Event[] {
+function move(state: "research" | "patch" | "construction" | "verification", id = "m1", from = "r1", seq = 2): Event[] {
   return [
     {
       type: "add_node",
@@ -144,8 +143,7 @@ describe("environment probe", () => {
     expect(parsed.found[0]?.version).toBeUndefined();
   });
 
-  it("gives Orientation no environment block", () => {
-    expect(environmentBrief(environment, "orientation")).toBe("");
+  it("gives the request turn no environment block", () => {
     expect(environmentBrief(environment)).toBe("");
   });
 
@@ -160,11 +158,6 @@ describe("environment probe", () => {
     expect(research).not.toContain("sqlite3");
     expect(research).not.toContain("missing:");
     expect(research).not.toContain("7z");
-
-    const recovery = environmentBrief(environment, "recovery");
-    expect(recovery).toContain("Installed interpreters:");
-    expect(recovery).not.toContain("Version-control tools:");
-    expect(recovery).not.toContain("Workspace root:");
 
     // Patch locates the defect and changes the artifact: the search tools plus the toolchain
     // the change is built with.
@@ -212,8 +205,6 @@ describe("environment probe", () => {
 
   it("keeps the environment probe separate from the material coordinates", () => {
     const probe: SessionProbe = { environment, material };
-    expect(orientationBrief(probe)).not.toContain("Installed interpreters:");
-    expect(orientationBrief(probe)).toContain("Workspace root: /app");
     expect(researchBrief(probe)).toContain("Installed interpreters:");
     expect(researchBrief(probe)).toContain("Workspace repository: git at /app/ocaml");
   });
@@ -258,7 +249,7 @@ describe("state briefs", () => {
   it("gives End an empty brief and dispatches by island", () => {
     expect(briefFor("end", probe)).toBe("");
     expect(briefFor("research", probe)).toBe(researchBrief(probe));
-    expect(briefFor("orientation", probe)).toBe(orientationBrief(probe));
+    expect(briefFor("patch", probe)).toBe(patchBrief(probe));
   });
 });
 
@@ -366,21 +357,6 @@ describe("material probe", () => {
 });
 
 describe("session probe projection", () => {
-  it("renders the coordinates as a system brief inside Orientation, without the environment", () => {
-    const probe: SessionProbe = { environment, material };
-    const context = project(fold([request(), probeEvent(probe), ...move("orientation")]));
-    expect(context.history[0]).toMatchObject({ role: "user", text: "task" });
-    const start = context.history.find(
-      (message) => message.role === "system" && message.text.includes("Start state Orientation"),
-    );
-    expect(start?.text).toBe("Start state Orientation");
-    const brief = context.history.find(
-      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
-    );
-    expect(brief?.text).toContain("Workspace repository: git at /app/ocaml");
-    expect(brief?.text).not.toContain("Installed interpreters:");
-  });
-
   it("carries the coordinates into Patch and Research", () => {
     const probe: SessionProbe = { environment, material };
     const patchContext = project(fold([request(), probeEvent(probe), ...move("patch")]));
@@ -399,16 +375,6 @@ describe("session probe projection", () => {
     expect(researchBriefText?.text).toContain("Workspace repository: git at /app/ocaml");
     expect(researchBriefText?.text).toContain("Installed interpreters: perl 5.38.2, python3 3.11.5.");
     expect(researchBriefText?.text).not.toContain("entries:");
-  });
-
-  it("gives Recovery its coordinates and no Orientation listing", () => {
-    const probe: SessionProbe = { environment, material };
-    const recovery = project(fold([request(), probeEvent(probe), ...move("recovery")]));
-    const brief = recovery.history.find(
-      (message) => message.role === "system" && message.text.startsWith("Workspace root:"),
-    );
-    expect(brief?.text).toContain("Installed interpreters:");
-    expect(brief?.text).not.toContain("entries:");
   });
 
   it("gives Patch the coordinates and the toolchain the change is built with", () => {
@@ -442,7 +408,7 @@ describe("session probe projection", () => {
     const events = [
       request(),
       probeEvent(probe),
-      ...move("orientation", "m1", "r1", 2),
+      ...move("patch", "m1", "r1", 2),
       ...stop("m1", 3),
       ...move("research", "m2", "r1", 4),
     ];

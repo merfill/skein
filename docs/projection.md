@@ -132,7 +132,7 @@ parts, and only the first two are structural:
 - **one turn per transition.** Entering a state is a turn (a model call); a walk with more
   states costs more turns than a single pass. This is the price of explicit decision points and
   of the projection dropping stale content instead of carrying it;
-- **re-orientation reasoning.** The model has to reconcile "what was → why here → what to do".
+- **re-framing reasoning.** The model has to reconcile "what was → why here → what to do".
   This one is **not** inevitable: it is a property of the state's spec, not of transitions as
   such. A crisp `Goal`, brief, instruction, criterion and a `Finish state` line cost little; a
   thin state (a spec-only Construction after `O→C`) invites the model to go exploring. Measure

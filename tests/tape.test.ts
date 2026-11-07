@@ -101,7 +101,7 @@ describe("the tape: request and state", () => {
   it("move renders the state, then the first plan item as a call/result pair", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 1, output: "boom" }, "make test"),
       result("eo", "a1", "o1"),
@@ -117,7 +117,7 @@ describe("the tape: request and state", () => {
       "assistant",
       "tool",
     ]);
-    expect(context.history[1]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toBe("Start state Patch");
     expect(context.what).toBe("green");
     expect(context.history[2]?.text).toBe("[a1] make test");
     expect(context.history[3]?.text).toBe("[o1] exit 1\nboom");
@@ -139,7 +139,7 @@ describe("the tape: commands and their outcomes", () => {
   it("a successful continuation appends a new call/observation pair", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       action("a1", "make test", 3),
       observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
       result("e1", "a1", "o1"),
@@ -163,7 +163,7 @@ describe("the tape: commands and their outcomes", () => {
   it("renders an edit's mutate (no observation) as a mutated file", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       action("a1", "edit src/a.ts", 3),
       { type: "add_edge", edge: edge("em", "a1", "file:src/a.ts", "mutates", llm) },
       { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
@@ -176,7 +176,7 @@ describe("the tape: commands and their outcomes", () => {
   it("renders a refused command as an observation with the reason", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       action("a1", "read src/a.ts", 3),
       observation("o1", 4, { failed: true, refused: true, output: "repeated_action: o0 already has it" }),
       result("e1", "a1", "o1"),
@@ -189,7 +189,7 @@ describe("the tape: commands and their outcomes", () => {
   it("renders each turn in order without an alternative marker", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       action("a1", "run one", 3),
       observation("o1", 4, { command: "run one", exitCode: 1 }, "run one"),
       result("e1", "a1", "o1"),
@@ -250,12 +250,12 @@ describe("the tape: edge cases", () => {
   it("a declared state without a plan renders move + confirmation", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "map", 1),
+      ...moved("m1", "patch", "map", 1),
     ]);
     const context = project(focused(state));
     expect(context.situation).toBe("working");
     expect(roles(context.history)).toEqual(["user", "system"]);
-    expect(context.history[1]?.text).toBe("Start state Orientation");
+    expect(context.history[1]?.text).toBe("Start state Patch");
   });
 });
 
@@ -263,7 +263,7 @@ describe("the tape: recall and determinism", () => {
   it("renders a recall as an action + observation under the state's plan (a node, not transient)", () => {
     const state = fold([
       request("do it", 0),
-      ...moved("m1", "orientation", "green", 1),
+      ...moved("m1", "patch", "green", 1),
       {
         type: "add_node",
         node: workNode("a1", "action", "recall { id: obs:5 }", 3, {
@@ -295,7 +295,7 @@ describe("the tape: recall and determinism", () => {
 function parentEvents(): Event[] {
   return [
     request("do it", 0),
-    ...moved("m1", "orientation", "green", 1),
+    ...moved("m1", "patch", "green", 1),
     action("a1", "make test", 3),
     observation("o1", 4, { command: "make test", exitCode: 0 }, "make test"),
     result("e1", "a1", "o1"),

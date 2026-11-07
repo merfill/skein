@@ -35,7 +35,7 @@ describe("frontier (applicable)", () => {
 
   it("a declared state offers apply and stop (work it; no criterion gate)", () => {
     const { ws } = makeWorkspace({});
-    const moved = exec(move("orientation", "map the repo"), [request()], ws);
+    const moved = exec(move("patch", "map the repo"), [request()], ws);
     const moveId = currentFocus(moved.state)!;
     expect(moved.state.nodes.get(moveId)?.kind).toBe("move");
     expect(applicable(moved.state, moveId)).toMatchObject({

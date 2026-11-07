@@ -284,7 +284,7 @@
   только пока открыто; `move.what` идёт в per-turn хвост — *устарело 2026-10-27: хвост больше не
   несёт `what`; цель — `island.what`, а `move.what` — догадка*). Добавлено поле острова
   `instruction`
-  (`src/ir/islands.ts`) — «как действовать в состоянии»: Orientation читает доки проекта;
+  (`src/ir/islands.ts`) — «как действовать в состоянии»: состояние читает нужные ему доки;
   Localization сверяет подозрительный код с **сиблингами** (другими обходами той же структуры) и
   не гонится за upstream-эталоном. Также тронуты критерий `turnInstruction` и описание `stop`.
   Пошаговая методика и обоснование — `docs/state_testing_ru.md`.
@@ -304,9 +304,9 @@
   - Сознательно убрано: «причина — та, что названа в `Finish` предыдущего состояния», «не
     выводи причину заново», «не выбирай другую». Из-за них неверная причина становилась
     неисправимой.
-  - `patch.next` = Verification, Research (коррекция ситуации); `orientation.next` → `patch`;
-    `research.next` → `patch`; `verification.next` → только `patch` (ветка `Localization`
-    убрана). B4 рендерится из `ISLANDS`, поэтому следует без правки блока.
+  - `patch.next` = Verification, Research (коррекция ситуации); `research.next` = End, Patch;
+    `verification.next` = End, Patch. Переходный промпт рендерится из `ISLANDS`, поэтому
+    следует без правки блока.
   - Блок пробы для Patch — `vcs, build, compilers, interpreters` (он и ищет в материале, и
     собирает изменение); `src/ir/project.ts` рендерит карту + environment для
     `localization`/`research`/`patch` одной ветвью.

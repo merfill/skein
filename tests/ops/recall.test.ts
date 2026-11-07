@@ -22,7 +22,7 @@ afterEach(cleanupWorkspaces);
 // open state (recall is work of an open state).
 function seeded() {
   const { ws } = makeWorkspace(DEFAULT_FILES);
-  const read1 = execAll([move("orientation", "go"), read("src/sum.mjs")], [request()], ws);
+  const read1 = execAll([move("patch", "go"), read("src/sum.mjs")], [request()], ws);
   const observationId = read1.outcome.turn.nodeId!;
   const actionId = [...read1.state.nodes.values()].find((n) => n.kind === "action")!.id;
   return { ws, events: read1.events, state: read1.state, observationId, actionId };

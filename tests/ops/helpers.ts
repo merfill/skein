@@ -65,18 +65,14 @@ export function classification(action: Action, events: readonly Event[]): Classi
   return classify(action, fold(events));
 }
 
-// Legacy journals and the tape tests built from them still name Orientation; a live `move`
-// cannot target it anymore, so the helper accepts it only to construct those fixtures directly.
-type TestIsland = LiveIslandId | "orientation";
-
 // Declare a state (the transition) with its goal text; `done` defaults to the island's criterion.
-export function move(state: TestIsland = "orientation", what = "do it"): Action {
-  return { operator: "move", state: state as unknown as LiveIslandId, what, done: ISLANDS[state].criterion };
+export function move(state: LiveIslandId = "patch", what = "do it"): Action {
+  return { operator: "move", state, what, done: ISLANDS[state].criterion };
 }
 
 // A state plus its first plan item, as one turn pair (the move, then the first `apply` that
 // seeds the plan).
-export function withGoal(what: string, command?: string, state: TestIsland = "orientation"): Action[] {
+export function withGoal(what: string, command?: string, state: LiveIslandId = "patch"): Action[] {
   return [move(state, what), run(command ?? "true")];
 }
 

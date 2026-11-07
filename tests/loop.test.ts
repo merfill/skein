@@ -60,7 +60,7 @@ function moveIdOf(context: Context | undefined): string | undefined {
 function open(what = "green"): Event[] {
   return [
     { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
-    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: what, payload: { state: "orientation", what }, seq: 1 } },
+    { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: what, payload: { state: "patch", what }, seq: 1 } },
     { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
     { type: "descend", node: "m1" },
   ];
@@ -227,7 +227,7 @@ describe("classify", () => {
     };
     const moved = fold([
       req,
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "orientation", what: "locate" }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "patch", what: "locate" }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
       { type: "descend", node: "m1" },
     ]);
@@ -277,7 +277,7 @@ describe("executeAction", () => {
     const workspace = fsWorkspace(setup("off-by-one"));
     const root = fold([
       { type: "add_node", node: { id: "r1", space: "work", kind: "request", label: "t", payload: { text: "t" }, seq: 0 } },
-      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "orientation", what: "locate" }, seq: 1 } },
+      { type: "add_node", node: { id: "m1", space: "work", kind: "move", label: "locate", payload: { state: "patch", what: "locate" }, seq: 1 } },
       { type: "add_edge", edge: { id: "em", from: "r1", to: "m1", kind: "move", provenance: { kind: "llm" } } },
       { type: "descend", node: "m1" },
     ]);
@@ -1082,9 +1082,9 @@ describe("runAgent", () => {
           kind: "move",
           label: "green",
           payload: {
-            state: "orientation",
+            state: "patch",
             what: "green",
-            call: { name: "move", args: { state: "orientation", what: "green" } },
+            call: { name: "move", args: { state: "patch", what: "green" } },
           },
           seq: 1,
         },
@@ -1099,7 +1099,7 @@ describe("runAgent", () => {
     expect(context.situation).toBe("working");
     expect(context.history[0]?.role).toBe("user"); // the request leads the tape
     expect(context.history[1]?.role).toBe("system");
-    expect(context.history[1]?.text).toContain("Start state Orientation");
+    expect(context.history[1]?.text).toContain("Start state Patch");
     const texts = context.history.map((message) => message.text).join("\n");
     expect(texts).toContain("run build");
     // The state's goal is projected from the move, not stored as a tape turn.

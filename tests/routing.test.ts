@@ -42,23 +42,26 @@ describe("routing: the corrective Patch ↔ Research edge", () => {
     expect(context.island).toBe("patch");
 
     const instruction = tail(context);
-    expect(instruction).toContain("Choose Verification when the change is applied");
+    expect(instruction).toContain("- Verification — the change is applied, and the edited lines read back.");
     expect(instruction).toContain(
-      "Choose Research only when the work turns out to be a situation, not a defect to locate and fix.",
+      "- Research — the work turns out to be a situation, not a defect to locate and fix.",
     );
-    expect(instruction).toContain("Next states from Patch:");
-    expect(instruction).toContain("- Research —");
+    expect(instruction).toContain("Choose exactly one next state:");
     expect(instruction).not.toContain("Recovery");
+    expect(instruction).not.toContain("Orientation");
   });
 
-  it("a finished Research offers Patch as a code-defect correction", () => {
+  it("a finished Research offers End and Patch by their conditions", () => {
     const { context } = finished("research", "this is a code defect to locate");
     expect(context.situation).toBe("transition");
     expect(context.island).toBe("research");
 
     const instruction = tail(context);
-    expect(instruction).toContain("Choose Patch when the work is a code defect to locate and fix.");
-    expect(instruction).toContain("- Patch —");
+    expect(instruction).toContain(
+      "- End — the required result exists in its declared form and matches the material or the request.",
+    );
+    expect(instruction).toContain("- Patch — the work is a code defect not yet located or fixed.");
+    expect(instruction).not.toContain("Verification");
     expect(instruction).not.toContain("Localization");
   });
 
@@ -104,7 +107,7 @@ describe("routing: the corrective Patch ↔ Research edge", () => {
       .join("\n");
     expect(stateText).not.toContain("Choose Research");
     expect(stateText).not.toContain("Choose Verification");
-    expect(transitionInstruction("research")).toContain("a code defect to locate");
+    expect(transitionInstruction("research")).toContain("a code defect not yet located or fixed");
   });
 });
 
@@ -121,7 +124,7 @@ describe("routing: Localization merged into Patch", () => {
   });
 
   it("a failed Verification returns to Patch, not to Localization", () => {
-    expect(transitionInstruction("verification")).toContain("choose Patch");
+    expect(transitionInstruction("verification")).toContain("- Patch — the acceptance fails.");
     expect(transitionInstruction("verification")).not.toContain("Choose Localization");
   });
 
