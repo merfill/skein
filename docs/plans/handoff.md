@@ -4,6 +4,27 @@
 > Отправная точка — `docs/session_concepts.md`/`_ru.md`, `docs/plans/tui_plan*` и планы
 > `docs/plans/session_{agent,driver,interrupt}_plan*`.
 
+## 2026-11-07 — Provider layer (уровень 0), maxTurns 80
+
+- **maxTurns по умолчанию 80**: `settings`, CLI (и интерактивная задача), sandbox/bench,
+  `.env.example`, `docs/testing.md`, README.
+- **Каталог провайдеров** (`src/providers/presets.ts`): RouterAI, OpenRouter, Google AI Studio,
+  Groq, Cerebras, Mistral, GitHub Models, DeepSeek, OpenAI, Ollama, LM Studio, vLLM, Custom.
+  Только OpenAI-compatible; нативные Anthropic/Google и models.dev — после 1.0.
+- **Файлы**: `~/.config/skein/config.json` (provider/model/baseURL, без секретов) и
+  `~/.local/share/skein/auth.json` (ключи, 0600); override `SKEIN_CONFIG_DIR`/`SKEIN_DATA_DIR`.
+  Приоритет: CLI → env → config → preset. Старые `SKEIN_API_URL`/`SKEIN_API_KEY`/`SKEIN_MODEL`
+  работают; `SKEIN_API_URL` без `SKEIN_PROVIDER` = `custom`.
+- **CLI**: `auth login/list/logout`, `models`, `doctor`, `--provider/--model/--base-url`,
+  `--help/--version`. Первый запуск без конфига предлагает локальные рантаймы и free-tier.
+- **TUI**: `/model` — список моделей, `/model <id>` — переключение на лету (со следующего хода,
+  с записью в конфиг).
+- **Совместимость**: `transformBody` добавляет reasoning только для routerai/openrouter/deepseek;
+  остальным тело не трогаем, чтобы не ломать OpenAI/Groq/локальные.
+- **Тесты**: `providers_config`, `providers_probe`, `providers_auth` (mock fetch, без живых
+  вызовов). Офлайн **630 passed / 40 skipped**, typecheck чистый.
+- **Доки**: `docs/providers.md` + `_ru`, README, `.env.example`.
+
 ## 2026-11-07 — Esc: пауза, выход в сессию, отмена
 
 - **Esc — пауза, не IR-операция.** Модельный вызов абортится, выполняющийся tool доходит до

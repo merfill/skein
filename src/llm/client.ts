@@ -35,10 +35,20 @@ export function reasoningBody(effort: string): Record<string, unknown> {
 // both fields on every assistant tool turn in thinking mode ("must be passed back to the
 // API"). The reasoning itself already rides as an AI SDK `reasoning` part and is serialized
 // by the provider; this only fills the absent/empty cases.
+//
+// Other providers get the body untouched: their reasoning wire format differs, and unknown
+// fields may be rejected. The default keeps the historical RouterAI behaviour for callers
+// that do not know the provider.
 export function transformBody(
   body: Record<string, unknown>,
   effort: string,
+  providerId = "routerai",
 ): Record<string, unknown> {
+  if (providerId === "openrouter") {
+    return effort === "none" ? body : { ...body, reasoning: { effort } };
+  }
+  if (providerId !== "routerai" && providerId !== "deepseek") return body;
+
   const out: Record<string, unknown> = { ...body, ...reasoningBody(effort) };
   const messages = out.messages;
   if (!Array.isArray(messages)) return out;
@@ -64,7 +74,8 @@ export function createChatModel(settings: Settings = loadSettings()): LanguageMo
     baseURL: settings.apiUrl,
     apiKey: settings.apiKey,
     includeUsage: true,
-    transformRequestBody: (body) => transformBody(body, settings.reasoningEffort),
+    transformRequestBody: (body) =>
+      transformBody(body, settings.reasoningEffort, settings.providerId ?? "routerai"),
   });
   return provider(settings.model);
 }

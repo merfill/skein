@@ -49,12 +49,21 @@ import {
 } from "./panels";
 import type { Focus, TraceEntry } from "./types";
 
+export interface ModelChange {
+  deps: SessionTurnDeps;
+  label: string;
+}
+
 export interface TuiAppProps {
   deps: SessionTurnDeps;
   telemetry: MemoryTelemetry;
   workspace: string;
   model: string;
   session?: SessionState;
+  // Live model switching: the CLI rebuilds the model and every proposer, and returns the new
+  // dependencies. Absent when the host does not configure providers.
+  onModelChange?: (model: string) => Promise<ModelChange | { error: string }>;
+  listModels?: () => Promise<string[]>;
 }
 
 interface CompletionView {
@@ -113,6 +122,7 @@ export function TuiApp(props: TuiAppProps) {
   const modelStarts = useRef(new Map<string, number>());
   const logRef = useRef<SessionLog | null>(null);
   const filesRef = useRef<string[] | null>(null);
+  const depsRef = useRef(deps);
 
   const [tick, setTick] = useState(0);
   const [trace, setTrace] = useState<TraceEntry[]>([]);
@@ -127,6 +137,7 @@ export function TuiApp(props: TuiAppProps) {
   const [observerNotice, setObserverNotice] = useState<string | undefined>();
   const [mouseCapture, setMouseCapture] = useState(process.env.SKEIN_MOUSE === "true");
   const [paused, setPaused] = useState<PausedState | undefined>();
+  const [modelLabel, setModelLabel] = useState(model);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySelected, setHistorySelected] = useState(0);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -477,21 +488,24 @@ export function TuiApp(props: TuiAppProps) {
     }
   };
 
-  const runDeps = (): SessionTurnDeps => ({
-    ...deps,
-    onProgress: handleProgress,
-    sessionAgent: { ...deps.sessionAgent, onProgress: handleProgress },
-    task: {
-      ...deps.task,
+  const runDeps = (): SessionTurnDeps => {
+    const current = depsRef.current;
+    return {
+      ...current,
       onProgress: handleProgress,
-      ...(deps.task.observer !== undefined
-        ? { observer: { ...deps.task.observer, onProgress: handleProgress } }
+      sessionAgent: { ...current.sessionAgent, onProgress: handleProgress },
+      task: {
+        ...current.task,
+        onProgress: handleProgress,
+        ...(current.task.observer !== undefined
+          ? { observer: { ...current.task.observer, onProgress: handleProgress } }
+          : {}),
+      },
+      ...(current.general !== undefined
+        ? { general: { ...current.general, onProgress: handleProgress } }
         : {}),
-    },
-    ...(deps.general !== undefined
-      ? { general: { ...deps.general, onProgress: handleProgress } }
-      : {}),
-  });
+    };
+  };
 
   const finishTaskTiming = (result: SessionTurnResult): void => {
     const finished = result.task ?? result.general;
@@ -586,6 +600,50 @@ export function TuiApp(props: TuiAppProps) {
     }
   };
 
+  const runModelCommand = async (args: readonly string[]): Promise<void> => {
+    if (runningRef.current || paused !== undefined) {
+      appendNotice("model: finish or resolve the current turn first");
+      return;
+    }
+    if (args.length === 0) {
+      if (props.listModels === undefined) {
+        appendNotice("model: listing is not configured");
+        return;
+      }
+      try {
+        const models = await props.listModels();
+        if (models.length === 0) {
+          appendNotice("model: the provider returned no models");
+          return;
+        }
+        const shown = models.slice(0, 20).join(", ");
+        appendNotice(`models (${models.length}): ${shown}${models.length > 20 ? ", …" : ""}`);
+      } catch (error) {
+        appendNotice(`model: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return;
+    }
+    if (args.length > 1) {
+      appendNotice("usage: /model [model-id]");
+      return;
+    }
+    const id = args[0];
+    if (id === undefined) return;
+    if (props.onModelChange === undefined) {
+      appendNotice("model: switching is not configured");
+      return;
+    }
+    const result = await props.onModelChange(id);
+    if ("error" in result) {
+      appendNotice(`model: ${result.error}`);
+      return;
+    }
+    depsRef.current = result.deps;
+    setModelLabel(result.label);
+    logRef.current?.write({ type: "model_changed", model: result.label });
+    appendNotice(`model: ${result.label}`);
+  };
+
   const submit = async (): Promise<void> => {
     const trimmed = input.trim();
     if (trimmed === "") return;
@@ -594,6 +652,10 @@ export function TuiApp(props: TuiAppProps) {
       const spec = COMMANDS.find((command) => command.name === name);
       if (spec === undefined) {
         appendNotice(`unknown command: /${name || "?"} · type ? for help`);
+        return;
+      }
+      if (spec.name === "model") {
+        void runModelCommand(args);
         return;
       }
       if (args.length > 0) {
@@ -1064,7 +1126,7 @@ export function TuiApp(props: TuiAppProps) {
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <HeaderBar workspace={workspace} model={model} mode={mode} totals={view.header} />
+      <HeaderBar workspace={workspace} model={modelLabel} mode={mode} totals={view.header} />
       <Box flexDirection="row" flexGrow={1} height={bodyRows}>
         <TracePanel
           lines={lines}

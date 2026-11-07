@@ -39,9 +39,9 @@ async function main(): Promise<void> {
   }
   try {
     // An explicit `--turns` wins; otherwise the task's own budget (a build-heavy task may
-    // need more than the 24-turn default), else 24.
+    // need more than the 80-turn default), else 80.
     const result = await runLiveTask(task, {
-      maxTurns: turns === "" ? (task.maxTurns ?? 24) : Number(turns),
+      maxTurns: turns === "" ? (task.maxTurns ?? 80) : Number(turns),
       network: net,
       ...(dir !== "" ? { dir } : {}),
     });

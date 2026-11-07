@@ -22,6 +22,7 @@ export const COMMANDS: readonly CommandSpec[] = [
   { name: "new", description: "start a new session" },
   { name: "help", description: "show key help" },
   { name: "tasks", description: "open task history" },
+  { name: "model", description: "list models or switch to /model <id>" },
   { name: "pause", description: "pause the running turn" },
   { name: "resume", description: "resume a paused turn" },
   { name: "cancel", description: "cancel the paused turn and roll back" },

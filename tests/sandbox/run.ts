@@ -42,7 +42,7 @@ export async function runSandbox(
     {
       propose,
       workspace,
-      maxTurns: options.maxTurns ?? 24,
+      maxTurns: options.maxTurns ?? 80,
       // The probe is a session fact in production; record it here too so the first state
       // sees the workspace map (root, repo status, entries) instead of re-listing the tree.
       probe: (target) => probeSession(target),

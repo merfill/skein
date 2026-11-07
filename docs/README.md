@@ -12,6 +12,11 @@ and Russian, the Russian version in a file with the `_ru` suffix.
 - [logos_ir.md](logos_ir.md) · [RU](logos_ir_ru.md) — the doxa/logos frame in depth.
 - [design_review.md](design_review.md) · [RU](design_review_ru.md) — design review notes.
 
+## Providers
+
+- [providers.md](providers.md) · [RU](providers_ru.md) — the OpenAI-compatible catalog,
+  `auth login`/`models`/`doctor`, config/auth files, precedence, free and local options.
+
 ## Sessions and controllability
 
 - [controllability.md](controllability.md) · [RU](controllability_ru.md) — triggers emitted by

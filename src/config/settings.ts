@@ -4,6 +4,8 @@ export interface Settings {
   apiUrl: string;
   apiKey: string;
   model: string;
+  // The provider preset id, when known (set by the provider resolver, not by `.env`).
+  providerId?: string;
   temperature: number;
   maxTokens: number;
   // When a structured call is cut by the completion cap, retry with a higher cap
@@ -61,6 +63,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     apiUrl: env.SKEIN_API_URL ?? "https://routerai.ru/api/v1",
     apiKey: env.SKEIN_API_KEY ?? "",
     model: env.SKEIN_MODEL ?? "~deepseek/deepseek-v4-flash-latest",
+    ...(env.SKEIN_PROVIDER !== undefined ? { providerId: env.SKEIN_PROVIDER } : {}),
     temperature: num(env.SKEIN_TEMPERATURE, 0.1),
     // Reasoning is on by default (see `client.ts`), at `low` effort: the reasoning tokens
     // share the completion budget, so the base cap is larger than a plain-answer run
@@ -73,7 +76,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     reasoningEffort: env.SKEIN_REASONING_EFFORT ?? "low",
     reasoningTape: (env.SKEIN_REASONING_TAPE ?? "true").toLowerCase() !== "false",
     streaming: (env.SKEIN_STREAMING ?? "true").toLowerCase() !== "false",
-    maxTurns: num(env.SKEIN_MAX_TURNS, 24),
+    maxTurns: num(env.SKEIN_MAX_TURNS, 80),
     generalMaxTurns: num(env.SKEIN_GENERAL_MAX_TURNS, 9),
     stateCycleEntries: num(env.SKEIN_STATE_CYCLE_ENTRIES, DEFAULT_STATE_CYCLE_ENTRIES),
     stateLongTurns: num(env.SKEIN_STATE_LONG_TURNS, DEFAULT_STATE_LONG_TURNS),

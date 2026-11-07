@@ -31,7 +31,7 @@ export interface SandboxTask {
   // runs the task's `tests/test.sh` in the agent's container. "host" runs the check through
   // bwrap on the host (for an image-less task whose image would otherwise supply the runtime).
   checkIn?: "task" | "host";
-  // The turn budget for a live run (default 24). A build-heavy task needs more: the
+  // The turn budget for a live run (default 80). A build-heavy task needs more: the
   // criterion triggers a full rebuild, and a foreground run of it blocks for minutes but is
   // one turn (`fix-ocaml-gc` sets 60, like the Harbor acceptance). An explicit `--turns`
   // overrides it.

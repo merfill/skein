@@ -309,7 +309,7 @@ export async function runTask(
     {
       propose: proposeWithCheckpoint,
       workspace,
-      maxTurns: options.maxTurns ?? task.maxTurns ?? 24,
+      maxTurns: options.maxTurns ?? task.maxTurns ?? 80,
       probe: (workspace) => probeSession(workspace, { network: network.requested }),
       ...(options.observer !== undefined ? { observer: options.observer } : {}),
     },

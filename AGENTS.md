@@ -68,6 +68,8 @@ surface, testing, plans, and benchmarks). Every document has a `_ru` mirror.
 - `npm run typecheck` — `tsc --noEmit`
 - `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — offline tests (`.env` sets
   `SKEIN_LIVE=true`)
+- `npm run cli -- auth login|list|logout`, `... models`, `... doctor` — provider setup and
+  probes; `docs/providers.md`. Provider tests use a mock fetch; no live calls without go-ahead.
 - **NEVER run bare `npx vitest run`.** It collects `tests/sandbox/**`, which self-enable on any
   machine with Docker + the task images + the Harbor cache and launch real containers and
   verifiers (300 s timeouts, 120 s cleanup) — minutes of runtime and apparent hangs, not the

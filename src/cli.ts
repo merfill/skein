@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { pathToFileURL } from "node:url";
 
-import { loadSettings } from "./config/settings";
+import { loadSettings, type Settings } from "./config/settings";
 import { createChatModel } from "./llm/client";
 import { createObserverDeps } from "./llm/observer";
 import type { Action } from "./llm/schemas";
@@ -17,11 +17,24 @@ import { memoryTelemetry } from "./session/telemetry";
 import type { SessionTurnDeps } from "./session/driver";
 import { runTui } from "./tui/run";
 import { fsWorkspace, type Workspace } from "./tools/workspace";
+import { createTerminalIo, runAuthLogin } from "./providers/auth";
+import { runAuthCommand, runDoctorCommand, runHelpOrVersion, runModelsCommand } from "./providers/cli";
+import { detectLocalProviders, listModels as listProviderModels } from "./providers/probe";
+import { applyProvider, resolveProvider, type ResolvedProvider } from "./providers/resolve";
+import {
+  readAuth,
+  readProviderConfig,
+  writeProviderConfig,
+  type AuthFile,
+  type ProviderConfig,
+} from "./providers/store";
 
 interface CliArgs {
   dir: string;
   maxTurns?: number;
   model?: string;
+  provider?: string;
+  baseURL?: string;
   verbose?: boolean;
   plain?: boolean;
 }
@@ -40,6 +53,12 @@ function parseArgs(argv: readonly string[]): CliArgs {
       index += 1;
     } else if (flag === "--model" && value !== undefined) {
       args.model = value;
+      index += 1;
+    } else if (flag === "--provider" && value !== undefined) {
+      args.provider = value;
+      index += 1;
+    } else if (flag === "--base-url" && value !== undefined) {
+      args.baseURL = value;
       index += 1;
     } else if (flag === "--verbose") {
       args.verbose = true;
@@ -136,30 +155,73 @@ async function runPlain(args: CliArgs, deps: SessionTurnDeps, workspace: Workspa
   }
 }
 
+async function ensureProvider(args: CliArgs): Promise<ResolvedProvider> {
+  let config: ProviderConfig | undefined;
+  let auth: AuthFile | undefined;
+  config = readProviderConfig();
+  auth = readAuth();
+  const resolve = (): ResolvedProvider =>
+    resolveProvider({
+      ...(config !== undefined ? { config } : {}),
+      ...(auth !== undefined ? { auth } : {}),
+      ...(args.provider !== undefined ? { provider: args.provider } : {}),
+      ...(args.model !== undefined ? { model: args.model } : {}),
+      ...(args.baseURL !== undefined ? { baseURL: args.baseURL } : {}),
+    });
+  let resolved = resolve();
+  if (resolved.ready) return resolved;
+
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+    throw new Error(
+      `no provider ready: ${resolved.reason ?? "unknown"}\n` +
+        "run `skein auth login` or set SKEIN_API_KEY",
+    );
+  }
+  process.stdout.write(`no provider ready: ${resolved.reason ?? "unknown"}\n`);
+  const local = await detectLocalProviders();
+  const io = createTerminalIo();
+  try {
+    await runAuthLogin({
+      io,
+      ...(args.provider !== undefined ? { provider: args.provider } : {}),
+      local,
+    });
+  } finally {
+    io.close();
+  }
+  config = readProviderConfig();
+  auth = readAuth();
+  resolved = resolve();
+  if (!resolved.ready) {
+    throw new Error(`provider is still not ready: ${resolved.reason ?? "unknown"}`);
+  }
+  return resolved;
+}
+
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  if (runHelpOrVersion(argv)) return;
+  if (argv[0] === "auth") {
+    process.exitCode = await runAuthCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "models") {
+    process.exitCode = await runModelsCommand(argv.slice(1));
+    return;
+  }
+  if (argv[0] === "doctor") {
+    process.exitCode = await runDoctorCommand(argv.slice(1));
+    return;
+  }
+
+  const args = parseArgs(argv);
   const root = resolveCliDir(args.dir);
-  const settings = loadSettings();
-  const modelName = args.model ?? settings.model;
-  const model = createChatModel({
-    ...settings,
-    model: modelName,
-  });
+  const provider = await ensureProvider(args);
+  let settings = applyProvider(loadSettings(), provider);
   const workspace = fsWorkspace(root, {
     runTimeoutMs: settings.runTimeoutMs,
     checkpoints: true,
   });
-  const basePropose = modelProposer(model);
-  let taskTurn = 0;
-  const propose: Proposer = async (context) => {
-    const proposal = await basePropose(context);
-    taskTurn += 1;
-    if (args.plain === true && args.verbose === true) {
-      const actions = proposal.actions.map(actionName).join(", ");
-      process.stdout.write(`  [${taskTurn}] ${actions}\n`);
-    }
-    return proposal;
-  };
 
   const telemetry = memoryTelemetry();
 
@@ -176,38 +238,81 @@ async function main(): Promise<void> {
     };
   })();
 
-  const deps: SessionTurnDeps = {
-    sessionProbe,
-    sessionAgent: {
-      ...createSessionAgentDeps(model, { settings }),
+  const buildAgent = (agentSettings: Settings): { deps: SessionTurnDeps } => {
+    const model = createChatModel(agentSettings);
+    const basePropose = modelProposer(model);
+    let taskTurn = 0;
+    const propose: Proposer = async (context) => {
+      const proposal = await basePropose(context);
+      taskTurn += 1;
+      if (args.plain === true && args.verbose === true) {
+        const actions = proposal.actions.map(actionName).join(", ");
+        process.stdout.write(`  [${taskTurn}] ${actions}\n`);
+      }
+      return proposal;
+    };
+    const deps: SessionTurnDeps = {
+      sessionProbe,
+      sessionAgent: {
+        ...createSessionAgentDeps(model, { settings: agentSettings }),
+        telemetry: telemetry.sink,
+      },
+      task: {
+        propose,
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.maxTurns,
+        probe: probeSession,
+        telemetry: telemetry.sink,
+        ...(agentSettings.observer
+          ? { observer: createObserverDeps(model, { settings: agentSettings }) }
+          : {}),
+      },
+      general: {
+        propose: modelGeneralProposer(model, { settings: agentSettings }),
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.generalMaxTurns,
+        telemetry: telemetry.sink,
+      },
       telemetry: telemetry.sink,
-    },
-    task: {
-      propose,
-      workspace,
-      ...(args.maxTurns !== undefined ? { maxTurns: args.maxTurns } : {}),
-      probe: probeSession,
-      telemetry: telemetry.sink,
-      ...(settings.observer ? { observer: createObserverDeps(model, { settings }) } : {}),
-    },
-    general: {
-      propose: modelGeneralProposer(model, { settings }),
-      workspace,
-      maxTurns: args.maxTurns ?? settings.generalMaxTurns,
-      telemetry: telemetry.sink,
-    },
-    telemetry: telemetry.sink,
+    };
+    return { deps };
   };
+
+  let built = buildAgent(settings);
 
   try {
     if (args.plain === true) {
-      await runPlain(args, deps, workspace);
+      process.stdout.write(`provider: ${provider.label}\n`);
+      await runPlain(args, built.deps, workspace);
     } else {
       await runTui({
-        deps,
+        deps: built.deps,
         telemetry,
         workspace: workspace.root,
-        model: modelName,
+        model: provider.label,
+        listModels: () => listProviderModels(provider.baseURL, { apiKey: provider.apiKey }),
+        onModelChange: async (modelId) => {
+          try {
+            const nextProvider: ResolvedProvider = {
+              ...provider,
+              model: modelId,
+              label: `${provider.providerId}/${modelId}`,
+              ready: true,
+            };
+            settings = applyProvider(loadSettings(), nextProvider);
+            const explicitBase = provider.baseURL !== provider.preset.baseURL;
+            writeProviderConfig({
+              version: 1,
+              provider: provider.providerId,
+              model: modelId,
+              ...(explicitBase ? { baseURL: provider.baseURL } : {}),
+            });
+            built = buildAgent(settings);
+            return { deps: built.deps, label: nextProvider.label };
+          } catch (error) {
+            return { error: error instanceof Error ? error.message : String(error) };
+          }
+        },
       });
     }
   } finally {

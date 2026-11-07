@@ -48,6 +48,21 @@ describe("provider body (openai-compatible)", () => {
     expect((body.messages as Record<string, unknown>[])[0]).not.toHaveProperty("reasoning_content");
   });
 
+  it("does not add RouterAI fields to other providers", () => {
+    const body = {
+      messages: [{ role: "assistant", content: null, tool_calls: [{ id: "a1" }] }],
+    };
+    expect(transformBody(body, "high", "openai")).toEqual(body);
+    expect(transformBody(body, "high", "groq")).toEqual(body);
+    expect(transformBody(body, "high", "openrouter")).toMatchObject({
+      reasoning: { effort: "high" },
+    });
+    expect(
+      (transformBody(body, "high", "openrouter").messages as Record<string, unknown>[])[0],
+    ).not.toHaveProperty("reasoning_content");
+    expect(transformBody(body, "none", "openrouter")).toEqual(body);
+  });
+
   it("turns reasoning off with the provider's thinking field", () => {
     expect(reasoningOffBody("none")).toEqual({
       thinking: { type: "disabled" },

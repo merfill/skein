@@ -63,7 +63,7 @@ async function main(): Promise<void> {
       return errorResult(id, "unknown task", 0);
     }
     try {
-      const result = await runLiveTask(task, { maxTurns: maxTurns ?? task.maxTurns ?? 24, quiet: true });
+      const result = await runLiveTask(task, { maxTurns: maxTurns ?? task.maxTurns ?? 80, quiet: true });
       console.info(`[${id}] done reward=${result.reward} stop=${result.stopReason} turns=${result.turns} ${(result.elapsedMs / 1000).toFixed(0)}s`);
       return result;
     } catch (error) {

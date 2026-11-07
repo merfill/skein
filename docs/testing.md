@@ -277,7 +277,7 @@ baseline is the opencode `--net off` run (`opencode-run.ts`).
 
 A run uses the task's own `maxTurns` when set (a build-heavy task like `fix-ocaml-gc`
 sets 60 — its criterion rebuilds the whole compiler and each background poll costs a
-turn), else 24; an explicit `--turns N` overrides both.
+turn), else 80; an explicit `--turns N` overrides both.
 
 Output — `bench/runs/sandbox-tasks/<ts>-<id>-<random>/`: `contexts.ndjson` (the projection per
 turn), `result.json` (`stopReason`, `reward`, the verifier result, the IR journal),
