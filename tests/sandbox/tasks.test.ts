@@ -44,7 +44,7 @@ const IMAGE_TASKS: SandboxTask[] = [
   fixCodeVulnerability,
 ];
 
-// A state plus its first plan item: the two turns a doxa makes to start working.
+// A state plus its first plan item: the two turns a model makes to start working.
 const goal = (what: string): Action[] => [
   { operator: "move", state: "patch", what, done: "the state is done" },
   { operator: "apply", action: { tool: "bash", command: "pwd" } },

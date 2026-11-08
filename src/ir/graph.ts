@@ -92,7 +92,7 @@ export function hasStopped(state: State, moveId: string): boolean {
   return stopOf(state, moveId) !== undefined;
 }
 
-// The request's `unactionable` node, if the doxa declined to formulate a goal for it
+// The request's `unactionable` node, if the model declined to formulate a goal for it
 // (`unactionable` relation). A declined request is terminal.
 export function unactionableOf(state: State, requestId: string): string | undefined {
   for (const edge of state.edges.values()) {

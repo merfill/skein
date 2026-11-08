@@ -6,15 +6,15 @@ import { join } from "node:path";
 // `docker.ts`), with all tools and the checkpoint inside the container; a task without an
 // image falls back to a host temp root under `bwrap` (`container.ts`). The task's own verifier
 // scores the result. The task's files (instruction, setup, verifier) are read from the local
-// Harbor cache, never copied into the repository (the tasks carry a benchmark canary).
+// benchmark task cache, never copied into the repository (the tasks carry a benchmark canary).
 //
 //   { id, files?, setup?, check?, mountPoint? }
 //
 // `request` defaults to the cached `instruction.md`. On the Docker path the reward comes from
-// the task's own `tests/test.sh` (staged after the agent, run in its container, like Harbor):
-// `check`, `checkIn` and `checkSetup` are for the legacy/bwrap and opencode paths only.
-// `files` are the environment's own files (a Docker `COPY`), `setup` are the commands a
-// Dockerfile/setup.sh would run before the agent.
+// the task's own `tests/test.sh` (staged after the agent, run in its container, as the
+// benchmark does): `check`, `checkIn` and `checkSetup` are for the legacy/bwrap and opencode
+// paths only. `files` are the environment's own files (a Docker `COPY`), `setup` are the
+// commands a Dockerfile/setup.sh would run before the agent.
 
 export interface SandboxTask {
   id: string;
@@ -33,7 +33,7 @@ export interface SandboxTask {
   checkIn?: "task" | "host";
   // The turn budget for a live run (default 80). A build-heavy task needs more: the
   // criterion triggers a full rebuild, and a foreground run of it blocks for minutes but is
-  // one turn (`fix-ocaml-gc` sets 60, like the Harbor acceptance). An explicit `--turns`
+  // one turn (`fix-ocaml-gc` sets 60, like the benchmark verification). An explicit `--turns`
   // overrides it.
   maxTurns?: number;
   // A pre-verifier command for the legacy/bwrap and opencode paths. The rootless Docker path
@@ -46,15 +46,15 @@ export interface SandboxTask {
   network?: string;
 }
 
-// `~/.cache/harbor/tasks/<hash>/<id>/` — the Harbor task cache layout.
-export function harborTaskDir(id: string): string {
+// `~/.cache/harbor/tasks/<hash>/<id>/` — the benchmark task cache layout.
+export function taskCacheDir(id: string): string {
   const root = join(homedir(), ".cache", "harbor", "tasks");
-  if (!existsSync(root)) throw new Error(`Harbor task cache not found: ${root}`);
+  if (!existsSync(root)) throw new Error(`benchmark task cache not found: ${root}`);
   for (const hash of readdirSync(root)) {
     const dir = join(root, hash, id);
     if (existsSync(dir)) return dir;
   }
-  throw new Error(`Harbor task not cached: ${id}`);
+  throw new Error(`task not cached: ${id}`);
 }
 
 // The verifier's default entry point: the cached `test_outputs.py` under the task's

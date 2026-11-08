@@ -84,10 +84,6 @@ export interface TelemetrySink {
 
 export const LOCAL_SESSION_ID = "local";
 
-export const noopTelemetry: TelemetrySink = {
-  record: () => {},
-};
-
 export interface MemoryTelemetry {
   sink: TelemetrySink;
   events: MetricEvent[];
@@ -186,31 +182,6 @@ export function usageTotals(events: readonly MetricEvent[]): UsageTotals {
   totals.cacheHitRatio =
     totals.inputTokens > 0 ? totals.cachedInputTokens / totals.inputTokens : 0;
   return totals;
-}
-
-export interface ContextPoint {
-  at: number;
-  agent: "session" | "task" | "general" | "observer";
-  unitId: string;
-  turn: number;
-  context: ContextSnapshot;
-  inputTokens?: number;
-}
-
-export function contextTimeline(events: readonly MetricEvent[]): ContextPoint[] {
-  const points: ContextPoint[] = [];
-  for (const event of events) {
-    if (event.type !== "model_call" || event.context === undefined) continue;
-    points.push({
-      at: event.endedAt,
-      agent: event.agent,
-      unitId: event.unitId,
-      turn: event.turn,
-      context: event.context,
-      ...(event.usage?.inputTokens !== undefined ? { inputTokens: event.usage.inputTokens } : {}),
-    });
-  }
-  return points;
 }
 
 export interface UnitStats {

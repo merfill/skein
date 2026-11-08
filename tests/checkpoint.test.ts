@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { fsWorkspace } from "../src/tools/workspace";
-import { createCheckpoint } from "./sandbox/checkpoint";
+import { createCheckpoint } from "../src/tools/checkpoint";
 
 const roots: string[] = [];
 

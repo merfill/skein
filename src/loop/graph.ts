@@ -46,7 +46,7 @@ import type { LoopState } from "./state";
 // everything the model emitted after it is dropped (the state it reasoned from is gone).
 const TERMINAL = new Set<Action["operator"]>(["move", "stop", "decline"]);
 
-// An error closure is an engine-owned result, not a doxa move: mark its stop so the projection
+// An error closure is an engine-owned result, not a model move: mark its stop so the projection
 // and the session attention can tell it from a normal closure.
 function markErrorStop(events: readonly Event[]): Event[] {
   return events.map((event) => {
@@ -117,7 +117,7 @@ export interface AgentDeps {
   propose: Proposer;
   workspace: Workspace;
   // An explicit safety cap for headless/bench runs. Undefined in the interactive session:
-  // the task runs until the doxa closes it, the observer halts it, or the user stops it.
+  // the task runs until the model closes it, the observer halts it, or the user stops it.
   maxTurns?: number;
   graceTurns?: number;
   // The session probe (`src/loop/probe.ts`): environment and material. The real entry points
@@ -190,7 +190,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     const focusDrift = focusEvents(current);
     if (focusDrift.length > 0) current = fold(focusDrift, current);
     // A structural move (stop/decline/move) refused by `classify` creates no node, so it is
-    // appended as a transient assistant call + `tool` reason for the next turn, so the doxa
+    // appended as a transient assistant call + `tool` reason for the next turn, so the model
     // sees why its move was refused (§2.7). A `recall`/`search` result is a node now, so it is
     // on the tape like any observation — no transient pairing.
     const rejection = state.rejection ?? undefined;
@@ -331,7 +331,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     // The pause already ended the graph in `propose`; nothing is executed.
     if (state.paused === true) return {};
     const proposals = state.proposals;
-    // A text reply is the doxa's closure: the engine records it as the state's `stop` (the
+    // A text reply is the model's closure: the engine records it as the state's `stop` (the
     // same relation the removed `stop` tool produced). It is only legal where a text reply is
     // a move: inside an open state (working) or at End. Elsewhere a text reply is a
     // protocol miss, handled by the no-proposal counter below after the tool repair.
@@ -353,7 +353,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
         ],
       };
     }
-    // The batch is a single doxa move: one thought, N calls. The engine decides and runs
+    // The batch is a single model move: one thought, N calls. The engine decides and runs
     // each call in order against the state the previous calls left; a terminal move
     // (move/stop/decline) ends the batch (the rest of the message is dropped).
     const events: Event[] = [];
@@ -661,7 +661,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
 
   // An `llm_error` is a result too: close the state where the call failed, enter End and ask
   // the model once for the final report (a deterministic fallback if that call also fails).
-  // This is not a doxa move: it is the engine's error exit, marked on the stop (`error: true`).
+  // This is not a model move: it is the engine's error exit, marked on the stop (`error: true`).
   const closeOnError = async (state: LoopState): Promise<LoopState> => {
     const errorText = state.stopText ?? "llm_error";
     const events = [...state.events];

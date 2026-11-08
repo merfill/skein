@@ -1,5 +1,0 @@
-{
-  "graphs": {
-    "skein": "./langgraph/graph.ts:skein"
-  }
-}

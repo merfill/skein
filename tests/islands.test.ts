@@ -83,7 +83,7 @@ describe("islands: the closed vocabulary", () => {
   });
 });
 
-describe("islands: the doxa authors the state at move", () => {
+describe("islands: the model authors the state at move", () => {
   it("maps a move call with its goal text into the IR", () => {
     const proposal = toProposal("move", { state: "patch", what: "map the repo" }, "");
     expect(proposal.action).toEqual({ operator: "move", state: "patch", what: "map the repo" });

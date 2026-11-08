@@ -102,7 +102,7 @@ describe("session view", () => {
     const result = await runSessionTurn(
       {
         sessionAgent: {
-          agent: async () => ({ operation: { kind: "start", text: "fix it" } }),
+          agent: async () => ({ operation: { kind: "task", text: "fix it" } }),
           tools,
         },
         task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },

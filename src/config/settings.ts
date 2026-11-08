@@ -18,7 +18,7 @@ export interface Settings {
   // completion-cap or a no-tool response is bounded separately and is not retried here.
   llmRetries: number;
   reasoningEffort: string;
-  // Whether the doxa's hidden reasoning is journalled and shown back on the tape (the AI SDK
+  // Whether the model's hidden reasoning is journalled and shown back on the tape (the AI SDK
   // reasoning part round-trips it, `src/llm/client.ts`). On by default; set
   // `SKEIN_REASONING_TAPE=false` for the controlled A/B that isolates "reasoning on the tape"
   // from the harness. The model still reasons either way.
@@ -67,8 +67,8 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     temperature: num(env.SKEIN_TEMPERATURE, 0.1),
     // Reasoning is on by default (see `client.ts`), at `low` effort: the reasoning tokens
     // share the completion budget, so the base cap is larger than a plain-answer run
-    // needs. A hard task — the Harbor bench/acceptance — raises the effort to `high` per
-    // run via `SKEIN_REASONING_EFFORT` or the adapter's `configurable.reasoningEffort`.
+    // needs. A hard task — the sandbox benchmark — raises the effort to `high` per
+    // run via `SKEIN_REASONING_EFFORT`.
     maxTokens: num(env.SKEIN_MAX_TOKENS, 8192),
     maxTokensCeiling: num(env.SKEIN_MAX_TOKENS_CEILING, 32768),
     maxTokensBumps: num(env.SKEIN_MAX_TOKENS_BUMPS, 2),

@@ -74,7 +74,7 @@ describe("the message tape under a long horizon", () => {
       if (call === 1) return { thought: "", actions: [{ operator: "move", state: "research", what: "A", done: "a" }] };
       if (call === 2) {
         // The first command fails, leaving the item unfulfilled; the criterion is declared met
-        // anyway and the state is stopped by the doxa (no criterion gate).
+        // anyway and the state is stopped by the model (no criterion gate).
         return { thought: "", actions: [{ operator: "apply", action: { tool: "bash", command: "echo FIRSTCMD" } }] };
       }
       if (call === 3) return { thought: "", actions: [{ operator: "stop", why: "A is done" }] };

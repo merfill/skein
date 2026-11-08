@@ -153,7 +153,7 @@ export async function propose(
   const allowedTools =
     context.applicable !== undefined ? toolNamesFor(context.applicable) : undefined;
   // A text reply is the state's closure. It is accepted only where the engine can record it:
-  // inside an open state or at End. At the request and at a transition the doxa must still
+  // inside an open state or at End. At the request and at a transition the model must still
   // choose a state (`move`/`decline`), so a text reply gets the tool repair.
   const closesOnText = context.situation === "working" || context.situation === "terminal";
   return invokeTools(model, buildMessages(context), {

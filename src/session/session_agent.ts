@@ -14,7 +14,6 @@ import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
 import { applyOperation, type OperationResult } from "./operations";
 import type { ProgressSink } from "./progress";
-import type { ReadFile } from "./reading";
 import {
   openUnit,
   popUnit,
@@ -39,9 +38,9 @@ import { sessionOutline, unitOutline } from "./session_outline";
 import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
-  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent. Choose by the result the user wants:\n- `respond` — the answer follows from the dialogue and earlier work.\n- `general` — the user wants an answer that requires investigation; the workspace stays unchanged.\n- `start` — the user wants something changed, or a command run that may change it.",
+  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent. Choose by the result the user wants:\n- `respond` — the answer follows from the dialogue and earlier work.\n- `general` — the user wants an answer that requires investigation; the workspace stays unchanged.\n- `task` — the user wants something changed, or a command run that may change it.",
   "`general` receives the user's own words, with the dialogue's references resolved. Keep their wording, scope and level of detail. The general agent chooses how to work and how much detail to give.",
-  "`start` receives a work order: the goal, the facts the task needs and how completion is judged. It changes the workspace, and the coding agent sees only this text.",
+  "`task` receives a work order: the goal, the facts the task needs and how completion is judged. It changes the workspace, and the coding agent sees only this text.",
   "Ask when the user's intent is unclear; if the dialogue resolves it, proceed.",
   "`respond` is shown to the user as-is: GitHub-flavored Markdown. Answer as briefly as possible and only what the user asked.",
 ].join("\n\n");
@@ -75,14 +74,13 @@ export interface SessionTools {
   search?(session: SessionState, unit: string, pattern: string, options?: SearchOptions): string;
 }
 
-export function createSessionTools(readFile?: ReadFile): SessionTools {
+export function createSessionTools(): SessionTools {
   return {
     unit: (session, id) => unitOutline(session, id),
     state: (session, unit, id) => stateDetail(session, unit, id),
     turns: (session, unit, id, range) => stateTurnHistory(session, unit, id, range),
-    body: (session, unit, id, window) => bodyText(session, unit, id, window, readFile),
-    search: (session, unit, pattern, options) =>
-      searchUnit(session, unit, pattern, options, readFile),
+    body: (session, unit, id, window) => bodyText(session, unit, id, window),
+    search: (session, unit, pattern, options) => searchUnit(session, unit, pattern, options),
   };
 }
 
@@ -144,14 +142,14 @@ export interface SessionContext {
 }
 
 interface ToolCallPayload {
-  origin: "engine" | "doxa";
+  origin: "engine" | "model";
   tool: string;
   args: Record<string, unknown>;
   callId: string;
 }
 
 interface ToolResultPayload {
-  origin: "engine" | "doxa";
+  origin: "engine" | "model";
   tool: string;
   callId: string;
   result: string;
@@ -159,7 +157,7 @@ interface ToolResultPayload {
 
 function callPayload(node: Node): ToolCallPayload | undefined {
   const payload = node.payload as Partial<ToolCallPayload> | undefined;
-  if (payload?.origin !== "engine" && payload?.origin !== "doxa") return undefined;
+  if (payload?.origin !== "engine" && payload?.origin !== "model") return undefined;
   if (typeof payload.tool !== "string" || typeof payload.callId !== "string") return undefined;
   return {
     origin: payload.origin,
@@ -171,7 +169,7 @@ function callPayload(node: Node): ToolCallPayload | undefined {
 
 function resultPayload(node: Node): ToolResultPayload | undefined {
   const payload = node.payload as Partial<ToolResultPayload> | undefined;
-  if (payload?.origin !== "engine" && payload?.origin !== "doxa") return undefined;
+  if (payload?.origin !== "engine" && payload?.origin !== "model") return undefined;
   if (
     typeof payload.tool !== "string" ||
     typeof payload.callId !== "string" ||
@@ -382,7 +380,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
     if (surveys >= surveyLimit) {
       messages.push({
         role: "system",
-        content: "You have inspected enough. Decide now: call `respond` or `start`.",
+        content: "You have inspected enough. Decide now: call `respond`, `general` or `task`.",
       });
     }
     const startedAt = Date.now();
@@ -491,7 +489,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
           label: `session:${toolCall.name}`,
           // The reply's reasoning belongs to the turn: keep it on its first call.
           payload: {
-            origin: "doxa",
+            origin: "model",
             tool: toolCall.name,
             args: toolCall.args,
             callId,
@@ -613,7 +611,7 @@ function appendRefusal(
       kind: "action",
       label: `session:${operation.kind}`,
       payload: {
-        origin: "doxa",
+        origin: "model",
         tool: operation.kind,
         args: operation as unknown as Record<string, unknown>,
         callId,

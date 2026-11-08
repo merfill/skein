@@ -10,11 +10,10 @@ import {
 import { observationText, requestTextOf, clipRequestText } from "../ir/project";
 import type { Node } from "../ir/types";
 import { isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
-import { readingText, type ReadFile } from "./reading";
 import { unitOf } from "./session";
 import type { SessionState } from "./types";
 
-// Read-only queries over a past unit's journal (docs/en/session_concepts.md §5). These are the
+// Read-only queries over a past unit's journal (docs/en/sessions.md §2). These are the
 // session agent's tools for L2 (state), turns, L4 (body) and content search; they never write
 // to a unit journal. The result is returned as text with the ids needed for the next query.
 
@@ -153,21 +152,12 @@ function windowText(text: string, window: BodyWindow = {}): string {
   return last < total ? `${head}\n…[lines ${from}–${last} of ${total}; continue from ${last + 1}]` : head;
 }
 
-function observationContent(node: Node, readFile?: ReadFile): string {
-  const payload = (node.payload ?? {}) as { path?: unknown; version?: unknown; output?: unknown };
-  if (typeof payload.path === "string") {
-    return readingText(payload, readFile) ?? observationText(node);
-  }
-  return observationText(node);
-}
-
 // L4: the stored content of an observation (or the result of an action), optionally windowed.
 export function bodyText(
   session: SessionState,
   unitId: string,
   id: string,
   window: BodyWindow = {},
-  readFile?: ReadFile,
 ): string {
   const state = unitState(session, unitId);
   const node = state.nodes.get(id);
@@ -177,13 +167,13 @@ export function bodyText(
   if (node.kind === "request") {
     return windowText(clipRequestText(requestTextOf(state) ?? node.label), window);
   }
-  if (node.kind === "observation") return windowText(observationContent(node, readFile), window);
+  if (node.kind === "observation") return windowText(observationText(node), window);
   if (node.kind === "action") {
     const result = resultOf(state, id);
     if (result === undefined) return "no result";
     const resultNode = state.nodes.get(result);
     return resultNode !== undefined
-      ? windowText(observationContent(resultNode, readFile), window)
+      ? windowText(observationText(resultNode), window)
       : `unknown observation: ${result}`;
   }
   return `${id} is a ${node.kind}, not an observation; pass an observation id (e.g. obs:…), not a unit id or a path`;
@@ -196,7 +186,6 @@ export function searchUnit(
   unitId: string,
   pattern: string,
   options: SearchOptions = {},
-  readFile?: ReadFile,
 ): string {
   let regex: RegExp;
   try {
@@ -216,7 +205,7 @@ export function searchUnit(
   const matches: string[] = [];
   let total = 0;
   for (const node of observations) {
-    const lines = observationContent(node, readFile).split("\n");
+    const lines = observationText(node).split("\n");
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index] ?? "";
       if (!regex.test(line)) continue;

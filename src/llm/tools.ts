@@ -62,7 +62,7 @@ const patchParams = z.object({
   patch: z.string(),
   strip: z.number().int().nonnegative().optional(),
 });
-// The state: the island of work the doxa will work in AND the state's goal text (`what`) and its
+// The state: the island of work the model will work in AND the state's goal text (`what`) and its
 // goal text (`what`) — the state IS its goal.
 // Only `state` is required: `what` is optional and falls back to the island's goal. The
 // state's criterion is the engine's handwritten island text, not a model-supplied field.
@@ -306,12 +306,12 @@ export const APPLY_TOOL_NAMES = new Set([
   "apply_patch",
 ]);
 
-// The tools the model surface offers for a given frontier (`applicable`): the doxa only ever
+// The tools the model surface offers for a given frontier (`applicable`): the model only ever
 // sees the moves the engine would accept, so a refused move cannot be called at all
 // (docs/en/ir.md §2.6). `recall`/`search` are read-only and always available. The apply
 // vocabulary is the frontier's `applies` (the focused island's tools): when omitted, the full
 // registry is bound (direct `invokeTools` callers, tests).
-// `stop` is engine-owned: the doxa closes a state with a text reply (no tool call), and the
+// `stop` is engine-owned: the model closes a state with a text reply (no tool call), and the
 // engine records the same `stop` relation. The frontier still marks `stop` so `classify` and
 // recorded journals keep their meaning, but there is no tool for it on the surface.
 export function toolNamesFor(frontier: {
@@ -396,7 +396,7 @@ function toApply(name: string, a: Record<string, unknown>): Apply {
   return applySchema.parse(apply) as Apply;
 }
 
-// Map a tool call (native name + arguments) into the IR Action; the engine (logos) still
+// Map a tool call (native name + arguments) into the IR Action; the engine (executor) still
 // decides. The native vocabulary differs from the IR: read/edit/write use the familiar
 // `filePath`/`offset`/`limit`/`oldString`/`newString` names, `webfetch` is the IR `fetch`,
 // and grep drops the state-only selectors.

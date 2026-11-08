@@ -68,5 +68,3 @@ export type ProgressEvent =
   | { type: "paused"; agent: ProgressAgent; unitId: string };
 
 export type ProgressSink = (event: ProgressEvent) => void;
-
-export const noopProgress: ProgressSink = () => {};

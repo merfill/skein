@@ -1,6 +1,5 @@
 import type { Event } from "./events";
 import {
-  actionExecuted,
   hasStopped,
   lastChild,
   unactionableOf,
@@ -8,10 +7,6 @@ import {
 } from "./graph";
 import { GENERAL_STATE, ISLANDS, isTerminalIsland, type IslandId } from "./islands";
 import type { MovePayload } from "./types";
-
-export function stackOf(state: State): string[] {
-  return [...state.branch];
-}
 
 // The current state: the last `move` child of the request (`move` edges, in order).
 export function currentMove(state: State): string | undefined {
@@ -35,22 +30,14 @@ export function moveIsland(state: State, id: string): IslandId | undefined {
 }
 
 // Is the state of this `move` finished? A state (including the terminal End state, which
-// has no turns) is finished when the doxa closes it — by a text reply, which the engine records
+// has no turns) is finished when the model closes it — by a text reply, which the engine records
 // as the `stop` relation (docs/en/ir.md §2.5).
 export function isMoveFinished(state: State, id: string): boolean {
   return hasStopped(state, id);
 }
 
-// A frame the engine must return out of: a finished state or an executed action.
-export function isFinished(state: State, id: string): boolean {
-  const node = state.nodes.get(id);
-  if (node?.kind === "action") return actionExecuted(state, id);
-  if (node?.kind === "move") return isMoveFinished(state, id);
-  return hasStopped(state, id);
-}
-
 // The path from the root the focus should sit on: the request and its current state (`move`),
-// while the state is still open; a finished state stays focused on the `move` so the doxa can
+// while the state is still open; a finished state stays focused on the `move` so the model can
 // make the transition (docs/en/ir.md §2.6). The states are flat children of the request.
 function desiredPath(state: State): string[] {
   const root = state.rootId;
@@ -62,7 +49,7 @@ function desiredPath(state: State): string[] {
   return path;
 }
 
-// Deterministic logos moves that bring the stack to the focus: descend into the current
+// Deterministic executor moves that bring the stack to the focus: descend into the current
 // state, or return out of a finished state. One computation feeds both the projection and
 // `classify` (docs/en/ir.md §2.6).
 export function focusEvents(state: State): Event[] {
@@ -98,7 +85,7 @@ export interface Applicable {
 
 // The frontier: the moves admissible at the focus. One computation feeds both the
 // projection (the model surface is bound from it) and `classify`, so the two cannot drift
-// (docs/en/ir.md §2.6). `return` is an engine-internal move, never a doxa operator.
+// (docs/en/ir.md §2.6). `return` is an engine-internal move, never a model operator.
 export function applicable(state: State, focusId: string | undefined): Applicable {
   const none: Applicable = {
     move: false,

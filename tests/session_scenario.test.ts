@@ -11,7 +11,6 @@ import { createSessionTools, type SessionAgent } from "../src/session/session_ag
 import { sessionOutline } from "../src/session/session_outline";
 import type { SessionTurnDeps } from "../src/session/driver";
 import type { GeneralProposer } from "../src/session/general";
-import type { ReadFile } from "../src/session/reading";
 import { cleanupWorkspaces, makeWorkspace, move, read, write } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
@@ -79,7 +78,7 @@ const sessionAgent: SessionAgent = async (messages) => {
         : { toolCalls: [{ name: "body", args: { unit: "g1", id }, callId: "b2" }] };
     }
     return {
-      operation: { kind: "start", text: `In src/app.txt, apply the rule: ${ruleOf(lastTool)}` },
+      operation: { kind: "task", text: `In src/app.txt, apply the rule: ${ruleOf(lastTool)}` },
     };
   }
 
@@ -93,7 +92,7 @@ const sessionAgent: SessionAgent = async (messages) => {
   }
 
   if (user.trim().toLowerCase() === "да") {
-    return { operation: { kind: "start", text: "Add a test for the applied rule" } };
+    return { operation: { kind: "task", text: "Add a test for the applied rule" } };
   }
 
   return { operation: { kind: "respond", text: "Не понял запрос." } };
@@ -172,17 +171,8 @@ describe("synthetic session: general read, memory, reformulation, confirmation",
       "NOTES.md": `${RULE}\n`,
       "src/app.txt": "TODO\n",
     });
-    const readFile: ReadFile = (path) => {
-      const text = workspace.ws.read(path);
-      return {
-        text,
-        version: workspace.ws.version(path),
-        bytes: text.length,
-        lines: text.split("\n").length,
-      };
-    };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: sessionAgent, tools: createSessionTools(readFile) },
+      sessionAgent: { agent: sessionAgent, tools: createSessionTools() },
       task: { propose: createTaskProposer(), workspace: workspace.ws, maxTurns: 20 },
       general: { propose: createGeneralProposer(), workspace: workspace.ws, maxTurns: 4 },
     };
@@ -217,14 +207,14 @@ describe("synthetic session: general read, memory, reformulation, confirmation",
     expect(output).toContain("answer:");
     expect(output).toContain(`Правило: ${RULE}`);
     expect(output.some((line) => line.includes('session: general("Read NOTES.md'))).toBe(true);
-    expect(output.some((line) => line.includes('session: start("In src/app.txt, apply the rule:'))).toBe(true);
+    expect(output.some((line) => line.includes('session: task("In src/app.txt, apply the rule:'))).toBe(true);
     expect(output.some((line) => line.includes("session: respond"))).toBe(true);
-    expect(output.some((line) => line.includes('session: start("Add a test for the applied rule")'))).toBe(true);
+    expect(output.some((line) => line.includes('session: task("Add a test for the applied rule")'))).toBe(true);
 
     const outline = sessionOutline(session);
     expect(outline).toContain('general g1 "Read NOTES.md and report the RULE"');
     expect(outline).toContain('respond: "Правило:');
-    expect(outline).toContain('start: "In src/app.txt, apply the rule:');
-    expect(outline).toContain('start: "Add a test for the applied rule"');
+    expect(outline).toContain('task: "In src/app.txt, apply the rule:');
+    expect(outline).toContain('task: "Add a test for the applied rule"');
   });
 });

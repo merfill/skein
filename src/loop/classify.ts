@@ -20,7 +20,7 @@ function reject(reason: string, constraintId?: string): Classification {
 
 const accept: Classification = { accept: true };
 
-// The gate for the doxa's structural moves (move / stop / decline): if such a move is
+// The gate for the model's structural moves (move / stop / decline): if such a move is
 // inadmissible in the current context it is refused — the reason is returned and no node is
 // created (docs/en/ir.md §2.6–2.7). A command (`apply`) is normally a non-execution
 // observation in the engine (a repeat, a stale base, a forbidden path); only `apply` outside
@@ -78,7 +78,7 @@ export function classify(action: Action, state: State): Classification {
   }
 
   if (action.operator === "stop") {
-    // The doxa's closure. On an open state it finishes it; on the terminal state it ends the
+    // The model's closure. On an open state it finishes it; on the terminal state it ends the
     // request. There is no `stop` on the request (docs/en/ir.md §4.4).
     if (node?.kind === "move" && !hasStopped(state, current as string)) return accept;
     return reject("not_addressed: not admissible here");

@@ -6,26 +6,26 @@ import { probeSession } from "../../src/loop/probe";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
 import type { Proposer } from "../../src/loop/propose";
 import type { CommandResult, Workspace } from "../../src/tools/workspace";
-import { createCheckpoint, createCheckpointWithBackend, type Checkpoint } from "./checkpoint";
+import { createCheckpoint, createCheckpointWithBackend, type Checkpoint } from "../../src/tools/checkpoint";
 import { DockerBackend } from "./checkpoint-docker";
 import { containerWorkspace } from "./container";
 import { dockerWorkspace, type DockerWorkspace } from "./docker";
 import { resolveNetwork, type NetworkPlan } from "./network";
 import type { SandboxRunOptions } from "./run";
-import { APT_SHIM, DEFAULT_TASK_CHECK, PYTEST_SHIM, VERIFIER_RUNNER, harborTaskDir, type SandboxTask } from "./task";
+import { APT_SHIM, DEFAULT_TASK_CHECK, PYTEST_SHIM, VERIFIER_RUNNER, taskCacheDir, type SandboxTask } from "./task";
 import { newSandboxRoot } from "./workspace";
 
-// Runs a real terminal-bench task against the real engine, without Harbor: an image task runs
-// rootless in its own Docker container (`docker.ts`); an image-less fallback materializes a
-// temp root and runs under `bwrap` (`container.ts`). The task's own verifier scores the
-// result. The engine, the projection and the metric extraction are the same as in production —
-// this only swaps the `Workspace`.
+// Runs a real terminal-bench task against the real engine, without a separate benchmark runner:
+// an image task runs rootless in its own Docker container (`docker.ts`); an image-less fallback
+// materializes a temp root and runs under `bwrap` (`container.ts`). The task's own verifier
+// scores the result. The engine, the projection and the metric extraction are the same as in
+// production — this only swaps the `Workspace`.
 
 export interface TaskRun {
   result: AgentResult;
   workspace: Workspace;
   reward: number;
-  // The acceptance that produced the reward: the task's own `test.sh` (Harbor's path) or,
+  // The acceptance that produced the reward: the task's own `test.sh` (benchmark path) or,
   // on the legacy/bwrap path, the task's `check` command.
   acceptance: "test.sh" | "task-check";
   // Where the reward came from. `reward.txt` is written by `test.sh` and is authoritative;
@@ -51,7 +51,7 @@ export function materializeTask(
   task: SandboxTask,
   options: { stageSolution?: boolean } = {},
 ): MaterializedTask {
-  const taskDir = harborTaskDir(task.id);
+  const taskDir = taskCacheDir(task.id);
   const root = newSandboxRoot(`skein-task-${task.id}-`);
 
   // The environment's own files (a Docker `COPY` in the task).
@@ -86,7 +86,7 @@ export function materializeTask(
 
 // Stage the task's verifier under `<root>/.skein/tests/`: the task's own pytest files plus the
 // pytest-free runner and shim. It is called AFTER the agent has run, never before: the agent's
-// workspace must not carry the verifier, whose Harbor `test.sh` can name the solution (it
+// workspace must not carry the verifier, whose `test.sh` can name the solution (it
 // re-clones the exact broken revision). The agent's file tools skip `.skein`, but its shell
 // does not, so "hidden" only holds if the files are simply absent during the agent phase. The
 // verifier is (re)materialized here from the task cache at check time, so the reward stays
@@ -94,7 +94,7 @@ export function materializeTask(
 export function stageVerifier(root: string, task: SandboxTask): void {
   const testsDst = join(root, ".skein", "tests");
   mkdirSync(testsDst, { recursive: true });
-  cpSync(join(harborTaskDir(task.id), "tests"), testsDst, { recursive: true });
+  cpSync(join(taskCacheDir(task.id), "tests"), testsDst, { recursive: true });
   writeFileSync(join(testsDst, "run.py"), VERIFIER_RUNNER);
   // A `pytest` stand-in next to the runner, so `import pytest` resolves without installing it.
   writeFileSync(join(testsDst, "pytest.py"), PYTEST_SHIM);
@@ -144,14 +144,14 @@ const verifierTimeoutMs = Number(process.env.SKEIN_VERIFIER_TIMEOUT_MS ?? 0);
 const VERIFIER_TIMEOUT_MS = Number.isFinite(verifierTimeoutMs) ? verifierTimeoutMs : 0;
 
 // Stage the task's own `tests/` at `/tests` INSIDE the agent's container, exactly where
-// Harbor puts them. Called only after the agent has run, so the verifier is never visible
-// during the work (fix-ocaml-gc's test.sh re-clones the solution).
+// the benchmark puts them. Called only after the agent has run, so the verifier is never
+// visible during the work (fix-ocaml-gc's test.sh re-clones the solution).
 function stageTestSh(container: DockerWorkspace, task: SandboxTask): void {
   const prepared = container.exec("rm -rf /tests /logs/verifier && mkdir -p /tests /logs/verifier");
   if (prepared.code !== 0) throw new Error(prepared.stderr.trim() || "test dirs failed");
   const staged = spawnSync(
     "docker",
-    ["cp", `${join(harborTaskDir(task.id), "tests")}/.`, `${container.name}:/tests`],
+    ["cp", `${join(taskCacheDir(task.id), "tests")}/.`, `${container.name}:/tests`],
     { encoding: "utf8", timeout: 120_000, maxBuffer: 64 * 1024 * 1024 },
   );
   if (staged.status !== 0) {
@@ -190,14 +190,14 @@ function readReward(container: DockerWorkspace): { reward: number; source: "rewa
 // Docker tasks: start the task image directly. No `tar | tar`, no `-v root:/app`; the
 // checkpoint store lives in the container (`/tmp/.skein`) and the host only orchestrates.
 function openRootlessTask(task: SandboxTask, options: SandboxRunOptions, network: NetworkPlan): OpenedTask {
-  const taskDir = harborTaskDir(task.id);
+  const taskDir = taskCacheDir(task.id);
   const request = task.request ?? readFileSync(join(taskDir, "instruction.md"), "utf8");
   const check = TEST_SH;
   const root = newSandboxRoot(`skein-rootless-${task.id}-`);
   const mount = task.mountPoint ?? "/app";
   // Rootless Docker cannot connect a network to a container started with `--network none`.
   // Start on the verifier's network, detach it for an offline agent, and reattach it before
-  // `test.sh` (Harbor's verifier has network; see `network.ts`).
+  // `test.sh` (the verifier has network; see `network.ts`).
   const startNetwork = task.network ?? (network.verifier === "host" ? "bridge" : network.verifier);
   const container = dockerWorkspace(root, {
     image: task.image as string,
@@ -321,8 +321,8 @@ export async function runTask(
 
   // Acceptance is staged only now — after the agent, before the check — so the agent's
   // workspace never contained it. On the Docker path this is the task's own `tests/test.sh`,
-  // exactly as Harbor runs it: in the agent's container, with the agent's environment, and
-  // with the verifier's network (independent of `--net off`). `checkSetup` is not run: the
+  // exactly as the benchmark runs it: in the agent's container, with the agent's environment,
+  // and with the verifier's network (independent of `--net off`). `checkSetup` is not run: the
   // task's `test.sh` owns its own preparation (fix-ocaml-gc re-clones, rebuilds and recreates
   // tests.txt there).
   let checkRoot = root;
@@ -366,10 +366,10 @@ export async function runTask(
   };
 }
 
-// True when the task's Harbor cache is present (so a test can skip on a machine without it).
+// True when the benchmark task cache is present (so a test can skip on a machine without it).
 export function taskAvailable(id: string): boolean {
   try {
-    return existsSync(join(harborTaskDir(id), "instruction.md"));
+    return existsSync(join(taskCacheDir(id), "instruction.md"));
   } catch {
     return false;
   }

@@ -566,8 +566,8 @@ export function TuiApp(props: TuiAppProps) {
     if (result.applied !== undefined && !result.applied.ok) {
       appendNotice(`refused: ${result.applied.reason}`);
     }
-    if (result.operation?.kind === "start") {
-      appendNotice(`start: ${result.operation.text}`);
+    if (result.operation?.kind === "task") {
+      appendNotice(`task: ${result.operation.text}`);
     }
     if (result.reply !== undefined) {
       append({ id: nextId(), kind: "assistant", text: result.reply });

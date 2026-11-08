@@ -1,7 +1,6 @@
 // Parsing for `opencode run --format json`: one JSON event per line. A `step-finish`
 // carries the LLM call's token usage (visible output, hidden reasoning, cache read); a
-// `tool_use` is one tool call. Shared by the sandbox adapter (`opencode.ts`) and the
-// Harbor report (`bench/agents_compare.ts`), so both count the same way.
+// `tool_use` is one tool call. Shared by the sandbox adapter (`opencode.ts`).
 
 export interface OpenCodeMetric {
   // LLM calls (`step-finish` events).

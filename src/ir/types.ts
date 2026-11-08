@@ -59,13 +59,13 @@ export type Provenance =
     }
   | { kind: "list"; path?: string; include?: string; exclude?: string };
 
-// The state the doxa declared it will work in (docs/en/ir.md §2.5). `state` is
+// The state the model declared it will work in (docs/en/ir.md §2.5). `state` is
 // authored and never changes; `what` is the state's own goal text (a state IS its goal —
 // there is no separate goal node).
 export interface MovePayload {
   state: StateId;
   what: string;
-  // The state's stop condition, concretized by the doxa in the request's terms (a state
+  // The state's stop condition, concretized by the model in the request's terms (a state
   // attribute like `what`); the island's generic criterion is the fallback.
   done?: string;
   turn?: number;

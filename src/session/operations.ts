@@ -1,12 +1,12 @@
 import { popUnit, recordOperation, sessionFocus, setPending } from "./session";
 import type { SessionOperation, SessionState } from "./types";
 
-// The SessionAgent's operations (docs/en/session_concepts.md §4.3): the doxa proposes one, logos
-// checks the preconditions and applies it as a session event. No task journal is touched.
-// The vocabulary is `respond` and `start`; resume/cancel strategies and `revise` are deferred.
+// The SessionAgent's operations (docs/en/sessions.md §4.3): the model proposes one, the
+// executor checks the preconditions and applies it as a session event. No task journal is touched.
+// The vocabulary is `respond`, `general` and `task`; resume/cancel strategies and `revise` are deferred.
 
 const MAX_RESPOND_TEXT = 4000;
-const MAX_START_TEXT = 4000;
+const MAX_TASK_TEXT = 4000;
 
 export type OperationResult =
   | { ok: true; operation: SessionOperation }
@@ -36,10 +36,10 @@ export function validateOperation(
   switch (operation.kind) {
     case "respond":
       return textProblem(operation.text, MAX_RESPOND_TEXT);
-    case "start":
-      return textProblem(operation.text, MAX_START_TEXT);
+    case "task":
+      return textProblem(operation.text, MAX_TASK_TEXT);
     case "general":
-      return textProblem(operation.text, MAX_START_TEXT);
+      return textProblem(operation.text, MAX_TASK_TEXT);
   }
 }
 
@@ -55,8 +55,8 @@ export function applyOperation(input: ApplyOperationInput): OperationResult {
     case "respond":
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
-    case "start": {
-      // Starting a new task takes the focus: the previous unit is popped and becomes a trace,
+    case "task": {
+      // Opening a task takes the focus: the previous unit is popped and becomes a trace,
       // still suspended/completed by its own journal. Nothing is written to its journal.
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);

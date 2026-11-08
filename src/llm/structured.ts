@@ -42,8 +42,8 @@ export interface StructuredOptions {
   // Called with the assembled model reply of every attempt (tokens/finish_reason telemetry,
   // used by the trace replay tool).
   onResponse?: (response: unknown) => void;
-  // Usage handlers (`{ handleUsage(reply) }`): the bench meter and the LangGraph adapter's
-  // bridge to Harbor's inherited callbacks. The model layer does not know LangChain.
+  // Usage handlers (`{ handleUsage(reply) }`): the bench meter and the bench bridge. The
+  // model layer does not know the harness.
   usageHandlers?: unknown[];
   ceiling?: number;
   bumps?: number;
@@ -72,8 +72,8 @@ export interface ModelCall {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-// The usage seam: one handler per successful call. The bench meter and the LangGraph
-// adapter's Harbor bridge implement `handleUsage`; the model layer stays AI-SDK-only.
+// The usage seam: one handler per successful call. The bench meter and the bench bridge
+// implement `handleUsage`; the model layer stays AI-SDK-only.
 export async function notifyUsage(handlers: unknown[] | undefined, reply: ModelReply): Promise<void> {
   if (handlers === undefined || handlers.length === 0) return;
   for (const handler of handlers) {
@@ -364,7 +364,7 @@ export async function invokeStructured<T extends z.ZodTypeAny>(
 // projection every turn, so there is no tool-result loop — a call is only the
 // structured-output channel for the proposed `Action`.
 export interface ToolsOptions {
-  // `{ handleUsage(reply) }` handlers: the bench meter, the LangGraph adapter's Harbor bridge.
+  // `{ handleUsage(reply) }` handlers: the bench meter and the bench bridge.
   usageHandlers?: unknown[];
   onError?: (error: unknown, phase: "tools") => void;
   onResponse?: (response: unknown) => void;

@@ -53,12 +53,12 @@ describe("session driver: one utterance turn", () => {
   it("starts a task, runs it, and keeps the final stop in the unit journal", async () => {
     const session = createSession();
     const result = await runSessionTurn(
-      deps([{ kind: "start", text: "fix the build" }]),
+      deps([{ kind: "task", text: "fix the build" }]),
       session,
       "fix the build",
     );
 
-    expect(result.operation).toEqual({ kind: "start", text: "fix the build" });
+    expect(result.operation).toEqual({ kind: "task", text: "fix the build" });
     expect(result.task?.unitId).toBe("r1");
     expect(result.task?.result.done).toBe(true);
     expect(result.task?.result.stopReason).toBe("request_addressed");
@@ -74,8 +74,8 @@ describe("session driver: one utterance turn", () => {
   it("starts a second task and leaves the first as a trace", async () => {
     const session = createSession();
     const turnDeps = deps([
-      { kind: "start", text: "first task" },
-      { kind: "start", text: "second task" },
+      { kind: "task", text: "first task" },
+      { kind: "task", text: "second task" },
     ]);
     await runSessionTurn(turnDeps, session, "first task");
     const second = await runSessionTurn(turnDeps, session, "second task");
@@ -91,7 +91,7 @@ describe("session driver: one utterance turn", () => {
     const session = createSession();
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
-        agent: async () => ({ operation: { kind: "start", text: "fix the build" } }),
+        agent: async () => ({ operation: { kind: "task", text: "fix the build" } }),
         tools,
       },
       task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
@@ -129,7 +129,7 @@ describe("session driver: one utterance turn", () => {
       seen.push(messages);
       return seen.length === 1
         ? { operation: { kind: "respond", text: "I understood: fix the build. Start?" } }
-        : { operation: { kind: "start", text: "fix the build" } };
+        : { operation: { kind: "task", text: "fix the build" } };
     };
     const turnDeps: SessionTurnDeps = {
       sessionAgent: { agent, tools },
@@ -191,7 +191,7 @@ describe("session driver: one utterance turn", () => {
     };
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
-        agent: async () => ({ operation: { kind: "start", text: "fix the parser in parser.c" } }),
+        agent: async () => ({ operation: { kind: "task", text: "fix the parser in parser.c" } }),
         tools,
       },
       task: { propose: isolated, workspace: makeWorkspace().ws, maxTurns: 6 },

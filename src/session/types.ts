@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "general" | "observer" | "session" | "reading";
+export type UnitType = "task" | "general" | "observer" | "session";
 
 export interface Unit {
   id: string;
@@ -46,18 +46,18 @@ export type ReactionProposal =
   | { kind: "memo"; text: string; evidence: string[] }
   | { kind: "halt"; reason: string };
 
-// A structured action of the SessionAgent on the session (docs/en/session_concepts.md §4.3).
-// The doxa proposes it; logos checks and applies it as a session event. The vocabulary is
-// deliberately minimal: answer, or start a task from a reformulated request. Resume/cancel
-// strategies and `revise` are deferred.
+// A structured action of the SessionAgent on the session (docs/en/sessions.md §4.3).
+// The model proposes it; the executor checks and applies it as a session event. The vocabulary is
+// deliberately minimal: answer, open a task from a reformulated request, or delegate to the
+// general agent. Resume/cancel strategies and `revise` are deferred.
 export type SessionOperation =
   | { kind: "respond"; text: string }
-  | { kind: "start"; text: string }
+  | { kind: "task"; text: string }
   | { kind: "general"; text: string };
 
 // The session's attention for a unit. Derived from the journals, never stored as a field:
 // `completed` is a terminal marker of the unit journal, `abandoned` is a session fact, and
-// neither closes a state (docs/en/session_concepts.md §2).
+// neither closes a state (docs/en/sessions.md §2).
 export type Attention = "active" | "suspended" | "abandoned" | "completed";
 
 // Why an interpretation turn ended without an operation: the model gave nothing, or the loop

@@ -2,7 +2,7 @@
 // `FRAGMENT` was (docs/en/system_prompt.md). `ISLAND_IDS` is the source of truth for
 // the `move` tool's `state` enum (`src/llm/schemas.ts`) and `START_ISLAND_IDS` for the request's
 // startable states, so the model's call contract and the prompt map cannot drift. A goal's
-// `state` is authored by the doxa at `create_goal` and never changes; it is a label, never a
+// `state` is authored by the model at `create_goal` and never changes; it is a label, never a
 // gate (docs/en/ir.md §2.5, §8).
 
 export const ISLAND_IDS = [
@@ -172,7 +172,7 @@ export const ISLANDS: Record<IslandId, Island> = {
 export const ISLAND_ORDER: readonly IslandId[] = LIVE_ISLAND_IDS;
 
 // The state's description, shown ONCE when the state is entered (a `system` turn on the tape):
-// what the state is and the knowledge that closes it. The doxa's concretized `what`/`done`
+// what the state is and the knowledge that closes it. The model's concretized `what`/`done`
 // (carried on the `move`) override the island's generic text when present.
 export function stateDescription(island: Island, what?: string, done?: string): string {
   const goal = what !== undefined && what !== "" ? what : island.what;
@@ -183,7 +183,7 @@ export function stateDescription(island: Island, what?: string, done?: string): 
 }
 
 // The terminal state: reaching it is the sign of the end; it carries no goal and is closed
-// directly by the doxa's text reply (recorded as `stop`).
+// directly by the model's text reply (recorded as `stop`).
 export const TERMINAL_ISLAND: IslandId = "end";
 
 export function isTerminalIsland(value: string): boolean {

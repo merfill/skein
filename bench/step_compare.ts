@@ -2,7 +2,7 @@
 // Reads each run's `metrics.json` and detects its shape:
 //   - Skein: { totals, byTool, byOperator, perTurn } (tests/sandbox/metrics.ts).
 //   - opencode: { agent, metric: { steps, toolCalls, inputTokens, ... byTool } }.
-// For the Skein reasoning-by-phase table, run `bench/reasoning-breakdown.ts` on the same dir.
+// For the Skein reasoning-by-phase table, inspect the run's `metrics.json` perTurn directly.
 //
 //   npx tsx bench/step_compare.ts <run-dir> [<run-dir> ...]
 import { readFileSync } from "node:fs";

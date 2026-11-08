@@ -684,7 +684,7 @@ describe("the message tape", () => {
       if (index === 1) return proposal({ operator: "move", state: "patch", what: "green", done: "green" });
       if (index === 2) return proposal({ operator: "apply", action: { tool: "bash", command: "echo start" } });
       if (index === 3) {
-        // One doxa move, two independent probes (a batch).
+        // One model move, two independent probes (a batch).
         return {
           thought: "probe",
           actions: [

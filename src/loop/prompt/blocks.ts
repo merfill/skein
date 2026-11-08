@@ -85,7 +85,7 @@ export function transitionInstruction(island?: IslandId): string {
 
 // The terminal prompt (`terminal`): End has no criterion and no reachable next state, so its
 // own instruction IS the turn's goal. Appended as a `system` turn after the tape, like the
-// transition rule, so the completion rule is the last thing the model reads; the doxa replies
+// transition rule, so the completion rule is the last thing the model reads; the model replies
 // with the final report as text and the engine records it as the state's `stop`.
 export function terminalInstruction(island?: IslandId): string {
   const target = island ?? TERMINAL_ISLAND;
@@ -95,7 +95,7 @@ export function terminalInstruction(island?: IslandId): string {
 }
 
 // The working prompt: the state's goal, criterion and plan as one `user` turn, appended after
-// the state's turns so the goal is the last thing the model reads. The doxa's `what` is an
+// the state's turns so the goal is the last thing the model reads. The model's `what` is an
 // unverified guess about the concrete subject, shown as advice, never as the state's goal; the
 // original request stays reference. Empty for a state with no criterion (End); the terminal
 // situation carries its own prompt (`terminalInstruction`).

@@ -8,7 +8,7 @@ import { fixOcamlGcTask } from "./tasks/fix-ocaml-gc";
 import { cleanupSandboxes } from "./workspace";
 
 // The verifier must not be in the agent's workspace: the agent's shell can read `.skein`, and
-// the task's Harbor `test.sh` names the exact revision to fix. It is staged only after the
+// the task's `test.sh` names the exact revision to fix. It is staged only after the
 // agent, before the check (docs/en/testing.md §3.6). No Docker or model here.
 
 afterEach(() => cleanupSandboxes());

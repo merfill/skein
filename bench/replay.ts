@@ -1,12 +1,12 @@
 // Replays recorded turns from a trace through the live model with the SAME context, so the
-// structured-output path and the proposed next step can be checked without Harbor.
+// structured-output path and the proposed next step can be checked without a container.
 //
 // Usage:
 //   npx tsx bench/replay.ts <trace-or-scenario> [--limit N] [--model M]
 //
 // Trace forms (auto-detected):
 //   * a scenario run: bench/runs/live-<ts>-<name>/contexts.ndjson (pass the path or the name)
-//   * a Harbor log:   langgraph-run.log (SKEIN_CONTEXT / SKEIN_PROPOSAL lines)
+//   * a saved agent log with SKEIN_CONTEXT / SKEIN_PROPOSAL lines
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -43,7 +43,7 @@ function fromContextsNdjson(path: string): Turn[] {
     });
 }
 
-function fromHarborLog(path: string): Turn[] {
+function fromAgentLog(path: string): Turn[] {
   const contexts: Context[] = [];
   const actions: Action[] = [];
   for (const line of readFileSync(path, "utf8").split("\n")) {
@@ -71,7 +71,7 @@ function resolveTrace(arg: string): string {
 function loadTurns(arg: string): Turn[] {
   const path = resolveTrace(arg);
   const text = readFileSync(path, "utf8");
-  return text.includes("SKEIN_CONTEXT ") ? fromHarborLog(path) : fromContextsNdjson(path);
+  return text.includes("SKEIN_CONTEXT ") ? fromAgentLog(path) : fromContextsNdjson(path);
 }
 
 function flag(name: string): string | undefined {

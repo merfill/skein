@@ -34,7 +34,7 @@ import type {
   Unit,
 } from "./types";
 
-// One dialogue turn: interpret the user's line, apply the operation, and, for `start`, run the
+// One dialogue turn: interpret the user's line, apply the operation, and, for `task`, run the
 // new task unit. The task sees only the reformulated request; the session (traces, history
 // tools) belongs to the session agent.
 
@@ -67,7 +67,7 @@ export interface PausedState {
   unitId: string;
   utterance: string;
   utteranceTurn: number;
-  // The session unit that proposed the `start`.
+  // The session unit that proposed the `task`.
   interpretationUnitId?: string;
   // Session resume: the loop turn already completed and the captured L0.
   startTurn?: number;

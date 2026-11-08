@@ -26,21 +26,21 @@ export const OBSERVER_BASE_PROMPT = [
 ].join("\n\n");
 
 export interface ObserverCall {
-  origin: "engine" | "doxa";
+  origin: "engine" | "model";
   tool: string;
   args: Record<string, unknown>;
   callId: string;
 }
 
 export interface ObserverResult {
-  origin: "engine" | "doxa";
+  origin: "engine" | "model";
   tool: string;
   callId: string;
   result: string;
 }
 
 export interface ObserverReply {
-  // The doxa proposes; the state the hint applies to is not its to name — the engine knows the
+  // The model proposes; the state the hint applies to is not its to name — the engine knows the
   // trigger's anchor and stamps it when the proposal becomes a reaction.
   decision?: ReactionProposal;
   // Side-channel telemetry.
@@ -92,7 +92,7 @@ export interface ObserverContext {
 
 function callPayload(node: Node): ObserverCall | undefined {
   const payload = node.payload as Partial<ObserverCall> | undefined;
-  if (payload?.origin !== "engine" && payload?.origin !== "doxa") return undefined;
+  if (payload?.origin !== "engine" && payload?.origin !== "model") return undefined;
   if (typeof payload.tool !== "string" || typeof payload.callId !== "string") return undefined;
   return {
     origin: payload.origin,
@@ -104,7 +104,7 @@ function callPayload(node: Node): ObserverCall | undefined {
 
 function resultPayload(node: Node): ObserverResult | undefined {
   const payload = node.payload as Partial<ObserverResult> | undefined;
-  if (payload?.origin !== "engine" && payload?.origin !== "doxa") return undefined;
+  if (payload?.origin !== "engine" && payload?.origin !== "model") return undefined;
   if (
     typeof payload.tool !== "string" ||
     typeof payload.callId !== "string" ||

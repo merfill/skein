@@ -23,15 +23,15 @@ import { cleanupWorkspaces, makeWorkspace, move, read, request, write } from "./
 afterEach(cleanupWorkspaces);
 
 const START: SessionAgent = async () => ({
-  operation: { kind: "start", text: "edit src/app.txt" },
+  operation: { kind: "task", text: "edit src/app.txt" },
 });
 
-function withReadingUnit(session: ReturnType<typeof createSession>): ReturnType<typeof createSession> {
-  openUnit(session, "reading:1", "reading", [
+function withSessionUnit(session: ReturnType<typeof createSession>): ReturnType<typeof createSession> {
+  openUnit(session, "m1", "session", [
     {
       type: "add_node",
       node: {
-        id: "reading:1",
+        id: "m1",
         space: "work",
         kind: "request",
         label: "a.txt",
@@ -175,12 +175,12 @@ describe("session pause and resume", () => {
   it("keeps the completed tool turns and resumes the same unit", async () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const controller = new AbortController();
-    const session = withReadingUnit(createSession());
+    const session = withSessionUnit(createSession());
     let calls = 0;
     const agent: SessionAgent = async () => {
       calls += 1;
       if (calls === 1) {
-        return { toolCalls: [{ name: "unit", args: { id: "reading:1" }, callId: "l1" }] };
+        return { toolCalls: [{ name: "unit", args: { id: "m1" }, callId: "l1" }] };
       }
       if (calls === 2) {
         controller.abort();
@@ -217,14 +217,14 @@ describe("session pause and resume", () => {
 describe("REPL pause menu", () => {
   it("pauses, resumes on 'r', and prints the answer", async () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
-    const session = withReadingUnit(createSession());
+    const session = withSessionUnit(createSession());
     let current: AbortController | undefined;
     let calls = 0;
     const agent: SessionAgent = async () => {
       calls += 1;
       if (calls === 1) {
         current?.abort();
-        return { toolCalls: [{ name: "unit", args: { id: "reading:1" }, callId: "l1" }] };
+        return { toolCalls: [{ name: "unit", args: { id: "m1" }, callId: "l1" }] };
       }
       return { operation: { kind: "respond", text: "done" } };
     };
@@ -266,7 +266,7 @@ describe("REPL pause menu", () => {
     const agent: SessionAgent = async () => {
       sessionCalls += 1;
       if (sessionCalls === 1) {
-        return { operation: { kind: "start", text: "edit src/app.txt" } };
+        return { operation: { kind: "task", text: "edit src/app.txt" } };
       }
       return { operation: { kind: "respond", text: "the task is open" } };
     };

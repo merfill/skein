@@ -6,6 +6,6 @@ export const crack7zHash: SandboxTask = {
   id: "crack-7z-hash",
   image: "alexgshaw/crack-7z-hash:20251031",
   checkIn: "host",
-  // The task installs p7zip and a Perl module at solve time, as Harbor allows.
+  // The task installs p7zip and a Perl module at solve time, as the benchmark allows.
   network: "bridge",
 };

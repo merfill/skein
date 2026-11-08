@@ -91,11 +91,11 @@ describe("session outline: L0 and L1", () => {
     openUnit(session, "m1", "session", [request("req", "hello")]);
     recordOperation(session, "m1", 1, { kind: "respond", text: "hi" });
     openUnit(session, "m2", "session", [request("req", "now do X")]);
-    recordOperation(session, "m2", 2, { kind: "start", text: "do X with the earlier context" });
+    recordOperation(session, "m2", 2, { kind: "task", text: "do X with the earlier context" });
     const outline = sessionOutline(session);
     expect(outline).toContain('1. session m1 "hello" completed; respond: "hi"');
     expect(outline).toContain(
-      '2. session m2 "now do X" completed; start: "do X with the earlier context"',
+      '2. session m2 "now do X" completed; task: "do X with the earlier context"',
     );
   });
 
@@ -106,14 +106,14 @@ describe("session outline: L0 and L1", () => {
       session,
       "m1",
       1,
-      { kind: "start", text: "apply the rule to src/app.txt" },
+      { kind: "task", text: "apply the rule to src/app.txt" },
       "text too long (max 4000)",
       "the model explained three alternatives",
     );
     expect(attentionOf(session, "m1")).toBe("completed");
     const outline = sessionOutline(session);
     expect(outline).toContain(
-      'start: "apply the rule to src/app.txt" (refused: text too long (max 4000))',
+      'task: "apply the rule to src/app.txt" (refused: text too long (max 4000))',
     );
     expect(outline).toContain('reasoning: "the model explained three alternatives"');
   });

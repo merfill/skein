@@ -20,7 +20,6 @@ import {
   type SessionReply,
   type SessionToolCall,
 } from "../session/session_agent";
-import type { ReadFile } from "../session/reading";
 import type { SessionOperation } from "../session/types";
 
 const unitSchema = z.object({ id: z.string() });
@@ -46,14 +45,14 @@ const searchSchema = z.object({
   count: z.number().int().positive().optional(),
 });
 const respondSchema = z.object({ text: z.string() });
-const startSchema = z.object({ text: z.string() });
+const taskSchema = z.object({ text: z.string() });
 const generalSchema = z.object({ text: z.string() });
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
     name: "unit",
     description:
-      "Return one unit's structure: states and closures, or a reading unit's path/size/observation. Call with the unit id from the trace (e.g. r1, g1, reading:1).",
+      "Return one unit's structure: states and closures. Call with the unit id from the trace (e.g. r1, g1, m1).",
     schema: unitSchema,
   },
   {
@@ -93,10 +92,10 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
     schema: generalSchema,
   },
   {
-    name: "start",
+    name: "task",
     description:
       "Change files or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged.",
-    schema: startSchema,
+    schema: taskSchema,
   },
 ];
 
@@ -119,9 +118,9 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
       const value = respondSchema.parse(input);
       return { kind: "respond", text: value.text };
     }
-    case "start": {
-      const value = startSchema.parse(input);
-      return { kind: "start", text: value.text };
+    case "task": {
+      const value = taskSchema.parse(input);
+      return { kind: "task", text: value.text };
     }
     case "general": {
       const value = generalSchema.parse(input);
@@ -154,17 +153,15 @@ export interface SessionModelOptions {
 export interface SessionAgentDepsOptions extends SessionModelOptions {
   maxTurns?: number;
   surveyLimit?: number;
-  readFile?: ReadFile;
 }
 
 export function createSessionAgentDeps(
   model: LanguageModel,
   options: SessionAgentDepsOptions = {},
 ): SessionAgentDeps {
-  const readFile = options.readFile;
   return {
     agent: modelSessionAgent(model, options),
-    tools: createSessionTools(readFile),
+    tools: createSessionTools(),
     ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
     ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
   };
@@ -215,7 +212,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `start`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `task`.",
             };
             continue;
           }

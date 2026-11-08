@@ -5,7 +5,7 @@ import { probeMaterial } from "./material";
 
 // One deterministic probe of the session at request start: the environment (which tools
 // exist and their versions) and the material (the map built in `material.ts`). It is an
-// engine-owned fact (the doxa neither asks for it nor executes it): the script only reads
+// engine-owned fact (the model neither asks for it nor executes it): the script only reads
 // `command -v` and versions, so it cannot change the material. The result is journalled, so
 // a replay reads the recorded fact instead of running the probe again.
 

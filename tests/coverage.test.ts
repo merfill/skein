@@ -3,9 +3,9 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-// The coverage contract: every spec ID in docs/en/ir.md must be cited by at least one test
+// The coverage contract: every spec ID in docs/en/ir_operations.md must be cited by at least one test
 // title as `[ID]`, so the document and the tests cannot drift apart.
-const DOC = join(import.meta.dirname, "..", "docs", "en", "ir.md");
+const DOC = join(import.meta.dirname, "..", "docs", "en", "ir_operations.md");
 const TESTS = join(import.meta.dirname, "..", "tests");
 
 const ID = "(?:OP-MV-\\d+|OP-CG-\\d+|OP-AP-[A-Z]+-\\d+|OP-ST-\\d+|OP-DC-\\d+|OP-CP-\\d+|OP-RC-\\d+|OP-SR-\\d+|TR-\\d+|DER-[A-Z]+-\\d+|REF-[A-Z][A-Z-]*)";

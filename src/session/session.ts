@@ -231,16 +231,10 @@ function unitCompleted(session: SessionState, unit: Unit): boolean {
         (event.type === "operation" || event.type === "refusal") && event.unitId === unit.id,
     );
   }
-  // A reading unit is complete once its observation is written.
-  if (unit.type === "reading") {
-    return unit.journal.some(
-      (event) => event.type === "add_node" && event.node.kind === "observation",
-    );
-  }
   return false;
 }
 
-// The attention status is a deterministic read of the journals (docs/en/session_concepts.md §2):
+// The attention status is a deterministic read of the journals (docs/en/sessions.md §6):
 // `abandoned` beats a closure, `completed` is the unit's own terminal fact, `active` is the
 // focus. Nothing is stored.
 export function attentionOf(session: SessionState, unitId: string): Attention {

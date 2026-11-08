@@ -7,7 +7,7 @@ import { currentMove } from "../src/ir/traversal";
 import type { Action } from "../src/llm/schemas";
 import { runAgent } from "../src/loop/graph";
 import type { Workspace } from "../src/tools/workspace";
-import { createCheckpoint } from "./sandbox/checkpoint";
+import { createCheckpoint } from "../src/tools/checkpoint";
 import {
   DEFAULT_FILES,
   cleanupWorkspaces,
@@ -180,7 +180,7 @@ describe("revert: failed Verification -> Patch", () => {
     expect(history.map((message) => message.text)).toContain("Finish state Verification — still fails");
   });
 
-  it("keeps the doxa's failure why in the Finish line even when the run exited 0", () => {
+  it("keeps the model's failure why in the Finish line even when the run exited 0", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     let step = execAll(withGoal("do it", "true"), [request()], ws);
     step = exec({ operator: "stop", why: "mapped" }, step.events, ws);

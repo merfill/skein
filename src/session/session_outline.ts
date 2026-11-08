@@ -9,7 +9,7 @@ import {
 } from "./session";
 import type { NoDecisionReason, SessionOperation, SessionState, Unit } from "./types";
 
-// The hierarchical outline of a session (docs/en/session_concepts.md §5): L0 — the units,
+// The hierarchical outline of a session (docs/en/sessions.md §2): L0 — the units,
 // L1 — a unit's states. It is a deterministic read of the session and unit journals, not a
 // separate model of "knowledge"; every level is bounded and its truncation is explicit.
 
@@ -71,7 +71,7 @@ function decisionText(decision: TraceDecision): string {
         ? `respond: "${short(operation.text)}"`
         : operation.kind === "general"
           ? `general: "${short(operation.text)}"`
-          : `start: "${short(operation.text)}"`;
+          : `task: "${short(operation.text)}"`;
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
@@ -99,31 +99,6 @@ function endingOf(state: State): string {
   if (!isMoveFinished(state, move)) return `open at ${island}`;
   const stop = stopOf(state, move);
   return `${island}: "${stop !== undefined ? short(labelOf(state, stop)) : ""}"`;
-}
-
-interface ReadingInfo {
-  path: string;
-  bytes?: number;
-  lines?: number;
-  observation?: string;
-}
-
-function readingInfo(unit: Unit): ReadingInfo {
-  const state = fold(unit.journal);
-  const root = state.rootId;
-  const observation = [...state.nodes.values()].find((node) => node.kind === "observation");
-  const payload = observation?.payload as { bytes?: unknown; lines?: unknown } | undefined;
-  return {
-    path: root !== undefined ? labelOf(state, root) : unit.id,
-    ...(typeof payload?.bytes === "number" ? { bytes: payload.bytes } : {}),
-    ...(typeof payload?.lines === "number" ? { lines: payload.lines } : {}),
-    ...(observation !== undefined ? { observation: observation.id } : {}),
-  };
-}
-
-function readingEnding(unit: Unit): string {
-  const info = readingInfo(unit);
-  return `read ${info.bytes ?? "?"} B, ${info.lines ?? "?"} line(s)${info.observation !== undefined ? `; ${info.observation}` : ""}`;
 }
 
 function resultOfAction(state: State, actionId: string): string | undefined {
@@ -218,9 +193,7 @@ function unitLine(session: SessionState, unit: Unit, index: number): string {
       ? endingOf(state)
       : unit.type === "general"
         ? generalEnding(state, unit)
-        : unit.type === "reading"
-          ? readingEnding(unit)
-          : "";
+        : "";
   // A session unit's trace carries its answer or the reformulated request it committed. The
   // task unit's trace carries the same reformulation as its request once the driver opens it.
   const decision = unit.type === "session" ? decisionOf(session, unit.id) : undefined;
@@ -265,16 +238,6 @@ export function unitOutline(
 ): string {
   const unit = unitOf(session, unitId);
   const status = attentionOf(session, unitId);
-  if (unit.type === "reading") {
-    const info = readingInfo(unit);
-    return [
-      `unit ${unit.id} (reading) status: ${status}`,
-      `path: ${info.path}`,
-      `bytes: ${info.bytes ?? "?"}`,
-      `lines: ${info.lines ?? "?"}`,
-      `observation: ${info.observation ?? "?"}`,
-    ].join("\n");
-  }
   const state = fold(unit.journal);
   const root = state.rootId;
   const lines = [`unit ${unit.id} (${unit.type}) status: ${status}`];

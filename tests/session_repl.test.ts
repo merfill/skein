@@ -48,7 +48,7 @@ describe("session REPL", () => {
       lines("hello", "fix it", "exit"),
       deps([
         { kind: "respond", text: "hi" },
-        { kind: "start", text: "fix it" },
+        { kind: "task", text: "fix it" },
       ]),
       (line) => output.push(line),
       session,
@@ -57,7 +57,7 @@ describe("session REPL", () => {
     expect(output).toContain("session: respond");
     expect(output).toContain("answer:");
     expect(output).toContain("hi");
-    expect(output).toContain('session: start("fix it")');
+    expect(output).toContain('session: task("fix it")');
     expect(output).toContain("task r1: request_addressed after 4 turns");
     expect(session.utteranceSeq).toBe(2);
     expect(session.units.has("r1")).toBe(true);

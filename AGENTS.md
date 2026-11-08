@@ -1,9 +1,8 @@
 # Skein
 
-A coding agent with a deterministic IR context. The context is a **projection of
-the IR**, not a message tape. The conceptual frame is doxa/logos: the LLM (doxa)
-only proposes, the engine and the witness (logos) decide, the journal and the
-projection are the protocol.
+A coding agent with a non-monotone IR context. The context is a **projection of
+the IR**, not a message tape. The model proposes; the executor records and derives;
+the journal and the projection are the protocol.
 
 ## The context is a projection (non-monotone)
 
@@ -18,7 +17,7 @@ content can disappear from the view as the focus moves.
   action/observation list); a **closed** state renders only `Start state` + `Finish state` —
   no brief or turns;
 - an open state gets a per-turn **working prompt**: one `user` turn after the turns, with
-  `Goal: <island.what>`, the doxa's unverified note (`Your earlier guess (may be wrong):`),
+  `Goal: <island.what>`, the model's unverified note (`Your earlier guess (may be wrong):`),
   `Done when: <criterion>`, `Plan:` (the state's instruction), and "The original user request
   is context for this state, not its goal." It is recomputed from the projection, never stored.
   The request/transition prompts are appended the same way; `transition` is a `system` turn;
@@ -26,7 +25,7 @@ content can disappear from the view as the focus moves.
   startable states, and the transition prompt names the reachable states and the rules,
   scoped to the move at hand. An open state never sees another state's goal;
 - the **request is reference, not the goal**: it explains why the task exists and what
-  acceptance it declares, but the state's goal and criterion are the only active goal for the
+  check it declares, but the state's goal and criterion are the only active goal for the
   turn. This is a real anchor the model otherwise treats as a broader task (see below);
 - "closed" does not delete nodes: they stay in the journal and are addressable via
   `recall`/`search`; only the projection stops selecting them;
@@ -37,18 +36,18 @@ stored history. Do not reason about the context as an append-only chat transcrip
 
 ## Prompt anchors (observed)
 
-- **The request is the strongest anchor.** A model will treat its acceptance as a second goal
+- **The request is the strongest anchor.** A model will treat the request's check as a second goal
   inside a state unless the state's goal/criterion is restated at the decision point and the
   request is explicitly *reference*. On `fix-ocaml-gc`, Patch kept building/testing because
   "Ensure … the testsuite runs cleanly" was still the broader task. It stopped only when
   (a) the request was marked reference, (b) the working prompt restated `Goal`/`Done when`/`Plan`
   at the decision point, and (c) the base prompt stopped carrying the state map/transitions, so
   "next state (Verification)" could not become another goal.
-- **A state records its own work, not the request's acceptance.** The request starts directly
+- **A state records its own work, not the request's check.** The request starts directly
   in a productive state (Patch/Research/Construction); there is no orientation pass, because the
-  engine already renders the root, the repository status and the environment. An `Acceptance: …`
+  engine already renders the root, the repository status and the environment. A `Check: …`
   line in a state's result becomes a second goal on the tape for every later state. The
-  acceptance stays in the request, and the state that owns it reads it there.
+  check stays in the request, and the state that owns it reads it there.
 - **Prohibitions are probes, not fixes.** "Stop after the edit; do not build" suppresses the
   symptom but leaves the model resolving the conflict between the request and the state. Fix
   the hierarchy and the salience; use a prohibition only to confirm the anchor exists. The
@@ -72,16 +71,16 @@ The two trees mirror each other by base name; the handoff log is RU-only at
 - `npm run cli -- auth login|list|logout`, `... models`, `... doctor` — provider setup and
   probes; `docs/en/providers.md`. Provider tests use a mock fetch; no live calls without go-ahead.
 - **NEVER run bare `npx vitest run`.** It collects `tests/sandbox/**`, which self-enable on any
-  machine with Docker + the task images + the Harbor cache and launch real containers and
+  machine with Docker + the task images + the benchmark task cache and launch real containers and
   verifiers (300 s timeouts, 120 s cleanup) — minutes of runtime and apparent hangs, not the
   seconds an offline run should take. Always exclude `tests/sandbox/**`.
 - **Heavy/live tests need the owner's explicit go-ahead — ask first, every time.** This covers
   `tests/sandbox/**` (which self-enables on any machine with Docker + the task images + the
-  Harbor cache and launches real containers/verifiers, regardless of `SKEIN_LIVE`), any
-  `SKEIN_LIVE=true` run (gate, live scenarios, live step tests), `npm run bench*`, and Harbor.
+  benchmark task cache and launches real containers/verifiers, regardless of `SKEIN_LIVE`), any
+  `SKEIN_LIVE=true` run (gate, live scenarios, live step tests) and `npm run bench*`.
   They cost minutes and money — never start one on your own initiative.
-- **Sandbox batch protocol (owner).** The original benchmark is Harbor; our runner is the
-  containerized `tests/sandbox/**`. For a K-run batch: run the cells **in parallel** (matrix.ts
+- **Sandbox batch protocol (owner).** Our runner is the containerized `tests/sandbox/**`. For a
+  K-run batch: run the cells **in parallel** (matrix.ts
   or parallel `sandbox-run.ts` processes — never a sequential shell loop), cap by **turns**
   (the task's `maxTurns`, 60 for `fix-ocaml-gc`), and impose **no wall-clock timeout** (do not
   pass/enforce `--timeout`, `VERIFIER_TIMEOUT_MS`, `DEFAULT_RUN_TIMEOUT_MS`).
@@ -103,13 +102,13 @@ The two trees mirror each other by base name; the handoff log is RU-only at
 
 ## Invariants (do not break)
 
-- a state is closed only by the doxa's `stop` (a `has_stopped` edge on the `move`); there is
-  no criterion gate — cycle / premature-stop detection is deferred;
+- a state is closed only by the model's text reply, recorded as `stop` (a `has_stopped` edge on
+  the `move`); there is no criterion gate — cycle / premature-stop detection is deferred;
 - the request ends when its goal is stopped (there is no `stop` on the request);
 - a `stale` fact is never shown as active content;
 - `project` is deterministic: same events → same `Context`;
-- doxa (the LLM) only proposes; logos decides (refusals and tool failures are the only
-  facts the engine adds);
+- the model proposes; the executor records; refusals and tool failures are the only facts the
+  engine adds;
 - secrets live only in `.env` (the file is in `.gitignore`);
 - minimal diff, no incidental refactoring or scope creep.
 

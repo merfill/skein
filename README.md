@@ -1,7 +1,7 @@
 # Skein
 
 A coding agent whose context is a **projection of an IR**, not a message tape.
-The LLM (doxa) only proposes; a deterministic engine (logos) decides; the event journal
+The model proposes; a deterministic executor records and derives; the event journal
 and the projection function are the protocol.
 
 ## Idea
@@ -11,14 +11,14 @@ In an ordinary agent memory is a growing message tape. In Skein memory is a type
 The model does not "remember" — it sees a slice of state.
 
 A **request** opens a task. The task walks a small set of states (`research`, `patch`,
-`construction`, `verification`, `end`); each state has its own goal, criterion and working
-prompt, and closes only through the doxa's `stop`. The projection is non-monotone: closed
-states fall out of view but stay addressable.
+`construction`, `verification`, `end`); each state has its own goal, completion condition
+and working prompt, and closes only by the model's text reply, recorded as `stop`. The
+projection is non-monotone: closed states fall out of view but stay addressable.
 
 A **session agent** sits above tasks. It interprets the user's utterance, answers
-(`respond`), opens a read-only analysis unit (`general`), or starts a coding task
-(`start`) with a reformulated request. Task unit journals stay isolated; continuity is
-carried by the reformulation and the session outline.
+(`respond`), opens a read-only analysis unit (`general`), or opens a coding task
+(`task`) with a reformulated request. Task unit journals stay isolated; continuity is
+carried by the reformulation and the session trace.
 
 ## Install
 
@@ -92,7 +92,7 @@ src/
   session/    session container, session agent, driver, REPL, TUI glue
   tools/      fsWorkspace, executeAction, checkpoint
   tui/        Ink UI
-bench/        replay, rollout, live-step and comparison tools
+bench/        replay, rollout, live-step and metrics tools
 tests/        offline tests; tests/live and tests/sandbox are opt-in
 docs/         en/ and ru/ documentation trees (concepts, IR, providers, sessions, testing)
 ```
@@ -101,10 +101,11 @@ docs/         en/ and ru/ documentation trees (concepts, IR, providers, sessions
 
 Start at `docs/README.md`. The core reading:
 
-- `docs/en/concepts.md` — doxa/logos and the projection.
-- `docs/en/ir.md` — the IR semantics (source of truth).
+- `docs/en/concepts.md` — the non-monotone context, the agents and the states.
+- `docs/en/ir.md` — the conceptual IR model.
+- `docs/en/ir_operations.md` — the operator registry and detailed tool tables.
 - `docs/en/projection.md` — what the model sees each turn.
-- `docs/en/session_concepts.md` — sessions, units and the session agent.
+- `docs/en/sessions.md` — sessions, units and the session agent.
 - `docs/en/providers.md` — providers, auth and free options.
 - `docs/ru/handoff.md` — the working handoff log (RU-only).
 

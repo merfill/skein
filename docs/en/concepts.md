@@ -1,218 +1,186 @@
-# Skein — a coding agent with a deterministic IR context
+# Skein — a coding agent with a non-monotone context
 
-> **Note (state protocol).** The tree/traversal/projection details here predate the
-> **state protocol** redesign: the walk is now a state
-> machine over islands — `move` declares the state (its goal is the island's own) and an optional
-> note (`what`), the first `apply` seeds its plan, `stop` finishes it and forces the transition, and the terminal
-> state ends the request. The current shape is `docs/en/ir.md`; the as-built is
-> `docs/en/ir.md`. The conceptual frame (doxa/logos, the journal, the projection) still holds.
-> Any `done_when`/criterion language below is historical (there is **no** criterion gate — a
-> state closes only by the doxa's `stop`).
+> Conceptual overview. The as-built IR semantics are in `ir.md`; the context tape in
+> `projection.md`; the work states in `states.md`; the agents and their memory in
+> `sessions.md`. The Russian mirror is `../ru/concepts.md`.
 
-## The core idea
+## 1. The central idea
 
-An ordinary agent treats the context as a message tape: the LLM reads the tape and
-writes to it; the IR, if any, sits on the side.
+Most coding agents treat the model's context as a conversation log. The log grows monotonically:
+every action and result is appended, and the model is expected to recover the current goal, the
+relevant evidence and the phase of work from that accumulation.
 
-Skein inverts this: **the context is a projection of the IR**. The tape exists only
-for communication with the LLM. Memory lives in the IR. The LLM does not "remember" —
-it sees a slice of state, and what it sees is determined by a **projection function**,
-not by history. A consequence: the context does not accumulate. Every turn is a fresh
-projection of the current state.
+Skein inverts this arrangement. The primary record is a typed, append-only IR. The context is a
+**projection** of that record, rebuilt on every turn by a deterministic function. The journal only
+grows; the projection does not. Content can leave the visible tape when it ceases to be relevant,
+while remaining available in the IR by address.
 
-## The tree, not the tape (ReAct, unwound)
+Two consequences follow. First, the context is bounded by the current focus rather than by the
+length of the history. Second, the model is not asked to maintain continuity by memory: the
+executor selects what the current decision requires, and everything else remains one `recall` or
+`search` away.
 
-A ReAct loop is a flat, growing transcript: the LLM reads it and appends the next tool
-call, and the only signal that the task is over is the model itself emitting a final
-answer. Skein **unwinds that loop along a tree**:
+## 2. Four agents
+
+Skein separates work by the kind of result and by the scope of attention. Four model-driven agents
+cooperate, and each reads a projection of the same kind of IR.
+
+A **unit** is one IR with its own root and journal. A session is a container of units; each agent
+works in a unit of its own type — a coding task, a general task, a session interpretation, or an
+observer run.
+
+| Agent | Scope | Responsibility | Context |
+|---|---|---|---|
+| Session | the dialogue | interprets an utterance, remembers completed work, routes, formulates a task | the dialogue, the traces of past units, memory tools |
+| Task (coding) | one request | walks the request as a state machine and changes the workspace | only its own request and states |
+| General | one non-coding request | investigates and answers without changing the workspace | its brief, project facts, read-only tools |
+| Observer | one stuck state | diagnoses the impasse and advises the task agent | the state tape: request, turns, reasoning, observations |
+
+The session agent is the only agent that sees the whole dialogue. It chooses among three
+operations: answer from the dialogue (`respond`), delegate an investigation to the general agent
+(`general`), or start a coding task (`task`). For a coding task it formulates a self-contained
+work order; the task agent receives only that text and never reads the session tape or other
+tasks. Continuity is therefore transferred through the formulation, not through shared history.
+
+The general agent handles questions that require reading and analysis but no modification. It
+uses inspection tools and a read-only shell; the executor restores any accidental change, so the
+workspace is unchanged by contract. Its result is an answer, not a coding task.
+
+The observer is an advisory agent. When a task repeats a state, spends too long in one state, or
+approaches its turn budget, a deterministic trigger runs the observer on the tape of that state.
+The observer returns a short hint, a unit-scoped memo, or a halt; it never edits the task. The
+observer is optional and enabled by configuration.
+
+## 3. The non-monotone tape
+
+The IR is monotone: events are appended and nodes are never rewritten. The tape is not.
+
+- While a state is open, the tape shows the `Start state` marker, the brief for that state, its
+  turns — the model's tool calls and the executor's observations — and, after the turns, a working
+  prompt with the state's `Goal`, the model's earlier guess about the subject, its `Done when`
+  criterion, its plan and the request marked as reference.
+- When the state closes, its brief and turns leave the tape. Only `Start state` and
+  `Finish state — <result>` remain, the latter carrying a short record of what the state
+  achieved.
+- When a task or a general unit finishes, a trace remains on the session tape: what was asked,
+  how it ended, its status, and the answer or the operation that produced it.
+
+Nothing is lost through this elision. Every action, observation and file version remains in the
+journal, addressed by node id, and can be retrieved with `recall` or `search`. The request always
+leads the tape and is explicitly marked as reference: it explains why the task exists, but the
+open state's goal is the only active goal for the turn.
+
+The same principle operates at two levels: inside a task, closed states collapse to a trace; at
+the session level, completed units collapse to a trace. In both cases the projection preserves the
+skeleton of what happened and removes the detail until it is requested. This is the mechanism that
+keeps the context compact without making the history incomplete.
+
+## 4. A state defines a goal
+
+A state is not a step or a command. It is a frame of work with a known boundary and a declared
+goal. Every state has five parts:
+
+1. a **subject** — the object or situation the state works on, recorded by the model as an
+   unverified note when it enters the state;
+2. a **goal** — the kind of work the state performs;
+3. a **completion criterion** — the observable condition under which the state's work is done;
+4. an **instruction** — how to act within the state;
+5. a **tool surface** — the tools admissible in that state.
+
+The executor renders these as `Goal`, `Done when`, `Plan` and the offered tool set. The state's goal
+is the only active goal for the turn. When the criterion holds, the model replies with text and
+the executor records that reply as the state's `Finish` line. Closure does not depend on the
+criterion: the criterion guides the model, while closure remains the model's decision.
+
+The live states are:
+
+| State | Goal |
+|---|---|
+| Research | derive the required result from the material or the specification, and write it if the task requires it |
+| Patch | find the defect in an existing artifact and make the change it needs |
+| Construction | build a new artifact from the specification or from the material's behaviour |
+| Verification | check the changed artifact against the check the request declares |
+| End | complete the request and report the result |
+
+This is the capability a flat ReAct agent lacks. In ReAct there is one goal — the original
+request — and every phase, subgoal and completion condition exists only as prose in the growing
+transcript. The model must continuously reconstruct which part of the work it is in. In Skein the
+executor names the state, renders its goal and criterion at the decision point, and offers only the
+tools that belong to it.
+
+## 5. A hybrid: ReAct inside, a graph between
+
+The system combines two control regimes.
+
+**Within a state it is ReAct.** The model calls a tool, the executor executes it and returns the
+observation, and the next decision is made from that observation. The state's turns form a
+monotone list of actions and results; nothing is hidden from the model while the state is open.
+
+**Between states it is a deterministic graph.** `move` declares the next state; a state is closed
+by `stop`, after which the next state is chosen from the transitions the executor declares. The
+request prompt and the transition prompt list the admissible states and the condition for each,
+scoped to the choice at hand. The executor does not choose content; it constrains the admissible
+moves, and the model chooses among them.
+
+The hybrid has a practical consequence for prompt design. A state's prompt is a small, local
+artifact: one goal, one criterion, one instruction, one tool surface, and the facts the state
+needs. It can be written and tested against that state alone. In a single-prompt ReAct agent the
+same text must serve localization, editing, verification and reporting at once; the model infers
+the phase, and state-specific behaviour becomes a matter of prose emphasis rather than an explicit
+contract. Here the phase is a first-class object, so its prompt has a defined scope and a
+defined failure mode.
+
+## 6. The IR in one page
+
+A request is the root. The model moves into a state (`move`), and the state's turns hang directly
+off that move. Each turn is an action and its observation; a file mutation is recorded as an
+artifact relation rather than as an observation body.
 
 ```
-request ─(move)▶ state (its own goal) ─(plan)▶ plan (items; last is current) ─▶ action ─▶ observation
+request ──move──▶ state (turns) ──turn──▶ action ──result──▶ observation
+                                             └──mutates──▶ file
 ```
 
-A request is walked as a sequence of states. Flat states hang off the request (a `move` each);
-a `move` declares the state — a state IS its own goal — and may carry an unverified note (`what`).
-A non-actionable request
-is **declined** instead (`unactionable`). A state closes only by the doxa's `stop` (no criterion);
-`stop`ping a state forces the next `move` (or the terminal state and `stop`).
+The model has four operators: `move` declares a state, `apply` executes a tool, `stop` closes the
+current state (or, at End, the request), and `decline` records that the request is not actionable.
+`recall` and `search` are read-only addressing operations; they leave ordinary turns and are
+therefore themselves addressable.
 
-**The arm is ReAct in place.** Within one level — an arm — a state is entered whose
-plan gains one item per command; each command is executed, its result recorded
-(`observation`/`mutate`) and shown to the doxa; the doxa then either adds the next node or
-stops. This is the ReAct loop unchanged: the next move is chosen from the results (a turn
-may carry several independent commands). What ReAct cannot do is *keep* it — here every
-step is an event in the append-only journal. An arm stops being flat only when a step
-**branches**: the doxa proposes an alternative to that step (another command) — and each
-branch is still an arm, i.e. ReAct again, one level down. In this sense the tree is "ReAct
-unwound": not a different policy, but ReAct plus explicit memory, branching, and a
-termination criterion.
+File knowledge is versioned. A read records the version it observed; a mutation makes facts about
+earlier versions stale without rewriting them. Staleness is a derived relation, not a stored flag.
+The journal remains monotone even though the knowledge it supports is not.
 
-- Only the state's first step is materialized as a plan item; later steps are chosen a turn at
-  a time. The plan's `item` edges append in order, and
-  the **last** is the current step. A turn appends one item per command (a batch may append
-  several).
-- With no alternatives, the tree is a flat, typed, addressable list — exactly the
-  ReAct limit, no worse.
-- The tree buys what a tape cannot: an explicit **termination criterion** (the
-  `done_when` command), **verifiable closure** (the criterion's exit code), **branching**
-  when a hypothesis fails, and a context that is a bounded slice (a spine plus its arms)
-  rather than a growing tape.
-- "Are we done?" is decided by the engine against the criterion, not by an LLM turn.
+## 7. What this design provides
 
-The plan is live, not a contract: it is revised by **adding nodes**
-(alternatives, new items), never by rewriting one. The IR only grows.
+- **A compact context.** The tape carries the current state's goal, its turns and a trace of the
+  work already completed. It does not grow with the whole history.
+- **Explicit goals.** Each state declares what it is for and when it is done. The model does not
+  infer the phase from transcript position.
+- **Deterministic, testable prompts.** A state's prompt is a local artifact with a defined goal,
+  criterion, instruction and tool surface.
+- **Complete, addressable history.** Elided content is not deleted; it is retrieved by identifier.
+- **Explicit closure.** An exit code is an ordinary observation. A state is closed only by the
+  model's `stop`.
 
-## First principle: knowledge has a source
+## 8. How it differs
 
-Every event in the journal is knowledge obtained from experience: a reading, a search,
-a criterion run, a user statement, or the engine's own deterministic action. Nothing
-appears out of nowhere, and every fact traces back to the experience that produced it —
-its **source**. A verdict guessed from a file change, a goal declared done by the LLM, a
-belief with no origin — all violate the principle.
+- **ReAct.** A flat, growing transcript with one global goal, where the model decides when the
+  task is over. Skein keeps the ReAct loop inside each state but adds declared goals, explicit
+  transitions and a non-monotone projection.
+- **Graph orchestration frameworks.** A graph usually coordinates control flow while the context
+  remains a message tape. In Skein the graph is the source of the context: states, their goals and
+  their results are the structure from which the tape is built.
+- **Textual memory systems.** Systems in the MemGPT/Letta tradition let the model manage textual
+  memory blocks; summarisation-based systems compress the tape but keep it. Skein derives typed
+  state deterministically and never treats a summary as truth.
+- **Retrieval by similarity.** RAG selects content by embedding similarity. Skein selects by
+  structure, state and provenance, and retrieves the rest by explicit address.
 
-Three consequences used throughout:
+## 9. Further reading
 
-- a file change is known only because a deterministic action produced it (`mutate`),
-  never guessed;
-- a "pass" is only the exit code of the goal's own criterion run; a change of the code
-  can make that run stale, but can never invent a verdict;
-- a refused proposal is recorded (`record_rejection`) with its reason, not merely
-  shown for a turn.
-
-## Doxa and logos
-
-The frame comes from the doxa/logos distinction (Ankyra, `doxa_and_logos.tex`):
-
-- **Doxa** is the LLM. It only *proposes*: one or more operators per turn (a batch)
-  (`move`, `apply`, `stop`, `decline`; `recall`/`search` are read-only
-  addressing). Its thought is narrative and stays out of the IR. A proposed state enters
-  `open`; it is never at once closed.
-- **Logos** is the deterministic side: the gate (`classify`), the execution and
-  recording of commands, and state derivation (`fold`, `project`), including the
-  **traversal** that decides where the focus moves.
-- **Arbiter** is the authority outside doxa and logos at the **boundaries**: the
-  toolchain and the user (the first request, the final acceptance of the request). There is no
-  per-state acceptance.
-
-Doxa never closes a state by a verdict: a state is closed only by the doxa's `stop` (there is no
-criterion gate).
-
-## The IR in one page
-
-A single graph, two namespaces (`docs/en/ir.md` is the as-built reference):
-
-- **work** — `request`, `move`, `plan`, `item`, `action`, `observation`,
-  `stop`, `unactionable`, `constraint`.
-- **artifact** — `file` (canonical id `file:src/foo.ts`).
-
-**Edges.** `move` (request → move), `plan` (move → plan), `items`, `alts`,
-  `result`, `stop` (move → stop), `unactionable`, `mutates`.
-
-**State** (never stored; computed by `fold`): an action is `executed` once it produced a
-result, a state (`move`) is `finished` once it has a `stop` relation (the terminal state
-included). There is no
-`achieved`/`refuted`/`abandoned` and no criterion.
-
-**Events** (closed vocabulary): `add_node`, `add_edge`, `descend`, `return`, `mutate`,
-`record_rejection`. There is no `set_status` and no `record_check`: a state change is a
-new node-event (`move`/`observation`/`stop`).
-
-**Operators.** `move { state, what }` declares the state to work in (the first one, or the next
-after a `stop`); `what` is an optional unverified note (a state IS its own goal; the plan hangs
-directly off the `move` and the first `apply` seeds it). `apply { action }`
-runs/reads/edits the world. `decline { why? }` answers a non-actionable request
-(`unactionable`). `stop { why? }` is the sole closure: it closes the state's `move` (or, at the
-terminal state, the request); there is no criterion and no check; the request has no `stop`.
-`recall`/`search` are read-only addressing.
-
-## The cycle
-
-```
-project → propose → classify → execute → progress
-```
-
-1. `project` builds the context (a slice of the tree).
-2. `propose` asks doxa for one or more operators (a batch).
-3. `classify` gates it (the logos decides admissibility).
-4. `execute` applies it deterministically, appending events.
-5. `progress` stops when the terminal state is stopped (the run ends), on no progress, or
-   on the budget.
-
-One move per turn (one or more independent calls), so every turn leaves a verifiable trace.
-
-## Traversal: the spine and the arms
-
-The position of work is a **stack of frames** — the **spine** — from the request to
-the focus, one frame per level. Each frame carries an **arm**: the ordered siblings at
-that level (the state under the request, the plan items under the state's `move`), with the
-current position inside it (the last item). Moving is a `descend` (push) or a `return`
-(pop); the engine computes where the focus must be, deterministically.
-
-Neither the stack nor the cursor is stored: the stack is the fold of `descend`/
-`return` over the journal, the cursor is derived from the plan. So `same events → same
-context`. History (executed items, observations, criterion runs) is not kept on the spine
-— it lives in the tree and is recalled **by address** (`recall { id }`).
-
-## Projection
-
-Projection is the heart of Skein: not "what was said" but "what acts now". It is a
-deterministic function of the state, not an LLM summary. `Context` carries:
-
-- `path` — the spine (`request → current move`); each node carries its own `plan` (so a
-  plan revision is visible where it happened);
-- `constraints`, the message tape, `applicable`.
-The old `lastResult`/`shown`/`calls`/`checkReady`/`nextAction`/`budget` blocks are gone — the
-context is the tape (`docs/en/projection.md`).
-
-Everything else — file contents, raw output, older bodies — is reached through
-`recall`/`search`. Addressability is always guaranteed: every node is either shown or one
-recall away.
-
-## Staleness by version
-
-Code knowledge is non-monotonic, but the journal stays monotonic. The bridge is
-**staleness by version**:
-
-- a `read` fact records the file hash (`version`) at assertion time;
-- a mutation emits `mutate`, which deterministically makes facts about the old version
-  stale;
-- a criterion run's observation carries a `ref → version` witness; a later `mutate`
-  makes facts about the old version stale, so a pass cannot silently remain valid.
-
-The witness is a snapshot of the whole workspace — sound but coarse; precision is
-deferred.
-
-## Acceptance
-
-Acceptance is external; there is no separate actor inside the loop:
-
-- the **toolchain** (tests, type checker, repro scripts) produces the criterion's exit
-  code when the goal's acceptance command runs;
-- the **user** or the harness issues the first request and accepts the final result from
-  outside.
-
-There is no `record_check` and no per-state acceptance. A state is closed only by the
-doxa's `stop` — there is no criterion gate. The LLM never produces the closure.
-
-The request root is not closed in the IR: acceptance is external and implicit. Inside,
-only `requestSettled` is computed.
-
-## How it differs from existing approaches
-
-- **MemGPT / Letta** — the LLM manages textual memory blocks. Skein: rules manage
-  typed state; the LLM proposes changes.
-- **Deepagents** — eviction and summarization compress the tape but keep it.
-  Skein: the context is a projection, not a summary; nothing is lost, only addressed.
-- **LangGraph state** — a typed dict for orchestration, not for context management.
-  Skein: projection into context is the main function; its task loop is a plain typed
-  record and a `while` loop, with no framework state.
-- **RAG** — retrieval by similarity. Skein: deterministic relevance by structure,
-  status and provenance, with addressed recall.
-
-The novelty: **context as projection** over an append-only tree, with a deterministic
-traversal and verification only by running a goal's criterion.
-
-## Status
-
-Tier 0 (a bug fix by a failing test) and the Tier 1 work graph are implemented; the
-current IR is `docs/en/ir.md`, the semantics `docs/en/ir.md`.
+- `ir.md` — the IR model, operators, derived facts and invariants.
+- `projection.md` — the message tape in detail.
+- `states.md` — the goal, criterion and routes of each work state.
+- `system_prompt.md` — the prompt blocks and the state prompts.
+- `sessions.md` — sessions, units, the session agent and the observer.
+- `walkthrough.md` — an end-to-end example of a task across states.

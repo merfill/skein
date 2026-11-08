@@ -663,7 +663,7 @@ export function executeAction(
   state: State,
   workspace: Workspace,
   turn: number,
-  // The doxa's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
+  // The model's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
   // action nodes so the projection can show it back on the tape next turn (`docs/en/ir.md §7`).
   reasoning?: string,
 ): ExecOutcome {
@@ -784,7 +784,7 @@ export function executeAction(
     return id;
   };
 
-  // A state: the doxa declared the island of work it will work in AND the state's goal text
+  // A state: the model declared the island of work it will work in AND the state's goal text
   // (`what`). The states are the request's flat children (`move` edges); a new move is a
   // sibling of the previous state (docs/en/ir.md §4.1). The turns container hangs directly off
   // the `move` — there is no goal node — and is seeded
@@ -1067,8 +1067,8 @@ export function executeAction(
     }
 
     case "stop": {
-      // The doxa's closure. On an open state a `stop` node hung off the `move` via the `stop`
-      // relation records the closure; the engine returns to the state and the doxa makes the
+      // The model's closure. On an open state a `stop` node hung off the `move` via the `stop`
+      // relation records the closure; the engine returns to the state and the model makes the
       // transition decision. On the terminal state (`finish`, which has no turns) the `stop`
       // ends the request (docs/en/ir.md §4.4).
       const focus = currentFocus(state);

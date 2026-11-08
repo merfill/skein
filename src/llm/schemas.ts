@@ -69,7 +69,7 @@ export type Apply = z.infer<typeof applySchema>;
 
 export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
-    // Declare the state (island of work) the doxa will work in — the automaton's transition —
+    // Declare the state (island of work) the model will work in — the automaton's transition —
     // AND the state's goal text (`what`); the state IS its goal (docs/en/ir.md §4.1).
     // `what` is required except for the terminal
     // End state, which has no turns.
@@ -208,7 +208,7 @@ export const proposalSchema = z.object({
 
 export type Proposal = z.infer<typeof proposalSchema>;
 
-// A doxa move: ONE thought (the assistant message text) plus one or more tool calls. The
+// A model move: ONE thought (the assistant message text) plus one or more tool calls. The
 // engine decides and executes each call in order (a batch); a single call is the common case.
 // Calls sharing a move render as one `assistant.tool_calls` message with N calls + N results.
 export interface Proposals {

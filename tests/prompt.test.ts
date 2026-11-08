@@ -150,7 +150,7 @@ describe("system prompt: tool contract", () => {
 
   });
 
-  it("offers no `stop` tool: the doxa closes a state with text", () => {
+  it("offers no `stop` tool: the model closes a state with text", () => {
     expect(PROPOSAL_TOOLS.some((tool) => tool.function.name === "stop")).toBe(false);
     expect(BASE_PROMPT).toMatch(/reply with text only, no tool calls/i);
   });

@@ -42,12 +42,12 @@ export interface TapeMessage {
   text: string;
   // An assistant turn that is a single tool call (`[id] …` was the model's move this turn).
   call?: ToolCall;
-  // An assistant turn that is a batch: the calls of one doxa move, in order. The following N
+  // An assistant turn that is a batch: the calls of one model move, in order. The following N
   // `tool` messages answer them by id (docs/en/ir.md §7).
   calls?: ToolCall[];
   // A tool result: the id of the assistant call it answers.
   callId?: string;
-  // The doxa's hidden reasoning for the turn this assistant message carries (the batch's
+  // The model's hidden reasoning for the turn this assistant message carries (the batch's
   // action nodes' `payload.reasoning`). Rendered as the assistant turn's `reasoning` part
   // (`src/loop/propose.ts`); never a user-visible answer.
   reasoning?: string;
@@ -61,10 +61,10 @@ export interface Context {
   situation: Situation;
   // The island of the focused state, when there is one (an authored label, §2.5).
   island?: IslandId;
-  // The doxa's `what` from the focused `move`: an unverified guess at the concrete subject,
+  // The model's `what` from the focused `move`: an unverified guess at the concrete subject,
   // not the state's goal. Rendered by the per-turn working prompt as advice.
   what?: string;
-  // The focused state's stop condition, concretized by the doxa on the `move` (falls back to
+  // The focused state's stop condition, concretized by the model on the `move` (falls back to
   // the island's generic criterion in the renderer). Used by the per-turn working prompt.
   done?: string;
   // The frontier: the moves admissible at the focus. The model surface is bound from it, so
@@ -294,7 +294,7 @@ function renderState(state: State, moveId: string, out: TapeMessage[]): void {
 
 // Render a state's turns: its actions in append order (the turns container hangs directly off
 // the `move` — there is no goal node). Calls a
-// single doxa move made together (`payload.turn`) render as ONE assistant `tool_calls` message
+// single model move made together (`payload.turn`) render as ONE assistant `tool_calls` message
 // followed by their results, in order; a lone call keeps the plain `call` shape
 // (docs/en/ir.md §7).
 function renderTurns(state: State, moveId: string, out: TapeMessage[]): void {
@@ -384,7 +384,7 @@ export function situationOf(state: State): Situation {
   return "working";
 }
 
-// The observation step: right after a tool result inside an open state, the doxa must read the
+// The observation step: right after a tool result inside an open state, the model must read the
 // result and decide. The instruction is ACTIVE (an imperative, not a passive description): a
 // passive form did not change behaviour in the replay experiment, while this directive produced
 // the edit. It is island-aware: a state whose

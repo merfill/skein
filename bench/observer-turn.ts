@@ -10,7 +10,7 @@
 // `--detect` is given, in which case the current `detectTriggers` is asked instead — that is how
 // a threshold change can be checked against the recorded history.
 //
-// The observer's answer is put through `applyReaction` (logos), so "it said something" and "the
+// The observer's answer is put through `applyReaction` (executor), so "it said something" and "the
 // engine would accept it" are reported as separate facts. A hint whose evidence ids do not exist
 // in the state is refused here exactly as it would be in a live run.
 //
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
     console.log(`  evidence: ${JSON.stringify(decision.evidence)}`);
     if (decision.kind === "hint") console.log(`  state: ${decision.state} (stamped by the engine)`);
 
-    // Logos: the same check a live run applies. This is the part that separates a plausible
+    // Executor: the same check a live run applies. This is the part that separates a plausible
     // sentence from a reaction the engine can actually record.
     const applied = applyReaction({
       state,

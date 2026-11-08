@@ -1,8 +1,8 @@
-// Network modes for a sandbox run. `on` is Harbor's default (the agent may reach the
+// Network modes for a sandbox run. `on` is the benchmark default (the agent may reach the
 // network); `off` removes it from the agent only. The verifier always keeps its network:
-// every task's `tests/test.sh` bootstraps its own runtime (apt/uv/pip), and Harbor runs that
-// script with network on. Keeping the two phases separate is what makes `off` honest without
-// breaking acceptance.
+// every task's `tests/test.sh` bootstraps its own runtime (apt/uv/pip), and the verifier runs
+// that script with network on. Keeping the two phases separate is what makes `off` honest
+// without breaking the check.
 
 export type NetworkMode = "on" | "off";
 export type NetworkAttachment = "bridge" | "none" | "host";

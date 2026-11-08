@@ -112,7 +112,7 @@ describe("session agent: bounded unit loop", () => {
     const taskJournal = session.units.get("r1")?.journal ?? [];
     const taskLength = taskJournal.length;
     const agent: SessionAgent = async () => ({
-      operation: { kind: "start", text: "  " },
+      operation: { kind: "task", text: "  " },
     });
     const result = await runSessionAgent({ agent, tools }, session, "start something");
     expect(result.applied?.ok).toBe(false);
@@ -243,8 +243,8 @@ describe("session agent: workspace intro", () => {
 describe("session agent: model reply mapping", () => {
   it("maps operation tools and keeps read-only calls", () => {
     expect(
-      toSessionReply([{ toolName: "start", input: { text: "do it" }, toolCallId: "x" }]),
-    ).toEqual({ operation: { kind: "start", text: "do it" } });
+      toSessionReply([{ toolName: "task", input: { text: "do it" }, toolCallId: "x" }]),
+    ).toEqual({ operation: { kind: "task", text: "do it" } });
     expect(
       toSessionReply([{ toolName: "unit", input: { id: "r1" }, toolCallId: "x" }]),
     ).toEqual({ toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "x" }] });

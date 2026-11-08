@@ -250,7 +250,7 @@ describe("apply — inspection: before GOAL_PREFIX -> delta -> after", () => {
   it("batch — two calls in one turn — is one assistant message with both calls", async () => {
     const w = ws();
     const first = opened(w);
-    // Both calls run on the SAME turn, so they belong to one doxa move (a batch).
+    // Both calls run on the SAME turn, so they belong to one model move (a batch).
     const r1 = exec(read("src/sum.mjs"), first.events, w, 1);
     const r2 = exec(run("echo one"), r1.events, w, 1);
     const history = project(r2.state).history;

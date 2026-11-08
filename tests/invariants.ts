@@ -1,7 +1,7 @@
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 
-/** Invariant: a state is closed only by the doxa's `stop` — every `stop` relation must
+/** Invariant: a state is closed only by the model's `stop` — every `stop` relation must
  * target a `stop` node. */
 export function achievedWithoutCheck(events: readonly Event[]): string[] {
   const state = fold(events);

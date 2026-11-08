@@ -85,14 +85,3 @@ export function workspaceLines(fact: MaterialFact, options: { index?: boolean } 
   );
   return lines;
 }
-
-// A workspace block. An empty title renders the lines without a heading (Construction).
-export function workspaceBrief(
-  fact: MaterialFact,
-  title: string,
-  options: { index?: boolean } = {},
-): string {
-  const lines = workspaceLines(fact, options);
-  if (lines.length === 0) return "";
-  return title === "" ? lines.join("\n") : [title, ...lines].join("\n");
-}

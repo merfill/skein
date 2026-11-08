@@ -140,7 +140,7 @@ export function renderedState(
 }
 
 // The tape handed to the observer: the current state's whole record in one body — the request, the
-// move list, and every turn of the state in order. Each turn carries the doxa's reasoning, the
+// move list, and every turn of the state in order. Each turn carries the model's reasoning, the
 // action's full command and the observation body it produced, addressed by its node id so a hint's
 // `evidence` can name it.
 //

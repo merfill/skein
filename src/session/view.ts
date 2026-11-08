@@ -52,7 +52,7 @@ function reasoningOf(payload: Record<string, unknown> | undefined): string | und
   return typeof reasoning === "string" && reasoning.trim() !== "" ? reasoning : undefined;
 }
 
-// The session agent's own tool calls and results. The operation tools (`respond`/`start`) are
+// The session agent's own tool calls and results. The operation tools (`respond`/`task`) are
 // the decision line itself, so they are not repeated here.
 function sessionLines(journal: readonly Event[], options: RenderOptions): string[] {
   const lines: string[] = [];
@@ -62,12 +62,12 @@ function sessionLines(journal: readonly Event[], options: RenderOptions): string
     const payload = payloadOf(event);
     if (node.kind === "action") {
       const tool = String(payload?.tool ?? "");
-      if (tool === "respond" || tool === "start") continue;
+      if (tool === "respond" || tool === "task") continue;
       lines.push(...thoughtLines(reasoningOf(payload), options));
       lines.push(`  call: ${tool}(${JSON.stringify(payload?.args ?? {})})`);
     } else if (node.kind === "observation") {
       const tool = String(payload?.tool ?? "");
-      if (tool === "respond" || tool === "start") continue;
+      if (tool === "respond" || tool === "task") continue;
       lines.push(`  result: ${resultText(String(payload?.result ?? node.label), options)}`);
     }
   }
@@ -134,7 +134,7 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
   } else if (operation.kind === "general") {
     lines.push(`session: general("${operation.text}")`);
   } else {
-    lines.push(`session: start("${operation.text}")`);
+    lines.push(`session: task("${operation.text}")`);
   }
   lines.push(...thoughtLines(result.reasoning, options));
   if (result.applied !== undefined && !result.applied.ok) {

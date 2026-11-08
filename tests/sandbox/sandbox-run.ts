@@ -6,7 +6,7 @@ import { TASKS } from "./tasks/registry";
 import { parseNetworkMode } from "./network";
 import { cleanupSandboxes } from "./workspace";
 
-// Live run of a ported terminal-bench task (no Harbor):
+// Live run of a ported terminal-bench task:
 //   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off] [--dir <dir>]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>/ and prints the token breakdown.
 // For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/en/testing.md §3.6.

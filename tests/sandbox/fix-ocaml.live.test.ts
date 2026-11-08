@@ -52,7 +52,7 @@ describe.skipIf(!settings.live)("fix-ocaml-gc sandbox (live model)", () => {
         `[sandbox-live] done=${result.done} stop=${result.stopReason} turns=${result.turns} fixed=${fixed} refusals=${refusals.length} actions=[${actions}]`,
       );
 
-      // The engine invariant under test: the run terminates on the doxa's move, not by
+      // The engine invariant under test: the run terminates on the model's move, not by
       // burning the budget on refused `stop`.
       expect(result.done).toBe(true);
       expect(result.stopReason).not.toBe("max_turns");

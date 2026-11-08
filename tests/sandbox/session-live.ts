@@ -190,7 +190,7 @@ async function main(): Promise<void> {
       if (index === 0 && result.general === undefined) failures.push("read opened no general unit");
       if (index === 1 && route !== "respond") failures.push("follow-up was not routed to respond");
       if (index === 1 && result.reply === undefined) failures.push("follow-up produced no reply");
-      if (index === 2 && route !== "start") failures.push("Makefile request was not routed to start");
+      if (index === 2 && route !== "task") failures.push("Makefile request was not routed to task");
       if (index === 2 && result.task === undefined) failures.push("Makefile request opened no coding task");
     }
 
@@ -198,7 +198,7 @@ async function main(): Promise<void> {
     console.info(
       `\nroutes=${JSON.stringify(routes)} tasks=${tasks} general=${generals} replies=${replies} utteranceSeq=${session.utteranceSeq}`,
     );
-    if (routes.join(",") !== "general,respond,start") {
+    if (routes.join(",") !== "general,respond,task") {
       failures.push(`unexpected route order: ${routes.join(",")}`);
     }
     if (tasks !== 1) failures.push(`expected one coding task, got ${tasks}`);
@@ -210,7 +210,7 @@ async function main(): Promise<void> {
       console.error(`\nFAIL:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
       process.exitCode = 1;
     } else {
-      console.info("\nOK: general, respond and start routes all exercised.");
+      console.info("\nOK: general, respond and task routes all exercised.");
     }
   } finally {
     cleanupWorkspaces();

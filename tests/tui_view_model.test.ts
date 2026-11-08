@@ -165,7 +165,7 @@ describe("TUI view model", () => {
 
   it("keeps tasks out of the history when they are not task units", () => {
     const session = createSession();
-    openUnit(session, "reading:1", "reading", [node("reading:1", "request", "README.md")], 0);
+    openUnit(session, "m1", "session", [node("m1", "request", "README.md")], 0);
     const view = buildTuiView(session, []);
     expect(view.header.totalTasks).toBe(0);
     expect(view.history).toHaveLength(0);

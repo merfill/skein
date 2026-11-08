@@ -70,7 +70,7 @@ function taskSession() {
   return session;
 }
 
-describe("session operations: logos checks and applies", () => {
+describe("session operations: executor checks and applies", () => {
   it("answers without changing any unit or focus", () => {
     const session = taskSession();
     const before = session.journal.length;
@@ -97,7 +97,7 @@ describe("session operations: logos checks and applies", () => {
     const journalBefore = task?.journal.length ?? 0;
     const result = applyOperation({
       session,
-      operation: { kind: "start", text: "fix the parser" },
+      operation: { kind: "task", text: "fix the parser" },
       turn: 4,
       sourceUnit: "session:1",
     });
@@ -108,7 +108,7 @@ describe("session operations: logos checks and applies", () => {
     expect(task?.journal.length).toBe(journalBefore);
     expect(
       session.journal.some(
-        (event) => event.type === "operation" && event.operation.kind === "start",
+        (event) => event.type === "operation" && event.operation.kind === "task",
       ),
     ).toBe(true);
   });
@@ -124,7 +124,7 @@ describe("session operations: logos checks and applies", () => {
     pushUnit(session, "r1", 0);
     const result = applyOperation({
       session,
-      operation: { kind: "start", text: "start another task" },
+      operation: { kind: "task", text: "start another task" },
       turn: 5,
       sourceUnit: "session:1",
     });
@@ -138,7 +138,7 @@ describe("session operations: logos checks and applies", () => {
     openUnit(session, "session:1", "session");
     const result = applyOperation({
       session,
-      operation: { kind: "start", text: "first task" },
+      operation: { kind: "task", text: "first task" },
       turn: 0,
       sourceUnit: "session:1",
     });
@@ -154,7 +154,7 @@ describe("session operations: logos checks and applies", () => {
     expect(validateOperation(session, { kind: "respond", text: "x".repeat(4001) })).toBe(
       "text too long (max 4000)",
     );
-    expect(validateOperation(session, { kind: "start", text: "x".repeat(4001) })).toBe(
+    expect(validateOperation(session, { kind: "task", text: "x".repeat(4001) })).toBe(
       "text too long (max 4000)",
     );
     expect(

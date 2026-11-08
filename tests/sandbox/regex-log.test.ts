@@ -13,12 +13,12 @@ afterEach(() => {
   cleanupSandboxes();
 }, 120_000);
 
-// The bwrap primitive is kept for the opencode baseline / `bench/minimal`; the task itself now
-// runs on its own image through the rootless Docker path.
+// The bwrap primitive is kept for the opencode baseline; the task itself now runs on its
+// own image through the rootless Docker path.
 
 // Offline (no model): the bwrap primitive, the `/app` path rewrite, and the real task harness.
 // The verifier is the task's own `tests/test.sh`, run in the agent's container after it, as
-// Harbor does; `test.sh` installs Python itself, so the image needs none.
+// the benchmark does; `test.sh` installs Python itself, so the image needs none.
 
 describe("sandbox container (bwrap)", () => {
   it("runs a real shell with the workspace at /app and no network", () => {

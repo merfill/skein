@@ -1,6 +1,6 @@
 import { dirname } from "node:path";
 
-import type { CheckpointBackend, CheckpointEntry, ScanEntry, TreeBase, TreeDelta } from "./checkpoint";
+import type { CheckpointBackend, CheckpointEntry, ScanEntry, TreeBase, TreeDelta } from "../../src/tools/checkpoint";
 import type { DockerWorkspace } from "./docker";
 
 // The same checkpoint algorithm as `HostBackend`, but the filesystem primitives run inside the

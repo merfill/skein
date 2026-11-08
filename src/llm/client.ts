@@ -64,7 +64,7 @@ export function transformBody(
   return out;
 }
 
-// The provider the doxa is called through. `includeUsage` asks the stream to carry usage;
+// The provider the model is called through. `includeUsage` asks the stream to carry usage;
 // reasoning arrives as an AI SDK `reasoning` part (both `reasoning` and `reasoning_content`
 // are read by `@ai-sdk/openai-compatible`). Temperature/token caps are per call
 // (`src/llm/structured.ts`), not model properties.

@@ -1,4 +1,4 @@
-// Shared metrics for the Skein bench and the Harbor adapter: per-call token/cache
+// Shared metrics for the Skein bench and the sandbox runs: per-call token/cache
 // usage, context size, and the work-graph node/action counts.
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";

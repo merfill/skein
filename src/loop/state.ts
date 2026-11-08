@@ -4,7 +4,7 @@ import type { Proposals } from "../llm/schemas";
 import type { SessionState } from "../session/types";
 
 // One move rendered as a role-tagged turn, kept in loop state (not IR): a proposal (the
-// doxa's move) or a tool result. `nodeId` is the result node a tool turn produced.
+// model's move) or a tool result. `nodeId` is the result node a tool turn produced.
 export interface Turn {
   seq: number;
   kind: "proposal" | "tool";
@@ -31,7 +31,7 @@ export interface LoopState {
   grace: boolean;
   // The structural move just refused (classify created no node): its rendered reason and
   // the call it corresponds to, so the next turn renders it as an assistant call + `tool`
-  // reason (the doxa sees why its move failed, §2.7). Reset to null on every accepted move.
+  // reason (the model sees why its move failed, §2.7). Reset to null on every accepted move.
   rejection: { text: string; name: string; args: Record<string, unknown> } | null;
   // Consecutive model replies with no actions. One retry is allowed; the second stops the
   // task as `no_decision` instead of spinning forever now that there is no turn cap.

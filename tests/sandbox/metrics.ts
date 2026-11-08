@@ -1,10 +1,10 @@
 import type { TurnMeter } from "../../bench/metrics";
 
 // Token/call accounting for a sandbox live run. The heavy lifting is `TurnMeter`
-// (`bench/metrics.ts`, shared with the Harbor adapter): it aggregates, per LangChain
-// LLM call, the provider's `usage_metadata` — input/output/reasoning tokens, cache
-// read/write, cost. `live-trace.ts` snapshots the meter around each turn and calls
-// `summarize`; this module is pure so it is verified offline (`metrics.test.ts`).
+// (`bench/metrics.ts`, shared with the bench): it aggregates, per model call, the
+// provider's `usage_metadata` — input/output/reasoning tokens, cache read/write, cost.
+// `live-trace.ts` snapshots the meter around each turn and calls `summarize`; this module
+// is pure so it is verified offline (`metrics.test.ts`).
 
 export interface Snapshot {
   llmCalls: number;
@@ -125,7 +125,7 @@ export function summarize(turns: TurnMetric[]): MetricsSummary {
   const totals: MetricTotals = {
     turns: turns.length,
     llmCalls: 0,
-    // A turn is one doxa move: one or more tool calls (no forced tool_choice; a batch
+    // A turn is one model move: one or more tool calls (no forced tool_choice; a batch
     // may carry several). Retries within a turn add LLM calls, not tool calls.
     toolCalls: 0,
     accepted: 0,
