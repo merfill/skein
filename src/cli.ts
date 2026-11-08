@@ -10,6 +10,7 @@ import { createObserverDeps } from "./llm/observer";
 import type { Action } from "./llm/schemas";
 import { createSessionAgentDeps } from "./llm/session_agent";
 import { modelGeneralProposer } from "./llm/general";
+import { modelPlannerAgent } from "./llm/planner";
 import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
@@ -271,6 +272,13 @@ async function main(): Promise<void> {
         propose: modelGeneralProposer(model, { settings: agentSettings }),
         workspace,
         maxTurns: args.maxTurns ?? agentSettings.generalMaxTurns,
+        telemetry: telemetry.sink,
+      },
+      planGeneralMaxTurns: args.maxTurns ?? agentSettings.planGeneralMaxTurns,
+      planner: {
+        agent: modelPlannerAgent(model, { settings: agentSettings }),
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.plannerMaxTurns,
         telemetry: telemetry.sink,
       },
       telemetry: telemetry.sink,

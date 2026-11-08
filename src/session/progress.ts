@@ -1,7 +1,7 @@
 import type { Event } from "../ir/events";
 import type { Usage } from "./telemetry";
 
-export type ProgressAgent = "session" | "task" | "general" | "observer";
+export type ProgressAgent = "session" | "task" | "general" | "plan" | "observer";
 
 export interface EditDetail {
   path: string;

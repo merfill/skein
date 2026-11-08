@@ -288,6 +288,51 @@ export function openTaskWorkspace(
   return { workspace, root, request, check, checkpoint, capture, network: { ...network, agent: "host", verifier: "host" } };
 }
 
+export interface TaskVerification {
+  reward: number;
+  acceptance: TaskRun["acceptance"];
+  rewardSource: TaskRun["rewardSource"];
+  check: CommandResult;
+}
+
+// The acceptance phase, shared by the task-loop harness and the session-level plan harness:
+// stage the task's own verifier only AFTER the agent has run, then read its verdict.
+export type VerifiableTask = Pick<
+  OpenedTask,
+  "workspace" | "root" | "check" | "network" | "rootless" | "container"
+>;
+
+export function verifyOpenedTask(task: SandboxTask, opened: VerifiableTask): TaskVerification {
+  const { workspace, root, check, network, rootless, container } = opened;
+  if (rootless) {
+    const docker = container as DockerWorkspace;
+    if (network.agent !== network.verifier) {
+      docker.attachNetwork(network.verifier === "host" ? "bridge" : network.verifier);
+    }
+    const verdict = runTestSh(task, docker);
+    return {
+      reward: verdict.reward,
+      rewardSource: verdict.rewardSource,
+      acceptance: "test.sh",
+      check: verdict.checked,
+    };
+  }
+  stageVerifier(root, task);
+  // A pre-verifier step in the task container (e.g. fix-ocaml-gc rebuilds and regenerates
+  // the tests.txt the verifier reads); its exit code is left to the verifier to reflect.
+  if (task.checkSetup !== undefined) workspace.run(task.checkSetup);
+  // The verifier runs in the task container by default; a task whose image lacks the
+  // verifier's runtime (git-leak-recovery has no Python) can run it via bwrap on the host.
+  const checker = task.checkIn === "host" ? containerWorkspace(root) : workspace;
+  const checked = checker.run(check);
+  return {
+    reward: checked.code === 0 ? 1 : 0,
+    rewardSource: "exit",
+    acceptance: "task-check",
+    check: checked,
+  };
+}
+
 export async function runTask(
   task: SandboxTask,
   propose: Proposer,
@@ -325,43 +370,23 @@ export async function runTask(
   // and with the verifier's network (independent of `--net off`). `checkSetup` is not run: the
   // task's `test.sh` owns its own preparation (fix-ocaml-gc re-clones, rebuilds and recreates
   // tests.txt there).
-  let checkRoot = root;
-  let checked: CommandResult;
-  let reward: number;
-  let rewardSource: TaskRun["rewardSource"];
-  let acceptance: TaskRun["acceptance"];
-  if (rootless) {
-    const docker = container as DockerWorkspace;
-    if (network.agent !== network.verifier) {
-      docker.attachNetwork(network.verifier === "host" ? "bridge" : network.verifier);
-    }
-    const verdict = runTestSh(task, docker);
-    checked = verdict.checked;
-    reward = verdict.reward;
-    rewardSource = verdict.rewardSource;
-    acceptance = "test.sh";
-  } else {
-    stageVerifier(root, task);
-    // A pre-verifier step in the task container (e.g. fix-ocaml-gc rebuilds and regenerates
-    // the tests.txt the verifier reads); its exit code is left to the verifier to reflect.
-    if (task.checkSetup !== undefined) workspace.run(task.checkSetup);
-    // The verifier runs in the task container by default; a task whose image lacks the
-    // verifier's runtime (git-leak-recovery has no Python) can run it via bwrap on the host.
-    const checker = task.checkIn === "host" ? containerWorkspace(root) : workspace;
-    checked = checker.run(check);
-    reward = checked.code === 0 ? 1 : 0;
-    rewardSource = "exit";
-    acceptance = "task-check";
-  }
+  const verification = verifyOpenedTask(task, {
+    workspace,
+    root,
+    check,
+    network,
+    rootless,
+    ...(container !== undefined ? { container } : {}),
+  });
   return {
     result,
     workspace,
-    reward,
-    acceptance,
-    rewardSource,
-    check: checked,
+    reward: verification.reward,
+    acceptance: verification.acceptance,
+    rewardSource: verification.rewardSource,
+    check: verification.check,
     network,
-    root: checkRoot,
+    root,
     request,
   };
 }

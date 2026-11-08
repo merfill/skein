@@ -17,6 +17,7 @@
 | Live-гейт | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | починка багфиксов живой моделью | минуты, деньги |
 | Live-сценарии | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | короткие сценарии на ветки цикла | минуты, деньги |
 | Live-сессии | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | маршруты general/respond/task и отчёт | минуты, деньги |
+| Live-план | `SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts <task-id> [--virtual]` | план-единица, исполнение пунктов и verifier задачи | минуты, деньги (Docker для реальной задачи) |
 | Live-операции | `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` | следующий ход живой модели на собранной проекции | минуты, деньги |
 | Синтетический бенч | `npm run bench -- <case>` | один кейс из `skein-plugin` | минуты, деньги |
 | Гейт бенча | `npm run bench:gate -- <runDir>` | прогон против `bench/baseline.json` | секунды |
@@ -100,6 +101,20 @@ SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # анализ -> general
 `session-live` проверяет три маршрута (`general`, `respond`, `task`) и отчёт после задачи;
 `general-live` проверяет, что вопрос по проекту уходит в `general`, общая единица читает через
 `read`/`grep`/`list`, а задача кодирования не открывается.
+
+### 3.3.1 Live-прогоны плана
+
+```sh
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts fix-ocaml-gc --virtual --turns 20  # дёшево
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts fix-ocaml-gc --turns 60            # Docker
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts custom-memory-heap-crash --turns 80
+```
+
+`session-plan` принудительно делает первую операцию `plan`, затем исполняет пункты реальными
+агентом сессии, планировщиком и агентами task/general, и оценивает результат собственным
+приёмочным механизмом задачи (`test.sh` для Docker, команда спеки для `--virtual`). Печатает
+план, итог каждого пункта и reward; `plan.json`, `run.json`, `session.json` ложатся в
+`bench/runs/session-plan/`. Виртуальный прогон дешёвый; реальная Docker-задача — минуты и деньги.
 
 ### 3.4 Live-шаги операций
 

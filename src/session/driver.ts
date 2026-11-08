@@ -10,10 +10,23 @@ import type { ProgressSink } from "./progress";
 import { runGeneralAgent, type GeneralDeps, type GeneralResult } from "./general";
 import { runRequestObserver } from "./observer";
 import {
+  activePlanState,
+  planFinished,
+  planModeOf,
+  planOfSession,
+  planProgress,
+  blockedItem,
+  nextPendingItem,
+  renderPlanState,
+} from "./plan";
+import { runPlanner, type PlannerDeps, type PlannerResult } from "./planner";
+import {
   abandonUnit,
   attentionOf,
   popUnit,
   recordNoDecision,
+  recordPlanFinished,
+  recordPlanStarted,
   recordReaction,
   sessionFocus,
   takePending,
@@ -42,6 +55,10 @@ export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
   general?: GeneralDeps;
+  planner?: PlannerDeps;
+  // The general unit's cap when it executes a plan item (a deeper investigation than a
+  // one-off question). Falls back to `general.maxTurns` when absent.
+  planGeneralMaxTurns?: number;
   // A lazy, session-scoped probe: the general unit gets the workspace facts. The session
   // agent gets only the root, so the brief cannot copy a directory or file list.
   sessionProbe?: () => SessionProbe | undefined;
@@ -62,7 +79,7 @@ export interface SessionTurnOptions {
 }
 
 export interface PausedState {
-  agent: "session" | "task" | "general" | "observer";
+  agent: "session" | "task" | "general" | "plan" | "observer";
   // The paused unit: the session unit, the task unit, or the observer unit.
   unitId: string;
   utterance: string;
@@ -75,6 +92,8 @@ export interface PausedState {
   // Observer resume: the parent task and the trigger that opened the observer.
   taskUnitId?: string;
   trigger?: Trigger;
+  // The plan execution this pause belongs to; resuming continues the plan.
+  planUnitId?: string;
 }
 
 export interface SessionTurnResult {
@@ -88,6 +107,8 @@ export interface SessionTurnResult {
   reply?: string;
   task?: { unitId: string; result: AgentResult };
   general?: { unitId: string; result: GeneralResult };
+  // The plan unit just developed (the user confirms execution separately).
+  plan?: { unitId: string; result: PlannerResult };
   // Why the interpretation ended without an operation.
   noDecision?: NoDecisionReason;
   // The turn stopped on a user pause; the unit is open and focused.
@@ -118,9 +139,19 @@ function nextGeneralId(session: SessionState): string {
   return `g${index}`;
 }
 
+function nextPlanId(session: SessionState): string {
+  let index = 1;
+  while (session.units.has(`p${index}`)) index += 1;
+  return `p${index}`;
+}
+
 // `progress` checks request closure before syncing the focus unit journal, so the final stop
 // can be missed. Extend the journal with the missing tail; never rewrite it.
-function syncUnit(session: SessionState, unitId: string, result: AgentResult): void {
+function syncUnit(
+  session: SessionState,
+  unitId: string,
+  result: { events: readonly Event[]; turns: number },
+): void {
   const unit = unitOf(session, unitId);
   if (result.events.length > unit.journal.length) {
     unit.journal.push(...result.events.slice(unit.journal.length));
@@ -194,20 +225,24 @@ function generalSnapshotFor(deps: SessionTurnDeps, unitId: string): string | und
 
 // The general unit is read-only by contract. If a command changed the tree anyway, put only
 // those paths back and record the fact; unchanged paths are left untouched.
-function restoreGeneralChanges(workspace: Workspace, unit: Unit): void {
+function restoreGeneralChanges(
+  workspace: Workspace,
+  unit: Unit,
+  reason = "general-read-only",
+): void {
   const checkpoint = unit.checkpoint;
   if (checkpoint === undefined) return;
   if (workspace.restoreChanged === undefined) return;
   try {
     const changed = workspace.restoreChanged(checkpoint);
     if (changed.length > 0) {
-      unit.journal.push({ type: "rollback", checkpoint, reason: "general-read-only" });
+      unit.journal.push({ type: "rollback", checkpoint, reason });
     }
   } catch (error) {
     unit.journal.push({
       type: "rollback",
       checkpoint,
-      reason: `general-read-only restore failed: ${error instanceof Error ? error.message : String(error)}`,
+      reason: `${reason} restore failed: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
 }
@@ -216,6 +251,31 @@ function restoreGeneral(deps: SessionTurnDeps, session: SessionState, unitId: st
   const unit = session.units.get(unitId);
   if (unit === undefined) return;
   restoreGeneralChanges(generalWorkspace(deps), unit);
+}
+
+function plannerWorkspace(deps: SessionTurnDeps): Workspace {
+  return deps.planner?.workspace ?? deps.task.workspace;
+}
+
+function plannerContextText(deps: SessionTurnDeps): string {
+  const workspace = plannerWorkspace(deps);
+  const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
+  const instructions = projectInstructionsText(workspace);
+  return instructions === "" ? facts : `${facts}\n\n${instructions}`;
+}
+
+function plannerSnapshotFor(deps: SessionTurnDeps, unitId: string): string | undefined {
+  try {
+    return plannerWorkspace(deps).checkpoint?.(`plan-start:${unitId}`);
+  } catch {
+    return undefined;
+  }
+}
+
+function restorePlanner(deps: SessionTurnDeps, session: SessionState, unitId: string): void {
+  const unit = session.units.get(unitId);
+  if (unit === undefined) return;
+  restoreGeneralChanges(plannerWorkspace(deps), unit, "plan-read-only");
 }
 
 function recordPause(deps: SessionTurnDeps, paused: PausedState): void {
@@ -293,6 +353,41 @@ async function dispatch(
   const pending = takePending(session);
   if (pending === undefined) return result;
 
+  if (applied.operation.kind === "plan") {
+    if (deps.planner === undefined) return result;
+    const unitId = nextPlanId(session);
+    const snapshot = plannerSnapshotFor(deps, unitId);
+    let run: PlannerResult;
+    let paused = false;
+    try {
+      run = await runPlanner(deps.planner, {
+        request: { id: unitId, text: pending.text },
+        session,
+        open: true,
+        workspace: plannerContextText(deps),
+        ...(snapshot !== undefined ? { snapshot } : {}),
+        ...(signal !== undefined ? { signal } : {}),
+      });
+      paused = run.paused === true;
+    } finally {
+      if (!paused) restorePlanner(deps, session, unitId);
+    }
+    syncUnit(session, unitId, run);
+    settleAttention(session, unitId, run.done, run.paused);
+    result.plan = { unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "plan",
+        unitId,
+        utterance,
+        utteranceTurn: turn,
+        startTurn: unitOf(session, unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   if (applied.operation.kind === "general") {
     if (deps.general === undefined) return result;
     const unitId = nextGeneralId(session);
@@ -306,6 +401,10 @@ async function dispatch(
         open: true,
         workspace: generalContextText(deps),
         ...(snapshot !== undefined ? { snapshot } : {}),
+        ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
+        ...(pending.planItem !== undefined && deps.planGeneralMaxTurns !== undefined
+          ? { maxTurns: deps.planGeneralMaxTurns }
+          : {}),
         ...(signal !== undefined ? { signal } : {}),
       });
       paused = run.paused === true;
@@ -335,6 +434,7 @@ async function dispatch(
     session,
     open: true,
     ...(snapshot !== undefined ? { snapshot } : {}),
+    ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
     ...(signal !== undefined ? { signal } : {}),
   });
   syncUnit(session, unitId, run);
@@ -356,9 +456,11 @@ export async function runSessionTurn(
   options: SessionTurnOptions = {},
 ): Promise<SessionTurnResult> {
   const turn = options.turn ?? session.utteranceSeq;
+  const plan = activePlanState(session);
   const interpretation = await runSessionAgent(deps.sessionAgent, session, utterance, {
     turn,
     workspace: workspaceIntro(deps),
+    ...(plan !== undefined ? { plan } : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   session.utteranceSeq = turn + 1;
@@ -377,6 +479,187 @@ export async function runSessionTurn(
     return result;
   }
   return dispatch(deps, session, utterance, turn, interpretation, result, options.signal);
+}
+
+export interface PlanExecutionUnit {
+  unitId: string;
+  itemId: string;
+  kind: "task" | "general";
+  result: AgentResult | GeneralResult;
+}
+
+export interface PlanExecutionResult {
+  session: SessionState;
+  planUnitId: string;
+  status: "done" | "aborted" | "paused" | "blocked" | "already_finished";
+  completed: number;
+  total: number;
+  units: PlanExecutionUnit[];
+  // A unit stopped on a user pause; resume it with `resumeTurn`.
+  paused?: PausedState;
+  // The session agent answered instead of opening the current item: the user decides.
+  reply?: string;
+  noDecision?: NoDecisionReason;
+  // A re-plan opened during execution.
+  plan?: { unitId: string; result: PlannerResult };
+  // Present when the plan had already finished before this call.
+  finished?: { status: "done" | "aborted"; completed: number; total: number };
+}
+
+// Execute a confirmed plan: open its items one after another as ordinary units. The session
+// agent is re-invoked for each item (it chooses `task` or `general` and reformulates the work
+// order); the engine records the link, derives the item's status from the unit's journal and
+// advances. An item that ends `abandoned` stops the plan instead of being skipped.
+export async function executePlan(
+  deps: SessionTurnDeps,
+  session: SessionState,
+  planUnitId: string,
+  options: SessionTurnOptions = {},
+): Promise<PlanExecutionResult> {
+  const plan = planOfSession(session, planUnitId);
+  if (plan === undefined) {
+    return { session, planUnitId, status: "blocked", completed: 0, total: 0, units: [] };
+  }
+  const finished = planFinished(session, planUnitId);
+  if (finished !== undefined) {
+    return {
+      session,
+      planUnitId,
+      status: "already_finished",
+      completed: finished.completed,
+      total: finished.total,
+      units: [],
+      finished,
+    };
+  }
+  let turn = session.utteranceSeq;
+  if (planModeOf(session) !== planUnitId) {
+    recordPlanStarted(session, planUnitId, turn);
+  }
+  const units: PlanExecutionUnit[] = [];
+  const progressNow = (): { completed: number; total: number } => {
+    const progress = planProgress(session, plan);
+    return { completed: progress.completed, total: progress.total };
+  };
+
+  for (;;) {
+    if (options.signal?.aborted === true) {
+      return {
+        session,
+        planUnitId,
+        status: "paused",
+        ...progressNow(),
+        units,
+      };
+    }
+    const blocked = blockedItem(session, plan);
+    if (blocked !== undefined) {
+      if (blocked.status === "abandoned") {
+        const progress = progressNow();
+        recordPlanFinished(session, planUnitId, turn, "aborted", progress.completed, progress.total);
+        return { session, planUnitId, status: "aborted", ...progress, units };
+      }
+      // A live unit under the plan (a pause); resume it before continuing.
+      return { session, planUnitId, status: "paused", ...progressNow(), units };
+    }
+    const item = nextPendingItem(session, plan);
+    if (item === undefined) {
+      const progress = progressNow();
+      recordPlanFinished(session, planUnitId, turn, "done", progress.completed, progress.total);
+      return { session, planUnitId, status: "done", ...progress, units };
+    }
+
+    const itemText = item.detail !== "" ? item.detail : item.title;
+    const interpretation = await runSessionAgent(deps.sessionAgent, session, itemText, {
+      turn,
+      workspace: workspaceIntro(deps),
+      plan: renderPlanState(session, plan),
+      planItem: item.id,
+      planUnitId,
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
+    turn += 1;
+    session.utteranceSeq = turn;
+    const result = makeResult(session, turn, interpretation);
+
+    if (interpretation.paused === true) {
+      const paused: PausedState = {
+        agent: "session",
+        unitId: interpretation.unitId,
+        utterance: itemText,
+        utteranceTurn: turn,
+        startTurn: interpretation.turns,
+        planUnitId,
+        ...(interpretation.outline !== undefined ? { outline: interpretation.outline } : {}),
+      };
+      recordPause(deps, paused);
+      return { session, planUnitId, status: "paused", ...progressNow(), units, paused };
+    }
+    if (interpretation.operation === undefined) {
+      return {
+        session,
+        planUnitId,
+        status: "blocked",
+        ...progressNow(),
+        units,
+        ...(interpretation.noDecision !== undefined
+          ? { noDecision: interpretation.noDecision }
+          : {}),
+      };
+    }
+    if (interpretation.operation.kind === "respond") {
+      return {
+        session,
+        planUnitId,
+        status: "blocked",
+        ...progressNow(),
+        units,
+        reply: interpretation.operation.text,
+      };
+    }
+
+    const dispatched = await dispatch(
+      deps,
+      session,
+      itemText,
+      turn,
+      interpretation,
+      result,
+      options.signal,
+    );
+    if (dispatched.plan !== undefined) {
+      // The session agent chose to re-plan: the current plan is superseded, not advanced.
+      const progress = progressNow();
+      recordPlanFinished(session, planUnitId, turn, "aborted", progress.completed, progress.total);
+      return {
+        session,
+        planUnitId,
+        status: "aborted",
+        ...progress,
+        units,
+        plan: dispatched.plan,
+      };
+    }
+    const run = dispatched.task ?? dispatched.general;
+    if (run !== undefined) {
+      units.push({
+        unitId: run.unitId,
+        itemId: item.id,
+        kind: dispatched.task !== undefined ? "task" : "general",
+        result: run.result,
+      });
+    }
+    if (dispatched.paused !== undefined) {
+      return {
+        session,
+        planUnitId,
+        status: "paused",
+        ...progressNow(),
+        units,
+        paused: { ...dispatched.paused, planUnitId },
+      };
+    }
+  }
 }
 
 async function resumeObserver(
@@ -484,10 +767,12 @@ export async function resumeTurn(
     at: Date.now(),
   });
   if (paused.agent === "session") {
+    const plan = activePlanState(session);
     const interpretation = await runSessionAgent(deps.sessionAgent, session, paused.utterance, {
       turn: paused.utteranceTurn,
       unitId: paused.unitId,
       workspace: workspaceIntro(deps),
+      ...(plan !== undefined ? { plan } : {}),
       ...(paused.startTurn !== undefined ? { startTurn: paused.startTurn } : {}),
       ...(paused.outline !== undefined ? { outline: paused.outline } : {}),
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
@@ -526,6 +811,9 @@ export async function resumeTurn(
         session,
         open: false,
         workspace: generalContextText(deps),
+        ...(unit.planItem !== undefined && deps.planGeneralMaxTurns !== undefined
+          ? { maxTurns: deps.planGeneralMaxTurns }
+          : {}),
         ...(options.signal !== undefined ? { signal: options.signal } : {}),
       });
       stillPaused = run.paused === true;
@@ -539,6 +827,42 @@ export async function resumeTurn(
     if (run.paused === true) {
       result.paused = {
         agent: "general",
+        unitId: paused.unitId,
+        utterance: paused.utterance,
+        utteranceTurn: paused.utteranceTurn,
+        startTurn: unitOf(session, paused.unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
+  if (paused.agent === "plan") {
+    if (deps.planner === undefined) return { session, turn: paused.utteranceTurn, paused };
+    const unit = unitOf(session, paused.unitId);
+    let run: PlannerResult;
+    let stillPaused = false;
+    try {
+      run = await runPlanner(deps.planner, {
+        request: { id: paused.unitId, text: requestText(unit.journal) },
+        seed: unit.journal,
+        startTurn: unit.turn,
+        session,
+        open: false,
+        workspace: plannerContextText(deps),
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      });
+      stillPaused = run.paused === true;
+    } finally {
+      if (!stillPaused) restorePlanner(deps, session, paused.unitId);
+    }
+    syncUnit(session, paused.unitId, run);
+    settleAttention(session, paused.unitId, run.done, run.paused);
+    const result = makeResult(session, paused.utteranceTurn);
+    result.plan = { unitId: paused.unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "plan",
         unitId: paused.unitId,
         utterance: paused.utterance,
         utteranceTurn: paused.utteranceTurn,
@@ -591,9 +915,13 @@ export function leaveTurn(
   if (paused.agent === "observer" && sessionFocus(session)?.unitId === paused.unitId) {
     popUnit(session);
   }
-  if (paused.agent === "general") {
+  if (paused.agent === "general" || paused.agent === "plan") {
     const unit = unitOf(session, paused.unitId);
-    restoreGeneralChanges(workspace, unit);
+    restoreGeneralChanges(
+      workspace,
+      unit,
+      paused.agent === "plan" ? "plan-read-only" : "general-read-only",
+    );
   }
   const unitId =
     paused.agent === "observer" ? (paused.taskUnitId ?? paused.unitId) : paused.unitId;
@@ -620,17 +948,22 @@ export function cancelTurn(
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
   }
-  if (paused.agent === "session" || paused.agent === "general") {
+  if (
+    paused.agent === "session" ||
+    paused.agent === "general" ||
+    paused.agent === "plan"
+  ) {
     let rollback: "ok" | "unavailable" | "error" = "unavailable";
     let warning: string | undefined;
-    if (paused.agent === "general") {
+    if (paused.agent === "general" || paused.agent === "plan") {
+      const reason = paused.agent === "plan" ? "plan-read-only" : "general-read-only";
       const unit = unitOf(session, paused.unitId);
       const checkpoint = unit.checkpoint;
       if (checkpoint !== undefined && workspace.restoreChanged !== undefined) {
         try {
           const changed = workspace.restoreChanged(checkpoint);
           if (changed.length > 0) {
-            unit.journal.push({ type: "rollback", checkpoint, reason: "general-read-only" });
+            unit.journal.push({ type: "rollback", checkpoint, reason });
           }
           rollback = "ok";
         } catch (error) {

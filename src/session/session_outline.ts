@@ -7,6 +7,13 @@ import {
   unitOf,
   unitsInOrder,
 } from "./session";
+import {
+  latestPlan,
+  planFinished,
+  planModeOf,
+  planOfUnit,
+  planProgress,
+} from "./plan";
 import type { NoDecisionReason, SessionOperation, SessionState, Unit } from "./types";
 
 // The hierarchical outline of a session (docs/en/sessions.md §2): L0 — the units,
@@ -69,8 +76,10 @@ function decisionText(decision: TraceDecision): string {
       ? ""
       : operation.kind === "respond"
         ? `respond: "${short(operation.text)}"`
-        : operation.kind === "general"
-          ? `general: "${short(operation.text)}"`
+      : operation.kind === "general"
+        ? `general: "${short(operation.text)}"`
+        : operation.kind === "plan"
+          ? `plan: "${short(operation.text)}"`
           : `task: "${short(operation.text)}"`;
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
@@ -184,6 +193,13 @@ function generalEnding(state: State, unit: Unit): string {
   return parts.join("; ");
 }
 
+function planEnding(session: SessionState, unit: Unit): string {
+  const plan = planOfUnit(unit);
+  if (plan === undefined) return "no plan submitted";
+  const progress = planProgress(session, plan);
+  return `${progress.completed}/${progress.total} item(s) done`;
+}
+
 function unitLine(session: SessionState, unit: Unit, index: number): string {
   const state = fold(unit.journal);
   const label = requestLabel(state, unit);
@@ -193,7 +209,9 @@ function unitLine(session: SessionState, unit: Unit, index: number): string {
       ? endingOf(state)
       : unit.type === "general"
         ? generalEnding(state, unit)
-        : "";
+        : unit.type === "plan"
+          ? planEnding(session, unit)
+          : "";
   // A session unit's trace carries its answer or the reformulated request it committed. The
   // task unit's trace carries the same reformulation as its request once the driver opens it.
   const decision = unit.type === "session" ? decisionOf(session, unit.id) : undefined;
@@ -228,6 +246,22 @@ export function sessionOutline(session: SessionState, options: OutlineOptions = 
   }
 
   for (const unit of shown) lines.push(unitLine(session, unit, indexOf(unit)));
+  // The plan execution marker: the active plan's progress, or the last plan's completion
+  // (the "special element" that closes the plan run).
+  const plan = latestPlan(session);
+  if (plan !== undefined) {
+    const finished = planFinished(session, plan.planUnitId);
+    if (finished !== undefined) {
+      lines.push(
+        `plan ${plan.planUnitId}: ${finished.status} (${finished.completed}/${finished.total})`,
+      );
+    } else if (planModeOf(session) === plan.planUnitId) {
+      const progress = planProgress(session, plan);
+      lines.push(
+        `plan ${plan.planUnitId}: executing (${progress.completed}/${progress.total})`,
+      );
+    }
+  }
   return lines.join("\n");
 }
 

@@ -4,8 +4,10 @@ import type {
   CancelResult,
   LeaveResult,
   PausedState,
+  PlanExecutionResult,
   SessionTurnResult,
 } from "./driver";
+import type { PlannerDraft } from "./planner";
 
 // The terminal view is a deterministic projection of a driver turn, not a second store: the
 // session-unit journal supplies the tool calls/results, the task events supply the work, and
@@ -62,12 +64,12 @@ function sessionLines(journal: readonly Event[], options: RenderOptions): string
     const payload = payloadOf(event);
     if (node.kind === "action") {
       const tool = String(payload?.tool ?? "");
-      if (tool === "respond" || tool === "task") continue;
+      if (tool === "respond" || tool === "task" || tool === "plan") continue;
       lines.push(...thoughtLines(reasoningOf(payload), options));
       lines.push(`  call: ${tool}(${JSON.stringify(payload?.args ?? {})})`);
     } else if (node.kind === "observation") {
       const tool = String(payload?.tool ?? "");
-      if (tool === "respond" || tool === "task") continue;
+      if (tool === "respond" || tool === "task" || tool === "plan") continue;
       lines.push(`  result: ${resultText(String(payload?.result ?? node.label), options)}`);
     }
   }
@@ -133,6 +135,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push("session: respond");
   } else if (operation.kind === "general") {
     lines.push(`session: general("${operation.text}")`);
+  } else if (operation.kind === "plan") {
+    lines.push(`session: plan("${operation.text}")`);
   } else {
     lines.push(`session: task("${operation.text}")`);
   }
@@ -161,9 +165,64 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     const answer = generalAnswer(run.events);
     if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
   }
+  if (result.plan !== undefined) {
+    const { unitId, result: run } = result.plan;
+    const outcome =
+      run.plan !== undefined ? `${run.plan.items.length} item(s)` : (run.stopReason ?? "no plan");
+    lines.push(`plan ${unitId}: ${outcome} after ${run.turns} turns`);
+    if (run.plan !== undefined) {
+      lines.push("", renderPlanDraft(run.plan), "");
+      lines.push("plan ready: [e]xecute  [r]ework  [q]uit");
+    } else {
+      lines.push("no plan was produced; the plan unit is not completed");
+    }
+  }
   if (result.paused !== undefined) {
     lines.push(renderPauseMenu(result.paused));
   }
+  return lines;
+}
+
+export function renderPlanDraft(draft: PlannerDraft): string {
+  const lines: string[] = [];
+  if (draft.summary !== undefined) lines.push(draft.summary, "");
+  for (const [index, item] of draft.items.entries()) {
+    const kind = item.kind === "general" ? "general" : "coding";
+    lines.push(`${index + 1}. **${item.title}** _(${kind})_`);
+    if (item.detail !== "") lines.push(`   ${item.detail}`);
+    if (item.done !== undefined) lines.push(`   Done when: ${item.done}`);
+  }
+  return lines.join("\n");
+}
+
+function stopText(events: readonly Event[]): string | undefined {
+  let text: string | undefined;
+  for (const event of events) {
+    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
+    const payload = event.node.payload as { answer?: unknown } | undefined;
+    text = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+  }
+  return text;
+}
+
+// A plan run's outcome: the units opened, their item and result, and the final status.
+export function renderPlanRun(result: PlanExecutionResult): string[] {
+  const lines = [
+    `plan ${result.planUnitId}: ${result.status} (${result.completed}/${result.total})`,
+  ];
+  for (const unit of result.units) {
+    const outcome = unit.result.done ? (unit.result.stopReason ?? "done") : "still open";
+    lines.push(`  item ${unit.itemId}: ${unit.kind} ${unit.unitId} — ${outcome}`);
+    const answer = stopText(unit.result.events);
+    if (answer !== undefined && answer !== "") lines.push(`    ${short(answer, 600)}`);
+  }
+  if (result.reply !== undefined) lines.push("answer:", result.reply);
+  if (result.noDecision !== undefined) lines.push(`no decision: ${result.noDecision}`);
+  if (result.plan !== undefined) {
+    lines.push(...renderPlanDraft(result.plan.result.plan ?? { items: [] }));
+    lines.push("new plan ready");
+  }
+  if (result.paused !== undefined) lines.push(renderPauseMenu(result.paused));
   return lines;
 }
 

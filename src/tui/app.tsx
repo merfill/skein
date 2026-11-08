@@ -7,13 +7,17 @@ import { currentMove } from "../ir/traversal";
 import { createSession } from "../session/session";
 import {
   cancelTurn,
+  executePlan,
   leaveTurn,
   resumeTurn,
   runSessionTurn,
   type PausedState,
+  type PlanExecutionResult,
   type SessionTurnDeps,
   type SessionTurnResult,
 } from "../session/driver";
+import { renderPlanDraft, renderPlanRun } from "../session/view";
+import { planModeOf } from "../session/plan";
 import {
   sessionSummary,
   usageTotals,
@@ -137,6 +141,7 @@ export function TuiApp(props: TuiAppProps) {
   const [observerNotice, setObserverNotice] = useState<string | undefined>();
   const [mouseCapture, setMouseCapture] = useState(process.env.SKEIN_MOUSE === "true");
   const [paused, setPaused] = useState<PausedState | undefined>();
+  const [pendingPlan, setPendingPlan] = useState<string | undefined>();
   const [modelLabel, setModelLabel] = useState(model);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historySelected, setHistorySelected] = useState(0);
@@ -166,7 +171,8 @@ export function TuiApp(props: TuiAppProps) {
     Math.max(0, view.history.length - 1),
   );
   mouseLayout.current = { mainWidth, gap: panelGap, showTask, bodyRows };
-  mouseBlocked.current = helpOpen || historyOpen || paused !== undefined;
+  mouseBlocked.current =
+    helpOpen || historyOpen || paused !== undefined || pendingPlan !== undefined;
 
   const workspaceFiles = (): string[] => {
     if (filesRef.current !== null) return filesRef.current;
@@ -375,7 +381,7 @@ export function TuiApp(props: TuiAppProps) {
       case "turn_started": {
         const unit = sessionRef.current.units.get(event.unitId);
         if (
-          (unit?.type === "task" || unit?.type === "general") &&
+          (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") &&
           timingsRef.current.get(event.unitId)?.startedAt === undefined
         ) {
           timingsRef.current.set(event.unitId, { startedAt: Date.now() });
@@ -448,7 +454,7 @@ export function TuiApp(props: TuiAppProps) {
           );
         }
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · ${event.tool} ${event.status}`);
@@ -456,7 +462,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "events_added": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
           const current = liveJournals.current.get(unit.id) ?? [...unit.journal];
           liveJournals.current.set(unit.id, [...current, ...event.events]);
         }
@@ -476,7 +482,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "turn_finished": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · turn done`);
@@ -504,11 +510,14 @@ export function TuiApp(props: TuiAppProps) {
       ...(current.general !== undefined
         ? { general: { ...current.general, onProgress: handleProgress } }
         : {}),
+      ...(current.planner !== undefined
+        ? { planner: { ...current.planner, onProgress: handleProgress } }
+        : {}),
     };
   };
 
   const finishTaskTiming = (result: SessionTurnResult): void => {
-    const finished = result.task ?? result.general;
+    const finished = result.task ?? result.general ?? result.plan;
     if (finished === undefined) return;
     const unitId = finished.unitId;
     liveJournals.current.delete(unitId);
@@ -557,6 +566,16 @@ export function TuiApp(props: TuiAppProps) {
               answer: answerOf(result.general.result.events) ?? null,
             }
           : null,
+      plan:
+        result.plan !== undefined
+          ? {
+              unitId: result.plan.unitId,
+              turns: result.plan.result.turns,
+              done: result.plan.result.done,
+              stopReason: result.plan.result.stopReason,
+              items: result.plan.result.plan?.items.length ?? 0,
+            }
+          : null,
     });
     setObserverNotice(undefined);
     finishTaskTiming(result);
@@ -592,6 +611,19 @@ export function TuiApp(props: TuiAppProps) {
       );
       if (answer !== undefined && answer !== "") {
         append({ id: nextId(), kind: "assistant", text: answer });
+      }
+    }
+    if (result.plan !== undefined) {
+      const run = result.plan.result;
+      if (run.plan !== undefined) {
+        appendNotice(`plan ${result.plan.unitId} · ${run.plan.items.length} item(s)`);
+        append({ id: nextId(), kind: "assistant", text: renderPlanDraft(run.plan) });
+        if (result.paused === undefined) {
+          setPendingPlan(result.plan.unitId);
+          appendNotice("plan ready: [e]xecute  [r]ework  [q]uit");
+        }
+      } else {
+        appendNotice(`plan ${result.plan.unitId} · no plan`);
       }
     }
     if (result.paused !== undefined) {
@@ -707,12 +739,19 @@ export function TuiApp(props: TuiAppProps) {
     const controller = new AbortController();
     abortRef.current = controller;
     let pausedResult = false;
+    let continuePlan: string | undefined;
     try {
       const result = await resumeTurn(runDeps(), sessionRef.current, current, {
         signal: controller.signal,
       });
       pausedResult = result.paused !== undefined;
       renderResult(result);
+      if (result.paused === undefined) {
+        const unit = sessionRef.current.units.get(current.unitId);
+        continuePlan =
+          current.planUnitId ??
+          (unit?.planItem !== undefined ? planModeOf(sessionRef.current) : undefined);
+      }
     } catch (error) {
       appendNotice(`error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -722,13 +761,18 @@ export function TuiApp(props: TuiAppProps) {
       setActivity(pausedResult ? "paused" : "idle");
       setTick((value) => value + 1);
     }
+    if (continuePlan !== undefined) void runPlan(continuePlan);
   };
 
   const cancel = (): void => {
     const current = paused;
     if (current === undefined) return;
     const workspace =
-      current.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
+      current.agent === "general"
+        ? (deps.general?.workspace ?? deps.task.workspace)
+        : current.agent === "plan"
+          ? (deps.planner?.workspace ?? deps.task.workspace)
+          : deps.task.workspace;
     const result = cancelTurn(workspace, sessionRef.current, current, deps.telemetry);
     setPaused(undefined);
     appendNotice("cancelled");
@@ -740,7 +784,11 @@ export function TuiApp(props: TuiAppProps) {
     const current = paused;
     if (current === undefined) return;
     const workspace =
-      current.agent === "general" ? (deps.general?.workspace ?? deps.task.workspace) : deps.task.workspace;
+      current.agent === "general"
+        ? (deps.general?.workspace ?? deps.task.workspace)
+        : current.agent === "plan"
+          ? (deps.planner?.workspace ?? deps.task.workspace)
+          : deps.task.workspace;
     const result = leaveTurn(workspace, sessionRef.current, current, deps.telemetry);
     setPaused(undefined);
     appendNotice(`left ${result.unitId} open (suspended); work kept`);
@@ -777,6 +825,7 @@ export function TuiApp(props: TuiAppProps) {
         filesRef.current = null;
         setTrace([]);
         setPaused(undefined);
+        setPendingPlan(undefined);
         setObserverNotice(undefined);
         setActivity("idle");
         setHistoryOpen(false);
@@ -864,6 +913,67 @@ export function TuiApp(props: TuiAppProps) {
     }
   };
 
+  const runPlan = async (planUnitId: string): Promise<void> => {
+    if (runningRef.current) return;
+    setPendingPlan(undefined);
+    runningRef.current = true;
+    setRunning(true);
+    setActivity("plan · executing");
+    const controller = new AbortController();
+    abortRef.current = controller;
+    let pausedResult = false;
+    try {
+      const result: PlanExecutionResult = await executePlan(
+        runDeps(),
+        sessionRef.current,
+        planUnitId,
+        { signal: controller.signal },
+      );
+      logRef.current?.write({
+        type: "plan_run",
+        planUnitId,
+        status: result.status,
+        completed: result.completed,
+        total: result.total,
+        units: result.units.map((unit) => ({
+          unitId: unit.unitId,
+          itemId: unit.itemId,
+          kind: unit.kind,
+          done: unit.result.done,
+          stopReason: unit.result.stopReason,
+        })),
+        reply: result.reply ?? null,
+      });
+      appendNotice(renderPlanRun(result).join("\n"));
+      if (
+        result.plan !== undefined &&
+        result.plan.result.plan !== undefined &&
+        result.plan.result.plan.items.length > 0
+      ) {
+        setPendingPlan(result.plan.unitId);
+      } else if (
+        result.status === "blocked" &&
+        planModeOf(sessionRef.current) === planUnitId
+      ) {
+        setPendingPlan(planUnitId);
+        appendNotice("plan is still active: [e]xecute to continue  [r]ework  [q]uit");
+      }
+      if (result.paused !== undefined) {
+        pausedResult = true;
+        setPaused(result.paused);
+        setActivity("paused");
+      }
+    } catch (error) {
+      appendNotice(`error: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      runningRef.current = false;
+      setRunning(false);
+      abortRef.current = undefined;
+      if (!pausedResult) setActivity("idle");
+      setTick((value) => value + 1);
+    }
+  };
+
   const acceptCompletion = (): void => {
     if (completion === undefined) return;
     const item = completion.items[completionIndex];
@@ -948,6 +1058,17 @@ export function TuiApp(props: TuiAppProps) {
         leave();
       } else if (value === "c") {
         cancel();
+      } else if (value === "q") {
+        exit();
+      }
+      return;
+    }
+    if (pendingPlan !== undefined) {
+      if (value === "e") {
+        void runPlan(pendingPlan);
+      } else if (value === "r") {
+        setPendingPlan(undefined);
+        appendNotice("plan kept; describe the changes and send them as the next message");
       } else if (value === "q") {
         exit();
       }

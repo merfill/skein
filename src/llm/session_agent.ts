@@ -47,6 +47,7 @@ const searchSchema = z.object({
 const respondSchema = z.object({ text: z.string() });
 const taskSchema = z.object({ text: z.string() });
 const generalSchema = z.object({ text: z.string() });
+const planSchema = z.object({ text: z.string() });
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
@@ -97,6 +98,12 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
       "Change files or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged.",
     schema: taskSchema,
   },
+  {
+    name: "plan",
+    description:
+      "Develop an execution plan: a read-only agent inspects the workspace and returns an ordered list of work items (general or coding). The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
+    schema: planSchema,
+  },
 ];
 
 export function sessionAgentTools(): ToolSet {
@@ -125,6 +132,10 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
     case "general": {
       const value = generalSchema.parse(input);
       return { kind: "general", text: value.text };
+    }
+    case "plan": {
+      const value = planSchema.parse(input);
+      return { kind: "plan", text: value.text };
     }
     default:
       return undefined;
@@ -212,7 +223,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `task`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `task`, `plan`.",
             };
             continue;
           }

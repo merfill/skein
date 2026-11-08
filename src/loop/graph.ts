@@ -151,6 +151,8 @@ export interface AgentInput {
   signal?: AbortSignal;
   // The task-entry checkpoint id, stored on the opened task unit for cancel rollback.
   snapshot?: string;
+  // The execution-plan item this task unit executes (plan mode).
+  planItem?: string;
 }
 
 export interface AgentResult {
@@ -799,7 +801,7 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
   const session = input.session ?? createSession();
   const opens = input.open ?? input.session === undefined;
   if (opens) {
-    openUnit(session, input.request.id, "task", seed, input.startTurn ?? 0);
+    openUnit(session, input.request.id, "task", seed, input.startTurn ?? 0, input.planItem);
     if (input.snapshot !== undefined) {
       unitOf(session, input.request.id).checkpoint = input.snapshot;
     }

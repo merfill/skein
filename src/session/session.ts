@@ -26,11 +26,18 @@ export function openUnit(
   type: UnitType,
   journal: Event[] = [],
   turn = 0,
+  planItem?: string,
 ): Unit {
   if (session.units.has(id)) throw new Error(`unit already open: ${id}`);
-  const unit: Unit = { id, type, journal, turn };
+  const unit: Unit = { id, type, journal, turn, ...(planItem !== undefined ? { planItem } : {}) };
   session.units.set(id, unit);
-  append(session, { type: "open_unit", unitId: id, unitType: type, turn });
+  append(session, {
+    type: "open_unit",
+    unitId: id,
+    unitType: type,
+    turn,
+    ...(planItem !== undefined ? { planItem } : {}),
+  });
   return unit;
 }
 
@@ -74,9 +81,16 @@ export function observerDepth(session: SessionState): number {
 export function setPending(
   session: SessionState,
   text: string,
-  unitType: "task" | "general" = "task",
+  unitType: "task" | "general" | "plan" = "task",
+  planItem?: string,
+  planUnitId?: string,
 ): void {
-  session.pending = unitType === "task" ? { text } : { text, unitType };
+  const link = {
+    ...(planItem !== undefined ? { planItem } : {}),
+    ...(planUnitId !== undefined ? { planUnitId } : {}),
+  };
+  session.pending =
+    unitType === "task" ? { text, ...link } : { text, unitType, ...link };
 }
 
 export function takePending(session: SessionState): PendingUtterance | undefined {
@@ -175,6 +189,35 @@ export function recordRefusal(
   });
 }
 
+export function recordPlanStarted(
+  session: SessionState,
+  planUnitId: string,
+  turn: number,
+): void {
+  unitOf(session, planUnitId);
+  append(session, { type: "plan_started", unitId: planUnitId, planUnitId, turn });
+}
+
+export function recordPlanFinished(
+  session: SessionState,
+  planUnitId: string,
+  turn: number,
+  status: "done" | "aborted",
+  completed: number,
+  total: number,
+): void {
+  unitOf(session, planUnitId);
+  append(session, {
+    type: "plan_finished",
+    unitId: planUnitId,
+    planUnitId,
+    turn,
+    status,
+    completed,
+    total,
+  });
+}
+
 // Units in the order they were opened (the session journal order); the caller filters the
 // transient observer units it does not want to show.
 export function unitsInOrder(session: SessionState): Unit[] {
@@ -219,7 +262,7 @@ function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent
 
 function unitCompleted(session: SessionState, unit: Unit): boolean {
   if (unit.type === "task") return taskEnded(unit.journal);
-  if (unit.type === "general") {
+  if (unit.type === "general" || unit.type === "plan") {
     const state = fold(unit.journal);
     const move = currentMove(state);
     return move !== undefined && isMoveFinished(state, move);

@@ -34,7 +34,9 @@ session journal records the units in the order they appear. The main unit types 
 
 - a **reply** — a user utterance and the session agent's answer or operation;
 - a **general task** — an investigation that answers a question without changing the workspace;
-- a **coding task** — a request that changes the workspace.
+- a **coding task** — a request that changes the workspace;
+- **plan development** — a read-only unit that returns an ordered list of items; the items are
+  executed as ordinary units later.
 
 An **observer** unit is a service unit opened when a task is stuck; it is not shown in the session
 trace.
@@ -45,9 +47,10 @@ with the memory tools (`unit`, `state`, `turns`, `body`, `search`) and become ob
 calling unit. The session journal also records push/pop, suspend/resume/abandon, operations,
 refusals, no-decision turns and observer triggers.
 
-The session agent chooses one of three operations: `respond` answers from the dialogue, `general`
-delegates an investigation, and `task` opens a coding task with a self-contained work order. The
-operation is recorded in the session journal; the opened unit keeps its own journal.
+The session agent chooses one of four operations: `respond` answers from the dialogue, `general`
+delegates an investigation, `task` opens a coding task with a self-contained work order, and `plan`
+opens a plan-development unit. The operation is recorded in the session journal; the opened unit
+keeps its own journal.
 
 ### 1.2 A coding task
 
@@ -125,6 +128,8 @@ The journal stores records:
 | `constraint` | a path restriction seeded at the start |
 | `fact` | an executor-owned session fact, such as the environment probe |
 | `hint` / `memo` | advice from the observer; not knowledge about the task |
+| `plan` | the plan header of a plan-development unit |
+| `plan_item` | an ordered plan item (`title`, `detail`, `kind`, `done`) |
 | `file` | a referenced file, produced by `mutates` |
 
 The relations are:
@@ -138,6 +143,8 @@ The relations are:
 | `turns` | `turn` | `action` |
 | `action` | `result` | `observation` |
 | `action` | `mutates` | `file` |
+| a plan unit's `move` | `plan` | `plan` |
+| `plan` | `plan_item` | `plan_item` |
 
 ```
 request --move--> move --turns--> turns --turn--> action --result--> observation
@@ -147,6 +154,9 @@ request --move--> move --turns--> turns --turn--> action --result--> observation
 Children are ordered by addition; the current child is the last one. A state's closure is stored on
 its `move`, in the relation `move.stop`. A `file` is the only record that several actions may point
 to.
+
+`plan` and `plan_item` are session-level artifacts, not states: `fold` keeps them out of the
+ordered `move`/`turn` children, and a plan is never rewritten — a rework opens a new `plan` unit.
 
 The full payloads and per-tool behaviour are in `ir_operations.md`.
 

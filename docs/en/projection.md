@@ -68,6 +68,12 @@ type, the request or utterance, the result, the status, and the answer or operat
 reached with the memory tools and become observations of the calling unit. See
 `sessions.md`.
 
+**A plan.** While a plan is executing, the session agent's context receives a separate `system`
+block: the active plan, its item statuses and the current item. Only the current item's work order
+reaches the task/general agent, never the whole list. The line `plan <id>: done|aborted (n/N)` is
+the special plan-completion element in the session trace; `plan_started`/`plan_finished` are
+session-journal events, and the block is rebuilt from them every turn.
+
 **Reasoning.** The reasoning of a turn is stored on its action and rendered as the assistant
 message's reasoning part. It is not a visible answer and is not a separate tape message. The
 visible text that closes a state becomes the `why` of its `Finish` line.

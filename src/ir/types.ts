@@ -20,6 +20,10 @@ export const WORK_KINDS = [
   // `system` turn. Neither counts as task knowledge.
   "hint",
   "memo",
+  // A plan developed by the `plan` unit: the plan node and its ordered items. They are a
+  // session-level artifact (the session agent's execution list), never task knowledge.
+  "plan",
+  "plan_item",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -71,6 +75,26 @@ export interface MovePayload {
   turn?: number;
 }
 
+// A plan item is one work order the session agent executes as an ordinary unit. `kind` is the
+// agent the item needs (a general answer or a workspace change); it is the planner's mark, and
+// the session agent still chooses the operation it opens. `order` is the item's 1-based place
+// in the plan; items are never rewritten, a rework is a new plan.
+export type PlanItemKind = "general" | "task";
+
+export interface PlanItemPayload {
+  title: string;
+  detail: string;
+  kind: PlanItemKind;
+  done?: string;
+  order: number;
+}
+
+// The plan header: a short summary that introduces the items (the markdown is rendered from
+// the items, never stored separately).
+export interface PlanPayload {
+  summary?: string;
+}
+
 // Relation names are the role the child plays for its owner (docs/en/ir.md §2.2):
 // a request's states hang off it via `move`; a state's turns container hangs off the `move`
 // via `turns`; each turn (action) hangs off the container via `turn`; a state's (the terminal
@@ -83,6 +107,11 @@ export const EDGE_KINDS = [
   "stop",
   "result",
   "mutates",
+  // A plan unit's move owns the plan header (`plan`); the header owns its ordered items
+  // (`plan_item`). These are session-level artifacts, not state transitions, so `fold` keeps
+  // them out of the `move`/`turn` ordered-children maps.
+  "plan",
+  "plan_item",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 

@@ -18,6 +18,7 @@
 | Live gate | `SKEIN_LIVE=true npx vitest run tests/gate.test.ts` | fixing bug fixtures with a live model | minutes, money |
 | Live scenarios | `SKEIN_LIVE=true npx vitest run tests/live/scenarios.test.ts` | short scenarios per loop branch | minutes, money |
 | Live sessions | `SKEIN_LIVE=true npx tsx tests/sandbox/session-live.ts` | general/respond/task routes and the report | minutes, money |
+| Live plan | `SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts <task-id> [--virtual]` | plan unit, item execution and the task's verifier | minutes, money (Docker for a real task) |
 | Live operations | `SKEIN_LIVE=true npx vitest run tests/live/ir_operations_step.test.ts` | the next move of a live model on a built projection | minutes, money |
 | Synthetic bench | `npm run bench -- <case>` | one case from `skein-plugin` | minutes, money |
 | Bench gate | `npm run bench:gate -- <runDir>` | a run against `bench/baseline.json` | seconds |
@@ -102,6 +103,20 @@ SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # analysis -> general, re
 `session-live` checks the three routes (`general`, `respond`, `task`) and the post-task report;
 `general-live` checks that a question about the project routes to `general`, that the general unit
 reads with `read`/`grep`/`list`, and that no coding task is opened.
+
+### 3.3.1 Live plan sessions
+
+```sh
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts fix-ocaml-gc --virtual --turns 20  # cheap
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts fix-ocaml-gc --turns 60            # Docker
+SKEIN_LIVE=true npx tsx tests/sandbox/session-plan.ts custom-memory-heap-crash --turns 80
+```
+
+`session-plan` forces the first operation to `plan`, then executes the items with the real
+session agent, planner and task/general agents, and scores the result with the task's own
+acceptance (`test.sh` for a Docker task, the spec's command for `--virtual`). It prints the plan,
+each item's outcome and the reward; `plan.json`, `run.json` and `session.json` land under
+`bench/runs/session-plan/`. The virtual run is cheap; a real Docker task costs minutes and money.
 
 ### 3.4 Live operation steps
 

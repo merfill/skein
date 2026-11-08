@@ -43,6 +43,10 @@ export interface GeneralInput {
   workspace?: string;
   // The entry checkpoint id; the read-only unit restores any mutation when it ends.
   snapshot?: string;
+  // The execution-plan item this unit executes (plan mode).
+  planItem?: string;
+  // A per-run cap override (a plan item gets `planGeneralMaxTurns`).
+  maxTurns?: number;
   signal?: AbortSignal;
 }
 
@@ -180,7 +184,7 @@ export async function runGeneralAgent(
   }
 
   if (input.open === true && session !== undefined) {
-    openUnit(session, input.request.id, "general", events, startTurn);
+    openUnit(session, input.request.id, "general", events, startTurn, input.planItem);
     pushUnit(session, input.request.id, startTurn);
     if (input.snapshot !== undefined) {
       unitOf(session, input.request.id).checkpoint = input.snapshot;
@@ -202,8 +206,9 @@ export async function runGeneralAgent(
   let done = false;
   let paused = false;
   let stopReason: string | null = null;
+  const maxTurns = input.maxTurns ?? deps.maxTurns;
 
-  while (turn < deps.maxTurns) {
+  while (turn < maxTurns) {
     if (isAborted(input.signal)) {
       paused = true;
       emit?.({ type: "paused", agent: "general", unitId });

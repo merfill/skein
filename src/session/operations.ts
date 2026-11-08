@@ -21,6 +21,9 @@ export interface ApplyOperationInput {
   sourceUnit: string;
   // The model's hidden reasoning for the decision, recorded with the event and shown in L0.
   reasoning?: string;
+  // The execution-plan item this operation opens a unit for (plan mode).
+  planItem?: string;
+  planUnitId?: string;
 }
 
 function textProblem(text: string, max: number): string | undefined {
@@ -40,11 +43,13 @@ export function validateOperation(
       return textProblem(operation.text, MAX_TASK_TEXT);
     case "general":
       return textProblem(operation.text, MAX_TASK_TEXT);
+    case "plan":
+      return textProblem(operation.text, MAX_TASK_TEXT);
   }
 }
 
 export function applyOperation(input: ApplyOperationInput): OperationResult {
-  const { session, operation, turn, sourceUnit, reasoning } = input;
+  const { session, operation, turn, sourceUnit, reasoning, planItem, planUnitId } = input;
   if (!session.units.has(sourceUnit)) {
     return { ok: false, reason: `unknown source unit: ${sourceUnit}` };
   }
@@ -60,14 +65,21 @@ export function applyOperation(input: ApplyOperationInput): OperationResult {
       // still suspended/completed by its own journal. Nothing is written to its journal.
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);
-      setPending(session, operation.text, "task");
+      setPending(session, operation.text, "task", planItem, planUnitId);
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
     }
     case "general": {
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);
-      setPending(session, operation.text, "general");
+      setPending(session, operation.text, "general", planItem, planUnitId);
+      recordOperation(session, sourceUnit, turn, operation, reasoning);
+      return { ok: true, operation };
+    }
+    case "plan": {
+      const focus = sessionFocus(session);
+      if (focus !== undefined) popUnit(session);
+      setPending(session, operation.text, "plan");
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
     }

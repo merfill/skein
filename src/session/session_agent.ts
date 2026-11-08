@@ -38,7 +38,7 @@ import { sessionOutline, unitOutline } from "./session_outline";
 import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
-  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent. Choose by the result the user wants:\n- `respond` — the answer follows from the dialogue and earlier work.\n- `general` — the user wants an answer that requires investigation; the workspace stays unchanged.\n- `task` — the user wants something changed, or a command run that may change it.",
+  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent. Choose by the result the user wants:\n- `respond` — the answer follows from the dialogue and earlier work.\n- `general` — the user wants an answer that requires investigation; the workspace stays unchanged.\n- `task` — the user wants something changed, or a command run that may change it.\n- `plan` — the user wants a multi-step execution plan; a read-only agent inspects the workspace and returns an ordered list of items.",
   "`general` receives the user's own words, with the dialogue's references resolved. Keep their wording, scope and level of detail. The general agent chooses how to work and how much detail to give.",
   "`task` receives a work order: the goal, the facts the task needs and how completion is judged. It changes the workspace, and the coding agent sees only this text.",
   "Ask when the user's intent is unclear; if the dialogue resolves it, proceed.",
@@ -109,6 +109,8 @@ export interface SessionUnitRunInput {
   outline?: string;
   // The engine-owned workspace orientation (root and material map).
   workspace?: WorkspaceIntro;
+  // The active execution plan, rendered for the session agent (statuses and the next item).
+  plan?: string;
   // A user pause: the in-flight model call is aborted and the loop returns `paused`.
   signal?: AbortSignal;
   // Side-channel telemetry; never rendered on the tape.
@@ -139,6 +141,8 @@ export interface SessionContext {
   outline: string;
   history: TapeMessage[];
   workspace?: WorkspaceIntro;
+  // The active execution plan as a system turn (plan execution mode only).
+  plan?: string;
 }
 
 interface ToolCallPayload {
@@ -208,6 +212,7 @@ export function projectSessionUnit(
   journal: readonly Event[],
   outline = "",
   workspace?: WorkspaceIntro,
+  plan?: string,
 ): SessionContext {
   let utterance = "";
   const history: TapeMessage[] = [];
@@ -242,6 +247,7 @@ export function projectSessionUnit(
     outline,
     history,
     ...(workspace !== undefined ? { workspace } : {}),
+    ...(plan !== undefined && plan !== "" ? { plan } : {}),
   };
 }
 
@@ -274,6 +280,7 @@ export function buildSessionMessages(context: SessionContext): ModelMessage[] {
       ? [{ role: "system" as const, content: workspaceMessage(context.workspace) }]
       : []),
     { role: "system", content: `Earlier tasks:\n${context.outline}` },
+    ...(context.plan !== undefined ? [{ role: "system" as const, content: context.plan }] : []),
     { role: "user", content: context.utterance },
     ...historyMessages(context.history),
   ];
@@ -376,7 +383,9 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
       return { journal, turns, paused: true };
     }
-    const messages = buildSessionMessages(projectSessionUnit(journal, outline, input.workspace));
+    const messages = buildSessionMessages(
+      projectSessionUnit(journal, outline, input.workspace, input.plan),
+    );
     if (surveys >= surveyLimit) {
       messages.push({
         role: "system",
@@ -570,6 +579,11 @@ export interface RunSessionAgentOptions {
   outline?: string;
   // The engine-owned workspace orientation (root and material map).
   workspace?: WorkspaceIntro;
+  // The active execution plan, rendered for the session agent.
+  plan?: string;
+  // The plan item this interpretation executes; the opened unit records the link.
+  planItem?: string;
+  planUnitId?: string;
   signal?: AbortSignal;
 }
 
@@ -677,6 +691,7 @@ export async function runSessionAgent(
       ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
       ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
       ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
+      ...(options.plan !== undefined ? { plan: options.plan } : {}),
       outline,
       ...(maxTurns !== undefined ? { maxTurns } : {}),
       ...(surveyLimit !== undefined ? { surveyLimit } : {}),
@@ -715,6 +730,8 @@ export async function runSessionAgent(
         turn,
         sourceUnit: unitId,
         ...(run.reasoning !== undefined ? { reasoning: run.reasoning } : {}),
+        ...(options.planItem !== undefined ? { planItem: options.planItem } : {}),
+        ...(options.planUnitId !== undefined ? { planUnitId: options.planUnitId } : {}),
       });
       result.applied = applied;
       if (!applied.ok) {

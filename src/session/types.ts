@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "general" | "observer" | "session";
+export type UnitType = "task" | "general" | "plan" | "observer" | "session";
 
 export interface Unit {
   id: string;
@@ -9,6 +9,8 @@ export interface Unit {
   turn: number;
   // The task-entry checkpoint id (task units only). Engine scaffolding, not the projection.
   checkpoint?: string;
+  // The execution-plan item this unit was opened for (task/general units under a plan).
+  planItem?: string;
 }
 
 export interface UnitRef {
@@ -18,7 +20,10 @@ export interface UnitRef {
 
 export interface PendingUtterance {
   text: string;
-  unitType?: "task" | "general";
+  unitType?: "task" | "general" | "plan";
+  // The execution-plan item this pending unit executes; the opened unit records the link.
+  planItem?: string;
+  planUnitId?: string;
 }
 
 export type TriggerKind = "budget" | "state_cycle" | "state_long";
@@ -53,7 +58,10 @@ export type ReactionProposal =
 export type SessionOperation =
   | { kind: "respond"; text: string }
   | { kind: "task"; text: string }
-  | { kind: "general"; text: string };
+  | { kind: "general"; text: string }
+  // Open the plan unit: an agent develops a plan (a structured list of items) from the
+  // request and the workspace. It does not start execution; the user confirms first.
+  | { kind: "plan"; text: string };
 
 // The session's attention for a unit. Derived from the journals, never stored as a field:
 // `completed` is a terminal marker of the unit journal, `abandoned` is a session fact, and
@@ -65,7 +73,27 @@ export type Attention = "active" | "suspended" | "abandoned" | "completed";
 export type NoDecisionReason = "empty_reply" | "max_turns";
 
 export type SessionEvent =
-  | { type: "open_unit"; unitId: string; unitType: UnitType; turn: number }
+  | {
+      type: "open_unit";
+      unitId: string;
+      unitType: UnitType;
+      turn: number;
+      // The plan item this unit executes, when the unit belongs to an execution plan.
+      planItem?: string;
+    }
+  // The user confirmed the plan: execution mode. The plan items are executed as ordinary
+  // units, one after another; the mode is derived from this event until `plan_finished`.
+  | { type: "plan_started"; unitId: string; planUnitId: string; turn: number }
+  // The plan execution is over: either every item completed, or it was aborted.
+  | {
+      type: "plan_finished";
+      unitId: string;
+      planUnitId: string;
+      turn: number;
+      status: "done" | "aborted";
+      completed: number;
+      total: number;
+    }
   | { type: "push"; unitId: string; turn: number }
   | { type: "pop"; unitId: string }
   | { type: "trigger"; unitId: string; turn: number; trigger: Trigger }
