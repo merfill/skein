@@ -137,6 +137,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push(`session: general("${operation.text}")`);
   } else if (operation.kind === "plan") {
     lines.push(`session: plan("${operation.text}")`);
+  } else if (operation.kind === "document") {
+    lines.push(`session: document("${operation.text}")`);
   } else {
     lines.push(`session: task("${operation.text}")`);
   }
@@ -165,6 +167,18 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     const answer = generalAnswer(run.events);
     if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
   }
+  if (result.document !== undefined) {
+    const { unitId, result: run } = result.document;
+    const outcome = run.done ? (run.stopReason ?? "done") : "still open";
+    lines.push(`document ${unitId}: ${outcome} after ${run.turns} turns`);
+    if (run.outline !== undefined) {
+      lines.push(`document: ${run.outline.path} (${run.outline.items.length} sections)`);
+    }
+    const answer = stopText(run.events);
+    if (run.done && answer !== undefined && answer !== "") {
+      lines.push("document summary:", answer);
+    }
+  }
   if (result.plan !== undefined) {
     const { unitId, result: run } = result.plan;
     const outcome =
@@ -187,7 +201,7 @@ export function renderPlanDraft(draft: PlannerDraft): string {
   const lines: string[] = [];
   if (draft.summary !== undefined) lines.push(draft.summary, "");
   for (const [index, item] of draft.items.entries()) {
-    const kind = item.kind === "general" ? "general" : "coding";
+    const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
     lines.push(`${index + 1}. **${item.title}** _(${kind})_`);
     if (item.detail !== "") lines.push(`   ${item.detail}`);
     if (item.done !== undefined) lines.push(`   Done when: ${item.done}`);

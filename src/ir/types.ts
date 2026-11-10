@@ -79,7 +79,7 @@ export interface MovePayload {
 // agent the item needs (a general answer or a workspace change); it is the planner's mark, and
 // the session agent still chooses the operation it opens. `order` is the item's 1-based place
 // in the plan; items are never rewritten, a rework is a new plan.
-export type PlanItemKind = "general" | "task";
+export type PlanItemKind = "general" | "task" | "document";
 
 export interface PlanItemPayload {
   title: string;

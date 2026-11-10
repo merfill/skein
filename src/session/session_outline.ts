@@ -80,7 +80,9 @@ function decisionText(decision: TraceDecision): string {
         ? `general: "${short(operation.text)}"`
         : operation.kind === "plan"
           ? `plan: "${short(operation.text)}"`
-          : `task: "${short(operation.text)}"`;
+          : operation.kind === "document"
+            ? `document: "${short(operation.text)}"`
+            : `task: "${short(operation.text)}"`;
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
@@ -200,6 +202,33 @@ function planEnding(session: SessionState, unit: Unit): string {
   return `${progress.completed}/${progress.total} item(s) done`;
 }
 
+function documentEnding(unit: Unit): string {
+  const state = fold(unit.journal);
+  let path = "";
+  let total = 0;
+  let written = 0;
+  for (const node of state.nodes.values()) {
+    const payload = node.payload as
+      | {
+          call?: { name?: unknown };
+          outline?: { path?: unknown; items?: unknown };
+          itemId?: unknown;
+        }
+      | undefined;
+    if (node.kind !== "action") continue;
+    if (payload?.call?.name === "submit_plan") {
+      const outline = payload.outline;
+      if (outline !== undefined) {
+        path = typeof outline.path === "string" ? outline.path : "";
+        total = Array.isArray(outline.items) ? outline.items.length : 0;
+      }
+    }
+    if (typeof payload?.itemId === "number") written += 1;
+  }
+  if (path === "") return "no outline submitted";
+  return `${path}: ${written}/${total} section(s)`;
+}
+
 function unitLine(session: SessionState, unit: Unit, index: number): string {
   const state = fold(unit.journal);
   const label = requestLabel(state, unit);
@@ -211,7 +240,9 @@ function unitLine(session: SessionState, unit: Unit, index: number): string {
         ? generalEnding(state, unit)
         : unit.type === "plan"
           ? planEnding(session, unit)
-          : "";
+          : unit.type === "document"
+            ? documentEnding(unit)
+            : "";
   // A session unit's trace carries its answer or the reformulated request it committed. The
   // task unit's trace carries the same reformulation as its request once the driver opens it.
   const decision = unit.type === "session" ? decisionOf(session, unit.id) : undefined;

@@ -402,7 +402,7 @@ export function TuiApp(props: TuiAppProps) {
       case "turn_started": {
         const unit = sessionRef.current.units.get(event.unitId);
         if (
-          (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") &&
+          (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") &&
           timingsRef.current.get(event.unitId)?.startedAt === undefined
         ) {
           timingsRef.current.set(event.unitId, { startedAt: Date.now() });
@@ -478,7 +478,7 @@ export function TuiApp(props: TuiAppProps) {
           );
         }
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · ${event.tool} ${event.status}`);
@@ -486,7 +486,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "events_added": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
           const current = liveJournals.current.get(unit.id) ?? [...unit.journal];
           liveJournals.current.set(unit.id, [...current, ...event.events]);
         }
@@ -506,7 +506,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "turn_finished": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · turn done`);
@@ -537,11 +537,14 @@ export function TuiApp(props: TuiAppProps) {
       ...(current.planner !== undefined
         ? { planner: { ...current.planner, onProgress: handleProgress } }
         : {}),
+      ...(current.document !== undefined
+        ? { document: { ...current.document, onProgress: handleProgress } }
+        : {}),
     };
   };
 
   const finishTaskTiming = (result: SessionTurnResult): void => {
-    const finished = result.task ?? result.general ?? result.plan;
+    const finished = result.task ?? result.general ?? result.plan ?? result.document;
     if (finished === undefined) return;
     const unitId = finished.unitId;
     liveJournals.current.delete(unitId);
@@ -600,6 +603,19 @@ export function TuiApp(props: TuiAppProps) {
               items: result.plan.result.plan?.items.length ?? 0,
             }
           : null,
+      document:
+        result.document !== undefined
+          ? {
+              unitId: result.document.unitId,
+              turns: result.document.result.turns,
+              done: result.document.result.done,
+              stopReason: result.document.result.stopReason,
+              path: result.document.result.outline?.path ?? null,
+              sections: result.document.result.outline?.items.length ?? 0,
+              paused: result.document.result.paused === true,
+              answer: answerOf(result.document.result.events) ?? null,
+            }
+          : null,
     });
     setObserverNotice(undefined);
     finishTaskTiming(result);
@@ -634,6 +650,21 @@ export function TuiApp(props: TuiAppProps) {
         `general ${result.general.unitId} · ${outcome} · ${result.general.result.turns} turns`,
       );
       if (answer !== undefined && answer !== "") {
+        append({ id: nextId(), kind: "assistant", text: answer });
+      }
+    }
+    if (result.document !== undefined) {
+      const run = result.document.result;
+      const outcome = run.done ? (run.stopReason ?? "done") : "open";
+      appendNotice(
+        `document ${result.document.unitId} · ${outcome} · ${run.turns} turns${
+          run.outline !== undefined
+            ? ` · ${run.outline.path} (${run.outline.items.length} sections)`
+            : ""
+        }`,
+      );
+      const answer = answerOf(run.events);
+      if (answer !== undefined && answer.trim() !== "") {
         append({ id: nextId(), kind: "assistant", text: answer });
       }
     }
@@ -801,7 +832,9 @@ export function TuiApp(props: TuiAppProps) {
         ? (deps.general?.workspace ?? deps.task.workspace)
         : current.agent === "plan"
           ? (deps.planner?.workspace ?? deps.task.workspace)
-          : deps.task.workspace;
+          : current.agent === "document"
+            ? (deps.document?.workspace ?? deps.task.workspace)
+            : deps.task.workspace;
     const result = cancelTurn(workspace, sessionRef.current, current, deps.telemetry);
     setPaused(undefined);
     appendNotice("cancelled");
@@ -817,7 +850,9 @@ export function TuiApp(props: TuiAppProps) {
         ? (deps.general?.workspace ?? deps.task.workspace)
         : current.agent === "plan"
           ? (deps.planner?.workspace ?? deps.task.workspace)
-          : deps.task.workspace;
+          : current.agent === "document"
+            ? (deps.document?.workspace ?? deps.task.workspace)
+            : deps.task.workspace;
     const result = leaveTurn(workspace, sessionRef.current, current, deps.telemetry);
     setPaused(undefined);
     appendNotice(`left ${result.unitId} open (suspended); work kept`);

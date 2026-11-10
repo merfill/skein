@@ -19,7 +19,7 @@ import type { SessionState } from "./types";
 export const PLANNER_BASE_PROMPT = [
   "You are the plan agent. You develop an execution plan for the user's request in this workspace. You do not change the workspace.",
   "Read the request and inspect the workspace with the read-only tools (read, grep, list, recall; `shell` only for read-only commands). Ground every step in what you actually read: a step that names files, commands or acceptance checks must come from the material, not from imagination.",
-  "When you have enough, call `submit_plan` exactly once with a short summary and an ordered list of items. Each item is one work order for a later agent: a title, a self-contained detail (the goal plus the facts that work order needs), its kind (`general` for a read-only answer, `coding` for a workspace change), and — when the request declares one — its `done` condition. Keep the plan linear and minimal; do not write code.",
+  "When you have enough, call `submit_plan` exactly once with a short summary and an ordered list of items. Each item is one work order for a later agent: a title, a self-contained detail (the goal plus the facts that work order needs), its kind (`general` for a read-only answer, `coding` for a workspace change, `document` for one large text artifact such as a plan or report, naming its target path), and — when the request declares one — its `done` condition. Keep the plan linear and minimal; do not write code.",
   "If the request is to add, implement, fix or change something, those changes ARE the plan: every deliverable the request names must be a `coding` item whose detail says what to create or modify and where, and whose `done` names the check that proves it. A `coding` item inspects the workspace itself, so do not spend an item only on gathering facts for a later item, and never rely on a step that is not in the list. `general` is only for a question the user wants answered without changing the workspace; do not turn an implementation plan into `general` research items.",
   "Write the summary, every item title and detail, and every `done` condition in the same language as the user's request. Do not translate them to English.",
   "The plan is a proposal, not the work: after it is submitted the user decides whether to execute it.",
@@ -192,7 +192,8 @@ function parsePlan(args: Record<string, unknown>): PlannerDraft | undefined {
     if (typeof raw !== "object" || raw === null) return undefined;
     const value = raw as Record<string, unknown>;
     if (typeof value.title !== "string" || typeof value.detail !== "string") return undefined;
-    const kind: PlanItemKind = value.kind === "general" ? "general" : "task";
+    const kind: PlanItemKind =
+      value.kind === "general" ? "general" : value.kind === "document" ? "document" : "task";
     items.push({
       title: value.title,
       detail: value.detail,

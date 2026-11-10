@@ -7,6 +7,11 @@ import { applyReaction } from "./apply";
 import { LOCAL_SESSION_ID, type TelemetrySink } from "./telemetry";
 import type { OperationResult } from "./operations";
 import type { ProgressSink } from "./progress";
+import {
+  runDocumentUnit,
+  type DocumentDeps,
+  type DocumentResult,
+} from "./document";
 import { runGeneralAgent, type GeneralDeps, type GeneralResult } from "./general";
 import { runRequestObserver } from "./observer";
 import {
@@ -57,6 +62,7 @@ export interface SessionTurnDeps {
   task: AgentDeps;
   general?: GeneralDeps;
   planner?: PlannerDeps;
+  document?: DocumentDeps;
   // The general unit's cap when it executes a plan item (a deeper investigation than a
   // one-off question). Falls back to `general.maxTurns` when absent.
   planGeneralMaxTurns?: number;
@@ -85,7 +91,7 @@ export interface SessionTurnOptions {
 }
 
 export interface PausedState {
-  agent: "session" | "task" | "general" | "plan" | "observer";
+  agent: "session" | "task" | "general" | "plan" | "document" | "observer";
   // The paused unit: the session unit, the task unit, or the observer unit.
   unitId: string;
   utterance: string;
@@ -117,6 +123,7 @@ export interface SessionTurnResult {
   reply?: string;
   task?: { unitId: string; result: AgentResult };
   general?: { unitId: string; result: GeneralResult };
+  document?: { unitId: string; result: DocumentResult };
   // The plan unit just developed (the user confirms execution separately).
   plan?: { unitId: string; result: PlannerResult };
   // Why the interpretation ended without an operation.
@@ -153,6 +160,12 @@ function nextPlanId(session: SessionState): string {
   let index = 1;
   while (session.units.has(`p${index}`)) index += 1;
   return `p${index}`;
+}
+
+function nextDocumentId(session: SessionState): string {
+  let index = 1;
+  while (session.units.has(`d${index}`)) index += 1;
+  return `d${index}`;
 }
 
 // `progress` checks request closure before syncing the focus unit journal, so the final stop
@@ -214,6 +227,13 @@ function generalWorkspace(deps: SessionTurnDeps): Workspace {
 
 function generalContextText(deps: SessionTurnDeps): string {
   const workspace = generalWorkspace(deps);
+  const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
+  const instructions = projectInstructionsText(workspace);
+  return instructions === "" ? facts : `${facts}\n\n${instructions}`;
+}
+
+function documentContextText(deps: SessionTurnDeps): string {
+  const workspace = deps.document?.workspace ?? deps.task.workspace;
   const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
   const instructions = projectInstructionsText(workspace);
   return instructions === "" ? facts : `${facts}\n\n${instructions}`;
@@ -437,6 +457,35 @@ async function dispatch(
     return result;
   }
 
+  if (applied.operation.kind === "document") {
+    if (deps.document === undefined) return result;
+    const unitId = nextDocumentId(session);
+    const run = await runDocumentUnit(deps.document, {
+      request: { id: unitId, text: pending.text },
+      session,
+      open: true,
+      workspace: documentContextText(deps),
+      ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    syncUnit(session, unitId, run);
+    settleAttention(session, unitId, run.done, run.paused);
+    result.document = { unitId, result: run };
+    if (run.paused === true) {
+      const planUnitId = pending.planItem !== undefined ? planModeOf(session) : undefined;
+      result.paused = {
+        agent: "document",
+        unitId,
+        utterance,
+        utteranceTurn: turn,
+        startTurn: unitOf(session, unitId).turn,
+        ...(planUnitId !== undefined ? { planUnitId } : {}),
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   const unitId = nextRequestId(session);
   const snapshot = snapshotFor(deps, unitId);
   const run = await runAgent(deps.task, {
@@ -499,8 +548,8 @@ export async function runSessionTurn(
 export interface PlanExecutionUnit {
   unitId: string;
   itemId: string;
-  kind: "task" | "general";
-  result: AgentResult | GeneralResult;
+  kind: "task" | "general" | "document";
+  result: AgentResult | GeneralResult | DocumentResult;
 }
 
 export interface PlanExecutionResult {
@@ -561,7 +610,7 @@ async function runPlanAcceptance(
     "",
     `Items (${plan.items.length}):`,
     ...plan.items.map((item) => {
-      const kind = item.kind === "general" ? "general" : "coding";
+      const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
       const done =
         item.done !== undefined && item.done !== "" ? ` — done when: ${item.done}` : "";
       return `- ${item.order}. [${kind}] ${item.title}${done}`;
@@ -665,6 +714,43 @@ export async function executePlan(
     }
 
     const itemText = item.detail !== "" ? item.detail : item.title;
+    if (item.kind === "document") {
+      if (deps.document === undefined) {
+        return { session, planUnitId, status: "blocked", ...progressNow(), units };
+      }
+      const unitId = nextDocumentId(session);
+      const run = await runDocumentUnit(deps.document, {
+        request: { id: unitId, text: itemText },
+        session,
+        open: true,
+        workspace: documentContextText(deps),
+        planItem: item.id,
+        ...(options.signal !== undefined ? { signal: options.signal } : {}),
+      });
+      syncUnit(session, unitId, run);
+      settleAttention(session, unitId, run.done, run.paused);
+      units.push({ unitId, itemId: item.id, kind: "document", result: run });
+      turn += 1;
+      session.utteranceSeq = turn;
+      if (run.paused === true) {
+        return {
+          session,
+          planUnitId,
+          status: "paused",
+          ...progressNow(),
+          units,
+          paused: {
+            agent: "document",
+            unitId,
+            utterance: itemText,
+            utteranceTurn: turn,
+            startTurn: unitOf(session, unitId).turn,
+            planUnitId,
+          },
+        };
+      }
+      continue;
+    }
     const interpretation = await runSessionAgent(deps.sessionAgent, session, itemText, {
       turn,
       workspace: workspaceIntro(deps),
@@ -968,6 +1054,36 @@ export async function resumeTurn(
     return result;
   }
 
+  if (paused.agent === "document") {
+    if (deps.document === undefined) return { session, turn: paused.utteranceTurn, paused };
+    const unit = unitOf(session, paused.unitId);
+    const run = await runDocumentUnit(deps.document, {
+      request: { id: paused.unitId, text: requestText(unit.journal) },
+      seed: unit.journal,
+      startTurn: unit.turn,
+      session,
+      open: false,
+      workspace: documentContextText(deps),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
+    syncUnit(session, paused.unitId, run);
+    settleAttention(session, paused.unitId, run.done, run.paused);
+    const result = makeResult(session, paused.utteranceTurn);
+    result.document = { unitId: paused.unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "document",
+        unitId: paused.unitId,
+        utterance: paused.utterance,
+        utteranceTurn: paused.utteranceTurn,
+        startTurn: unitOf(session, paused.unitId).turn,
+        ...(paused.planUnitId !== undefined ? { planUnitId: paused.planUnitId } : {}),
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   if (paused.agent === "observer") {
     return resumeObserver(deps, session, paused, options.signal);
   }
@@ -1057,6 +1173,19 @@ export function cancelTurn(
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
   }
+  if (paused.agent === "document") {
+    if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
+    abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
+    telemetry?.record({
+      type: "cancel",
+      sessionId: LOCAL_SESSION_ID,
+      unitId: paused.unitId,
+      at: Date.now(),
+      rollback: "unavailable",
+    });
+    return { session };
+  }
+
   if (
     paused.agent === "session" ||
     paused.agent === "general" ||

@@ -21,7 +21,8 @@ const planItemSchema = z.object({
   title: z.string().min(1).max(200),
   detail: z.string().min(1).max(4000),
   // `coding` is the model-facing name for the IR `task` kind; the parser normalizes it.
-  kind: z.enum(["general", "task", "coding"]),
+  // `document` opens the document unit for a large text artifact (docs, reports).
+  kind: z.enum(["general", "task", "coding", "document"]),
   done: z.string().max(1000).optional(),
 });
 
@@ -36,7 +37,7 @@ export const PLAN_TOOLS: Record<string, ExtraToolDefinition> = {
   ...GENERAL_TOOLS,
   submit_plan: {
     description:
-      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent, with its kind (`general` = read-only answer, `coding` = workspace change). `detail` must carry the facts that work order needs (paths, commands, acceptance). If the request is to add/implement/fix/change something, every deliverable is a `coding` item that makes the change itself — never a `general` item that only gathers facts for a step not in the list. Keep the plan linear and minimal.",
+      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent, with its kind (`general` = read-only answer, `coding` = workspace change, `document` = one large text artifact whose detail names the target path). `detail` must carry the facts that work order needs (paths, commands, acceptance). If the request is to add/implement/fix/change something, every deliverable is a `coding` item that makes the change itself — never a `general` item that only gathers facts for a step not in the list. Keep the plan linear and minimal.",
     schema: submitPlanSchema,
   },
 };

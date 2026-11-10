@@ -47,6 +47,7 @@ const searchSchema = z.object({
 const respondSchema = z.object({ text: z.string() });
 const taskSchema = z.object({ text: z.string() });
 const generalSchema = z.object({ text: z.string() });
+const documentSchema = z.object({ text: z.string() });
 const planSchema = z.object({ text: z.string() });
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
@@ -89,13 +90,19 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "general",
     description:
-      "Ask the general agent for an answer that requires investigation. `text` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. The general agent chooses how to work and how much detail to give.",
+      "Ask the general agent for an answer that requires investigation. `text` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. The general agent chooses how to work and how much detail to give; it never creates or changes a file.",
     schema: generalSchema,
+  },
+  {
+    name: "document",
+    description:
+      "Create one large text file (documentation, a plan, a report) section by section. `text` is a self-contained order: the target path, what the file must establish, the required sections/decisions, the material to cite, and the done condition. Use it instead of `general` whenever the user asks to create or write a file, and instead of `task` when the deliverable is mostly prose.",
+    schema: documentSchema,
   },
   {
     name: "task",
     description:
-      "Change files or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged.",
+      "Change code or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged. For a large written document choose `document` instead.",
     schema: taskSchema,
   },
   {
@@ -132,6 +139,10 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
     case "general": {
       const value = generalSchema.parse(input);
       return { kind: "general", text: value.text };
+    }
+    case "document": {
+      const value = documentSchema.parse(input);
+      return { kind: "document", text: value.text };
     }
     case "plan": {
       const value = planSchema.parse(input);
@@ -223,7 +234,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `task`, `plan`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `document`, `task`, `plan`.",
             };
             continue;
           }

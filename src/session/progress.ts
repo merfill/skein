@@ -2,7 +2,13 @@ import type { Event } from "../ir/events";
 import type { FileDiff } from "../tools";
 import type { Usage } from "./telemetry";
 
-export type ProgressAgent = "session" | "task" | "general" | "plan" | "observer";
+export type ProgressAgent =
+  | "session"
+  | "task"
+  | "general"
+  | "plan"
+  | "document"
+  | "observer";
 
 export interface EditDetail {
   path: string;

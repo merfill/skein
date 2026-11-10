@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "general" | "plan" | "observer" | "session";
+export type UnitType = "task" | "general" | "plan" | "document" | "observer" | "session";
 
 export interface Unit {
   id: string;
@@ -20,7 +20,7 @@ export interface UnitRef {
 
 export interface PendingUtterance {
   text: string;
-  unitType?: "task" | "general" | "plan";
+  unitType?: "task" | "general" | "plan" | "document";
   // The execution-plan item this pending unit executes; the opened unit records the link.
   planItem?: string;
   planUnitId?: string;
@@ -59,6 +59,9 @@ export type SessionOperation =
   | { kind: "respond"; text: string }
   | { kind: "task"; text: string }
   | { kind: "general"; text: string }
+  // Open the document unit: it writes one large text file section by section, from an
+  // outline it submits first (docs/en/sessions.md §4.3).
+  | { kind: "document"; text: string }
   // Open the plan unit: an agent develops a plan (a structured list of items) from the
   // request and the workspace. It does not start execution; the user confirms first.
   | { kind: "plan"; text: string };

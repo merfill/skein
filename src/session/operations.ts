@@ -43,6 +43,8 @@ export function validateOperation(
       return textProblem(operation.text, MAX_TASK_TEXT);
     case "general":
       return textProblem(operation.text, MAX_TASK_TEXT);
+    case "document":
+      return textProblem(operation.text, MAX_TASK_TEXT);
     case "plan":
       return textProblem(operation.text, MAX_TASK_TEXT);
   }
@@ -73,6 +75,13 @@ export function applyOperation(input: ApplyOperationInput): OperationResult {
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);
       setPending(session, operation.text, "general", planItem, planUnitId);
+      recordOperation(session, sourceUnit, turn, operation, reasoning);
+      return { ok: true, operation };
+    }
+    case "document": {
+      const focus = sessionFocus(session);
+      if (focus !== undefined) popUnit(session);
+      setPending(session, operation.text, "document", planItem, planUnitId);
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
     }

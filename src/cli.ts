@@ -9,6 +9,7 @@ import { createChatModel } from "./llm/client";
 import { createObserverDeps } from "./llm/observer";
 import type { Action } from "./llm/schemas";
 import { createSessionAgentDeps } from "./llm/session_agent";
+import { modelDocumentPlanAgent, modelDocumentTextAgent } from "./llm/document";
 import { modelGeneralProposer } from "./llm/general";
 import { modelPlannerAgent } from "./llm/planner";
 import { modelProposer, type Proposer } from "./loop/propose";
@@ -286,6 +287,26 @@ async function main(): Promise<void> {
         }),
         workspace,
         maxTurns: args.maxTurns ?? agentSettings.plannerMaxTurns,
+        telemetry: telemetry.sink,
+      },
+      document: {
+        plan: modelDocumentPlanAgent(model, {
+          settings: agentSettings,
+          rebuild: (rebuildOptions) =>
+            rebuildOptions?.reasoningOff === true
+              ? createChatModel({ ...agentSettings, reasoningEffort: "none" })
+              : model,
+        }),
+        write: modelDocumentTextAgent(model, {
+          settings: agentSettings,
+          rebuild: (rebuildOptions) =>
+            rebuildOptions?.reasoningOff === true
+              ? createChatModel({ ...agentSettings, reasoningEffort: "none" })
+              : model,
+        }),
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.maxTurns,
+        maxPlanTurns: args.maxTurns ?? agentSettings.plannerMaxTurns,
         telemetry: telemetry.sink,
       },
       telemetry: telemetry.sink,

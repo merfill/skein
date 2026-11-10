@@ -55,7 +55,9 @@ export async function runRepl(
       ? (deps.general?.workspace ?? deps.task.workspace)
       : state.agent === "plan"
         ? (deps.planner?.workspace ?? deps.task.workspace)
-        : deps.task.workspace;
+        : state.agent === "document"
+          ? (deps.document?.workspace ?? deps.task.workspace)
+          : deps.task.workspace;
   const cancel = (state: PausedState): void => {
     print(renderCancel(cancelTurn(workspaceFor(state), session, state, deps.telemetry)));
     paused = undefined;

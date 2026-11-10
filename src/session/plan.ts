@@ -43,7 +43,8 @@ function itemsOf(state: State, planId: string): PlanItemData[] {
     const payload = node.payload as Partial<PlanItemPayload> | undefined;
     const title = typeof payload?.title === "string" ? payload.title : node.label;
     const detail = typeof payload?.detail === "string" ? payload.detail : "";
-    const kind: PlanItemKind = payload?.kind === "general" ? "general" : "task";
+    const kind: PlanItemKind =
+      payload?.kind === "general" ? "general" : payload?.kind === "document" ? "document" : "task";
     const order = typeof payload?.order === "number" ? payload.order : items.length + 1;
     items.push({
       seq: node.seq,
@@ -209,7 +210,7 @@ export function renderPlanState(session: SessionState, plan: PlanData): string {
           : status === "abandoned"
             ? "!"
             : " ";
-    const kind = item.kind === "general" ? "general" : "coding";
+    const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
     lines.push(`[${marker}] ${item.order}. ${item.title} (${kind}, ${status})`);
     if (item.detail !== "") lines.push(`      ${item.detail}`);
     if (item.done !== undefined) lines.push(`      Done when: ${item.done}`);

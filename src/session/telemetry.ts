@@ -43,7 +43,7 @@ export type MetricEvent =
   | {
       type: "model_call";
       sessionId: string;
-      agent: "session" | "task" | "general" | "plan" | "observer";
+      agent: "session" | "task" | "general" | "plan" | "document" | "observer";
       unitId: string;
       turn: number;
       callId?: string;
@@ -57,7 +57,7 @@ export type MetricEvent =
   | {
       type: "tool_call";
       sessionId: string;
-      agent: "session" | "task" | "general" | "plan" | "observer";
+      agent: "session" | "task" | "general" | "plan" | "document" | "observer";
       unitId: string;
       turn: number;
       callId?: string;
