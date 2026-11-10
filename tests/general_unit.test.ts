@@ -249,10 +249,12 @@ describe("general unit", () => {
     expect(text).toContain("TAIL-MARKER");
   });
 
-  it("bounds a large non-read tool result in the rebuilt history and points at recall", async () => {
+  it("keeps a command's tail and does not re-truncate the tool result", async () => {
     const session = createSession();
     const ws = workspace();
-    ws.write("big.txt", `${"x".repeat(6000)}\nTAIL-MARKER\n`);
+    // A command's output is bounded by its tail at the tool (INLINE_LIMIT); the general
+    // history keeps that bounded body whole instead of capping it a second time.
+    ws.write("big.txt", `${"x".repeat(20_000)}\nTAIL-MARKER\n`);
     let captured: ModelMessage[] = [];
     let calls = 0;
     const turnDeps: SessionTurnDeps = {
@@ -281,8 +283,10 @@ describe("general unit", () => {
 
     const toolMessage = captured.find((message) => message.role === "tool");
     const text = JSON.stringify(toolMessage);
-    expect(text.length).toBeLessThan(3000);
-    expect(text).toContain("recall obs:");
+    // The old 2000-char cap would make this < 3000; the tool's own bound is ~8 KB.
+    expect(text.length).toBeGreaterThan(3000);
+    expect(text.length).toBeLessThan(9000);
+    expect(text).toContain("full output:");
     expect(text).toContain("TAIL-MARKER");
   });
 

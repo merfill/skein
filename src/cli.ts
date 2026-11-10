@@ -275,8 +275,15 @@ async function main(): Promise<void> {
         telemetry: telemetry.sink,
       },
       planGeneralMaxTurns: args.maxTurns ?? agentSettings.planGeneralMaxTurns,
+      budgetExtend: agentSettings.budgetExtend,
       planner: {
-        agent: modelPlannerAgent(model, { settings: agentSettings }),
+        agent: modelPlannerAgent(model, {
+          settings: agentSettings,
+          rebuild: (rebuildOptions) =>
+            rebuildOptions?.reasoningOff === true
+              ? createChatModel({ ...agentSettings, reasoningEffort: "none" })
+              : model,
+        }),
         workspace,
         maxTurns: args.maxTurns ?? agentSettings.plannerMaxTurns,
         telemetry: telemetry.sink,

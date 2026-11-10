@@ -106,12 +106,9 @@ function requestOf(state: State): string {
   return typeof payload?.text === "string" ? payload.text : (state.nodes.get(root)?.label ?? "");
 }
 
-// The general history is rebuilt every turn, so a full tool result is resent each time. A
-// `read` result is already bounded by READ_LIMIT and is kept whole; other results keep a
-// bounded head and point at the stored observation (`recall` retrieves the full body).
-const TOOL_RESULT_LIMIT = 2000;
-const TOOL_RESULT_TAIL = 400;
-
+// The general history is rebuilt every turn, so a full tool result is resent each time. The
+// tool already bounded the inline body (`INLINE_LIMIT`); it is kept whole here, never
+// truncated a second time (a smaller cap made the model re-read the same file in slices).
 function historyOf(state: State, moveId: string): TapeMessage[] {
   const history: TapeMessage[] = [{ role: "user", text: requestOf(state) }];
   const turns = turnsOf(state, moveId);
@@ -145,13 +142,7 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
     const resultId = resultOf(state, actionId);
     const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
     const text = result !== undefined ? observationText(result) : action.label;
-    const bounded =
-      call?.name === "read" || text.length <= TOOL_RESULT_LIMIT
-        ? text
-        : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}${
-            resultId !== undefined ? `\n…[truncated; recall ${resultId}]` : "\n…[truncated]"
-          }\n${text.slice(-TOOL_RESULT_TAIL)}`;
-    history.push({ role: "tool", text: bounded, callId: actionId });
+    history.push({ role: "tool", text, callId: actionId });
   }
   return history;
 }

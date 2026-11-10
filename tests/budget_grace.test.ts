@@ -18,23 +18,25 @@ function proposer(island: "patch" | "verification") {
 }
 
 describe("budget grace", () => {
-  it("extends the budget once in a near-end state", async () => {
+  it("extends the budget once in a near-end state, then pauses", async () => {
     const workspace = makeWorkspace().ws;
     const result = await runAgent(
       { propose: proposer("patch"), workspace, maxTurns: 1, graceTurns: 5 },
-      { request: { id: "r1", text: "patch it" } },
+      { request: { id: "r1", text: "patch it" }, budgetPause: true },
     );
-    expect(result.stopReason).toBe("max_turns");
+    expect(result.paused).toBe(true);
+    expect(result.stopReason).toBe("budget");
     expect(result.turns).toBe(6);
   });
 
-  it("does not extend in a far-from-end state", async () => {
+  it("pauses at the cap in a far-from-end state", async () => {
     const workspace = makeWorkspace().ws;
     const result = await runAgent(
       { propose: proposer("verification"), workspace, maxTurns: 1, graceTurns: 5 },
-      { request: { id: "r1", text: "look" } },
+      { request: { id: "r1", text: "look" }, budgetPause: true },
     );
-    expect(result.stopReason).toBe("max_turns");
+    expect(result.paused).toBe(true);
+    expect(result.stopReason).toBe("budget");
     expect(result.turns).toBe(1);
   });
 });

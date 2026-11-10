@@ -19,7 +19,9 @@ import type { SessionState } from "./types";
 export const PLANNER_BASE_PROMPT = [
   "You are the plan agent. You develop an execution plan for the user's request in this workspace. You do not change the workspace.",
   "Read the request and inspect the workspace with the read-only tools (read, grep, list, recall; `shell` only for read-only commands). Ground every step in what you actually read: a step that names files, commands or acceptance checks must come from the material, not from imagination.",
-  "When you have enough, call `submit_plan` exactly once with a short summary and an ordered list of items. Each item is one work order for a later agent: a title, a self-contained detail (the goal plus the facts that work order needs), its kind (`general` for a read-only answer, `coding` for a workspace change), and — when the request declares one — its `done` condition. Keep the plan linear and minimal; do not write code and do not split work that one agent can do in one unit.",
+  "When you have enough, call `submit_plan` exactly once with a short summary and an ordered list of items. Each item is one work order for a later agent: a title, a self-contained detail (the goal plus the facts that work order needs), its kind (`general` for a read-only answer, `coding` for a workspace change), and — when the request declares one — its `done` condition. Keep the plan linear and minimal; do not write code.",
+  "If the request is to add, implement, fix or change something, those changes ARE the plan: every deliverable the request names must be a `coding` item whose detail says what to create or modify and where, and whose `done` names the check that proves it. A `coding` item inspects the workspace itself, so do not spend an item only on gathering facts for a later item, and never rely on a step that is not in the list. `general` is only for a question the user wants answered without changing the workspace; do not turn an implementation plan into `general` research items.",
+  "Write the summary, every item title and detail, and every `done` condition in the same language as the user's request. Do not translate them to English.",
   "The plan is a proposal, not the work: after it is submitted the user decides whether to execute it.",
 ].join("\n\n");
 
@@ -141,9 +143,6 @@ function requestOf(state: State): string {
   return typeof payload?.text === "string" ? payload.text : (state.nodes.get(root)?.label ?? "");
 }
 
-const TOOL_RESULT_LIMIT = 2000;
-const TOOL_RESULT_TAIL = 400;
-
 function historyOf(state: State, moveId: string): TapeMessage[] {
   const history: TapeMessage[] = [{ role: "user", text: requestOf(state) }];
   const turns = turnsOf(state, moveId);
@@ -166,14 +165,13 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
     }
     const resultId = resultOf(state, actionId);
     const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
-    const text = result !== undefined ? observationText(result) : action.label;
-    const bounded =
-      text.length <= TOOL_RESULT_LIMIT
-        ? text
-        : `${text.slice(0, TOOL_RESULT_LIMIT - TOOL_RESULT_TAIL)}\n…[truncated]${
-            resultId !== undefined ? ` recall ${resultId}` : ""
-          }\n${text.slice(-TOOL_RESULT_TAIL)}`;
-    history.push({ role: "tool", text: bounded, callId: actionId });
+    // The tool already bounded the inline body (`INLINE_LIMIT`); do not truncate it again, or
+    // the model re-reads the same file in slices.
+    history.push({
+      role: "tool",
+      text: result !== undefined ? observationText(result) : action.label,
+      callId: actionId,
+    });
   }
   return history;
 }

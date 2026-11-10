@@ -2,14 +2,17 @@ import { render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { SessionTurnDeps } from "../src/session/driver";
+import type { Proposer } from "../src/loop/propose";
 import { memoryTelemetry } from "../src/session/telemetry";
 import { TuiApp } from "../src/tui/app";
+import { cleanupWorkspaces, makeWorkspace, move, run } from "./ops/helpers";
 
 beforeEach(() => {
   process.env.SKEIN_LOG = "off";
 });
 
 afterEach(() => {
+  cleanupWorkspaces();
   delete process.env.SKEIN_MOUSE;
   delete process.env.SKEIN_LOG;
 });
@@ -333,6 +336,48 @@ describe("TUI app", () => {
     app.unmount();
   });
 
+  it("pauses at the turn limit with a continue/finish menu", async () => {
+    const telemetry = memoryTelemetry();
+    const turnDeps = deps();
+    turnDeps.sessionAgent.agent = async () => ({
+      operation: { kind: "task", text: "work" },
+    });
+    let turn = 0;
+    turnDeps.task = {
+      propose: async () => {
+        turn += 1;
+        return {
+          thought: "",
+          actions: [turn === 1 ? move("verification", "work") : run("echo a")],
+        };
+      },
+      workspace: makeWorkspace().ws,
+      maxTurns: 2,
+    } as never;
+    turnDeps.budgetExtend = 3;
+    const app = render(
+      <TuiApp deps={turnDeps} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("work");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Turn limit (2)");
+    expect(frame).toContain("continue +3");
+
+    app.stdin.write("c");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(app.lastFrame()).toContain("Turn limit (5)");
+
+    app.stdin.write("f");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(app.lastFrame()).not.toContain("Turn limit");
+    app.unmount();
+  });
+
   it("rejects an unknown slash command without sending it", async () => {
     const telemetry = memoryTelemetry();
     const app = render(
@@ -344,6 +389,131 @@ describe("TUI app", () => {
     app.stdin.write("\r");
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(app.lastFrame()).toContain("unknown command: /zzz");
+    app.unmount();
+  });
+
+  it("shows the plan in the task panel without hijacking the composer", async () => {
+    const telemetry = memoryTelemetry();
+    const turnDeps = deps();
+    turnDeps.sessionAgent.agent = async () => ({
+      operation: { kind: "plan", text: "plan z3" },
+    });
+    turnDeps.planner = {
+      agent: async () => ({
+        calls: [
+          {
+            name: "submit_plan",
+            args: {
+              summary: "Add Z3",
+              items: [
+                { title: "Deps", detail: "Add z3-solver", kind: "task" },
+                { title: "Adapter", detail: "Wrap z3", kind: "task" },
+              ],
+            },
+            callId: "planner:submit",
+          },
+        ],
+        thought: "",
+      }),
+      workspace: { root: "/tmp/project", displayRoot: "/tmp/project" } as never,
+      maxTurns: 4,
+    };
+    const app = render(
+      <TuiApp deps={turnDeps} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("plan z3");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const ready = app.lastFrame() ?? "";
+    expect(ready).toContain("Plan · p1 ·");
+    expect(ready).toContain("Deps");
+    expect(ready).toContain("/execute");
+
+    // /rework sets the plan aside; /plan brings the panel back.
+    app.stdin.write("/rework");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(app.lastFrame()).toContain("plan kept");
+    expect(app.lastFrame()).not.toContain("Plan · p1 ·");
+
+    app.stdin.write("/plan");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(app.lastFrame()).toContain("Plan · p1 ·");
+
+    // The composer stays fully usable while a ready plan waits: typing reaches the input.
+    app.stdin.write("hello");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(app.lastFrame()).toContain("hello");
+    app.unmount();
+  });
+
+  it("renders a plan item's report as Markdown after execution", async () => {
+    const telemetry = memoryTelemetry();
+    const turnDeps = deps();
+    let first = true;
+    turnDeps.sessionAgent.agent = async () => {
+      if (first) {
+        first = false;
+        return { operation: { kind: "plan", text: "plan it" } };
+      }
+      return { operation: { kind: "task", text: "do it" } };
+    };
+    const proposer: Proposer = async (context) => {
+      if (context.situation === "request") {
+        return { thought: "", actions: [move("research", "finish")] };
+      }
+      if (context.situation === "transition") {
+        return { thought: "", actions: [move("end", "finish")] };
+      }
+      return {
+        thought: "",
+        actions: [
+          { operator: "stop", why: context.island === "end" ? "# Report\n\nZ3-SOLVER-REPORT" : "x" },
+        ],
+      };
+    };
+    turnDeps.task = {
+      propose: proposer,
+      workspace: makeWorkspace().ws,
+      maxTurns: 8,
+    } as never;
+    turnDeps.planner = {
+      agent: async () => ({
+        calls: [
+          {
+            name: "submit_plan",
+            args: { items: [{ title: "Implement", detail: "Do it.", kind: "task" }] },
+            callId: "planner:submit",
+          },
+        ],
+        thought: "",
+      }),
+      workspace: { root: "/tmp/project", displayRoot: "/tmp/project" } as never,
+      maxTurns: 4,
+    };
+    const app = render(
+      <TuiApp deps={turnDeps} telemetry={telemetry} workspace="/tmp/project" model="test-model" />,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    app.stdin.write("plan it");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    app.stdin.write("/execute");
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    app.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    const frame = app.lastFrame() ?? "";
+    expect(frame).toContain("Z3-SOLVER-REPORT");
+    // Markdown is rendered (the heading marker is not shown as source text).
+    expect(frame).toContain("Report");
     app.unmount();
   });
 });

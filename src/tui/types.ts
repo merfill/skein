@@ -1,4 +1,5 @@
 import type { ProgressAgent } from "../session/progress";
+import type { FileDiff } from "../tools";
 
 export type Focus = "composer" | "trace" | "task";
 
@@ -16,6 +17,8 @@ export interface TraceEntry {
   durationMs?: number;
   // The edit preimage for a coloured diff.
   edit?: { path: string; find: string; replace: string };
+  // Whole-file before/after for a mutation (`edit`/`write`/`apply_patch`).
+  diffs?: FileDiff[];
   // Per-block collapse state; the default depends on the kind (thought/tool collapsed).
   collapsed?: boolean;
 }

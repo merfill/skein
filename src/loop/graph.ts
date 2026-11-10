@@ -80,6 +80,17 @@ function fallbackErrorReport(state: State, errorText: string): string {
   ].join("\n\n");
 }
 
+function fallbackBudgetReport(state: State): string {
+  const finishes = project(state).history
+    .filter((message) => message.role === "system" && message.text.startsWith("Finish state "))
+    .map((message) => `- ${message.text.replace(/\n+/g, " ")}`);
+  return [
+    "# Report",
+    "The run reached its turn limit before the request was complete.",
+    ...(finishes.length > 0 ? ["## States", ...finishes] : []),
+  ].join("\n\n");
+}
+
 function describeTarget(action: Action): string {
   let target: string;
   switch (action.operator) {
@@ -153,6 +164,12 @@ export interface AgentInput {
   snapshot?: string;
   // The execution-plan item this task unit executes (plan mode).
   planItem?: string;
+  // The task reached its turn cap and the user chose to finish: write a final report and
+  // close the current state instead of continuing.
+  finalize?: boolean;
+  // The interactive session pauses at the turn cap (the user decides: continue or finish).
+  // Headless runs (bench/gate) keep the hard `max_turns` stop.
+  budgetPause?: boolean;
 }
 
 export interface AgentResult {
@@ -177,7 +194,11 @@ function merge(state: LoopState, update: Partial<LoopState>): LoopState {
   };
 }
 
-async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopState> {
+async function runTaskLoop(
+  deps: AgentDeps,
+  initial: LoopState,
+  options: { finalize?: boolean; budgetPause?: boolean } = {},
+): Promise<LoopState> {
   const signatures: VersionCache = new Map();
   const graceTurns = deps.graceTurns ?? loadSettings().graceTurns;
 
@@ -487,6 +508,7 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
         target: actionTarget,
         status: failed ? "error" : "ok",
         preview: outcome.turn.text,
+        ...(outcome.diffs !== undefined ? { diffs: outcome.diffs } : {}),
       });
       if (action.operator === "move" || action.operator === "stop") {
         const after = fold([...state.events, ...events]);
@@ -650,12 +672,24 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
 
     if (done) return { events, done, stopReason, stopText, session };
     if (deps.maxTurns !== undefined) {
+      // At the cap the interactive session pauses for the user instead of ending: the unit
+      // stays open, and `continue` raises the cap while `finish` writes a report. Headless
+      // runs keep the hard stop.
+      const atBudget = (): Partial<LoopState> => {
+        if (options.budgetPause !== true) {
+          return { events, done: true, stopReason: "max_turns", session };
+        }
+        if (session !== undefined && unitId !== undefined) {
+          deps.onProgress?.({ type: "paused", agent: "task", unitId });
+        }
+        return { events, done: true, paused: true, stopReason: "budget", session };
+      };
       if (state.turn >= deps.maxTurns && state.grace !== true) {
         if (isNearEnd(current)) return { events, session, grace: true };
-        return { events, done: true, stopReason: "max_turns", session };
+        return atBudget();
       }
       if (state.turn >= deps.maxTurns + (state.grace ? graceTurns : 0)) {
-        return { events, done: true, stopReason: "max_turns", session };
+        return atBudget();
       }
     }
     return { events, session };
@@ -735,6 +769,71 @@ async function runTaskLoop(deps: AgentDeps, initial: LoopState): Promise<LoopSta
     };
   };
 
+  // The task hit its turn cap and the user chose to finish: close the work with a report
+  // instead of continuing or abandoning it. Like `closeOnError`, but this is not a failure.
+  const closeOnBudget = async (state: LoopState): Promise<LoopState> => {
+    const events = [...state.events];
+    let current = fold(events);
+    const situation = situationOf(current);
+    if (situation !== "terminal") {
+      const moved = executeAction(
+        { operator: "move", state: "end", what: "the turn budget is exhausted; write the final report" },
+        current,
+        deps.workspace,
+        state.turn,
+      );
+      events.push(...moved.events);
+      current = fold(events);
+    }
+    let report: string | undefined;
+    if (situation !== "terminal") {
+      try {
+        const reportRun = await proposeNode({
+          ...state,
+          events,
+          context: project(current),
+          proposals: null,
+          done: false,
+          paused: false,
+          stopReason: null,
+          stopText: null,
+        });
+        if (
+          reportRun.proposals !== null &&
+          reportRun.proposals !== undefined &&
+          reportRun.proposals.actions.length === 0 &&
+          reportRun.proposals.thought.trim() !== ""
+        ) {
+          report = reportRun.proposals.thought.trim();
+        }
+      } catch {
+        report = undefined;
+      }
+    }
+    const text = report ?? fallbackBudgetReport(current);
+    const closed = executeAction(
+      { operator: "stop", why: text },
+      current,
+      deps.workspace,
+      state.turn,
+    );
+    events.push(...closed.events);
+    return {
+      ...state,
+      events,
+      context: null,
+      proposals: null,
+      done: true,
+      paused: false,
+      stopReason: "max_turns",
+      stopText: text,
+    };
+  };
+
+  if (options.finalize === true) {
+    return closeOnBudget(initial);
+  }
+
   let state = initial;
   while (!state.done) {
     state = merge(state, projectNode(state));
@@ -808,21 +907,25 @@ export async function runAgent(deps: AgentDeps, input: AgentInput): Promise<Agen
     pushUnit(session, input.request.id, input.startTurn ?? 0);
   }
 
-  const final = await runTaskLoop(runDeps, {
-    events: seed,
-    recent: [],
-    context: null,
-    proposals: null,
-    turn: input.startTurn ?? 0,
-    done: false,
-    paused: false,
-    stopReason: null,
-    stopText: null,
-    session,
-    grace: false,
-    rejection: null,
-    noProposal: 0,
-  });
+  const final = await runTaskLoop(
+    runDeps,
+    {
+      events: seed,
+      recent: [],
+      context: null,
+      proposals: null,
+      turn: input.startTurn ?? 0,
+      done: false,
+      paused: false,
+      stopReason: null,
+      stopText: null,
+      session,
+      grace: false,
+      rejection: null,
+      noProposal: 0,
+    },
+    { finalize: input.finalize === true, budgetPause: input.budgetPause === true },
+  );
 
   return {
     events: final.events,

@@ -36,7 +36,7 @@ export const PLAN_TOOLS: Record<string, ExtraToolDefinition> = {
   ...GENERAL_TOOLS,
   submit_plan: {
     description:
-      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent, with its kind (`general` = read-only answer, `coding` = workspace change). `detail` must carry the facts that work order needs (paths, commands, acceptance). Keep the plan linear and minimal.",
+      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent, with its kind (`general` = read-only answer, `coding` = workspace change). `detail` must carry the facts that work order needs (paths, commands, acceptance). If the request is to add/implement/fix/change something, every deliverable is a `coding` item that makes the change itself — never a `general` item that only gathers facts for a step not in the list. Keep the plan linear and minimal.",
     schema: submitPlanSchema,
   },
 };
@@ -45,6 +45,9 @@ const PLANNER_TOOL_NAMES = ["read", "grep", "list", "recall", "search", "shell",
 
 export interface PlannerModelOptions {
   settings?: Settings;
+  // Rebuild the model with reasoning disabled. A plan interrupted by the completion cap is
+  // retried with reasoning off (the budget was spent thinking), not with a larger cap.
+  rebuild?: (options?: { reasoningOff?: boolean }) => LanguageModel;
 }
 
 export interface PlannerModelDeps {
@@ -77,10 +80,17 @@ export function modelPlannerAgent(
     const settings = options.settings ?? loadSettings();
     const final = callOptions.final === true;
     let repair: ModelMessage | undefined;
+    // A plan can be cut off by the completion cap after the model spends the budget thinking.
+    // Retry once with reasoning disabled (same cap) rather than raising the output limit.
+    let reasoningOff = false;
     for (;;) {
+      const base =
+        reasoningOff && options.rebuild !== undefined
+          ? options.rebuild({ reasoningOff: true })
+          : model;
       try {
         const result = await callModel({
-          model,
+          model: base,
           messages: repair === undefined ? messages : [...messages, repair],
           settings,
           tools: final ? toolsFor(["submit_plan"]) : tools(),
@@ -88,11 +98,21 @@ export function modelPlannerAgent(
           ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
         const calls = toCalls(result.toolCalls);
+        if (result.finishReason === "length" && !reasoningOff && options.rebuild !== undefined) {
+          reasoningOff = true;
+          repair = {
+            role: "user",
+            content: final
+              ? "Your reply hit the output limit. Do not reason; call `submit_plan` now with a concise plan: the summary and the ordered items, each detail at most three sentences."
+              : "Your reply hit the output limit. Do not reason; inspect less and call `submit_plan` with a concise plan.",
+          };
+          continue;
+        }
         if (calls.length === 0 && repair === undefined) {
           repair = {
             role: "user",
             content: final
-              ? "Call `submit_plan` now with the completed plan; do not inspect anything else."
+              ? "Call `submit_plan` now with the completed plan; do not inspect anything else. Keep it concise: the summary and the ordered items, each detail at most three sentences."
               : "Use a read-only tool to inspect the workspace, or call `submit_plan` when the plan is ready.",
           };
           continue;

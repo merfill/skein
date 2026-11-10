@@ -29,7 +29,7 @@ The tool names, parameters and descriptions ship in the request's `tools` field,
 | Tool | Parameters | What it does | Returns |
 |---|---|---|---|
 | `move` | `{ state, what? }` | declares the next state; `what` is an optional note about the subject | the tape shows `Start state <label>`; the first `apply` seeds the state's turns |
-| `read` | `{ filePath, offset?, limit? }` | reads a file or a line window (`offset` is the 1-based first line, `limit` the maximum number of lines) | at most ~32K chars; a larger file reports `[lines X-Y of Z; continue from Y+1]` |
+| `read` | `{ filePath, offset?, limit? }` | reads a file or a line window (`offset` is the 1-based first line, `limit` the maximum number of lines) | at most ~8K chars from the top (or from `offset`); a larger window reports `[lines X-Y of Z; continue from Y+1]` |
 | `grep` | `{ pattern, path?, include?, from? }` | searches file contents by regular expression; `path`/`include` scope the search | line-numbered plain text (`path:line:match`, context `path-line-text`, default 3/3); `from` is the 1-based start, default 50 and max 100 matches |
 | `list` | `{ path?, include?, from? }` | lists workspace files; `path`/`include` scope the listing | JSON; 100 files by default, 200 maximum; the window is kept near 8K |
 | `edit` | `{ filePath, oldString, newString }` | replaces the first occurrence of `oldString` in an existing file | mutates the file; the tape shows `mutated <path>` |
@@ -50,16 +50,14 @@ paging: a broad pattern is bounded with a note to narrow it.
 
 ## 3. The result contract
 
-Each tool has its own byte budget. The tape shows the tool's window whole and never cuts out its
-middle:
+Every tool result shares one inline budget, 8K. The tape shows the tool's window whole and never
+cuts out its middle:
 
-- `read` — 32K;
-- `grep`, `list`, `bash` — 8K;
-- `recall` — 64K.
+- an inspection result (`read`, `grep`, `list`, `recall`, `search`) keeps its head up to 8K; a
+  larger body is paged;
+- a command's output (`bash`) keeps its tail up to 8K.
 
-An inspection result (`read`, `grep`, `list`) is consumed from the beginning, so the head is kept.
-A command's output matters at the end, so `bash` keeps the tail. Only a body that still exceeds the
-tool's budget is bounded, with a note about the omission.
+Only a body that still exceeds the budget is bounded, with a note about the omission.
 
 The executor stores the full body as a file and the action keeps an `outputRef`. Access is by
 identifier, not by path: `recall { id, start?, end? }` reads a fragment, `search { id, pattern }`

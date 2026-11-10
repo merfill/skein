@@ -114,12 +114,16 @@ export async function runRepl(
     }
   };
 
-  const resume = async (state: PausedState): Promise<void> => {
+  const resume = async (
+    state: PausedState,
+    budgetAction?: "continue" | "finish",
+  ): Promise<void> => {
     const current = signal();
     let result: SessionTurnResult;
     try {
       result = await resumeTurn(deps, session, state, {
         ...(current !== undefined ? { signal: current } : {}),
+        ...(budgetAction !== undefined ? { budgetAction } : {}),
       });
     } finally {
       options.onTurnEnd?.();
@@ -165,6 +169,23 @@ export async function runRepl(
       pendingPlan = undefined;
     }
     if (paused !== undefined) {
+      if (paused.budget !== undefined) {
+        if (line === "c" || line === "continue") {
+          await resume(paused, "continue");
+          continue;
+        }
+        if (line === "f" || line === "finish") {
+          await resume(paused, "finish");
+          continue;
+        }
+        if ((line === "s" || line === "session") && paused.agent !== "session") {
+          leave(paused);
+          continue;
+        }
+        if (line === "q" || line === "quit" || line === "exit") break;
+        print([renderPauseMenu(paused)]);
+        continue;
+      }
       if (line === "r" || line === "resume") {
         await resume(paused);
         continue;

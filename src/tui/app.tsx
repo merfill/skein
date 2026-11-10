@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type { Event } from "../ir/events";
 import { fold } from "../ir/graph";
@@ -17,7 +17,7 @@ import {
   type SessionTurnResult,
 } from "../session/driver";
 import { renderPlanDraft, renderPlanRun } from "../session/view";
-import { planModeOf } from "../session/plan";
+import { latestPlan, planFinished, planModeOf, planOfSession } from "../session/plan";
 import {
   sessionSummary,
   usageTotals,
@@ -26,7 +26,7 @@ import {
 import type { ProgressEvent } from "../session/progress";
 import { createSessionLog, type SessionLog } from "../session/session_log";
 import type { SessionState } from "../session/types";
-import { buildTuiView, type TaskTiming } from "./view_model";
+import { buildTuiView, type PlanView, type TaskTiming } from "./view_model";
 import { traceLines, traceWindow } from "./trace_lines";
 import { theme } from "./theme";
 import {
@@ -48,6 +48,7 @@ import {
   HelpOverlay,
   HistoryOverlay,
   PauseOverlay,
+  PlanPanel,
   TaskPanel,
   TracePanel,
 } from "./panels";
@@ -105,6 +106,15 @@ function notice(id: string, text: string): TraceEntry {
   return { id, kind: "notice", text };
 }
 
+// The plan block's height: bordered box (2) + header + item lines + footer. When a task panel
+// shares the column, keep at least six rows for it.
+function planPanelRows(plan: PlanView, bodyRows: number, withTask: boolean): number {
+  const itemCount = plan.status === "building" ? 1 : Math.min(plan.items.length, 12);
+  const needed = itemCount + 4 + (plan.items.length > itemCount ? 1 : 0);
+  if (!withTask) return Math.min(needed, bodyRows);
+  return Math.min(needed, Math.max(4, bodyRows - 6));
+}
+
 export function TuiApp(props: TuiAppProps) {
   const { deps, telemetry, workspace, model } = props;
   const { exit } = useApp();
@@ -151,11 +161,18 @@ export function TuiApp(props: TuiAppProps) {
   const [detailScroll, setDetailScroll] = useState(0);
   const [traceScroll, setTraceScroll] = useState(0);
 
-  const view = buildTuiView(sessionRef.current, telemetry.events, {
-    now: Date.now(),
-    timings: timingsRef.current,
-    liveJournals: liveJournals.current,
-  });
+  // Expensive and independent of the composer: rebuild only when the session (via `tick`) or
+  // the telemetry changes, not on every keystroke/cursor move.
+  const view = useMemo(
+    () =>
+      buildTuiView(sessionRef.current, telemetry.events, {
+        now: Date.now(),
+        timings: timingsRef.current,
+        liveJournals: liveJournals.current,
+        planUnitId: pendingPlan ?? planModeOf(sessionRef.current),
+      }),
+    [tick, telemetry.events.length, pendingPlan],
+  );
 
   const showTask = columns >= 72;
   const panelGap = 2;
@@ -171,8 +188,7 @@ export function TuiApp(props: TuiAppProps) {
     Math.max(0, view.history.length - 1),
   );
   mouseLayout.current = { mainWidth, gap: panelGap, showTask, bodyRows };
-  mouseBlocked.current =
-    helpOpen || historyOpen || paused !== undefined || pendingPlan !== undefined;
+  mouseBlocked.current = helpOpen || historyOpen || paused !== undefined;
 
   const workspaceFiles = (): string[] => {
     if (filesRef.current !== null) return filesRef.current;
@@ -354,8 +370,13 @@ export function TuiApp(props: TuiAppProps) {
       if (event.type === "events_added") {
         log.write({ record: "progress", ...event, events: event.events.length });
       } else if (event.type === "tool_finished") {
-        const { preview, ...rest } = event;
-        log.write({ record: "progress", ...rest, previewChars: preview?.length ?? 0 });
+        const { preview, diffs, ...rest } = event;
+        log.write({
+          record: "progress",
+          ...rest,
+          previewChars: preview?.length ?? 0,
+          ...(diffs !== undefined ? { diffs: diffs.length } : {}),
+        });
       } else if (event.type === "model_call_finished") {
         const { reasoning, ...rest } = event;
         log.write({
@@ -447,6 +468,9 @@ export function TuiApp(props: TuiAppProps) {
                     status: event.status,
                     ...(event.preview !== undefined
                       ? { preview: event.preview.slice(0, 4000) }
+                      : {}),
+                    ...(event.diffs !== undefined && event.diffs.length > 0
+                      ? { diffs: event.diffs, collapsed: false }
                       : {}),
                   }
                 : entry,
@@ -620,10 +644,12 @@ export function TuiApp(props: TuiAppProps) {
         append({ id: nextId(), kind: "assistant", text: renderPlanDraft(run.plan) });
         if (result.paused === undefined) {
           setPendingPlan(result.plan.unitId);
-          appendNotice("plan ready: [e]xecute  [r]ework  [q]uit");
+          appendNotice("plan ready · /execute  /rework");
         }
       } else {
-        appendNotice(`plan ${result.plan.unitId} · no plan`);
+        appendNotice(
+          `plan ${result.plan.unitId} · no plan produced (${result.plan.result.stopReason ?? "no_plan"}); try again or rephrase`,
+        );
       }
     }
     if (result.paused !== undefined) {
@@ -698,6 +724,8 @@ export function TuiApp(props: TuiAppProps) {
       return;
     }
     if (runningRef.current) return;
+    // Sending a message leaves the ready-plan menu; `/plan` brings it back.
+    setPendingPlan(undefined);
     const text = trimmed.startsWith("//") ? trimmed.slice(1) : trimmed;
     logRef.current?.write({ type: "user", text });
     setInputHistory((previous) => [...previous, text].slice(-100));
@@ -729,7 +757,7 @@ export function TuiApp(props: TuiAppProps) {
     }
   };
 
-  const resume = async (): Promise<void> => {
+  const resume = async (budgetAction?: "continue" | "finish"): Promise<void> => {
     const current = paused;
     if (current === undefined || runningRef.current) return;
     setPaused(undefined);
@@ -743,6 +771,7 @@ export function TuiApp(props: TuiAppProps) {
     try {
       const result = await resumeTurn(runDeps(), sessionRef.current, current, {
         signal: controller.signal,
+        ...(budgetAction !== undefined ? { budgetAction } : {}),
       });
       pausedResult = result.paused !== undefined;
       renderResult(result);
@@ -891,6 +920,48 @@ export function TuiApp(props: TuiAppProps) {
         appendNotice(expand ? "blocks expanded" : "blocks collapsed");
         return;
       }
+      case "plan": {
+        const latest = latestPlan(sessionRef.current);
+        if (latest === undefined) {
+          appendNotice("plan: no plan in this session");
+          return;
+        }
+        const finished = planFinished(sessionRef.current, latest.planUnitId);
+        if (finished !== undefined) {
+          appendNotice(
+            `plan ${latest.planUnitId}: ${finished.status} (${finished.completed}/${finished.total})`,
+          );
+          return;
+        }
+        if (planModeOf(sessionRef.current) === latest.planUnitId) {
+          appendNotice("plan: already executing");
+          return;
+        }
+        setPendingPlan(latest.planUnitId);
+        appendNotice("plan ready · /execute  /rework");
+        setTick((value) => value + 1);
+        return;
+      }
+      case "execute": {
+        const target =
+          pendingPlan ?? planModeOf(sessionRef.current) ?? latestPlan(sessionRef.current)?.planUnitId;
+        if (target === undefined) {
+          appendNotice("execute: no plan in this session");
+          return;
+        }
+        void runPlan(target);
+        return;
+      }
+      case "rework": {
+        if (pendingPlan === undefined) {
+          appendNotice("rework: no ready plan");
+          return;
+        }
+        setPendingPlan(undefined);
+        appendNotice("plan kept · describe the changes and send them as the next message");
+        setTick((value) => value + 1);
+        return;
+      }
       case "status": {
         const summary = sessionSummary(telemetry.events);
         const totals = usageTotals(telemetry.events);
@@ -943,8 +1014,36 @@ export function TuiApp(props: TuiAppProps) {
           stopReason: unit.result.stopReason,
         })),
         reply: result.reply ?? null,
+        ...(result.acceptance !== undefined
+          ? {
+              acceptance: {
+                unitId: result.acceptance.unitId,
+                ok: result.acceptance.ok,
+                answer: result.acceptance.answer.slice(0, 600),
+              },
+            }
+          : {}),
       });
-      appendNotice(renderPlanRun(result).join("\n"));
+      appendNotice(renderPlanRun(result, { answers: false }).join("\n"));
+      // Each item's report is Markdown: render it as its own block instead of collapsed plain
+      // text, with the item's title as the label.
+      const plan = planOfSession(sessionRef.current, planUnitId);
+      const labels = new Map<string, string>(
+        (plan?.items ?? []).map((item) => [item.id, `${item.order}. ${item.title}`]),
+      );
+      for (const unit of result.units) {
+        const answer = answerOf(unit.result.events);
+        if (answer === undefined || answer.trim() === "") continue;
+        const label = labels.get(unit.itemId) ?? unit.itemId;
+        append({ id: nextId(), kind: "assistant", text: `**${label}**\n\n${answer}` });
+      }
+      if (result.acceptance !== undefined) {
+        append({
+          id: nextId(),
+          kind: "assistant",
+          text: `**Plan acceptance — ${result.acceptance.ok ? "PASS" : "FAIL"}**\n\n${result.acceptance.answer}`,
+        });
+      }
       if (
         result.plan !== undefined &&
         result.plan.result.plan !== undefined &&
@@ -956,7 +1055,7 @@ export function TuiApp(props: TuiAppProps) {
         planModeOf(sessionRef.current) === planUnitId
       ) {
         setPendingPlan(planUnitId);
-        appendNotice("plan is still active: [e]xecute to continue  [r]ework  [q]uit");
+        appendNotice("plan is still active · /execute to continue  /rework");
       }
       if (result.paused !== undefined) {
         pausedResult = true;
@@ -1052,23 +1151,24 @@ export function TuiApp(props: TuiAppProps) {
       return;
     }
     if (paused !== undefined) {
+      if (paused.budget !== undefined) {
+        if (value === "c") {
+          void resume("continue");
+        } else if (value === "f") {
+          void resume("finish");
+        } else if (value === "s" && paused.agent !== "session") {
+          leave();
+        } else if (value === "q") {
+          exit();
+        }
+        return;
+      }
       if (value === "r") {
         void resume();
       } else if (value === "s" && paused.agent !== "session") {
         leave();
       } else if (value === "c") {
         cancel();
-      } else if (value === "q") {
-        exit();
-      }
-      return;
-    }
-    if (pendingPlan !== undefined) {
-      if (value === "e") {
-        void runPlan(pendingPlan);
-      } else if (value === "r") {
-        setPendingPlan(undefined);
-        appendNotice("plan kept; describe the changes and send them as the next message");
       } else if (value === "q") {
         exit();
       }
@@ -1222,7 +1322,10 @@ export function TuiApp(props: TuiAppProps) {
     if (value !== "") insert(value);
   });
 
-  const lines = traceLines(trace, Math.max(20, mainWidth - (focus === "trace" ? 4 : 2)));
+  // The whole trace is re-parsed, diffed and highlighted; do it only when the trace or the
+  // panel width changes, not on every composer keystroke.
+  const traceWidth = Math.max(20, mainWidth - (focus === "trace" ? 4 : 2));
+  const lines = useMemo(() => traceLines(trace, traceWidth), [trace, traceWidth]);
   const activeEntryId =
     [...trace].reverse().find((entry) => entry.status === "running")?.id ?? trace.at(-1)?.id;
   clickRef.current = (column, row) => {
@@ -1244,6 +1347,15 @@ export function TuiApp(props: TuiAppProps) {
   };
   const mode = running ? "working" : paused !== undefined ? "paused" : "idle";
   const activityColor = running ? theme.warning : paused !== undefined ? theme.error : theme.success;
+  const plan = view.plan;
+  const showPlanPanel = showTask && plan !== undefined;
+  const showTaskSection =
+    plan === undefined ||
+    plan.status === "executing" ||
+    plan.status === "done" ||
+    plan.status === "aborted";
+  const planRows = showPlanPanel ? planPanelRows(plan, bodyRows, showTaskSection) : 0;
+  const taskRows = showTaskSection ? Math.max(1, bodyRows - planRows) : 0;
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
@@ -1259,16 +1371,28 @@ export function TuiApp(props: TuiAppProps) {
         />
         {showTask ? <Box width={panelGap} /> : null}
         {showTask ? (
-          <TaskPanel
-            task={activeTask}
-            width={taskWidth}
-            rows={bodyRows}
-            selected={Math.max(0, stateCount - 1)}
-            detailScroll={detailScroll}
-            focused={focus === "task"}
-            paused={paused !== undefined}
-            {...(observerNotice !== undefined ? { observer: observerNotice } : {})}
-          />
+          <Box flexDirection="column" width={taskWidth} height={bodyRows}>
+            {showPlanPanel && plan !== undefined ? (
+              <PlanPanel
+                plan={plan}
+                width={taskWidth}
+                rows={planRows}
+                {...(plan.status === "building" ? { activity } : {})}
+              />
+            ) : null}
+            {showTaskSection ? (
+              <TaskPanel
+                task={activeTask}
+                width={taskWidth}
+                rows={taskRows}
+                selected={Math.max(0, stateCount - 1)}
+                detailScroll={detailScroll}
+                focused={focus === "task"}
+                paused={paused !== undefined}
+                {...(observerNotice !== undefined ? { observer: observerNotice } : {})}
+              />
+            ) : null}
+          </Box>
         ) : null}
       </Box>
       <ActivityBar
@@ -1284,7 +1408,13 @@ export function TuiApp(props: TuiAppProps) {
         rows={composerRows}
         focused={focus === "composer"}
       />
-      <Footer paused={paused !== undefined} historyOpen={historyOpen} />
+      <Footer
+        paused={paused !== undefined}
+        historyOpen={historyOpen}
+        {...(paused?.budget !== undefined ? { budget: paused.budget } : {})}
+        {...(paused?.budgetExtend !== undefined ? { budgetExtend: paused.budgetExtend } : {})}
+        {...(plan !== undefined ? { plan } : {})}
+      />
       {completion !== undefined && !helpOpen && !historyOpen && paused === undefined ? (
         <CompletionPanel
           kind={completion.kind}

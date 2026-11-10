@@ -20,6 +20,13 @@ import { modelCall } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
 import type { GrepMatch, RunOptions, Workspace } from "./workspace";
 
+export interface FileDiff {
+  path: string;
+  // The whole file before/after the call; "" for a new or a deleted file.
+  before: string;
+  after: string;
+}
+
 export interface ExecOutcome {
   events: Event[];
   turn: {
@@ -29,23 +36,28 @@ export interface ExecOutcome {
     nodeId?: string;
     error?: string;
   };
+  // Whole-file preimage/postimage for a mutation, so the UI can render a real diff.
+  diffs?: FileDiff[];
   done: boolean;
   stopReason: string | null;
+  noProposal?: number;
+  rejection?: { text: string; name: string; args: Record<string, unknown> };
+  attempts?: unknown;
 }
 
-// Per-tool inline budgets (docs/en/ir.md §7). The `read` window holds a whole small file
-// (README-scale docs) so the model does not page what it can read at once; a larger body is
-// paged with explicit `start`/`end` or pulled by `recall` (which keeps a big budget).
-// `grep`/`list`/`run` are small too, because they are pointers, not content. A body still over
-// its cap keeps its head (inspection) or tail (command) and is spilled behind
-// `outputRef`/`errorRef`.
-export const READ_LIMIT = 32 * 1024;
-const GREP_LIMIT = 8192;
-const LIST_LIMIT = 8192;
-const RUN_LIMIT = 8192;
-// `recall` is the deliberate way to pull a large fragment of a stored body back (the `read`
-// window is bounded), so it keeps a big budget of its own rather than sharing `READ_LIMIT`.
-export const QUERY_BODY_LIMIT = 65536;
+
+// One inline budget for every tool result (docs/en/ir.md §7). A file/inspection result keeps
+// its HEAD up to the budget; a larger body is paged with explicit `start`/`end` or pulled by
+// `recall`. A command result keeps its TAIL (the error and exit code matter at the end). A body
+// still over the budget spills behind `outputRef`/`errorRef`.
+export const INLINE_LIMIT = 8 * 1024;
+export const READ_LIMIT = INLINE_LIMIT;
+const GREP_LIMIT = INLINE_LIMIT;
+const LIST_LIMIT = INLINE_LIMIT;
+const RUN_LIMIT = INLINE_LIMIT;
+// `recall`/`search` return a stored body; one call keeps the same HEAD budget, and a larger
+// fragment is fetched with explicit `start`/`end`.
+export const QUERY_BODY_LIMIT = INLINE_LIMIT;
 // The read window leaves room for its `continue from` trailer, so window + trailer still
 // fit the budget and the shown body is never cut a second time.
 const READ_CONTINUE_RESERVE = 96;
@@ -114,6 +126,38 @@ function bounded(text: string, limit = QUERY_BODY_LIMIT): string {
   const omitted = text.length - limit;
   return `${text.slice(0, head)}\n…[${omitted} chars omitted]…\n${text.slice(-(limit - head))}`;
 }
+
+// The preimage for a diff: the file's content, or "" when it does not exist (new/deleted).
+function readForDiff(workspace: Workspace, path: string): string {
+  try {
+    return workspace.exists(path) ? workspace.read(path) : "";
+  } catch {
+    return "";
+  }
+}
+
+// The workspace paths a unified diff touches (both `---` and `+++` sides), stripped the way
+// `patch -p<strip>` strips them. `/dev/null` marks a creation/deletion side.
+function patchPaths(patch: string, strip: number): string[] {
+  const paths = new Set<string>();
+  for (const line of patch.split("\n")) {
+    const match = /^(?:\+\+\+|---)\s+(.+?)(?:\t.*)?$/.exec(line);
+    if (match === null) continue;
+    let path = match[1]?.trim() ?? "";
+    if (path === "" || path === "/dev/null") continue;
+    for (let index = 0; index < strip; index += 1) {
+      const slash = path.indexOf("/");
+      if (slash === -1) {
+        path = "";
+        break;
+      }
+      path = path.slice(slash + 1);
+    }
+    if (path !== "") paths.add(path);
+  }
+  return [...paths];
+}
+
 
 // The one-line crash summary for a run/poll header: the signal, the core if one was
 // written, else why there is none (core_pattern), and whether a backtrace is attached.
@@ -1446,7 +1490,13 @@ export function executeAction(
         ensureFile(apply.path, ref);
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
-        return { events, turn: proposalTurn(`edited ${apply.path}`, actionId), done: false, stopReason: null };
+        return {
+          events,
+          turn: proposalTurn(`edited ${apply.path}`, actionId),
+          diffs: [{ path: apply.path, before: original, after: updated }],
+          done: false,
+          stopReason: null,
+        };
       }
 
       if (apply.tool === "write") {
@@ -1469,6 +1519,7 @@ export function executeAction(
           // A stale base never reaches here: `commandRefusal` returns it first, with the
           // current content in the observation.
         }
+        const before = readForDiff(workspace, apply.path);
         try {
           workspace.write(apply.path, apply.content);
         } catch (error) {
@@ -1478,7 +1529,13 @@ export function executeAction(
         ensureFile(apply.path, ref);
         addEdge({ kind: "llm" }, actionId, ref, "mutates");
         events.push({ type: "mutate", ref, version, actionId });
-        return { events, turn: proposalTurn(`wrote ${apply.path}`, actionId), done: false, stopReason: null };
+        return {
+          events,
+          turn: proposalTurn(`wrote ${apply.path}`, actionId),
+          diffs: [{ path: apply.path, before, after: apply.content }],
+          done: false,
+          stopReason: null,
+        };
       }
 
       if (apply.tool === "fetch") {
@@ -1522,6 +1579,8 @@ export function executeAction(
       }
 
       if (apply.tool === "apply_patch") {
+        const touched = patchPaths(apply.patch, apply.strip ?? 1);
+        const beforeByPath = new Map(touched.map((path) => [path, readForDiff(workspace, path)]));
         const before = signatureMap(workspace);
         try {
           workspace.applyPatch(apply.patch, apply.strip);
@@ -1535,6 +1594,12 @@ export function executeAction(
           ensureFile(path, entry.ref);
           addEdge({ kind: "llm" }, actionId, entry.ref, "mutates");
           events.push({ type: "mutate", ref: entry.ref, version: entry.version, actionId });
+        }
+        const diffs: FileDiff[] = [];
+        for (const path of touched) {
+          const beforeText = beforeByPath.get(path) ?? "";
+          const afterText = readForDiff(workspace, path);
+          if (beforeText !== afterText) diffs.push({ path, before: beforeText, after: afterText });
         }
         const observationSeq = next();
         const observationId = `obs:${observationSeq}`;
@@ -1553,7 +1618,13 @@ export function executeAction(
           },
         });
         addEdge({ kind: "llm" }, actionId, observationId, "result");
-        return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
+        return {
+          events,
+          turn: proposalTurn(text, observationId),
+          ...(diffs.length > 0 ? { diffs } : {}),
+          done: false,
+          stopReason: null,
+        };
       }
 
       // apply.tool === "bash": one plain foreground command (docs/en/ir.md §2.7).

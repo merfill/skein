@@ -275,10 +275,21 @@ describe("apply: edit", () => {
     const { ws } = makeWorkspace(DEFAULT_FILES);
     const first = exec(read("src/sum.mjs"), [request()], ws);
     const before = currentVersion(first.state, "file:src/sum.mjs");
-    const { events, state } = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
+    const { events, state, outcome } = exec(edit("src/sum.mjs", "a - b", "a + b"), first.events, ws);
     expect(events.some((e) => e.type === "mutate")).toBe(true);
     expect(ws.read("src/sum.mjs")).toContain("a + b");
     expect(currentVersion(state, "file:src/sum.mjs")).not.toBe(before);
+    // The whole-file preimage/postimage rides with the outcome for the UI diff.
+    expect(outcome.diffs?.[0]?.path).toBe("src/sum.mjs");
+    expect(outcome.diffs?.[0]?.before).toBe(DEFAULT_FILES["src/sum.mjs"]);
+    expect(outcome.diffs?.[0]?.after).toContain("a + b");
+  });
+
+  it("diff capture: a new file has an empty preimage", () => {
+    const { ws } = makeWorkspace(DEFAULT_FILES);
+    const moved = exec(move("patch", "work"), [request()], ws);
+    const { outcome } = exec(write("new.txt", "hello\n"), moved.events, ws);
+    expect(outcome.diffs).toEqual([{ path: "new.txt", before: "", after: "hello\n" }]);
   });
 
   it("OP-AP-EDIT-2 a missing find materializes the file and fails, recording the attempt", () => {
@@ -464,6 +475,8 @@ describe("apply: apply_patch", () => {
     expect(ws.read("src/sum.mjs")).toContain("a + b");
     expect(ws.read("src/sum.mjs")).not.toBe(before);
     expect(state.nodes.has("file:src/sum.mjs")).toBe(true);
+    expect(outcome.diffs?.[0]).toMatchObject({ path: "src/sum.mjs", before });
+    expect(outcome.diffs?.[0]?.after).toContain("a + b");
   });
 
   it("OP-AP-PATCH-2 a patch that does not apply is a fail observation", () => {

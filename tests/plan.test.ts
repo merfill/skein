@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
+import type { ModelMessage } from "ai";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
@@ -20,6 +21,7 @@ import {
   plansInOrder,
 } from "../src/session/plan";
 import type { PlannerAgent, PlannerDraft, PlannerReply } from "../src/session/planner";
+import { runPlanner } from "../src/session/planner";
 import { createSession, unitOf } from "../src/session/session";
 import type { SessionAgent, SessionTools } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
@@ -101,7 +103,7 @@ describe("execution plan", () => {
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       general: {
-        propose: async () => ({ thought: "ANSWER", actions: [] }),
+        propose: async () => ({ thought: "All conditions hold.\nVERDICT: PASS", actions: [] }),
         workspace: ws,
         maxTurns: 4,
       },
@@ -342,6 +344,112 @@ describe("execution plan", () => {
     expect(run.units[0]?.kind).toBe("general");
     expect(run.units[0]?.result.turns).toBeGreaterThan(1);
     expect(calls).toBeGreaterThanOrEqual(4);
+  });
+
+  it("does not truncate a large read result in the planner history", async () => {
+    const { ws } = makeWorkspace({ "big.txt": `${"x".repeat(5000)}\nEND-MARKER\n` });
+    let captured: ModelMessage[] = [];
+    const agent: PlannerAgent = async (messages) => {
+      captured = messages;
+      const hasTool = messages.some((message) => message.role === "tool");
+      if (!hasTool) {
+        return {
+          calls: [{ name: "read", args: { filePath: "big.txt" }, callId: "read:1" }],
+          thought: "",
+        };
+      }
+      return {
+        calls: [
+          {
+            name: "submit_plan",
+            args: { items: [{ title: "T", detail: "D", kind: "task" }] },
+            callId: "plan:1",
+          },
+        ],
+        thought: "",
+      };
+    };
+
+    const result = await runPlanner(
+      { agent, workspace: ws, maxTurns: 4 },
+      { request: { id: "p1", text: "plan it" } },
+    );
+
+    expect(result.plan?.items).toHaveLength(1);
+    const tool = captured.find((message) => message.role === "tool");
+    const text = JSON.stringify(tool);
+    // The old 2k cap cut the body; the tool's own bound (~8K) keeps this one whole.
+    expect(text).toContain("END-MARKER");
+    expect(text).not.toContain("[truncated]");
+  });
+
+  it("runs a declared acceptance check and aborts the plan when it fails", async () => {
+    const { ws } = makeWorkspace();
+    const draft: PlannerDraft = {
+      summary: "Add a solver",
+      items: [
+        { title: "Implement", detail: "Implement the solver.", kind: "task", done: "solver.py exists" },
+      ],
+    };
+    const deps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: operations([
+          { kind: "plan", text: "plan it" },
+          { kind: "task", text: "implement it" },
+        ]),
+        tools,
+      },
+      task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
+      general: {
+        propose: async () => ({ thought: "solver.py is missing.\nVERDICT: FAIL", actions: [] }),
+        workspace: ws,
+        maxTurns: 4,
+      },
+      planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
+    };
+    const session = createSession();
+    const planned = await runSessionTurn(deps, session, "plan it");
+
+    const run = await executePlan(deps, session, planned.plan!.unitId);
+
+    expect(run.status).toBe("aborted");
+    expect(run.acceptance?.ok).toBe(false);
+    expect(run.acceptance?.answer).toContain("VERDICT: FAIL");
+    expect(planFinished(session, "p1")).toEqual({ status: "aborted", completed: 1, total: 1 });
+  });
+
+  it("closes the plan done when the acceptance check passes", async () => {
+    const { ws } = makeWorkspace();
+    const draft: PlannerDraft = {
+      summary: "Add a solver",
+      items: [
+        { title: "Implement", detail: "Implement the solver.", kind: "task", done: "solver.py exists" },
+      ],
+    };
+    const deps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: operations([
+          { kind: "plan", text: "plan it" },
+          { kind: "task", text: "implement it" },
+        ]),
+        tools,
+      },
+      task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
+      general: {
+        propose: async () => ({ thought: "All conditions hold.\nVERDICT: PASS", actions: [] }),
+        workspace: ws,
+        maxTurns: 4,
+      },
+      planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
+    };
+    const session = createSession();
+    const planned = await runSessionTurn(deps, session, "plan it");
+
+    const run = await executePlan(deps, session, planned.plan!.unitId);
+
+    expect(run.status).toBe("done");
+    expect(run.acceptance?.ok).toBe(true);
+    expect(planFinished(session, "p1")).toEqual({ status: "done", completed: 1, total: 1 });
   });
 
   it("restores a planner's shell mutation on exit", async () => {

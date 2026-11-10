@@ -5,7 +5,7 @@ import stringWidth from "string-width";
 import type { PausedState } from "../session/driver";
 import type { CompletionItem } from "./completion";
 import { compactDuration, compactTokens, oneLine, shortId, wrap } from "./format";
-import type { TaskState, TaskView } from "./view_model";
+import type { PlanItemView, PlanView, TaskState, TaskView } from "./view_model";
 import { theme } from "./theme";
 import type { Focus, TraceLine } from "./types";
 import { traceWindow } from "./trace_lines";
@@ -191,6 +191,99 @@ function detailLines(state: TaskState | undefined, width: number): string[] {
     lines.push(`  ${number}${tokens}  ${time}`);
   }
   return lines;
+}
+
+export function PlanPanel(props: {
+  plan: PlanView;
+  width: number;
+  rows: number;
+  activity?: string;
+}) {
+  const { plan, width, rows, activity } = props;
+  const height = Math.max(3, rows);
+  const inner = Math.max(10, width - 4);
+  const itemRows = Math.max(0, height - 4);
+  const items = plan.items;
+  let start = 0;
+  if (items.length > itemRows && itemRows > 0) {
+    const activeIndex = Math.max(
+      0,
+      items.findIndex((item) => item.id === plan.activeItemId),
+    );
+    start = Math.max(
+      0,
+      Math.min(activeIndex - Math.floor(itemRows / 2), items.length - itemRows),
+    );
+  }
+  const shown = items.slice(start, start + itemRows);
+  const footer =
+    plan.status === "ready"
+      ? "/execute  /rework"
+      : plan.status === "building"
+        ? `${plan.turns}t · ${compactDuration(plan.elapsedMs)} · building`
+        : plan.status === "executing"
+          ? `executing · ${plan.completed}/${plan.total}`
+          : `${plan.status} · ${plan.completed}/${plan.total}`;
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      height={height}
+      borderStyle="round"
+      borderColor={theme.border}
+      paddingX={1}
+      overflow="hidden"
+      backgroundColor={theme.panelBg}
+    >
+      <T bold wrap="truncate-end">
+        {oneLine(`Plan · ${shortId(plan.unitId, 10)} · ${plan.completed}/${plan.total}`, inner)}
+      </T>
+      {plan.status === "building" ? (
+        <T dimColor wrap="truncate-end">
+          {oneLine(activity ?? "reading the workspace…", inner)}
+        </T>
+      ) : null}
+      {shown.map((item) => planItemRow(item, plan.activeItemId, inner))}
+      {items.length > shown.length ? (
+        <T dimColor wrap="truncate-end">
+          {start > 0 ? `↑ ${start} earlier` : `↓ ${items.length - start - shown.length} more`}
+        </T>
+      ) : null}
+      <T
+        wrap="truncate-end"
+        {...(plan.status === "ready"
+          ? { color: theme.warning, bold: true }
+          : { dimColor: true })}
+      >
+        {oneLine(footer, inner)}
+      </T>
+    </Box>
+  );
+}
+
+function planItemRow(item: PlanItemView, activeItemId: string | undefined, width: number) {
+  const mark =
+    item.status === "completed"
+      ? "✓"
+      : item.status === "active" || item.status === "suspended"
+        ? ">"
+        : item.status === "abandoned"
+          ? "!"
+          : "·";
+  const active = item.id === activeItemId;
+  return (
+    <T
+      key={item.id}
+      wrap="truncate-end"
+      {...(active
+        ? { color: theme.state, bold: true }
+        : item.status === "completed"
+          ? { dimColor: true }
+          : {})}
+    >
+      {oneLine(`${mark} ${item.order}. ${item.title}`, width)}
+    </T>
+  );
 }
 
 export function TaskPanel(props: {
@@ -456,7 +549,13 @@ export function Composer(props: {
   );
 }
 
-export function Footer(props: { paused: boolean; historyOpen: boolean }) {
+export function Footer(props: {
+  paused: boolean;
+  historyOpen: boolean;
+  plan?: PlanView;
+  budget?: number;
+  budgetExtend?: number;
+}) {
   if (props.historyOpen) {
     return (
       <Box paddingX={1}>
@@ -465,11 +564,43 @@ export function Footer(props: { paused: boolean; historyOpen: boolean }) {
     );
   }
   if (props.paused) {
+    if (props.budget !== undefined) {
+      return (
+        <Box paddingX={1}>
+          <T color={theme.warning} bold wrap="truncate-end">
+            {`turn limit ${props.budget} · c continue +${props.budgetExtend ?? 10} · f finish & report · s session · q quit`}
+          </T>
+        </Box>
+      );
+    }
     return (
       <Box paddingX={1}>
         <T color={theme.error}>paused · r resume · s session · c cancel · q quit</T>
       </Box>
     );
+  }
+  const plan = props.plan;
+  if (plan !== undefined) {
+    if (plan.status === "ready") {
+      return (
+        <Box paddingX={1}>
+          <T color={theme.warning} bold wrap="truncate-end">
+            {`plan ready · ${plan.completed}/${plan.total} · /execute  /rework  /plan`}
+          </T>
+        </Box>
+      );
+    }
+    if (plan.status === "building" || plan.status === "executing") {
+      return (
+        <Box paddingX={1}>
+          <T dimColor wrap="truncate-end">
+            {plan.status === "building"
+              ? "plan · building…"
+              : `plan · executing ${plan.completed}/${plan.total}`}
+          </T>
+        </Box>
+      );
+    }
   }
   return (
     <Box paddingX={1}>
@@ -525,9 +656,17 @@ export function CompletionPanel(props: {
 
 export function PauseOverlay(props: { paused: PausedState; width: number; height: number }) {
   const { paused, width, height } = props;
-  const boxWidth = Math.max(30, Math.min(64, width - 8));
+  const boxWidth = Math.max(30, Math.min(72, width - 8));
   // The keys line may wrap on a narrow terminal.
   const boxHeight = 8;
+  const budget = paused.budget;
+  const accent = budget !== undefined ? theme.warning : theme.error;
+  const keys =
+    budget !== undefined
+      ? `[c] continue +${paused.budgetExtend ?? 10} · [f] finish & report · [s] session · [q] quit`
+      : paused.agent === "session"
+        ? "[r] resume · [c] discard · [q] quit"
+        : "[r] resume · [s] session · [c] cancel & roll back · [q] quit";
   return (
     <Box
       position="absolute"
@@ -537,12 +676,12 @@ export function PauseOverlay(props: { paused: PausedState; width: number; height
       height={boxHeight}
       flexDirection="column"
       borderStyle="double"
-      borderColor={theme.error}
+      borderColor={accent}
       paddingX={1}
       backgroundColor={theme.panelBg}
     >
-      <T bold color={theme.error}>
-        Paused
+      <T bold color={accent}>
+        {budget !== undefined ? `Turn limit (${budget})` : "Paused"}
       </T>
       <T>
         {paused.agent} · {shortId(paused.unitId, boxWidth - 10)}
@@ -551,11 +690,7 @@ export function PauseOverlay(props: { paused: PausedState; width: number; height
         {oneLine(paused.utterance, boxWidth - 4)}
       </T>
       <T> </T>
-      <T>
-        {paused.agent === "session"
-          ? "[r] resume · [c] discard · [q] quit"
-          : "[r] resume · [s] session · [c] cancel & roll back · [q] quit"}
-      </T>
+      <T>{keys}</T>
     </Box>
   );
 }

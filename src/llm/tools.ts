@@ -96,7 +96,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "read",
     description:
-      "Read a file from the local filesystem (filePath). Returns at most ~32K chars; offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). A larger file reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window when nothing has been modified is refused as a repeat. Refused if the file does not exist.",
+      "Read a file from the local filesystem (filePath). Returns at most ~8K chars from the top (or from offset); offset is the 1-indexed line to start from and limit is the maximum number of lines to read (without them, from the top). A larger window reports \"[lines X-Y of Z; continue from Y+1]\" — page it with a new offset. Re-reading the SAME window when nothing has been modified is refused as a repeat. Refused if the file does not exist.",
     schema: readParams,
   },
   {

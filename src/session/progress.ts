@@ -1,4 +1,5 @@
 import type { Event } from "../ir/events";
+import type { FileDiff } from "../tools";
 import type { Usage } from "./telemetry";
 
 export type ProgressAgent = "session" | "task" | "general" | "plan" | "observer";
@@ -48,6 +49,8 @@ export type ProgressEvent =
       target: string;
       status: "ok" | "error";
       preview?: string;
+      // Whole-file preimage/postimage for a mutation, for a real diff in the UI.
+      diffs?: FileDiff[];
     }
   | { type: "events_added"; unitId: string; events: readonly Event[] }
   | {

@@ -3,11 +3,14 @@ import { highlightCode } from "./highlight";
 import { markdownLines } from "./markdown";
 import { theme } from "./theme";
 import type { TraceEntry, TraceLine, TraceSpan } from "./types";
+import type { FileDiff } from "../tools";
 
 const MAX_PREVIEW_LINES = 400;
 const MAX_REASONING_LINES = 200;
 const MAX_DIFF_LINES = 400;
 const MAX_DIFF_CELLS = 160_000;
+// A collapsed tool shows this many result lines as a teaser; click to expand the rest.
+const COLLAPSED_PREVIEW_LINES = 5;
 
 const LANGUAGES: Record<string, string> = {
   ts: "typescript",
@@ -191,6 +194,103 @@ function diffLines(entry: TraceEntry, width: number): TraceLine[] {
   return out;
 }
 
+interface DiffEntry {
+  kind: DiffKind;
+  text: string;
+  oldNo?: number;
+  newNo?: number;
+}
+
+function diffEntries(before: string, after: string): DiffEntry[] {
+  const entries: DiffEntry[] = [];
+  let oldNo = 1;
+  let newNo = 1;
+  for (const op of diffOps(before, after)) {
+    if (op.kind === "same") {
+      entries.push({ kind: "same", text: op.text, oldNo, newNo });
+      oldNo += 1;
+      newNo += 1;
+    } else if (op.kind === "del") {
+      entries.push({ kind: "del", text: op.text, oldNo });
+      oldNo += 1;
+    } else {
+      entries.push({ kind: "add", text: op.text, newNo });
+      newNo += 1;
+    }
+  }
+  return entries;
+}
+
+// An opencode-style file diff: the path, old/new line numbers, `-`/`+` colours, and only the
+// changed hunks with a little context (a long unchanged run becomes a `…` separator).
+const DIFF_CONTEXT = 3;
+
+function fileDiffLines(entry: TraceEntry, diff: FileDiff, width: number): TraceLine[] {
+  const out: TraceLine[] = [];
+  const label =
+    diff.before === "" && diff.after !== ""
+      ? `${diff.path} (new)`
+      : diff.after === "" && diff.before !== ""
+        ? `${diff.path} (deleted)`
+        : diff.path;
+  out.push(block(entry, { text: `  ${label}`, bold: true, color: theme.link }));
+  if (diff.before === diff.after) return out;
+
+  const entries = diffEntries(diff.before, diff.after);
+  const keep = new Set<number>();
+  entries.forEach((item, index) => {
+    if (item.kind === "same") return;
+    for (
+      let cursor = Math.max(0, index - DIFF_CONTEXT);
+      cursor <= Math.min(entries.length - 1, index + DIFF_CONTEXT);
+      cursor += 1
+    ) {
+      keep.add(cursor);
+    }
+  });
+  const maxLine = entries.reduce(
+    (max, item) => Math.max(max, item.oldNo ?? 0, item.newNo ?? 0),
+    0,
+  );
+  const gutter = String(Math.max(1, maxLine)).length;
+  let previous = -2;
+  let rendered = 0;
+  for (let index = 0; index < entries.length; index += 1) {
+    if (!keep.has(index)) continue;
+    if (rendered >= MAX_DIFF_LINES) {
+      out.push(block(entry, { text: "  …", dim: true }));
+      break;
+    }
+    if (previous >= 0 && index !== previous + 1) out.push(block(entry, { text: "  …", dim: true }));
+    const item = entries[index] as DiffEntry;
+    const sign = item.kind === "add" ? "+" : item.kind === "del" ? "-" : " ";
+    const color =
+      item.kind === "add"
+        ? theme.syntax.addition
+        : item.kind === "del"
+          ? theme.syntax.deletion
+          : undefined;
+    const oldLabel =
+      item.kind === "add" ? " ".repeat(gutter) : String(item.oldNo ?? "").padStart(gutter);
+    const newLabel =
+      item.kind === "del" ? " ".repeat(gutter) : String(item.newNo ?? "").padStart(gutter);
+    const prefix = `${oldLabel} ${newLabel} ${sign} `;
+    const parts = wrap(item.text === "" ? " " : item.text, Math.max(10, width - 2 - prefix.length));
+    for (const [partIndex, part] of parts.entries()) {
+      out.push(
+        block(entry, {
+          text: `  ${partIndex === 0 ? prefix : " ".repeat(prefix.length)}${part}`,
+          ...(color !== undefined ? { color } : {}),
+          ...(item.kind === "same" ? { dim: true } : {}),
+        }),
+      );
+      rendered += 1;
+    }
+    previous = index;
+  }
+  return out;
+}
+
 function previewLines(entry: TraceEntry, width: number): TraceLine[] {
   const text = entry.preview ?? "";
   const language = entry.tool === "read" ? languageOf(entry.target) : undefined;
@@ -230,10 +330,44 @@ function toolLines(entry: TraceEntry, width: number): TraceLine[] {
             : theme.success,
     }),
   ];
-  if (!collapsed) {
+  const renderedDiff =
+    entry.diffs !== undefined && entry.diffs.length > 0
+      ? entry.diffs.flatMap((diff, index) => [
+          ...(index > 0 ? [block(entry, { text: " " })] : []),
+          ...fileDiffLines(entry, diff, width),
+        ])
+      : undefined;
+  if (renderedDiff !== undefined) {
+    if (!collapsed) {
+      out.push(...renderedDiff);
+    } else {
+      out.push(...renderedDiff.slice(0, COLLAPSED_PREVIEW_LINES));
+      if (renderedDiff.length > COLLAPSED_PREVIEW_LINES) {
+        out.push(
+          block(entry, {
+            text: `  … +${renderedDiff.length - COLLAPSED_PREVIEW_LINES} more lines · click to expand`,
+            dim: true,
+          }),
+        );
+      }
+    }
+  } else if (!collapsed) {
     if (entry.edit !== undefined) out.push(...diffLines(entry, width));
     else if (entry.preview !== undefined && entry.preview.trim() !== "") {
       out.push(...previewLines(entry, width));
+    }
+  } else if (entry.edit === undefined && entry.preview !== undefined && entry.preview.trim() !== "") {
+    // The collapsed state is a teaser, not a bare header: show the first result lines and
+    // expand the rest on click (opencode-style).
+    const preview = previewLines(entry, width);
+    out.push(...preview.slice(0, COLLAPSED_PREVIEW_LINES));
+    if (preview.length > COLLAPSED_PREVIEW_LINES) {
+      out.push(
+        block(entry, {
+          text: `  … +${preview.length - COLLAPSED_PREVIEW_LINES} more lines · click to expand`,
+          dim: true,
+        }),
+      );
     }
   }
   return out;

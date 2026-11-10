@@ -205,8 +205,13 @@ function stopText(events: readonly Event[]): string | undefined {
   return text;
 }
 
-// A plan run's outcome: the units opened, their item and result, and the final status.
-export function renderPlanRun(result: PlanExecutionResult): string[] {
+// A plan run's outcome: the units opened, their item and result, and the final status. The
+// terminal view prints each item's answer inline; the TUI renders those answers as their own
+// Markdown blocks (`answers: false` keeps only the summary lines here).
+export function renderPlanRun(
+  result: PlanExecutionResult,
+  options: { answers?: boolean } = {},
+): string[] {
   const lines = [
     `plan ${result.planUnitId}: ${result.status} (${result.completed}/${result.total})`,
   ];
@@ -214,7 +219,17 @@ export function renderPlanRun(result: PlanExecutionResult): string[] {
     const outcome = unit.result.done ? (unit.result.stopReason ?? "done") : "still open";
     lines.push(`  item ${unit.itemId}: ${unit.kind} ${unit.unitId} — ${outcome}`);
     const answer = stopText(unit.result.events);
-    if (answer !== undefined && answer !== "") lines.push(`    ${short(answer, 600)}`);
+    if (options.answers !== false && answer !== undefined && answer !== "") {
+      lines.push(`    ${short(answer, 600)}`);
+    }
+  }
+  if (result.acceptance !== undefined) {
+    lines.push(
+      `  acceptance ${result.acceptance.unitId}: ${result.acceptance.ok ? "pass" : "fail"}`,
+    );
+    if (options.answers !== false && !result.acceptance.ok && result.acceptance.answer !== "") {
+      lines.push(`    ${short(result.acceptance.answer, 600)}`);
+    }
   }
   if (result.reply !== undefined) lines.push("answer:", result.reply);
   if (result.noDecision !== undefined) lines.push(`no decision: ${result.noDecision}`);
@@ -229,6 +244,9 @@ export function renderPlanRun(result: PlanExecutionResult): string[] {
 // The pause menu is the same fact for both interfaces; the session agent cannot "leave to
 // itself", and leaving keeps the work while cancel is the destructive choice.
 export function renderPauseMenu(paused: PausedState): string {
+  if (paused.budget !== undefined) {
+    return `turn limit (${paused.budget}) reached: [c]ontinue +${paused.budgetExtend ?? 10}  [f]inish & report  [s]ession  [q]uit`;
+  }
   if (paused.agent === "session") {
     return "paused session: [r]esume  [c]discard  [q]uit";
   }

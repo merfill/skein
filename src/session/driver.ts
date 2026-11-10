@@ -18,6 +18,7 @@ import {
   blockedItem,
   nextPendingItem,
   renderPlanState,
+  type PlanData,
 } from "./plan";
 import { runPlanner, type PlannerDeps, type PlannerResult } from "./planner";
 import {
@@ -59,6 +60,8 @@ export interface SessionTurnDeps {
   // The general unit's cap when it executes a plan item (a deeper investigation than a
   // one-off question). Falls back to `general.maxTurns` when absent.
   planGeneralMaxTurns?: number;
+  // How many turns to add when the user continues a task that reached its cap.
+  budgetExtend?: number;
   // A lazy, session-scoped probe: the general unit gets the workspace facts. The session
   // agent gets only the root, so the brief cannot copy a directory or file list.
   sessionProbe?: () => SessionProbe | undefined;
@@ -76,6 +79,9 @@ export interface SessionTurnOptions {
   turn?: number;
   // A user pause. The in-flight model call is aborted and the turn returns `paused`.
   signal?: AbortSignal;
+  // Resuming a task paused at its turn cap: continue with more turns, or finalize with a
+  // report. Defaults to `continue`.
+  budgetAction?: "continue" | "finish";
 }
 
 export interface PausedState {
@@ -92,6 +98,10 @@ export interface PausedState {
   // Observer resume: the parent task and the trigger that opened the observer.
   taskUnitId?: string;
   trigger?: Trigger;
+  // A task that stopped at its turn cap: the cap it reached, and how many turns `continue`
+  // would add. The user can continue (raising the cap) or finish with a report.
+  budget?: number;
+  budgetExtend?: number;
   // The plan execution this pause belongs to; resuming continues the plan.
   planUnitId?: string;
 }
@@ -433,6 +443,7 @@ async function dispatch(
     request: { id: unitId, text: pending.text },
     session,
     open: true,
+    budgetPause: true,
     ...(snapshot !== undefined ? { snapshot } : {}),
     ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
     ...(signal !== undefined ? { signal } : {}),
@@ -443,6 +454,10 @@ async function dispatch(
 
   if (run.paused === true) {
     result.paused = pauseState(session, unitId, interpretation.unitId, turn, utterance);
+    if (run.stopReason === "budget") {
+      result.paused.budget = run.turns;
+      result.paused.budgetExtend = deps.budgetExtend ?? 10;
+    }
     recordPause(deps, result.paused);
     return result;
   }
@@ -502,8 +517,75 @@ export interface PlanExecutionResult {
   noDecision?: NoDecisionReason;
   // A re-plan opened during execution.
   plan?: { unitId: string; result: PlannerResult };
+  // The acceptance check the plan ran before closing `done`; `ok: false` turns it `aborted`.
+  acceptance?: PlanAcceptance;
   // Present when the plan had already finished before this call.
   finished?: { status: "done" | "aborted"; completed: number; total: number };
+}
+
+export interface PlanAcceptance {
+  unitId: string;
+  ok: boolean;
+  answer: string;
+}
+
+function lastStopText(events: readonly Event[]): string | undefined {
+  let text: string | undefined;
+  for (const event of events) {
+    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
+    const payload = event.node.payload as { answer?: unknown } | undefined;
+    text = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+  }
+  return text;
+}
+
+// Before a plan closes `done`, verify its declared `done` conditions against the workspace with
+// a read-only general unit. The free-text condition is not machine-checkable, so the check is a
+// model verdict; a FAIL (or a missing verdict) aborts the plan instead of reporting success.
+async function runPlanAcceptance(
+  deps: SessionTurnDeps,
+  session: SessionState,
+  plan: PlanData,
+  request: string,
+  signal?: AbortSignal,
+): Promise<PlanAcceptance | undefined> {
+  const declared = plan.items.filter((item) => item.done !== undefined && item.done !== "");
+  const hasCoding = plan.items.some((item) => item.kind !== "general");
+  if (deps.general === undefined || (declared.length === 0 && !hasCoding)) return undefined;
+  const unitId = nextGeneralId(session);
+  const requestTextValue = [
+    `Verify the execution plan against the original request:`,
+    request,
+    "",
+    "Check every item's done condition against the workspace as it is now. Read-only: read, grep, list, or run read-only commands; change nothing.",
+    "",
+    `Items (${plan.items.length}):`,
+    ...plan.items.map((item) => {
+      const kind = item.kind === "general" ? "general" : "coding";
+      const done =
+        item.done !== undefined && item.done !== "" ? ` — done when: ${item.done}` : "";
+      return `- ${item.order}. [${kind}] ${item.title}${done}`;
+    }),
+    "",
+    "End your reply with one final line, exactly `VERDICT: PASS` if the request and every done condition hold, or `VERDICT: FAIL` otherwise.",
+  ].join("\n");
+  let run: GeneralResult;
+  try {
+    run = await runGeneralAgent(deps.general, {
+      request: { id: unitId, text: requestTextValue },
+      session,
+      open: true,
+      workspace: generalContextText(deps),
+      ...(signal !== undefined ? { signal } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+  syncUnit(session, unitId, run);
+  settleAttention(session, unitId, run.done, run.paused);
+  const answer = lastStopText(run.events) ?? "";
+  const verdict = /verdict\s*:\s*(pass|fail)/i.exec(answer);
+  return { unitId, ok: verdict?.[1]?.toLowerCase() === "pass", answer };
 }
 
 // Execute a confirmed plan: open its items one after another as ordinary units. The session
@@ -565,8 +647,21 @@ export async function executePlan(
     const item = nextPendingItem(session, plan);
     if (item === undefined) {
       const progress = progressNow();
+      const planRequest = requestText(unitOf(session, planUnitId).journal);
+      const acceptance = await runPlanAcceptance(deps, session, plan, planRequest, options.signal);
+      if (acceptance !== undefined && !acceptance.ok) {
+        recordPlanFinished(session, planUnitId, turn, "aborted", progress.completed, progress.total);
+        return { session, planUnitId, status: "aborted", ...progress, units, acceptance };
+      }
       recordPlanFinished(session, planUnitId, turn, "done", progress.completed, progress.total);
-      return { session, planUnitId, status: "done", ...progress, units };
+      return {
+        session,
+        planUnitId,
+        status: "done",
+        ...progress,
+        units,
+        ...(acceptance !== undefined ? { acceptance } : {}),
+      };
     }
 
     const itemText = item.detail !== "" ? item.detail : item.title;
@@ -878,12 +973,22 @@ export async function resumeTurn(
   }
 
   const unit = unitOf(session, paused.unitId);
-  const run = await runAgent(deps.task, {
+  const finish = paused.budget !== undefined && options.budgetAction === "finish";
+  const extend = deps.budgetExtend ?? 10;
+  const effectiveMaxTurns =
+    paused.budget !== undefined && !finish
+      ? Math.max(unit.turn, paused.budget) + extend
+      : undefined;
+  const taskDeps =
+    effectiveMaxTurns !== undefined ? { ...deps.task, maxTurns: effectiveMaxTurns } : deps.task;
+  const run = await runAgent(taskDeps, {
     request: { id: paused.unitId, text: requestText(unit.journal) },
     seed: unit.journal,
     startTurn: unit.turn,
     session,
     open: false,
+    budgetPause: true,
+    ...(finish ? { finalize: true } : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   syncUnit(session, paused.unitId, run);
@@ -897,6 +1002,10 @@ export async function resumeTurn(
       paused.utteranceTurn,
       paused.utterance,
     );
+    if (run.stopReason === "budget") {
+      result.paused.budget = effectiveMaxTurns ?? run.turns;
+      result.paused.budgetExtend = extend;
+    }
     recordPause(deps, result.paused);
     return result;
   }

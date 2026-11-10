@@ -3,6 +3,57 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-10 — план в TUI, бюджет, единый лимит, диффы, планировщик
+
+### Что сделано
+
+- **TUI: план в правой панели.** `PlanPanel` (building/ready/executing) с пунктами,
+  прогрессом и активным пунктом; текущая задача — юнит активного пункта (`unit.planItem`);
+  меню плана — командами `/execute` / `/rework` / `/plan` (без модального перехвата клавиш),
+  подсказки в футере. Отчёты пунктов и acceptance рендерятся отдельными Markdown-блоками.
+- **Бюджет ходов.** На пределе task-юнита — пауза `budget` (не обрыв): `[c]ontinue +N`
+  (`SKEIN_BUDGET_EXTEND`, дефолт 10) и `[f]inish & report` (финальный отчёт). Headless
+  (`runAgent` без `budgetPause`) сохраняет жёсткий `max_turns`. `plannerMaxTurns` 12→24;
+  в `.env` задачи — `SKEIN_MAX_TURNS=48` (дефолт в коде 80, .env не коммитится).
+- **Acceptance плана.** Перед `plan_finished done` read-only general-юнит проверяет исходный
+  запрос и `done` каждого пункта, требует финальную строку `VERDICT: PASS`; FAIL/нет вердикта →
+  план `aborted` с отчётом (`PlanExecutionResult.acceptance`, видно в TUI/REPL).
+- **Единый inline-бюджет 8K** (`INLINE_LIMIT`): инспекция (`read`, `grep`, `list`, `recall`,
+  `search`) — голова, команды (`bash`) — хвост; `read` 32K→8K, `recall` 64K→8K (листание
+  `offset`/`start-end`). Убрана повторная обрезка до 2K в `planner.ts`/`general.ts`. Доки EN/RU
+  (`projection.md`, `tools.md`) обновлены.
+- **Диффы.** `edit`/`write`/`apply_patch` несут whole-file `before`/`after`
+  (`ExecOutcome.diffs` → `tool_finished.diffs`); TUI рисует opencode-style unified diff (путь,
+  номера старых/новых строк, цвета, контекст, `…`), мутации авто-разворачиваются. Остальные
+  инструменты — тизер первых 5 строк + разворот по клику.
+- **Планировщик.** Промпт: реализация обязана быть `coding`-пунктами, `general` — только
+  read-only; запрет «собери факты, чтобы потом написать» без шага записи; язык плана = язык
+  запроса. Финальный `submit_plan` запускается всегда при отсутствии плана; при обрезании по
+  лимиту — ретрай с **выключенным reasoning** (тот же `maxTokens`), не bump.
+- **TUI perf.** `traceLines`/`buildTuiView` мемоизированы; ввод/перемещение курсора больше не
+  пересчитывают трейс и view.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **649 passed / 40 skipped**.
+- Новые тесты: `tests/budget_pause.test.ts`, `tests/planner_model.test.ts`; обновлены
+  `plan.test.ts`, `tui_app.test.tsx`, `tui_view_model.test.ts`, `tui_trace.test.ts`,
+  `general_unit.test.ts`, `ops/apply.test.ts`, `budget_grace.test.ts`.
+
+### Открыто
+
+- Тяжёлые Docker/live прогоны не запускались (нужен go-ahead): live plan-исполнение,
+  бюджет-пауза, planning с reasoning-off, acceptance.
+- `abandoned`-пункт (`llm_error`, `no_decision`, `max_turns` старого пути) всё ещё останавливает
+  план как `aborted`; retry/skip/возврат решения агенту сессии не сделаны. Бюджет-лимит теперь
+  пауза, но остальные `abandoned` — нет.
+- Отмена плана, rework с фидбеком/версиями, политика pause/leave/suspend пункта, общий бюджет
+  плана, полный метеринг (planner/session/general) в `tests/sandbox/session-plan.ts`.
+- Acceptance — model-verdict: free-text `done` не проверяется машинно; FAIL/отсутствие вердикта
+  трактуется как abort. Стоит решить, нужен ли строгий формат / `toolChoice`.
+- `.deep-memory/`, `.opencode/` — untracked, не наши, не коммитятся.
+
 ## 2026-11-08 — режим планирования (`plan` unit)
 
 ### Что сделано

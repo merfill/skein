@@ -6,7 +6,18 @@ import {
   turnsOf,
   type State,
 } from "../ir/graph";
+import type { PlanItemKind } from "../ir/types";
 import { currentMove } from "../ir/traversal";
+import {
+  blockedItem,
+  nextPendingItem,
+  planFinished,
+  planModeOf,
+  planOfSession,
+  planProgress,
+  unitOfPlanItem,
+  type PlanItemStatus,
+} from "../session/plan";
 import { unitsInOrder, attentionOf } from "../session/session";
 import type {
   Attention,
@@ -86,15 +97,42 @@ export interface HeaderView {
   cachedInputTokens: number;
 }
 
+export type PlanViewStatus = "building" | "ready" | "executing" | "done" | "aborted";
+
+export interface PlanItemView {
+  id: string;
+  order: number;
+  title: string;
+  kind: PlanItemKind;
+  status: PlanItemStatus;
+  done?: string;
+}
+
+export interface PlanView {
+  unitId: string;
+  summary?: string;
+  status: PlanViewStatus;
+  completed: number;
+  total: number;
+  items: PlanItemView[];
+  // The item the engine is on: active/suspended/abandoned, else the next one to open.
+  activeItemId?: string;
+  // The plan unit's own turn counter (the planner during `building`, the item units after).
+  turns: number;
+  elapsedMs?: number;
+}
+
 export interface TuiView {
   header: HeaderView;
   current?: TaskView;
   history: TaskView[];
   totalsByTask: Map<string, TaskView>;
+  plan?: PlanView;
 }
 
 export interface ViewOptions {
   currentUnitId?: string;
+  planUnitId?: string;
   now?: number;
   timings?: Map<string, TaskTiming>;
   liveJournals?: Map<string, readonly Event[]>;
@@ -319,6 +357,70 @@ function buildTask(
   };
 }
 
+function buildPlanView(
+  session: SessionState,
+  requestedUnitId: string | undefined,
+  timings: Map<string, TaskTiming>,
+  now: number,
+): PlanView | undefined {
+  const unitId = requestedUnitId ?? activePlanUnitId(session);
+  if (unitId === undefined) return undefined;
+  const unit = session.units.get(unitId);
+  if (unit === undefined || unit.type !== "plan") return undefined;
+  const timing = timings.get(unitId);
+  const elapsedMs =
+    timing?.startedAt !== undefined && timing.endedAt === undefined
+      ? Math.max(0, now - timing.startedAt)
+      : undefined;
+  const progressOf = (): { turns: number; elapsedMs?: number } => ({
+    turns: unit.turn,
+    ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+  });
+  const plan = planOfSession(session, unitId);
+  if (plan === undefined) {
+    // The planner unit is open but has not submitted a plan yet.
+    return {
+      unitId,
+      status: "building",
+      completed: 0,
+      total: 0,
+      items: [],
+      ...progressOf(),
+    };
+  }
+  const finished = planFinished(session, unitId);
+  const executing = planModeOf(session) === unitId;
+  const progress = planProgress(session, plan);
+  const activeItemId = blockedItem(session, plan)?.item.id ?? nextPendingItem(session, plan)?.id;
+  const status: PlanViewStatus =
+    finished !== undefined ? finished.status : executing ? "executing" : "ready";
+  return {
+    unitId,
+    ...(plan.summary !== undefined ? { summary: plan.summary } : {}),
+    status,
+    completed: progress.completed,
+    total: progress.total,
+    items: progress.items.map(({ item, status: itemStatus }) => ({
+      id: item.id,
+      order: item.order,
+      title: item.title,
+      kind: item.kind,
+      status: itemStatus,
+      ...(item.done !== undefined ? { done: item.done } : {}),
+    })),
+    ...(activeItemId !== undefined ? { activeItemId } : {}),
+    ...progressOf(),
+  };
+}
+
+// A plan unit that is still being built: open, not completed, and without a submitted plan.
+function activePlanUnitId(session: SessionState): string | undefined {
+  for (const unit of unitsInOrder(session)) {
+    if (unit.type === "plan" && attentionOf(session, unit.id) === "active") return unit.id;
+  }
+  return undefined;
+}
+
 export function buildTuiView(
   session: SessionState,
   telemetry: readonly MetricEvent[],
@@ -345,12 +447,19 @@ export function buildTuiView(
     );
   });
 
-  const currentId =
-    options.currentUnitId ??
-    (session.stack.at(-1)?.unitId !== undefined &&
-    byTask.has(session.stack.at(-1)?.unitId as string)
-      ? (session.stack.at(-1)?.unitId as string)
-      : tasks.at(-1)?.id);
+  const plan = buildPlanView(session, options.planUnitId, timings, now);
+  let currentId = options.currentUnitId;
+  if (currentId === undefined) {
+    const planOwnsFocus = plan?.status === "ready" || plan?.status === "building";
+    if (plan?.status === "executing" && plan.activeItemId !== undefined) {
+      const activeUnit = unitOfPlanItem(session, plan.activeItemId);
+      if (activeUnit !== undefined && byTask.has(activeUnit.id)) currentId = activeUnit.id;
+    }
+    if (currentId === undefined && !planOwnsFocus) {
+      const top = session.stack.at(-1)?.unitId;
+      currentId = top !== undefined && byTask.has(top) ? top : tasks.at(-1)?.id;
+    }
+  }
 
   const history = [...byTask.values()].reverse();
   const usage = usageTotals(telemetry);
@@ -380,6 +489,7 @@ export function buildTuiView(
       : {}),
     history,
     totalsByTask: byTask,
+    ...(plan !== undefined ? { plan } : {}),
   };
 }
 

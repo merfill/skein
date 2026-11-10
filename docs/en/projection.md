@@ -88,17 +88,16 @@ on the next turn.
 
 ## 5. Working with data
 
-Each result body is bounded by its own tool:
+Every tool result shares one inline budget, 8K:
 
-- `read` — 32K;
-- `grep`, `list` and `bash` — 8K;
-- `recall` — 64K.
+- an inspection result (`read`, `grep`, `list`, `recall`, `search`) keeps its head up to 8K; a
+  larger body is paged (`read` `offset`/`limit`, `recall` `start`/`end`);
+- a command's output (`bash`) keeps its tail up to 8K, because the error and exit code are at the
+  end.
 
-The `tool` message shows the tool's window whole and never cuts its middle. An inspection result
-(`read`, `grep`, `list`) is consumed from the beginning, so its head is preserved; a command's
-output matters at its end, so `bash` keeps its tail. Only a body that still exceeds its tool's
-budget is bounded, with a note about the omission. The executor stores the full body as a file and
-the record keeps a reference. Access is by identifier, not by path:
+The `tool` message shows the tool's window whole and never cuts its middle. Only a body that still
+exceeds the budget is bounded, with a note about the omission. The executor stores the full body as
+a file and the record keeps a reference. Access is by identifier, not by path:
 
 - read a fragment — `recall { id, start, end }`;
 - search the body — `search { id, pattern }`.

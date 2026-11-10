@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Event } from "../src/ir/events";
 import type { EdgeKind, NodeKind } from "../src/ir/types";
-import { createSession, openUnit } from "../src/session/session";
+import { createSession, openUnit, pushUnit, recordPlanStarted } from "../src/session/session";
 import type { MetricEvent } from "../src/session/telemetry";
 import { buildTuiView } from "../src/tui/view_model";
 
@@ -170,6 +170,94 @@ describe("TUI view model", () => {
     expect(view.header.totalTasks).toBe(0);
     expect(view.history).toHaveLength(0);
     expect(view.current).toBeUndefined();
+  });
+});
+
+function planJournal(): Event[] {
+  return [
+    node("rp", "request", "plan z3", { text: "plan z3" }),
+    node("mp", "move", "Plan", { state: "plan", what: "plan z3", turn: 0 }),
+    edge("rp", "mp", "move"),
+    node("body", "plan", "Add Z3", { summary: "Add Z3" }),
+    edge("mp", "body", "plan"),
+    node("i1", "plan_item", "Deps", {
+      title: "Deps",
+      detail: "Add z3-solver",
+      kind: "task",
+      order: 1,
+      done: "z3 imports",
+    }),
+    edge("body", "i1", "plan_item"),
+    node("i2", "plan_item", "Adapter", {
+      title: "Adapter",
+      detail: "Wrap z3",
+      kind: "task",
+      order: 2,
+    }),
+    edge("body", "i2", "plan_item"),
+    node("sp", "stop", "plan submitted", { why: "plan submitted", turn: 0 }),
+    edge("mp", "sp", "stop"),
+  ];
+}
+
+describe("TUI plan view", () => {
+  it("shows a ready plan and hides the stale task", () => {
+    const session = createSession();
+    openUnit(session, "g1", "task", taskJournal(), 6);
+    openUnit(session, "p1", "plan", planJournal(), 0);
+
+    const view = buildTuiView(session, [], { planUnitId: "p1" });
+
+    expect(view.plan).toMatchObject({
+      unitId: "p1",
+      status: "ready",
+      completed: 0,
+      total: 2,
+      activeItemId: "i1",
+    });
+    expect(view.plan?.summary).toBe("Add Z3");
+    expect(view.plan?.items.map((item) => item.title)).toEqual(["Deps", "Adapter"]);
+    // The plan owns the panel: no unit belongs to it yet, so the old task is not "current".
+    expect(view.current).toBeUndefined();
+  });
+
+  it("shows the building plan before submit_plan", () => {
+    const session = createSession();
+    openUnit(
+      session,
+      "p1",
+      "plan",
+      [
+        node("rp", "request", "plan z3", { text: "plan z3" }),
+        node("mp", "move", "Plan", { state: "plan", what: "plan z3", turn: 0 }),
+        edge("rp", "mp", "move"),
+      ],
+      0,
+    );
+    pushUnit(session, "p1", 0);
+
+    const view = buildTuiView(session, []);
+
+    expect(view.plan?.status).toBe("building");
+    expect(view.current).toBeUndefined();
+  });
+
+  it("tracks the executing item and shows its task", () => {
+    const session = createSession();
+    openUnit(session, "p1", "plan", planJournal(), 0);
+    openUnit(session, "r1", "task", taskJournal(), 6, "i1");
+    recordPlanStarted(session, "p1", 0);
+
+    const view = buildTuiView(session, [], { planUnitId: "p1" });
+
+    expect(view.plan).toMatchObject({
+      status: "executing",
+      activeItemId: "i1",
+      completed: 0,
+      total: 2,
+    });
+    expect(view.plan?.items[0]?.status).toBe("suspended");
+    expect(view.current?.unitId).toBe("r1");
   });
 });
 

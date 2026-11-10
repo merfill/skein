@@ -33,7 +33,8 @@ describe("trace blocks", () => {
     expect(body).toContain("second thought");
   });
 
-  it("collapses a tool preview and expands it on demand", () => {
+  it("shows a collapsed tool preview teaser and expands the rest on demand", () => {
+    const preview = Array.from({ length: 8 }, (_, index) => `preview-${index + 1}`).join("\n");
     const entry: TraceEntry = {
       id: "tool",
       kind: "tool",
@@ -41,12 +42,42 @@ describe("trace blocks", () => {
       tool: "bash",
       target: "make test",
       status: "ok",
-      preview: "preview-one\npreview-two",
+      preview,
       collapsed: true,
     };
-    expect(texts([entry])).toContain("▸ ✓ bash make test");
-    expect(texts([entry])).not.toContain("preview-one");
-    expect(texts([{ ...entry, collapsed: false }])).toContain("preview-one");
+    const collapsed = texts([entry]);
+    expect(collapsed).toContain("▸ ✓ bash make test");
+    // The first five result lines are the collapsed teaser.
+    expect(collapsed).toContain("preview-1");
+    expect(collapsed).toContain("preview-5");
+    expect(collapsed).not.toContain("preview-6");
+    expect(collapsed).toContain("+3 more lines · click to expand");
+    // Expanding shows the whole preview.
+    const expanded = texts([{ ...entry, collapsed: false }]);
+    expect(expanded).toContain("preview-1");
+    expect(expanded).toContain("preview-8");
+  });
+
+  it("renders a whole-file diff with path, line numbers and colours", () => {
+    const entry: TraceEntry = {
+      id: "write",
+      kind: "tool",
+      text: "",
+      tool: "write",
+      target: "write src/a.ts",
+      status: "ok",
+      collapsed: false,
+      diffs: [{ path: "src/a.ts", before: "a\nb\nc\n", after: "a\nB\nc\n" }],
+    };
+    const out = traceLines([entry], 80);
+    const body = out.map((line) => line.text).join("\n");
+    expect(body).toContain("src/a.ts");
+    expect(body).toContain("- b");
+    expect(body).toContain("+ B");
+    // Old/new line numbers are in the gutter.
+    expect(body).toMatch(/2\s+- b/);
+    expect(out.some((line) => line.color === theme.syntax.deletion)).toBe(true);
+    expect(out.some((line) => line.color === theme.syntax.addition)).toBe(true);
   });
 
   it("renders an edit as a coloured line diff", () => {
