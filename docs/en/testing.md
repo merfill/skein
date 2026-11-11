@@ -4,7 +4,7 @@
 >
 > How to run offline tests, live checks, sandbox tasks and step-by-step debugging.
 > Related: `ir.md` (the model and the tape), `ir_operations.md` (the operator registry),
-> `projection.md` (the tape), `sessions.md` (sessions and the observer), `AGENTS.md` (the
+> `projection.md` (the tape), `sessions.md` (sessions and agents), `AGENTS.md` (the
 > working rules).
 
 ## 1. Layers and commands
@@ -102,7 +102,8 @@ SKEIN_LIVE=true npx tsx tests/sandbox/general-live.ts  # analysis -> general, re
 
 `session-live` checks the three routes (`general`, `respond`, `task`) and the post-task report;
 `general-live` checks that a question about the project routes to `general`, that the general unit
-reads with `read`/`grep`/`list`, and that no coding task is opened.
+reads with `read`/`grep`/`list`, and that no coding task is opened. The `document` unit is covered
+offline (`tests/document_unit.test.ts`); there is no dedicated live harness for its route yet.
 
 ### 3.3.1 Live plan sessions
 

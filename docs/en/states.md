@@ -3,8 +3,11 @@
 > Russian mirror — `docs/ru/states.md`.
 >
 > The source of truth for the state definitions is `src/ir/islands.ts`. This document describes the
-> live states, their work and their routes. The prompt and the tape are in `system_prompt.md` and
-> `projection.md`; the IR in `ir.md`.
+> live **task** states (islands), their work and their routes. The prompt and the tape are in
+> `system_prompt.md` and `projection.md`; the IR in `ir.md`.
+>
+> The `general`, `plan` and `document` units are request-anchored: one goal, no `move`; they are
+> described in `sessions.md`.
 
 ## 1. What a state is
 

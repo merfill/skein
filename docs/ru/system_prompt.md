@@ -6,6 +6,10 @@
 > в `src/loop/prompt/blocks.ts`, тест. Связанные документы: `ir.md` (состояния и лента),
 > `ir_operations.md` (реестр инструментов), `projection.md` (что видит модель), `states.md`
 > (цели состояний).
+>
+> Документ описывает промпт **агента задачи**. У `general`, `plan` и `document` свои базовые
+> промпты (`GENERAL_BASE_PROMPT`, `PLANNER_BASE_PROMPT`, `DOCUMENT_BASE_PROMPT`); их единицы
+> request-anchored и не используют `move`.
 
 ## 1. Назначение
 

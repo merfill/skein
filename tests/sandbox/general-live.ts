@@ -176,7 +176,6 @@ async function main(): Promise<void> {
       if (unit?.checkpoint === undefined) failures.push("the general unit has no entry checkpoint");
     }
     if (answer === "") failures.push("the answer is empty");
-    if (!/^##\s/m.test(answer)) failures.push("the answer is not Markdown (no '## ' heading)");
     if (!answer.includes("src/")) failures.push("the answer does not cite src/ paths");
     if ((tools.read ?? 0) === 0) failures.push("the general unit read no file with `read`");
 

@@ -42,6 +42,9 @@ The trace is an address, not a copy. Details are reached with the read-only memo
 | `body` | L4 | a stored observation body, optionally a line window |
 | `search` | L4 | pattern matches inside a stored body |
 
+`general`, `plan` and `document` have one state anchored on the request: its id is the unit id, and
+`state`/`turns` work with it as with any other state.
+
 The result of a memory call becomes an observation of the calling session unit and is therefore
 addressable in turn. L0 is shown to the session agent in full; the terminal view may bound it.
 
@@ -152,16 +155,17 @@ events; the mode and cursor are derived, never stored.
 
 The general agent answers a question that requires reading and analysis but no workspace change. It
 works on one request with the read-only tools (`read`, `grep`, `list`, `recall`; `shell` only for
-read-only commands) and the deterministic project facts. It has no `move`: the unit's tape hangs
-off the request, so it has one goal and no state transitions. The model closes it with a text
-answer, recorded as the request's `stop`; the session sees the trace with the answer. The general
-agent does not write a post-task report and does not open further units.
+read-only commands) and the deterministic project facts. It has one state anchored on the request:
+`move` is not used, the unit's tape hangs off the request, and there are no state transitions. The
+model closes it with a text answer, recorded as the request's `stop`; the session sees the trace
+with the answer. The general agent does not write a post-task report and does not open further
+units.
 
 ## 10. The document agent
 
 The document agent produces one text file (Markdown by default) in the request's language, writing
-it section by section. The unit has no `move`: its tape hangs off the request and the executor
-decides when it is done.
+it section by section. The unit has one state anchored on the request: `move` is not used, the tape
+hangs off the request, and the executor decides when it is done.
 
 1. **Outline.** The agent may inspect the material with the read-only tools and then calls
    `submit_plan` once with the target `path` and an ordered list of sections, each a title and a

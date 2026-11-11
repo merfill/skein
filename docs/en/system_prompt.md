@@ -6,6 +6,10 @@
 > block in `src/loop/prompt/blocks.ts`, add a test. Related: `ir.md` (states and the tape),
 > `ir_operations.md` (the tool registry), `projection.md` (what the model sees),
 > `states.md` (the state goals).
+>
+> This document describes the **task agent's** prompt. `general`, `plan` and `document` have their
+> own base prompts (`GENERAL_BASE_PROMPT`, `PLANNER_BASE_PROMPT`, `DOCUMENT_BASE_PROMPT`); their
+> units are request-anchored and do not use `move`.
 
 ## 1. Purpose
 

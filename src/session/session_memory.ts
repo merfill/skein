@@ -9,7 +9,7 @@ import {
 } from "../ir/graph";
 import { observationText, requestTextOf, clipRequestText } from "../ir/project";
 import type { Node } from "../ir/types";
-import { isMoveFinished, moveIsland, movePayload } from "../ir/traversal";
+import { moveIsland, movePayload } from "../ir/traversal";
 import { unitOf } from "./session";
 import type { SessionState } from "./types";
 
@@ -74,23 +74,30 @@ function resultSummary(state: State, actionId: string): string {
   return ` -> ${id}${summary !== "" ? `: ${summary}` : ""}`;
 }
 
-// L2: the state's turns, each action's outcome and result.
-export function stateDetail(session: SessionState, unitId: string, moveId: string): string {
+// L2: the state's turns, each action's outcome and result. A request-anchored unit
+// (general/plan/document) has one state whose id is the unit/request id.
+export function stateDetail(session: SessionState, unitId: string, stateId: string): string {
   const state = unitState(session, unitId);
-  const node = state.nodes.get(moveId);
-  if (node === undefined || node.kind !== "move") return `unknown state: ${moveId}`;
-  const island = moveIsland(state, moveId) ?? "unknown";
-  const payload = movePayload(state, moveId);
-  const closed = isMoveFinished(state, moveId);
-  const stop = stopOf(state, moveId);
+  const node = state.nodes.get(stateId);
+  const atRequest = node?.kind === "request";
+  if (node === undefined || (!atRequest && node.kind !== "move")) {
+    return `unknown state: ${stateId}`;
+  }
+  const island = atRequest
+    ? unitOf(session, unitId).type
+    : (moveIsland(state, stateId) ?? "unknown");
+  const what = atRequest
+    ? clip(requestTextOf(state) ?? node.label, 400)
+    : (movePayload(state, stateId)?.what ?? "");
+  const stop = stopOf(state, stateId);
   const lines = [
-    `state ${moveId}: ${island}`,
-    `what: ${payload?.what ?? ""}`,
-    `closure: ${closed ? `closed (${stop !== undefined ? labelOf(state, stop) : ""})` : "open"}`,
+    `state ${stateId}: ${island}`,
+    `what: ${what}`,
+    `closure: ${stop !== undefined ? `closed (${labelOf(state, stop)})` : "open"}`,
     "turns:",
   ];
 
-  const turns = turnsOf(state, moveId);
+  const turns = turnsOf(state, stateId);
   const actions = turns !== undefined ? childrenOf(state, turns) : [];
   if (actions.length === 0) {
     lines.push("(empty)");

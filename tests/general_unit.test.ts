@@ -10,7 +10,8 @@ import type { Event } from "../src/ir/events";
 import { childrenOf, fold, stopOf, turnsOf } from "../src/ir/graph";
 import { runSessionTurn, type SessionTurnDeps } from "../src/session/driver";
 import { attentionOf, createSession } from "../src/session/session";
-import { sessionOutline } from "../src/session/session_outline";
+import { sessionOutline, unitOutline } from "../src/session/session_outline";
+import { stateDetail, stateTurnHistory } from "../src/session/session_memory";
 import { memoryTelemetry } from "../src/session/telemetry";
 import type { Proposals } from "../src/llm/schemas";
 import { buildTuiView } from "../src/tui/view_model";
@@ -106,6 +107,15 @@ describe("general unit", () => {
     expect(outline).toContain('general g1 "analyse NOTES.md"');
     expect(outline).toContain('actions: read NOTES.md');
     expect(outline).toContain('answer: "## Answer');
+
+    // A request-anchored unit exposes its single tape as a state addressed by the unit id.
+    const unitStates = unitOutline(session, "g1");
+    expect(unitStates).toContain("g1 general");
+    expect(unitStates).toContain("closed:");
+    expect(unitStates).toContain("turns=1");
+    expect(stateDetail(session, "g1", "g1")).toContain("state g1: general");
+    expect(stateDetail(session, "g1", "g1")).toContain("read NOTES.md");
+    expect(stateTurnHistory(session, "g1", "g1")).toContain("read NOTES.md");
 
     const view = buildTuiView(session, telemetry.events);
     expect(view.current?.unitId).toBe("g1");

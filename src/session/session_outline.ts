@@ -324,7 +324,17 @@ export function unitOutline(
     (id) => state.nodes.get(id)?.kind === "move",
   );
   if (moves.length === 0) {
-    lines.push("(no states)");
+    // A request-anchored unit (general/plan/document): one goal, no `move`. Report the
+    // request as its single state so its turns stay addressable by the unit/request id.
+    const turnsId = turnsOf(state, root);
+    const stop = stopOf(state, root);
+    if (turnsId === undefined && stop === undefined) {
+      lines.push("(no states)");
+      return lines.join("\n");
+    }
+    const actions = turnsId !== undefined ? childrenOf(state, turnsId) : [];
+    const outcome = stop !== undefined ? `closed: ${labelOf(state, stop)}` : "open";
+    lines.push(`${root} ${unit.type} ${outcome} turns=${actions.length}`);
     return lines.join("\n");
   }
 

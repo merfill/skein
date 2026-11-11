@@ -21,12 +21,20 @@
   операций, §1.4 «Документ», observer §1.5; убрана legacy «Чтение». `projection.md`: пункт
   `document` в блоке плана. Индексные README EN/RU.
 - **Снят вопрос про отдельную TaskView-панель `document`:** не нужна.
+- **Request-anchored единицы видны в памяти.** `unit`/`state`/`turns` трактуют
+  `general`/`plan`/`document` как одно состояние с id единицы: `unitOutline` печатает якорь,
+  `stateDetail` принимает request-якорь, описания инструментов session-агента обновлены; тест в
+  `general_unit.test.ts`.
+- **`general-live`**: убрана строгая проверка `## `-заголовка — ответ модели не переписываем.
+- **Доки-скоуп.** `testing.md`/`system_prompt.md`/`tools.md`/`states.md` явно ограничивают себя
+  агентом задачи и ссылаются на request-anchored единицы; `sessions.md` §2/§9/§10 называет их
+  одним состоянием на request.
 
 ### Проверено
 
 - `npm run typecheck` — чистый.
 - `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **654 passed / 40 skipped**
-  (включая обновлённый `tests/general_unit.test.ts`).
+  (включая обновлённый `tests/general_unit.test.ts` с памятью request-anchored единиц).
 - **Live `general-live`** (синтетический проект): маршрут `general`, 6 ходов, `done`, `stop=answered`,
   `completed`, без `move`; `stop`/`turns` на request. Единственный FAIL харнесса —
   ответ модели без `## `-заголовка (проверка стиля, не якоря).
@@ -40,11 +48,11 @@
 
 ### Открыто
 
-- Синхронизированы `sessions.md`, `concepts.md`, `ir.md`, `projection.md`, README; `testing.md`,
-  `system_prompt.md`, `tools.md`, `states.md` не ревизовались.
-- `tests/sandbox/general-live.ts` слишком строго требует `## `-заголовок в ответе — решить,
-  ослабить ли проверку.
-- Рабочее дерево не закоммичено.
+- Роутинг `document` — нужна серия live-прогонов (см. ниже, 2026-11-10).
+- Новые правки (память request-anchored единиц, `general-live`, скоуп-заметки в доках) не
+  закоммичены.
+- Дальше — функциональные дыры плана (retry `abandoned`, отмена, rework, бюджет) и live-проверка
+  авто-выбора `plan` агентом сессии.
 
 ## 2026-11-10 — юнит `document` (запись большого файла секциями)
 

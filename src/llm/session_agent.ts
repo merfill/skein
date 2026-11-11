@@ -54,19 +54,19 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "unit",
     description:
-      "Return one unit's structure: states and closures. Call with the unit id from the trace (e.g. r1, g1, m1).",
+      "Return one unit's structure: states and closures. Call with the unit id from the trace (e.g. r1, g1, m1). General, plan and document units have one request-anchored state whose id is the unit id.",
     schema: unitSchema,
   },
   {
     name: "state",
     description:
-      "Return a state's turns: each action, its result id and outcome (L2). Call with { unit, id }; unit is a task id (e.g. r1).",
+      "Return a state's turns: each action, its result id and outcome (L2). Call with { unit, id }; use the state id printed by `unit` (for general/plan/document it is the unit id).",
     schema: stateSchema,
   },
   {
     name: "turns",
     description:
-      "Return a state's turns: action, result id and outcome, plus the task agent's reasoning (bounded). Call with { unit, id, from?, to? }.",
+      "Return a state's turns: action, result id and outcome, plus the agent's reasoning (bounded). Call with { unit, id, from?, to? }; use the state id printed by `unit` (for general/plan/document it is the unit id).",
     schema: turnsSchema,
   },
   {
