@@ -20,31 +20,43 @@ length of the history. Second, the model is not asked to maintain continuity by 
 executor selects what the current decision requires, and everything else remains one `recall` or
 `search` away.
 
-## 2. Four agents
+## 2. Agents and units
 
-Skein separates work by the kind of result and by the scope of attention. Four model-driven agents
+Skein separates work by the kind of result and by the scope of attention. Six model-driven agents
 cooperate, and each reads a projection of the same kind of IR.
 
 A **unit** is one IR with its own root and journal. A session is a container of units; each agent
-works in a unit of its own type — a coding task, a general task, a session interpretation, or an
-observer run.
+works in a unit of its own type — a session interpretation, a coding task, a general task, a plan
+development, a document write, or an observer run.
 
 | Agent | Scope | Responsibility | Context |
 |---|---|---|---|
 | Session | the dialogue | interprets an utterance, remembers completed work, routes, formulates a task | the dialogue, the traces of past units, memory tools |
 | Task (coding) | one request | walks the request as a state machine and changes the workspace | only its own request and states |
 | General | one non-coding request | investigates and answers without changing the workspace | its brief, project facts, read-only tools |
+| Planner | one request | inspects the workspace read-only and returns an ordered plan; does not execute it | the request, project facts, read-only tools |
+| Document | one large text artifact | writes one file section by section; the executor owns the plan and the file | the request, project facts, read-only tools, section briefs |
 | Observer | one stuck state | diagnoses the impasse and advises the task agent | the state tape: request, turns, reasoning, observations |
 
-The session agent is the only agent that sees the whole dialogue. It chooses among three
-operations: answer from the dialogue (`respond`), delegate an investigation to the general agent
-(`general`), or start a coding task (`task`). For a coding task it formulates a self-contained
-work order; the task agent receives only that text and never reads the session tape or other
-tasks. Continuity is therefore transferred through the formulation, not through shared history.
+The session agent is the only agent that sees the whole dialogue. It chooses among five operations:
+answer from the dialogue (`respond`), delegate an investigation to the general agent (`general`),
+start a coding task (`task`), develop a plan (`plan`), or write a document (`document`). For a
+coding task it formulates a self-contained work order; the task agent receives only that text and
+never reads the session tape or other tasks. Continuity is therefore transferred through the
+formulation, not through shared history.
 
 The general agent handles questions that require reading and analysis but no modification. It
 uses inspection tools and a read-only shell; the executor restores any accidental change, so the
 workspace is unchanged by contract. Its result is an answer, not a coding task.
+
+The planner agent develops a plan: a read-only unit that inspects the workspace and returns an
+ordered list of work orders. It neither changes the workspace nor executes the items; the plan is a
+session-level artifact, and execution opens ordinary units per item.
+
+The document agent writes one large text artifact (a document, report or spec) section by section.
+It first submits an outline with the target path and the section briefs, then replies with one
+section body at a time as plain text; the executor appends each section and decides when the unit
+is done. No tool argument carries the file, so a large section cannot be cut into invalid JSON.
 
 The observer is an advisory agent. When a task repeats a state, spends too long in one state, or
 approaches its turn budget, a deterministic trigger runs the observer on the tape of that state.
@@ -62,8 +74,8 @@ The IR is monotone: events are appended and nodes are never rewritten. The tape 
 - When the state closes, its brief and turns leave the tape. Only `Start state` and
   `Finish state — <result>` remain, the latter carrying a short record of what the state
   achieved.
-- When a task or a general unit finishes, a trace remains on the session tape: what was asked,
-  how it ended, its status, and the answer or the operation that produced it.
+- When a task, general or document unit finishes, a trace remains on the session tape: what was
+  asked, how it ended, its status, and the answer or the operation that produced it.
 
 Nothing is lost through this elision. Every action, observation and file version remains in the
 journal, addressed by node id, and can be retrieved with `recall` or `search`. The request always
@@ -182,5 +194,5 @@ The journal remains monotone even though the knowledge it supports is not.
 - `projection.md` — the message tape in detail.
 - `states.md` — the goal, criterion and routes of each work state.
 - `system_prompt.md` — the prompt blocks and the state prompts.
-- `sessions.md` — sessions, units, the session agent and the observer.
+- `sessions.md` — sessions, units and the agents of those units.
 - `walkthrough.md` — an end-to-end example of a task across states.

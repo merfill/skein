@@ -3,7 +3,6 @@ import type { ModelMessage } from "ai";
 import { isAborted } from "../abort";
 import type { Event } from "../ir/events";
 import { childrenOf, fold, turnsOf, type State } from "../ir/graph";
-import { GENERAL_STATE } from "../ir/islands";
 import { asCall, observationText, type TapeMessage } from "../ir/project";
 import type { PlanItemKind } from "../ir/types";
 import { historyMessages } from "../loop/propose";
@@ -93,7 +92,7 @@ export interface PlannerResult {
 
 function node(
   id: string,
-  kind: "request" | "move",
+  kind: "request" | "turns",
   label: string,
   payload: unknown,
   seq: number,
@@ -104,29 +103,23 @@ function node(
   };
 }
 
-function seedPlanner(request: { id: string; text: string }, turn: number): Event[] {
-  const moveId = `${request.id}:plan`;
+// One goal, no state transitions: the plan tape hangs off the request, like the document unit.
+function seedPlanner(request: { id: string; text: string }): Event[] {
+  const turnsId = `${request.id}:turns`;
   return [
     node(request.id, "request", request.text, { text: request.text }, 0),
-    node(moveId, "move", "Plan", { state: GENERAL_STATE, what: request.text, turn }, 1),
+    node(turnsId, "turns", `plan for ${request.id}`, undefined, 1),
     {
       type: "add_edge",
       edge: {
-        id: `${request.id}:move`,
+        id: `${request.id}:turns:edge`,
         from: request.id,
-        to: moveId,
-        kind: "move",
+        to: turnsId,
+        kind: "turns",
         provenance: { kind: "llm" },
       },
     },
-    { type: "descend", node: moveId },
   ];
-}
-
-function moveOf(events: readonly Event[], requestId: string): string | undefined {
-  const state = fold(events);
-  const root = state.rootId ?? requestId;
-  return childrenOf(state, root).find((id) => state.nodes.get(id)?.kind === "move");
 }
 
 function resultOf(state: State, actionId: string): string | undefined {
@@ -143,9 +136,9 @@ function requestOf(state: State): string {
   return typeof payload?.text === "string" ? payload.text : (state.nodes.get(root)?.label ?? "");
 }
 
-function historyOf(state: State, moveId: string): TapeMessage[] {
+function historyOf(state: State, requestId: string): TapeMessage[] {
   const history: TapeMessage[] = [{ role: "user", text: requestOf(state) }];
-  const turns = turnsOf(state, moveId);
+  const turns = turnsOf(state, requestId);
   if (turns === undefined) return history;
   for (const actionId of childrenOf(state, turns)) {
     const action = state.nodes.get(actionId);
@@ -176,11 +169,11 @@ function historyOf(state: State, moveId: string): TapeMessage[] {
   return history;
 }
 
-function messagesOf(state: State, moveId: string, workspace?: string): ModelMessage[] {
+function messagesOf(state: State, requestId: string, workspace?: string): ModelMessage[] {
   return [
     { role: "system", content: PLANNER_BASE_PROMPT },
     ...(workspace !== undefined ? [{ role: "system" as const, content: workspace }] : []),
-    ...historyMessages(historyOf(state, moveId)),
+    ...historyMessages(historyOf(state, requestId)),
   ];
 }
 
@@ -205,12 +198,11 @@ function parsePlan(args: Record<string, unknown>): PlannerDraft | undefined {
   return { ...(summary !== undefined ? { summary } : {}), items };
 }
 
-// Record the submitted plan on the unit's journal: a `plan` header hanging off the move, its
-// ordered `plan_item` children, and the state's `stop` so the unit is complete.
+// Record the submitted plan on the unit's journal: a `plan` header hanging off the request, its
+// ordered `plan_item` children, and the request's `stop` so the unit is complete.
 function recordPlan(
   events: Event[],
   requestId: string,
-  moveId: string,
   draft: PlannerDraft,
   turn: number,
 ): void {
@@ -235,7 +227,7 @@ function recordPlan(
     type: "add_edge",
     edge: {
       id: `${planId}:edge`,
-      from: moveId,
+      from: requestId,
       to: planId,
       kind: "plan",
       provenance: { kind: "llm" },
@@ -287,7 +279,7 @@ function recordPlan(
     type: "add_edge",
     edge: {
       id: `${stopId}:edge`,
-      from: moveId,
+      from: requestId,
       to: stopId,
       kind: "stop",
       provenance: { kind: "llm" },
@@ -306,9 +298,9 @@ export async function runPlanner(
 ): Promise<PlannerResult> {
   const session = input.session;
   const startTurn = input.startTurn ?? 0;
-  let events: Event[] = input.seed !== undefined ? [...input.seed] : seedPlanner(input.request, startTurn);
-  const moveId = moveOf(events, input.request.id);
-  if (moveId === undefined) {
+  let events: Event[] = input.seed !== undefined ? [...input.seed] : seedPlanner(input.request);
+  const requestId = input.request.id;
+  if (turnsOf(fold(events), requestId) === undefined) {
     return { events, done: false, stopReason: "no_state", turns: startTurn };
   }
 
@@ -345,7 +337,7 @@ export async function runPlanner(
       break;
     }
     const state = fold(events);
-    const messages = messagesOf(state, moveId, input.workspace);
+    const messages = messagesOf(state, requestId, input.workspace);
     if (askedForPlan) {
       messages.push({
         role: "system",
@@ -417,7 +409,7 @@ export async function runPlanner(
       const draft = parsePlan(submit.args);
       if (draft !== undefined) {
         const before = events.length;
-        recordPlan(events, input.request.id, moveId, draft, turn);
+        recordPlan(events, requestId, draft, turn);
         plan = draft;
         done = true;
         stopReason = "planned";
@@ -504,7 +496,7 @@ export async function runPlanner(
   // as the only tool, so the work already read still produces a plan. Without this a real
   // task (a large source tree) never reaches the submit call.
   if (!done && !paused) {
-    const messages = messagesOf(fold(events), moveId, input.workspace);
+    const messages = messagesOf(fold(events), requestId, input.workspace);
     messages.push({
       role: "system",
       content:
@@ -573,7 +565,7 @@ export async function runPlanner(
         const draft = parsePlan(submit.args);
         if (draft !== undefined) {
           const before = events.length;
-          recordPlan(events, input.request.id, moveId, draft, turn);
+          recordPlan(events, requestId, draft, turn);
           plan = draft;
           done = true;
           stopReason = "planned";

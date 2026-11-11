@@ -262,14 +262,9 @@ function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent
 
 function unitCompleted(session: SessionState, unit: Unit): boolean {
   if (unit.type === "task") return taskEnded(unit.journal);
-  if (unit.type === "general" || unit.type === "plan") {
-    const state = fold(unit.journal);
-    const move = currentMove(state);
-    return move !== undefined && isMoveFinished(state, move);
-  }
-  // The document unit has no `move`: its tape hangs off the request and the unit closes on
-  // the `stop` written when every section and the summary are done.
-  if (unit.type === "document") {
+  // General, plan and document units have no `move`: their tape hangs off the request and the
+  // unit closes on the request's `stop`.
+  if (unit.type === "general" || unit.type === "plan" || unit.type === "document") {
     return stopOf(fold(unit.journal), unit.id) !== undefined;
   }
   // A session unit is completed once its operation is committed or refused.

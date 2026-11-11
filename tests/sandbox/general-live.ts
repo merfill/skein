@@ -67,9 +67,7 @@ function printEvents(events: readonly Event[]): void {
     const node = event.node;
     const payload = node.payload as Record<string, unknown> | undefined;
     if (node.kind === "request") continue;
-    if (node.kind === "move") {
-      console.info(`  general move: ${String(payload?.state)} — ${short(String(payload?.what ?? ""))}`);
-    } else if (node.kind === "action") {
+    if (node.kind === "action") {
       console.info(`  general action: ${short(node.label)}`);
     } else if (node.kind === "observation") {
       console.info(`  general observation ${node.id}: ${short(observationText(node))}`);

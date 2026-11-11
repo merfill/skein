@@ -36,7 +36,9 @@ session journal records the units in the order they appear. The main unit types 
 - a **general task** — an investigation that answers a question without changing the workspace;
 - a **coding task** — a request that changes the workspace;
 - **plan development** — a read-only unit that returns an ordered list of items; the items are
-  executed as ordinary units later.
+  executed as ordinary units later;
+- **a document** — one large text artifact written section by section; the executor owns the
+  section plan and the file.
 
 An **observer** unit is a service unit opened when a task is stuck; it is not shown in the session
 trace.
@@ -47,10 +49,10 @@ with the memory tools (`unit`, `state`, `turns`, `body`, `search`) and become ob
 calling unit. The session journal also records push/pop, suspend/resume/abandon, operations,
 refusals, no-decision turns and observer triggers.
 
-The session agent chooses one of four operations: `respond` answers from the dialogue, `general`
-delegates an investigation, `task` opens a coding task with a self-contained work order, and `plan`
-opens a plan-development unit. The operation is recorded in the session journal; the opened unit
-keeps its own journal.
+The session agent chooses one of five operations: `respond` answers from the dialogue, `general`
+delegates an investigation, `task` opens a coding task with a self-contained work order, `plan`
+opens a plan-development unit, and `document` opens a document unit. The operation is recorded in
+the session journal; the opened unit keeps its own journal.
 
 ### 1.2 A coding task
 
@@ -73,10 +75,19 @@ model's text reply, recorded as `stop`.
 ### 1.3 The general task
 
 The general agent handles a question that requires reading and analysis but no change to the
-workspace. It works one request with read-only tools and returns an answer. Its unit is closed by
-the model's text reply; the session sees a trace with the answer.
+workspace. It works one request with read-only tools and returns an answer. The unit has no `move`:
+its tape hangs off the request. It is closed by the model's text reply, recorded as the request's
+`stop`; the session sees a trace with the answer.
 
-### 1.4 The observer
+### 1.4 A document
+
+A document unit produces one text file section by section. The model first submits an outline (the
+target path and an ordered list of section briefs), then replies with one section body at a time as
+plain text. The executor appends each body to the file and decides when the unit is done: after the
+last section it asks for a short summary and records the request's `stop`. The unit has no `move`
+and no tool argument carries the file.
+
+### 1.5 The observer
 
 The observer is opened by a deterministic trigger when a task repeats a state, spends too long in
 one state, or approaches its turn budget. It reads the state tape — the request, the turns, the
@@ -228,5 +239,5 @@ arithmetic, no user interface and no criterion gate. There are no `check`, `clai
 - `ir_operations.md` — the model surface, operators, tool tables, refusals and coverage registry.
 - `projection.md` — the message tape in detail.
 - `states.md` — the goal and completion condition of each state.
-- `sessions.md` — sessions, units, the session agent and the observer.
+- `sessions.md` — sessions, units and the agents of those units.
 - `walkthrough.md` — a worked example across states.

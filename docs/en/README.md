@@ -4,7 +4,7 @@ Russian: [../ru/README.md](../ru/README.md).
 
 ## What Skein is
 
-- [concepts.md](concepts.md) — the conceptual overview: the non-monotone context, the four agents,
+- [concepts.md](concepts.md) — the conceptual overview: the non-monotone context, the agents,
   states and transitions.
 - [walkthrough.md](walkthrough.md) — the end-to-end example: states and the dynamic tape across
   execution contexts.
@@ -26,8 +26,8 @@ Russian: [../ru/README.md](../ru/README.md).
 
 ## Sessions and controllability
 
-- [sessions.md](sessions.md) — sessions, the container of units, the session
-  agent, its memory tools, the outline, task isolation and the observer.
+- [sessions.md](sessions.md) — sessions, the container of units, the session, general, task,
+  plan and document agents, the observer, memory tools, the outline and isolation.
 
 ## Providers
 

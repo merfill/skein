@@ -3,6 +3,49 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-11 — `general`/`plan` без `move`; агенты в документации
+
+### Что сделано
+
+- **`move` убран из `general`/`plan`.** Обе единицы теперь request-anchored, как `document`:
+  `request → turns`, `plan`/`stop` — рёбра от request. `seedGeneral`/`seedPlanner` создают
+  `request`+`turns`; история и `messagesOf` читают request как якорь; `recordPlan` вешает `plan`
+  и `stop` на request. `executeAction("stop")` замыкает request-якорь, `unitCompleted` для
+  `general/plan/document` читает `stopOf(request)`. `session_outline.generalEnding` и
+  `tui/view_model` тоже читают request; общая единица в TUI рендерится одной синтетической
+  request-стадией (сохраняет ходы и токены), `plan` в общий TaskView не входит — у него PlanPanel.
+- **Документация EN/RU синхронизирована.** `sessions.md` («сессии и агенты»): `document` в §1,
+  пять операций, §9 «Агент общей задачи», §10 «Агент записи документа», observer §11; план —
+  `kind general|task|document`, `document`-пункт открывается напрямую. `concepts.md`: шесть
+  агентов и единиц, включая planner/document, пять операций. `ir.md`: тип «документ», пять
+  операций, §1.4 «Документ», observer §1.5; убрана legacy «Чтение». `projection.md`: пункт
+  `document` в блоке плана. Индексные README EN/RU.
+- **Снят вопрос про отдельную TaskView-панель `document`:** не нужна.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **654 passed / 40 skipped**
+  (включая обновлённый `tests/general_unit.test.ts`).
+- **Live `general-live`** (синтетический проект): маршрут `general`, 6 ходов, `done`, `stop=answered`,
+  `completed`, без `move`; `stop`/`turns` на request. Единственный FAIL харнесса —
+  ответ модели без `## `-заголовка (проверка стиля, не якоря).
+- **Live `session-live`**: `routes=["general","respond","task"]`, `general` completed, task
+  отработал — OK.
+- **Live план `log-summary-date-ranges`** (Docker, 40 turns): plan 1/1, **reward=1**,
+  acceptance pass, 9 ходов task — request-anchored план и закрытие по `stop` работают.
+- **Live документ, полный путь** (временный скрипт вне репо, ~63 с): агент сессии сам выбрал
+  `document`; 8 ходов, `done/summarized`, 5/5 секций, 21.3 KB; без `move`, `turns`+`stop` на
+  request, `completed`, заголовки совпадают с outline — OK.
+
+### Открыто
+
+- Синхронизированы `sessions.md`, `concepts.md`, `ir.md`, `projection.md`, README; `testing.md`,
+  `system_prompt.md`, `tools.md`, `states.md` не ревизовались.
+- `tests/sandbox/general-live.ts` слишком строго требует `## `-заголовок в ответе — решить,
+  ослабить ли проверку.
+- Рабочее дерево не закоммичено.
+
 ## 2026-11-10 — юнит `document` (запись большого файла секциями)
 
 ### Что сделано
@@ -38,13 +81,6 @@
 
 ### Открыто
 
-- **Вопрос: зачем `move` в `general`/`plan`?** У этих юнитов одна цель и нет смены локальной
-  цели; `move` там нужен только как якорь для `turns`/`stop`, хотя семантически это инструмент
-  перехода между состояниями. `document` уже живёт без него (turns-контейнер на `request`).
-  Решить: заменить якорь в `general`/`plan` на turns-контейнер от request и убрать `move`.
-- UI: `document` виден в плане как пункт и в L0-контуре, но не как отдельная TaskView-панель
-  (её `states` строятся из `move`). При необходимости — отдельный компактный вид.
-- Документация EN/RU (`sessions.md`) ещё не описывает `document`.
 - Роутинг `document` — модельный; после усиления промпта один live-прогон попал верно, но нужна
   серия прогонов (или явная эвристика «есть путь к файлу»), чтобы оценить стабильность.
 

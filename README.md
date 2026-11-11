@@ -105,7 +105,7 @@ Start at `docs/README.md`. The core reading:
 - `docs/en/ir.md` — the conceptual IR model.
 - `docs/en/ir_operations.md` — the operator registry and detailed tool tables.
 - `docs/en/projection.md` — what the model sees each turn.
-- `docs/en/sessions.md` — sessions, units and the session agent.
+- `docs/en/sessions.md` — sessions, units and the agents of those units.
 - `docs/en/providers.md` — providers, auth and free options.
 - `docs/ru/handoff.md` — the working handoff log (RU-only).
 

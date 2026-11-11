@@ -160,9 +160,9 @@ function generalActionText(state: State, actionId: string): string | undefined {
 }
 
 function generalEnding(state: State, unit: Unit): string {
-  const move = currentMove(state);
-  if (move === undefined) return "open";
-  const turns = turnsOf(state, move);
+  const root = state.rootId;
+  if (root === undefined) return "open";
+  const turns = turnsOf(state, root);
   const actions: string[] = [];
   const seen = new Set<string>();
   if (turns !== undefined) {
@@ -174,7 +174,7 @@ function generalEnding(state: State, unit: Unit): string {
       }
     }
   }
-  const stop = stopOf(state, move);
+  const stop = stopOf(state, root);
   const stopNode = stop !== undefined ? state.nodes.get(stop) : undefined;
   const payload = stopNode?.payload as { answer?: unknown } | undefined;
   const answer =
@@ -191,7 +191,7 @@ function generalEnding(state: State, unit: Unit): string {
     );
   }
   if (answer !== undefined && answer !== "") parts.push(`answer: "${short(answer)}"`);
-  if (parts.length === 0) return isMoveFinished(state, move) ? "closed" : "open";
+  if (parts.length === 0) return stop !== undefined ? "closed" : "open";
   return parts.join("; ");
 }
 

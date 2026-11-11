@@ -74,7 +74,7 @@ function deps(): SessionTurnDeps {
 }
 
 describe("general unit", () => {
-  it("runs one general state, records the plan and closes with stop", async () => {
+  it("runs one general tape and closes with stop", async () => {
     const session = createSession();
     const telemetry = memoryTelemetry();
     const source = deps();
@@ -96,14 +96,11 @@ describe("general unit", () => {
     const unit = session.units.get("g1");
     expect(unit?.type).toBe("general");
     const state = fold(unit?.journal ?? []);
-    const move = childrenOf(state, state.rootId ?? "").find(
-      (id) => state.nodes.get(id)?.kind === "move",
-    );
-    expect(move).toBeDefined();
-    const turns = turnsOf(state, move as string);
+    const root = state.rootId ?? "";
+    const turns = turnsOf(state, root);
     expect(turns).toBeDefined();
     expect(childrenOf(state, turns as string)).toHaveLength(1);
-    expect(stopOf(state, move as string)).toBeDefined();
+    expect(stopOf(state, root)).toBeDefined();
 
     const outline = sessionOutline(session);
     expect(outline).toContain('general g1 "analyse NOTES.md"');
@@ -302,27 +299,6 @@ describe("general unit", () => {
           label: "q",
           payload: { text: "q" },
           seq: 0,
-        },
-      },
-      {
-        type: "add_node",
-        node: {
-          id: "g9:general",
-          space: "work",
-          kind: "move",
-          label: "General",
-          payload: { state: "general", what: "q", turn: 0 },
-          seq: 1,
-        },
-      },
-      {
-        type: "add_edge",
-        edge: {
-          id: "e:g9",
-          from: "g9",
-          to: "g9:general",
-          kind: "move",
-          provenance: { kind: "llm" },
         },
       },
     ];

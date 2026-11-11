@@ -1114,14 +1114,16 @@ export function executeAction(
       // The model's closure. On an open state a `stop` node hung off the `move` via the `stop`
       // relation records the closure; the engine returns to the state and the model makes the
       // transition decision. On the terminal state (`finish`, which has no turns) the `stop`
-      // ends the request (docs/en/ir.md §4.4).
+      // ends the request (docs/en/ir.md §4.4). A request-anchored tape (general/plan, no `move`)
+      // closes directly on the request.
       const focus = currentFocus(state);
       if (focus === undefined) return fail("not admissible here");
       const focusNode = state.nodes.get(focus);
-      if (focusNode?.kind !== "move") {
+      const atRequest = focusNode?.kind === "request";
+      if (!atRequest && focusNode?.kind !== "move") {
         return fail("not admissible here");
       }
-      const terminal = isTerminalIsland(moveIsland(state, focus) ?? "");
+      const terminal = !atRequest && isTerminalIsland(moveIsland(state, focus) ?? "");
       const seq = next();
       const stopId = `w:stop:${seq}`;
       events.push({
@@ -1143,7 +1145,7 @@ export function executeAction(
         },
       });
       addEdge({ kind: "llm" }, focus, stopId, "stop");
-      if (terminal) {
+      if (atRequest || terminal) {
         return {
           events,
           turn: proposalTurn(`stopped: ${action.why ?? "done"}`, stopId),

@@ -252,7 +252,14 @@ function turnDetailsFor(
 
 function outcomeOf(state: State, task: Unit): string {
   const move = currentMove(state);
-  if (move === undefined) return "no state";
+  if (move === undefined) {
+    // A request-anchored unit (general has no `move`): its closure is the request's `stop`.
+    const root = state.rootId;
+    const stopId = root !== undefined ? stopOf(state, root) : undefined;
+    if (stopId === undefined) return "no state";
+    const why = state.nodes.get(stopId)?.label;
+    return why !== undefined && why !== "" ? why : "closed";
+  }
   const payload = movePayload(state, move);
   const label = payload.state ?? "?";
   const stopId = stopOf(state, move);
@@ -276,9 +283,21 @@ function buildTask(
   liveJournal?: readonly Event[],
 ): TaskView {
   const state = fold(liveJournal ?? unit.journal);
-  const ids = moveIds(state);
+  const rawIds = moveIds(state);
+  const rootId = state.rootId;
+  // General has no `move`: its tape hangs off the request. Render that one tape as the unit's
+  // single state so the panel keeps its turns and token totals.
+  const requestAnchored =
+    rawIds.length === 0 &&
+    unit.type === "general" &&
+    rootId !== undefined &&
+    (turnsOf(state, rootId) !== undefined || stopOf(state, rootId) !== undefined);
+  const ids = requestAnchored && rootId !== undefined ? [rootId] : rawIds;
   const states: TaskState[] = ids.map((id, index) => {
-    const payload = movePayload(state, id);
+    const payload =
+      requestAnchored && id === rootId
+        ? { state: "general", what: requestText(unit.journal), turn: 0 }
+        : movePayload(state, id);
     const start = payload.turn ?? 0;
     const next = ids[index + 1];
     const nextStart = next !== undefined ? (movePayload(state, next).turn ?? start + 1) : undefined;
