@@ -1,10 +1,11 @@
 import { REVISION_BASE_PROMPT } from "../llm/revision";
 import { runGeneralAgent, type GeneralDeps, type GeneralInput, type GeneralResult } from "./general";
 
-// The revision unit carries out a change a request describes: it edits existing files and runs
-// the commands the change needs. It is request-anchored like `general`/`document` — one goal,
-// no `move` — and reuses the general runner with its own prompt, tool surface and label. It is
-// mutable by design: unlike `general`, there is no read-only snapshot or restore.
+// The revision unit performs any mutable operation a request describes, except coding: it edits
+// existing files and runs the commands the operation needs. It is request-anchored like
+// `general`/`document` — one goal, no `move` — and reuses the general runner with its own prompt,
+// tool surface and label. It is mutable by design: unlike `general`, there is no read-only
+// snapshot or restore.
 
 export type RevisionDeps = GeneralDeps;
 export type RevisionResult = GeneralResult;

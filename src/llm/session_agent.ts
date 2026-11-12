@@ -117,7 +117,7 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "revision",
     description:
-      "Carry out a change the request already describes: edit existing files and run the commands it needs — add a dependency, update the lock, install a package. `request` is the user's request restated. Choose it for a described change to existing artifacts (documentation, configuration, dependencies, renames, refactors, additive edits), including a plan item whose detail names the files and steps; choose `task` for new code or files, or when the cause or the approach must be found.",
+      "Use it for any mutable operation the request describes on the existing workspace, except coding: make the edits it names and run the commands it needs, including side-effecting ones. `request` is the user's request restated.",
     schema: revisionSchema,
   },
   {
@@ -129,7 +129,7 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "task",
     description:
-      "Write new code or files, or run side-effecting commands, or find a cause. The coding agent sees only this request. For a described change to existing artifacts choose `revision`; for a large written document choose `write_document`.",
+      "Write new code, fix a defect, or find a cause. The coding agent sees only this request.",
     schema: taskSchema,
   },
   {

@@ -3,6 +3,41 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-12 — revision: описанные мутации, task — только кодирование
+
+### Что сделано
+
+- **Роутинг сессии выровнен с назначением `revision`.** Причина — лог в `~/dev/ankyra`: сессия
+  выбрала `task`, потому что его описание обещало «run side-effecting commands»; внутри `task`
+  запрос ушёл в `Research` («all other cases»), сделал dry-run коммита на копии и пошёл искать
+  дефект. `revision` сессия рассмотрела и отвергла: «covers edits to existing files; commit and
+  push are commands».
+- **Описания тулов.** `revision` — «Use it for any mutable operation the request describes on the
+  existing workspace, except coding…»; `task` — «Write new code, fix a defect, or find a cause».
+  Из `task` убран «run side-effecting commands»; cross-reference на `revision`/`write_document`
+  из него убран.
+- **`REVISION_BASE_PROMPT`.** «You make the change or run the operation…», команды включая
+  side-effecting.
+- **Доки EN/RU.** `sessions.md` §1/§3/§10 и `concepts.md` (таблица и абзац) — `revision` описан
+  как мутабельная операция, кроме кодирования.
+- **Не трогали:** `decline` и request-промпт task'а. `decline` — до-сессионный артефакт; роутинг
+  остаётся работой агента сессии.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **657 passed / 40 skipped**.
+- Живой probe (5 прогонов, только выбор операции): коммит/пуш → `revision` 5/5; зависимость/lock →
+  `revision` 5/5; баг/новый файл → `task` 5/5; документ → `document` 5/5; read-only вопрос →
+  `general` 5/5; «прогони тесты» → `revision` 4/5, `task` 1/5.
+- **E2E `revision`** на временном репо с bare-remote: 5 ходов, `git add/commit/push`; коммит
+  `f498a53` в `origin/main`, дерево чистое, код не менялся.
+
+### Открыто
+
+- «прогони тесты» иногда (1/5) уходит в `task`; наблюдать.
+- Пробники `.route-matrix.ts`, `.revision-e2e.ts` — untracked, в коммит не входят.
+
 ## 2026-11-12 — session prompts: write_document, verbatim, gather 10+3
 
 ### Что сделано

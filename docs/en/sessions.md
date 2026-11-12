@@ -16,8 +16,8 @@ The main unit types are:
 
 - `session` — the interpretation of a user utterance and the answer or operation it produces;
 - `general` — a non-coding task that answers a question without changing the workspace;
-- `revision` — carrying out a change the request already describes: edits existing files and runs
-  the commands the change needs (add a dependency, update the lock, install a package);
+- `revision` — performing any mutable operation the request describes on the existing workspace,
+  except coding: edits and commands, including side-effecting ones;
 - `task` — a coding task that changes the workspace;
 - `plan` — plan development: a read-only agent returns an ordered list of items; it neither
   changes the workspace nor executes the items;
@@ -57,7 +57,7 @@ traces, and chooses one of six operations:
 
 - `respond` — answer from the dialogue and earlier work;
 - `general` — delegate an investigation to the general agent;
-- `revision` — carry out a change the request already describes (files plus commands);
+- `revision` — perform a mutable operation the request already describes (edits plus commands);
 - `task` — open a coding task with a self-contained work order;
 - `plan` — open a plan-development unit: a read-only agent reads the request and the workspace and
   returns an ordered list of items;
@@ -67,9 +67,9 @@ Before opening a task, the session agent **reformulates** the request from the d
 traces: what to do now, which constraints and findings from the past matter. Confirmation by the
 user is an optional interaction policy, not an IR step.
 
-The session agent has no workspace tools. Material questions go to the general unit; a change the
-request already describes goes to the revision unit; work whose cause or approach must be found
-goes to the task unit. `search` remains a memory tool over stored bodies, not a workspace search.
+The session agent has no workspace tools. Material questions go to the general unit; a described
+mutable operation goes to the revision unit; work whose cause or approach must be found goes to the
+task unit. `search` remains a memory tool over stored bodies, not a workspace search.
 
 ## 4. Isolation and continuity
 
@@ -173,9 +173,10 @@ units.
 
 ## 10. The revision agent
 
-The revision agent carries out a change the request already describes: it edits existing files and
-runs the commands the change needs — adding a dependency, updating the lock, installing a package.
-It is for work whose change is given, not for a defect whose cause must be found (that is a task).
+The revision agent performs any mutable operation the request already describes, except coding: it
+edits existing files and runs the commands the operation needs — adding a dependency, updating the
+lock, installing a package, and other side-effecting commands. It is for work whose change is given,
+not for a defect whose cause must be found (that is a task).
 
 It has one state anchored on the request: `move` is not used, the tape hangs off the request, and
 the model closes it with a text reply recorded as the request's `stop`. It works with the workspace
