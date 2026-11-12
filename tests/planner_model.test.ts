@@ -37,7 +37,7 @@ const planReply = (): LanguageModelV3GenerateResult => ({
       toolName: "submit_plan",
       input: JSON.stringify({
         summary: "Add Z3",
-        items: [{ title: "Implement", detail: "Do it.", kind: "task" }],
+        items: [{ title: "Implement", detail: "Do it." }],
       }),
     },
   ],

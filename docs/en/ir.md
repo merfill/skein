@@ -140,7 +140,7 @@ The journal stores records:
 | `fact` | an executor-owned session fact, such as the environment probe |
 | `hint` / `memo` | advice from the observer; not knowledge about the task |
 | `plan` | the plan header of a plan-development unit |
-| `plan_item` | an ordered plan item (`title`, `detail`, `kind`, `done`) |
+| `plan_item` | an ordered plan item (`title`, `detail`, `done`) |
 | `file` | a referenced file, produced by `mutates` |
 
 The relations are:

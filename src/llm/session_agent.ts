@@ -47,6 +47,7 @@ const searchSchema = z.object({
 const respondSchema = z.object({ text: z.string() });
 const taskSchema = z.object({ text: z.string() });
 const generalSchema = z.object({ text: z.string() });
+const revisionSchema = z.object({ text: z.string() });
 const documentSchema = z.object({ text: z.string() });
 const planSchema = z.object({ text: z.string() });
 
@@ -94,6 +95,12 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
     schema: generalSchema,
   },
   {
+    name: "revision",
+    description:
+      "Carry out a change the request already describes: edit existing files and run the commands it needs — add a dependency, update the lock, install a package. `text` is a self-contained order naming the files and steps and the done condition. Choose it for a described change to existing artifacts (documentation, configuration, dependencies, renames, refactors, additive edits), including a plan item whose detail names the files and steps; choose `task` for new code or files, or when the cause or the approach must be found.",
+    schema: revisionSchema,
+  },
+  {
     name: "document",
     description:
       "Create one large text file (documentation, a plan, a report) section by section. `text` is a self-contained order: the target path, what the file must establish, the required sections/decisions, the material to cite, and the done condition. Use it instead of `general` whenever the user asks to create or write a file, and instead of `task` when the deliverable is mostly prose.",
@@ -102,13 +109,13 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "task",
     description:
-      "Change code or run side-effecting commands. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged. For a large written document choose `document` instead.",
+      "Write new code or files, or run side-effecting commands, or find a cause. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged. For a described change to existing artifacts choose `revision`; for a large written document choose `document`.",
     schema: taskSchema,
   },
   {
     name: "plan",
     description:
-      "Develop an execution plan: a read-only agent inspects the workspace and returns an ordered list of work items (general or coding). The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
+      "Develop an execution plan: a read-only agent inspects the workspace and returns an ordered list of executable work orders. The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
     schema: planSchema,
   },
 ];
@@ -139,6 +146,10 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
     case "general": {
       const value = generalSchema.parse(input);
       return { kind: "general", text: value.text };
+    }
+    case "revision": {
+      const value = revisionSchema.parse(input);
+      return { kind: "revision", text: value.text };
     }
     case "document": {
       const value = documentSchema.parse(input);
@@ -234,7 +245,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `document`, `task`, `plan`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `revision`, `document`, `task`, `plan`.",
             };
             continue;
           }

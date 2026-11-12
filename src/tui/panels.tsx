@@ -666,7 +666,9 @@ export function PauseOverlay(props: { paused: PausedState; width: number; height
       ? `[c] continue +${paused.budgetExtend ?? 10} · [f] finish & report · [s] session · [q] quit`
       : paused.agent === "session"
         ? "[r] resume · [c] discard · [q] quit"
-        : "[r] resume · [s] session · [c] cancel & roll back · [q] quit";
+        : paused.agent === "document" || paused.agent === "revision"
+          ? "[r] resume · [s] session · [c] cancel · [q] quit"
+          : "[r] resume · [s] session · [c] cancel & roll back · [q] quit";
   return (
     <Box
       position="absolute"

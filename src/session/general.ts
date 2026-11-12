@@ -39,6 +39,16 @@ export interface GeneralInput {
   startTurn?: number;
   session?: SessionState;
   open?: boolean;
+  // The unit type opened on the session; the revision unit reuses this runner.
+  unitType?: "general" | "revision";
+  // The progress/telemetry agent label.
+  agent?: "general" | "revision";
+  // The base prompt (a revision unit supplies its own).
+  basePrompt?: string;
+  // The `state_changed.state` label.
+  stateLabel?: string;
+  // The final no-tools instruction used at the turn cap.
+  finalInstruction?: string;
   // Engine-recorded workspace facts (project directory and top-level structure).
   workspace?: string;
   // The entry checkpoint id; the read-only unit restores any mutation when it ends.
@@ -140,9 +150,17 @@ function historyOf(state: State, requestId: string): TapeMessage[] {
   return history;
 }
 
-function messagesOf(state: State, requestId: string, workspace?: string): ModelMessage[] {
+const DEFAULT_FINAL_INSTRUCTION =
+  "The turn limit is reached. Write the final answer now as text from what you have already read. Use only that material: do not invent or extrapolate collection names, datasets, results, paths, or numbers. If something is not established by what you read, say so explicitly instead of guessing. Do not inspect anything else; the engine records your text as the answer.";
+
+function messagesOf(
+  state: State,
+  requestId: string,
+  workspace: string | undefined,
+  basePrompt: string,
+): ModelMessage[] {
   return [
-    { role: "system", content: GENERAL_BASE_PROMPT },
+    { role: "system", content: basePrompt },
     ...(workspace !== undefined ? [{ role: "system" as const, content: workspace }] : []),
     ...historyMessages(historyOf(state, requestId)),
   ];
@@ -163,12 +181,17 @@ export async function runGeneralAgent(
   const startTurn = input.startTurn ?? 0;
   let events: Event[] = input.seed !== undefined ? [...input.seed] : seedGeneral(input.request);
   const requestId = input.request.id;
+  const unitType = input.unitType ?? "general";
+  const agent = input.agent ?? "general";
+  const basePrompt = input.basePrompt ?? GENERAL_BASE_PROMPT;
+  const stateLabel = input.stateLabel ?? GENERAL_STATE;
+  const finalInstruction = input.finalInstruction ?? DEFAULT_FINAL_INSTRUCTION;
   if (turnsOf(fold(events), requestId) === undefined) {
     return { events, done: true, stopReason: "no_state", turns: startTurn };
   }
 
   if (input.open === true && session !== undefined) {
-    openUnit(session, input.request.id, "general", events, startTurn, input.planItem);
+    openUnit(session, input.request.id, unitType, events, startTurn, input.planItem);
     pushUnit(session, input.request.id, startTurn);
     if (input.snapshot !== undefined) {
       unitOf(session, input.request.id).checkpoint = input.snapshot;
@@ -181,7 +204,7 @@ export async function runGeneralAgent(
     type: "state_changed",
     unitId,
     turn: startTurn,
-    state: GENERAL_STATE,
+    state: stateLabel,
     what: input.request.text,
     closed: false,
   });
@@ -195,14 +218,14 @@ export async function runGeneralAgent(
   while (turn < maxTurns) {
     if (isAborted(input.signal)) {
       paused = true;
-      emit?.({ type: "paused", agent: "general", unitId });
+      emit?.({ type: "paused", agent, unitId });
       break;
     }
     const state = fold(events);
-    const messages = messagesOf(state, requestId, input.workspace);
+    const messages = messagesOf(state, requestId, input.workspace, basePrompt);
     const startedAt = Date.now();
-    emit?.({ type: "turn_started", agent: "general", unitId, turn });
-    emit?.({ type: "model_call_started", agent: "general", unitId, turn });
+    emit?.({ type: "turn_started", agent, unitId, turn });
+    emit?.({ type: "model_call_started", agent, unitId, turn });
     let proposals: Proposals;
     try {
       proposals = await deps.propose(
@@ -213,7 +236,7 @@ export async function runGeneralAgent(
       deps.telemetry?.record({
         type: "model_call",
         sessionId: LOCAL_SESSION_ID,
-        agent: "general",
+        agent,
         unitId,
         turn,
         model: "",
@@ -224,7 +247,7 @@ export async function runGeneralAgent(
       });
       if (isAborted(input.signal)) {
         paused = true;
-        emit?.({ type: "paused", agent: "general", unitId });
+        emit?.({ type: "paused", agent, unitId });
         break;
       }
       throw error;
@@ -232,7 +255,7 @@ export async function runGeneralAgent(
     deps.telemetry?.record({
       type: "model_call",
       sessionId: LOCAL_SESSION_ID,
-      agent: "general",
+      agent,
       unitId,
       turn,
       model: proposals.model ?? "",
@@ -244,7 +267,7 @@ export async function runGeneralAgent(
     });
     emit?.({
       type: "model_call_finished",
-      agent: "general",
+      agent,
       unitId,
       turn,
       model: proposals.model,
@@ -260,7 +283,7 @@ export async function runGeneralAgent(
     if (actions.length === 0) {
       stopReason = "no_decision";
       done = true;
-      emit?.({ type: "turn_finished", agent: "general", unitId, turn, stopReason });
+      emit?.({ type: "turn_finished", agent, unitId, turn, stopReason });
       break;
     }
 
@@ -281,7 +304,7 @@ export async function runGeneralAgent(
           : undefined;
       emit?.({
         type: "tool_started",
-        agent: "general",
+        agent,
         unitId,
         turn,
         tool,
@@ -300,7 +323,7 @@ export async function runGeneralAgent(
       );
       emit?.({
         type: "tool_finished",
-        agent: "general",
+        agent,
         unitId,
         turn,
         tool,
@@ -311,7 +334,7 @@ export async function runGeneralAgent(
       deps.telemetry?.record({
         type: "tool_call",
         sessionId: LOCAL_SESSION_ID,
-        agent: "general",
+        agent,
         unitId,
         turn,
         tool: target,
@@ -326,7 +349,7 @@ export async function runGeneralAgent(
           type: "state_changed",
           unitId,
           turn,
-          state: GENERAL_STATE,
+          state: stateLabel,
           closed: true,
         });
         break;
@@ -334,9 +357,9 @@ export async function runGeneralAgent(
     }
 
     turn += 1;
-    emit?.({ type: "turn_finished", agent: "general", unitId, turn: turn - 1, stopReason });
+    emit?.({ type: "turn_finished", agent, unitId, turn: turn - 1, stopReason });
     if (paused) {
-      emit?.({ type: "paused", agent: "general", unitId });
+      emit?.({ type: "paused", agent, unitId });
       break;
     }
     if (done) break;
@@ -346,16 +369,12 @@ export async function runGeneralAgent(
   // work already read still produces a report instead of an empty `max_turns` result.
   if (!done && !paused) {
     const messages: ModelMessage[] = [
-      ...messagesOf(fold(events), requestId, input.workspace),
-      {
-        role: "system",
-        content:
-          "The turn limit is reached. Write the final answer now as text from what you have already read. Use only that material: do not invent or extrapolate collection names, datasets, results, paths, or numbers. If something is not established by what you read, say so explicitly instead of guessing. Do not inspect anything else; the engine records your text as the answer.",
-      },
+      ...messagesOf(fold(events), requestId, input.workspace, basePrompt),
+      { role: "system", content: finalInstruction },
     ];
     const startedAt = Date.now();
-    emit?.({ type: "turn_started", agent: "general", unitId, turn });
-    emit?.({ type: "model_call_started", agent: "general", unitId, turn });
+    emit?.({ type: "turn_started", agent, unitId, turn });
+    emit?.({ type: "model_call_started", agent, unitId, turn });
     let proposals: Proposals | undefined;
     try {
       proposals = await deps.propose(messages, {
@@ -366,7 +385,7 @@ export async function runGeneralAgent(
       deps.telemetry?.record({
         type: "model_call",
         sessionId: LOCAL_SESSION_ID,
-        agent: "general",
+        agent,
         unitId,
         turn,
         model: proposals.model ?? "",
@@ -378,7 +397,7 @@ export async function runGeneralAgent(
       });
       emit?.({
         type: "model_call_finished",
-        agent: "general",
+        agent,
         unitId,
         turn,
         model: proposals.model,
@@ -390,7 +409,7 @@ export async function runGeneralAgent(
       deps.telemetry?.record({
         type: "model_call",
         sessionId: LOCAL_SESSION_ID,
-        agent: "general",
+        agent,
         unitId,
         turn,
         model: "",
@@ -401,14 +420,14 @@ export async function runGeneralAgent(
       });
       emit?.({
         type: "model_call_finished",
-        agent: "general",
+        agent,
         unitId,
         turn,
         status: isAborted(input.signal) ? "aborted" : "error",
       });
       if (isAborted(input.signal)) {
         paused = true;
-        emit?.({ type: "paused", agent: "general", unitId });
+        emit?.({ type: "paused", agent, unitId });
       }
     }
 
@@ -419,7 +438,7 @@ export async function runGeneralAgent(
           ? (stop.why ?? "").trim()
           : proposals.thought.trim();
       if (report !== "") {
-        emit?.({ type: "tool_started", agent: "general", unitId, turn, tool: "stop", target: "stop" });
+        emit?.({ type: "tool_started", agent, unitId, turn, tool: "stop", target: "stop" });
         const before = events.length;
         const outcome = executeAction(
           { operator: "stop", why: report },
@@ -432,7 +451,7 @@ export async function runGeneralAgent(
         emit?.({ type: "events_added", unitId, events: events.slice(before) });
         emit?.({
           type: "tool_finished",
-          agent: "general",
+          agent,
           unitId,
           turn,
           tool: "stop",
@@ -443,7 +462,7 @@ export async function runGeneralAgent(
         deps.telemetry?.record({
           type: "tool_call",
           sessionId: LOCAL_SESSION_ID,
-          agent: "general",
+          agent,
           unitId,
           turn,
           tool: "stop",
@@ -453,13 +472,13 @@ export async function runGeneralAgent(
         });
         done = true;
         stopReason = "answered";
-        emit?.({ type: "state_changed", unitId, turn, state: GENERAL_STATE, closed: true });
+        emit?.({ type: "state_changed", unitId, turn, state: stateLabel, closed: true });
       }
     }
     turn += 1;
     emit?.({
       type: "turn_finished",
-      agent: "general",
+      agent,
       unitId,
       turn: turn - 1,
       stopReason: stopReason ?? "max_turns",

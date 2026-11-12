@@ -6,7 +6,6 @@ import {
   turnsOf,
   type State,
 } from "../ir/graph";
-import type { PlanItemKind } from "../ir/types";
 import { currentMove } from "../ir/traversal";
 import {
   blockedItem,
@@ -103,7 +102,6 @@ export interface PlanItemView {
   id: string;
   order: number;
   title: string;
-  kind: PlanItemKind;
   status: PlanItemStatus;
   done?: string;
 }
@@ -186,7 +184,7 @@ function usageFor(
   unitId: string,
   startTurn: number,
   endTurn: number,
-  agent: "task" | "general",
+  agent: "task" | "general" | "revision",
 ): {
   input: number;
   output: number;
@@ -224,7 +222,7 @@ function usageFor(
 function turnDetailsFor(
   events: readonly MetricEvent[],
   unitId: string,
-  agent: "task" | "general",
+  agent: "task" | "general" | "revision",
   startTurn: number,
   endTurn: number,
 ): TaskTurn[] {
@@ -289,14 +287,14 @@ function buildTask(
   // single state so the panel keeps its turns and token totals.
   const requestAnchored =
     rawIds.length === 0 &&
-    unit.type === "general" &&
+    (unit.type === "general" || unit.type === "revision") &&
     rootId !== undefined &&
     (turnsOf(state, rootId) !== undefined || stopOf(state, rootId) !== undefined);
   const ids = requestAnchored && rootId !== undefined ? [rootId] : rawIds;
   const states: TaskState[] = ids.map((id, index) => {
     const payload =
       requestAnchored && id === rootId
-        ? { state: "general", what: requestText(unit.journal), turn: 0 }
+        ? { state: unit.type, what: requestText(unit.journal), turn: 0 }
         : movePayload(state, id);
     const start = payload.turn ?? 0;
     const next = ids[index + 1];
@@ -307,12 +305,12 @@ function buildTask(
       unit.id,
       start,
       end,
-      unit.type === "general" ? "general" : "task",
+      unit.type === "revision" ? "revision" : unit.type === "general" ? "general" : "task",
     );
     const turnDetails = turnDetailsFor(
       telemetry,
       unit.id,
-      unit.type === "general" ? "general" : "task",
+      unit.type === "revision" ? "revision" : unit.type === "general" ? "general" : "task",
       start,
       end,
     );
@@ -423,7 +421,6 @@ function buildPlanView(
       id: item.id,
       order: item.order,
       title: item.title,
-      kind: item.kind,
       status: itemStatus,
       ...(item.done !== undefined ? { done: item.done } : {}),
     })),
@@ -448,7 +445,7 @@ export function buildTuiView(
   const now = options.now ?? Date.now();
   const timings = options.timings ?? new Map<string, TaskTiming>();
   const tasks = unitsInOrder(session).filter(
-    (unit) => unit.type === "task" || unit.type === "general",
+    (unit) => unit.type === "task" || unit.type === "general" || unit.type === "revision",
   );
   const byTask = new Map<string, TaskView>();
   tasks.forEach((unit, index) => {

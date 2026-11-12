@@ -69,20 +69,26 @@ function decisionOf(session: SessionState, unitId: string): TraceDecision | unde
   return Object.keys(decision).length > 0 ? decision : undefined;
 }
 
+function operationText(operation: SessionOperation): string {
+  switch (operation.kind) {
+    case "respond":
+      return `respond: "${short(operation.text)}"`;
+    case "general":
+      return `general: "${short(operation.text)}"`;
+    case "revision":
+      return `revision: "${short(operation.text)}"`;
+    case "plan":
+      return `plan: "${short(operation.text)}"`;
+    case "document":
+      return `document: "${short(operation.text)}"`;
+    case "task":
+      return `task: "${short(operation.text)}"`;
+  }
+}
+
 function decisionText(decision: TraceDecision): string {
   const { operation, reason, reasoning, noDecision } = decision;
-  const text =
-    operation === undefined
-      ? ""
-      : operation.kind === "respond"
-        ? `respond: "${short(operation.text)}"`
-      : operation.kind === "general"
-        ? `general: "${short(operation.text)}"`
-        : operation.kind === "plan"
-          ? `plan: "${short(operation.text)}"`
-          : operation.kind === "document"
-            ? `document: "${short(operation.text)}"`
-            : `task: "${short(operation.text)}"`;
+  const text = operation === undefined ? "" : operationText(operation);
   const refused = reason !== undefined ? ` (refused: ${reason})` : "";
   const thought =
     reasoning !== undefined ? ` · reasoning: "${short(reasoning)}"` : "";
@@ -236,7 +242,7 @@ function unitLine(session: SessionState, unit: Unit, index: number): string {
   const ending =
     unit.type === "task"
       ? endingOf(state)
-      : unit.type === "general"
+      : unit.type === "general" || unit.type === "revision"
         ? generalEnding(state, unit)
         : unit.type === "plan"
           ? planEnding(session, unit)

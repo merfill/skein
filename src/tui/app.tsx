@@ -402,7 +402,7 @@ export function TuiApp(props: TuiAppProps) {
       case "turn_started": {
         const unit = sessionRef.current.units.get(event.unitId);
         if (
-          (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") &&
+          (unit?.type === "task" || unit?.type === "general" || unit?.type === "revision" || unit?.type === "plan" || unit?.type === "document") &&
           timingsRef.current.get(event.unitId)?.startedAt === undefined
         ) {
           timingsRef.current.set(event.unitId, { startedAt: Date.now() });
@@ -478,7 +478,7 @@ export function TuiApp(props: TuiAppProps) {
           );
         }
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "revision" || unit?.type === "plan" || unit?.type === "document") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · ${event.tool} ${event.status}`);
@@ -486,7 +486,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "events_added": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "revision" || unit?.type === "plan" || unit?.type === "document") {
           const current = liveJournals.current.get(unit.id) ?? [...unit.journal];
           liveJournals.current.set(unit.id, [...current, ...event.events]);
         }
@@ -506,7 +506,7 @@ export function TuiApp(props: TuiAppProps) {
       }
       case "turn_finished": {
         const unit = sessionRef.current.units.get(event.unitId);
-        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "plan" || unit?.type === "document") {
+        if (unit?.type === "task" || unit?.type === "general" || unit?.type === "revision" || unit?.type === "plan" || unit?.type === "document") {
           unit.turn = Math.max(unit.turn, event.turn + 1);
         }
         setActivity(`${event.agent} · turn done`);
@@ -534,6 +534,9 @@ export function TuiApp(props: TuiAppProps) {
       ...(current.general !== undefined
         ? { general: { ...current.general, onProgress: handleProgress } }
         : {}),
+      ...(current.revision !== undefined
+        ? { revision: { ...current.revision, onProgress: handleProgress } }
+        : {}),
       ...(current.planner !== undefined
         ? { planner: { ...current.planner, onProgress: handleProgress } }
         : {}),
@@ -544,7 +547,8 @@ export function TuiApp(props: TuiAppProps) {
   };
 
   const finishTaskTiming = (result: SessionTurnResult): void => {
-    const finished = result.task ?? result.general ?? result.plan ?? result.document;
+    const finished =
+      result.task ?? result.general ?? result.revision ?? result.plan ?? result.document;
     if (finished === undefined) return;
     const unitId = finished.unitId;
     liveJournals.current.delete(unitId);
@@ -591,6 +595,17 @@ export function TuiApp(props: TuiAppProps) {
               stopReason: result.general.result.stopReason,
               paused: result.general.result.paused === true,
               answer: answerOf(result.general.result.events) ?? null,
+            }
+          : null,
+      revision:
+        result.revision !== undefined
+          ? {
+              unitId: result.revision.unitId,
+              turns: result.revision.result.turns,
+              done: result.revision.result.done,
+              stopReason: result.revision.result.stopReason,
+              paused: result.revision.result.paused === true,
+              answer: answerOf(result.revision.result.events) ?? null,
             }
           : null,
       plan:
@@ -650,6 +665,17 @@ export function TuiApp(props: TuiAppProps) {
         `general ${result.general.unitId} · ${outcome} · ${result.general.result.turns} turns`,
       );
       if (answer !== undefined && answer !== "") {
+        append({ id: nextId(), kind: "assistant", text: answer });
+      }
+    }
+    if (result.revision !== undefined) {
+      const run = result.revision.result;
+      const outcome = run.done ? (run.stopReason ?? "done") : "open";
+      appendNotice(
+        `revision ${result.revision.unitId} · ${outcome} · ${run.turns} turns`,
+      );
+      const answer = answerOf(run.events);
+      if (answer !== undefined && answer.trim() !== "") {
         append({ id: nextId(), kind: "assistant", text: answer });
       }
     }
@@ -830,7 +856,9 @@ export function TuiApp(props: TuiAppProps) {
     const workspace =
       current.agent === "general"
         ? (deps.general?.workspace ?? deps.task.workspace)
-        : current.agent === "plan"
+        : current.agent === "revision"
+          ? (deps.revision?.workspace ?? deps.task.workspace)
+          : current.agent === "plan"
           ? (deps.planner?.workspace ?? deps.task.workspace)
           : current.agent === "document"
             ? (deps.document?.workspace ?? deps.task.workspace)
@@ -848,7 +876,9 @@ export function TuiApp(props: TuiAppProps) {
     const workspace =
       current.agent === "general"
         ? (deps.general?.workspace ?? deps.task.workspace)
-        : current.agent === "plan"
+        : current.agent === "revision"
+          ? (deps.revision?.workspace ?? deps.task.workspace)
+          : current.agent === "plan"
           ? (deps.planner?.workspace ?? deps.task.workspace)
           : current.agent === "document"
             ? (deps.document?.workspace ?? deps.task.workspace)
@@ -1049,15 +1079,6 @@ export function TuiApp(props: TuiAppProps) {
           stopReason: unit.result.stopReason,
         })),
         reply: result.reply ?? null,
-        ...(result.acceptance !== undefined
-          ? {
-              acceptance: {
-                unitId: result.acceptance.unitId,
-                ok: result.acceptance.ok,
-                answer: result.acceptance.answer.slice(0, 600),
-              },
-            }
-          : {}),
       });
       appendNotice(renderPlanRun(result, { answers: false }).join("\n"));
       // Each item's report is Markdown: render it as its own block instead of collapsed plain
@@ -1071,13 +1092,6 @@ export function TuiApp(props: TuiAppProps) {
         if (answer === undefined || answer.trim() === "") continue;
         const label = labels.get(unit.itemId) ?? unit.itemId;
         append({ id: nextId(), kind: "assistant", text: `**${label}**\n\n${answer}` });
-      }
-      if (result.acceptance !== undefined) {
-        append({
-          id: nextId(),
-          kind: "assistant",
-          text: `**Plan acceptance — ${result.acceptance.ok ? "PASS" : "FAIL"}**\n\n${result.acceptance.answer}`,
-        });
       }
       if (
         result.plan !== undefined &&

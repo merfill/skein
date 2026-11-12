@@ -1,6 +1,6 @@
 import type { Event } from "../ir/events";
 
-export type UnitType = "task" | "general" | "plan" | "document" | "observer" | "session";
+export type UnitType = "task" | "general" | "revision" | "plan" | "document" | "observer" | "session";
 
 export interface Unit {
   id: string;
@@ -20,7 +20,7 @@ export interface UnitRef {
 
 export interface PendingUtterance {
   text: string;
-  unitType?: "task" | "general" | "plan" | "document";
+  unitType?: "task" | "general" | "revision" | "plan" | "document";
   // The execution-plan item this pending unit executes; the opened unit records the link.
   planItem?: string;
   planUnitId?: string;
@@ -52,13 +52,17 @@ export type ReactionProposal =
   | { kind: "halt"; reason: string };
 
 // A structured action of the SessionAgent on the session (docs/en/sessions.md §4.3).
-// The model proposes it; the executor checks and applies it as a session event. The vocabulary is
-// deliberately minimal: answer, open a task from a reformulated request, or delegate to the
-// general agent. Resume/cancel strategies and `revise` are deferred.
+// The model proposes it; the executor checks and applies it as a session event: answer, open a
+// task from a reformulated request, delegate to the general agent, carry out a described change,
+// write a document, or develop a plan.
 export type SessionOperation =
   | { kind: "respond"; text: string }
   | { kind: "task"; text: string }
   | { kind: "general"; text: string }
+  // Carry out the change a request describes: edit existing files and run the commands it
+  // needs (add a dependency, update the lock, install a package). One request-anchored goal,
+  // no `move`; the unit closes on a text reply.
+  | { kind: "revision"; text: string }
   // Open the document unit: it writes one large text file section by section, from an
   // outline it submits first (docs/en/sessions.md §4.3).
   | { kind: "document"; text: string }

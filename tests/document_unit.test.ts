@@ -146,12 +146,17 @@ describe("document unit", () => {
         {
           title: "Write the document",
           detail: "Create docs/out.md with the requested sections.",
-          kind: "document",
         },
       ],
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: operations([{ kind: "plan", text: "plan the doc" }]), tools },
+      sessionAgent: {
+        agent: operations([
+          { kind: "plan", text: "plan the doc" },
+          { kind: "document", text: "create docs/out.md" },
+        ]),
+        tools,
+      },
       task: {
         propose: async () => ({ thought: "", actions: [] }),
         workspace: ws,

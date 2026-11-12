@@ -117,7 +117,7 @@ describe("budget pause", () => {
         calls: [
           {
             name: "submit_plan",
-            args: { items: [{ title: "Do it", detail: "Do it.", kind: "task" }] },
+            args: { items: [{ title: "Do it", detail: "Do it." }] },
             callId: "planner:submit",
           },
         ],

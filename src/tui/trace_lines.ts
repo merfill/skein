@@ -48,6 +48,7 @@ const LANGUAGES: Record<string, string> = {
 function agentPrefix(agent: TraceEntry["agent"]): string {
   if (agent === "session") return "[session] ";
   if (agent === "general") return "[general] ";
+  if (agent === "revision") return "[revision] ";
   if (agent === "observer") return "[observer] ";
   return "";
 }

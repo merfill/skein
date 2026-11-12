@@ -22,32 +22,39 @@ executor selects what the current decision requires, and everything else remains
 
 ## 2. Agents and units
 
-Skein separates work by the kind of result and by the scope of attention. Six model-driven agents
+Skein separates work by the kind of result and by the scope of attention. Seven model-driven agents
 cooperate, and each reads a projection of the same kind of IR.
 
 A **unit** is one IR with its own root and journal. A session is a container of units; each agent
-works in a unit of its own type — a session interpretation, a coding task, a general task, a plan
-development, a document write, or an observer run.
+works in a unit of its own type — a session interpretation, a coding task, a general task, a
+revision, a plan development, a document write, or an observer run.
 
 | Agent | Scope | Responsibility | Context |
 |---|---|---|---|
 | Session | the dialogue | interprets an utterance, remembers completed work, routes, formulates a task | the dialogue, the traces of past units, memory tools |
 | Task (coding) | one request | walks the request as a state machine and changes the workspace | only its own request and states |
 | General | one non-coding request | investigates and answers without changing the workspace | its brief, project facts, read-only tools |
+| Revision | one described change | edits existing files and runs the commands the change needs (add/lock/install) | its brief, project facts, workspace tools |
 | Planner | one request | inspects the workspace read-only and returns an ordered plan; does not execute it | the request, project facts, read-only tools |
 | Document | one large text artifact | writes one file section by section; the executor owns the plan and the file | the request, project facts, read-only tools, section briefs |
 | Observer | one stuck state | diagnoses the impasse and advises the task agent | the state tape: request, turns, reasoning, observations |
 
-The session agent is the only agent that sees the whole dialogue. It chooses among five operations:
+The session agent is the only agent that sees the whole dialogue. It chooses among six operations:
 answer from the dialogue (`respond`), delegate an investigation to the general agent (`general`),
-start a coding task (`task`), develop a plan (`plan`), or write a document (`document`). For a
-coding task it formulates a self-contained work order; the task agent receives only that text and
-never reads the session tape or other tasks. Continuity is therefore transferred through the
-formulation, not through shared history.
+carry out a change the request already describes (`revision`), start a coding task (`task`),
+develop a plan (`plan`), or write a document (`document`). For a coding task it formulates a
+self-contained work order; the task agent receives only that text and never reads the session tape
+or other tasks. Continuity is therefore transferred through the formulation, not through shared
+history.
 
 The general agent handles questions that require reading and analysis but no modification. It
 uses inspection tools and a read-only shell; the executor restores any accidental change, so the
 workspace is unchanged by contract. Its result is an answer, not a coding task.
+
+The revision agent carries out a change the request already describes: it edits existing files and
+runs the commands the change needs — adding a dependency, updating the lock, installing a package.
+It is for a change that is given, not for a defect whose cause must be found (that is a task). It
+uses the workspace tools including the side-effecting shell and is mutable by contract.
 
 The planner agent develops a plan: a read-only unit that inspects the workspace and returns an
 ordered list of work orders. It neither changes the workspace nor executes the items; the plan is a

@@ -53,7 +53,9 @@ export async function runRepl(
   const workspaceFor = (state: PausedState) =>
     state.agent === "general"
       ? (deps.general?.workspace ?? deps.task.workspace)
-      : state.agent === "plan"
+      : state.agent === "revision"
+        ? (deps.revision?.workspace ?? deps.task.workspace)
+        : state.agent === "plan"
         ? (deps.planner?.workspace ?? deps.task.workspace)
         : state.agent === "document"
           ? (deps.document?.workspace ?? deps.task.workspace)

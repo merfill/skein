@@ -3,7 +3,7 @@ import type { SessionOperation, SessionState } from "./types";
 
 // The SessionAgent's operations (docs/en/sessions.md §4.3): the model proposes one, the
 // executor checks the preconditions and applies it as a session event. No task journal is touched.
-// The vocabulary is `respond`, `general` and `task`; resume/cancel strategies and `revise` are deferred.
+// The vocabulary is `respond`, `general`, `revision`, `task`, `document` and `plan`.
 
 const MAX_RESPOND_TEXT = 4000;
 const MAX_TASK_TEXT = 4000;
@@ -43,6 +43,8 @@ export function validateOperation(
       return textProblem(operation.text, MAX_TASK_TEXT);
     case "general":
       return textProblem(operation.text, MAX_TASK_TEXT);
+    case "revision":
+      return textProblem(operation.text, MAX_TASK_TEXT);
     case "document":
       return textProblem(operation.text, MAX_TASK_TEXT);
     case "plan":
@@ -75,6 +77,13 @@ export function applyOperation(input: ApplyOperationInput): OperationResult {
       const focus = sessionFocus(session);
       if (focus !== undefined) popUnit(session);
       setPending(session, operation.text, "general", planItem, planUnitId);
+      recordOperation(session, sourceUnit, turn, operation, reasoning);
+      return { ok: true, operation };
+    }
+    case "revision": {
+      const focus = sessionFocus(session);
+      if (focus !== undefined) popUnit(session);
+      setPending(session, operation.text, "revision", planItem, planUnitId);
       recordOperation(session, sourceUnit, turn, operation, reasoning);
       return { ok: true, operation };
     }

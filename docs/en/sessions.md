@@ -16,6 +16,8 @@ The main unit types are:
 
 - `session` — the interpretation of a user utterance and the answer or operation it produces;
 - `general` — a non-coding task that answers a question without changing the workspace;
+- `revision` — carrying out a change the request already describes: edits existing files and runs
+  the commands the change needs (add a dependency, update the lock, install a package);
 - `task` — a coding task that changes the workspace;
 - `plan` — plan development: a read-only agent returns an ordered list of items; it neither
   changes the workspace nor executes the items;
@@ -42,8 +44,8 @@ The trace is an address, not a copy. Details are reached with the read-only memo
 | `body` | L4 | a stored observation body, optionally a line window |
 | `search` | L4 | pattern matches inside a stored body |
 
-`general`, `plan` and `document` have one state anchored on the request: its id is the unit id, and
-`state`/`turns` work with it as with any other state.
+`general`, `revision`, `plan` and `document` have one state anchored on the request: its id is the
+unit id, and `state`/`turns` work with it as with any other state.
 
 The result of a memory call becomes an observation of the calling session unit and is therefore
 addressable in turn. L0 is shown to the session agent in full; the terminal view may bound it.
@@ -51,10 +53,11 @@ addressable in turn. L0 is shown to the session agent in full; the terminal view
 ## 3. The session agent
 
 The session agent is the only agent that sees the dialogue. It reads the current utterance and the
-traces, and chooses one of five operations:
+traces, and chooses one of six operations:
 
 - `respond` — answer from the dialogue and earlier work;
 - `general` — delegate an investigation to the general agent;
+- `revision` — carry out a change the request already describes (files plus commands);
 - `task` — open a coding task with a self-contained work order;
 - `plan` — open a plan-development unit: a read-only agent reads the request and the workspace and
   returns an ordered list of items;
@@ -64,9 +67,9 @@ Before opening a task, the session agent **reformulates** the request from the d
 traces: what to do now, which constraints and findings from the past matter. Confirmation by the
 user is an optional interaction policy, not an IR step.
 
-The session agent has no workspace tools. Material questions go to the general unit; workspace
-changes go to the task unit. `search` remains a memory tool over stored bodies, not a workspace
-search.
+The session agent has no workspace tools. Material questions go to the general unit; a change the
+request already describes goes to the revision unit; work whose cause or approach must be found
+goes to the task unit. `search` remains a memory tool over stored bodies, not a workspace search.
 
 ## 4. Isolation and continuity
 
@@ -85,6 +88,7 @@ unit.
 |---|---|---|
 | `respond` | always; non-empty text up to 4000 characters | answers the user in GitHub-flavored Markdown; task journals are unchanged |
 | `general` | there is a text up to 4000 characters | pops the current focus and opens a general unit with that text |
+| `revision` | there is a text up to 4000 characters | pops the current focus and opens a revision unit with that text |
 | `task` | there is a coding-task text up to 4000 characters | pops the current focus and opens a coding task with that text |
 | `plan` | there is a text up to 4000 characters | pops the current focus and opens a plan-development unit with that text |
 | `document` | there is a text up to 4000 characters | pops the current focus and opens a document unit with that text |
@@ -130,26 +134,30 @@ closes no state and changes no focus.
 
 ## 8. Plan execution
 
-A plan is a session-level artifact, not a task state. The `plan` unit (read-only; `shell` is
-allowed, mutations are rolled back on exit and recorded as `rollback`) writes a `plan` node and its
-ordered `plan_item` nodes (title, detail, kind `general|task|document`, done) into its journal. The
-plan's Markdown is a render of those nodes, not a second source of truth.
+A plan is a session-level artifact, not a task state. The `plan` unit is strictly read-only: it
+inspects with `read`/`grep`/`list`/`recall`/`search`, has no shell and no write tools, and any
+off-surface tool call is refused, never executed. It writes a `plan` node and its
+ordered `plan_item` nodes (title, detail, done) into its journal. An item is a work order, not a
+classification: the planner does not choose the operation. The plan's Markdown is a render of those
+nodes, not a second source of truth.
 
 After the plan is developed the interface asks the user whether to execute or rework it.
 Confirmation is an interaction policy, not an IR step. Rework opens a new `plan` unit (a new
 version); older items are never rewritten.
 
-On execution the driver records `plan_started` and walks the items in order. A `document` item
-opens the document unit directly, without a session-agent pass. For any other item the session
-agent is invoked again: it sees the plan with statuses, chooses `task` or `general`, and
-reformulates a self-contained work order. The item runs as an ordinary unit linked to it
-(`planItem`); only the current item's work order reaches the unit's agent — never the whole list.
+On execution the driver records `plan_started` and walks the items in order. For each item the
+session agent is invoked: it sees the plan with statuses and the earlier items' results, chooses
+the operation (`revision`, `task`, `general`, `document` or `plan`), and reformulates a
+self-contained work order. The item runs as an ordinary unit linked to it (`planItem`); only the
+current item's work order reaches the unit's agent — never the whole list.
 
 An item's status is derived from its unit's journal: `completed` means the item is done;
 `abandoned` stops the plan and records `plan_finished` with status `aborted`; `active/suspended` is
 a pause. After the last item, `plan_finished { status, n/N }` is recorded — the special
 plan-completion element in the session trace. `plan_started`/`plan_finished` are session-journal
-events; the mode and cursor are derived, never stored.
+events; the mode and cursor are derived, never stored. There is no separate acceptance pass: the
+plan is done when the last item's unit closes. An item's `done` note is the work order's own check,
+carried into the unit by the session agent rather than re-judged after the fact.
 
 ## 9. The general agent
 
@@ -161,7 +169,19 @@ model closes it with a text answer, recorded as the request's `stop`; the sessio
 with the answer. The general agent does not write a post-task report and does not open further
 units.
 
-## 10. The document agent
+## 10. The revision agent
+
+The revision agent carries out a change the request already describes: it edits existing files and
+runs the commands the change needs — adding a dependency, updating the lock, installing a package.
+It is for work whose change is given, not for a defect whose cause must be found (that is a task).
+
+It has one state anchored on the request: `move` is not used, the tape hangs off the request, and
+the model closes it with a text reply recorded as the request's `stop`. It works with the workspace
+tools, including the side-effecting `bash`; unlike the general agent it is mutable, so it has no
+read-only snapshot and no rollback. The same unit is opened directly by the `revision` operation and
+by a plan item the session agent routes to it.
+
+## 11. The document agent
 
 The document agent produces one text file (Markdown by default) in the request's language, writing
 it section by section. The unit has one state anchored on the request: `move` is not used, the tape
@@ -178,9 +198,10 @@ hangs off the request, and the executor decides when it is done.
    the executor records it and closes the unit with the request's `stop`.
 
 The model never emits the whole file at once and never chooses when to stop: the executor walks the
-outline. The same unit is opened directly by the `document` operation and as a `document` plan item.
+outline. The same unit is opened by the `document` operation — both directly and from a plan item
+the session agent routes to it.
 
-## 11. The observer
+## 12. The observer
 
 The observer is an advisory service unit. A deterministic trigger opens it when a task repeats a
 state, spends too long in one state, or approaches its turn budget. The observer reads the **state
@@ -194,14 +215,14 @@ one of:
 The observer never edits the task. Its units are service units and are not shown in the session
 trace. The observer is optional and disabled by default; `SKEIN_OBSERVER=true` enables it.
 
-## 12. Errors
+## 13. Errors
 
 A persistent model error still produces a result. The executor closes the failed state with an
 error-marked closure, enters the terminal state and writes the final report there; if the report
 call also fails, the report falls back deterministically to the `Finish` lines. The task unit is
 then `abandoned`, not `completed`.
 
-## 13. Non-goals
+## 14. Non-goals
 
 - No similarity search or RAG: selection is by structure and declared rules.
 - No summary as truth: a trace is an address and a short fact, not knowledge.

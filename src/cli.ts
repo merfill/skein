@@ -11,6 +11,7 @@ import type { Action } from "./llm/schemas";
 import { createSessionAgentDeps } from "./llm/session_agent";
 import { modelDocumentPlanAgent, modelDocumentTextAgent } from "./llm/document";
 import { modelGeneralProposer } from "./llm/general";
+import { modelRevisionProposer } from "./llm/revision";
 import { modelPlannerAgent } from "./llm/planner";
 import { modelProposer, type Proposer } from "./loop/propose";
 import { probeSession } from "./loop/probe";
@@ -273,6 +274,12 @@ async function main(): Promise<void> {
         propose: modelGeneralProposer(model, { settings: agentSettings }),
         workspace,
         maxTurns: args.maxTurns ?? agentSettings.generalMaxTurns,
+        telemetry: telemetry.sink,
+      },
+      revision: {
+        propose: modelRevisionProposer(model, { settings: agentSettings }),
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.maxTurns,
         telemetry: telemetry.sink,
       },
       planGeneralMaxTurns: args.maxTurns ?? agentSettings.planGeneralMaxTurns,

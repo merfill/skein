@@ -81,7 +81,7 @@ export function observerDepth(session: SessionState): number {
 export function setPending(
   session: SessionState,
   text: string,
-  unitType: "task" | "general" | "plan" | "document" = "task",
+  unitType: "task" | "general" | "revision" | "plan" | "document" = "task",
   planItem?: string,
   planUnitId?: string,
 ): void {
@@ -264,7 +264,12 @@ function unitCompleted(session: SessionState, unit: Unit): boolean {
   if (unit.type === "task") return taskEnded(unit.journal);
   // General, plan and document units have no `move`: their tape hangs off the request and the
   // unit closes on the request's `stop`.
-  if (unit.type === "general" || unit.type === "plan" || unit.type === "document") {
+  if (
+    unit.type === "general" ||
+    unit.type === "revision" ||
+    unit.type === "plan" ||
+    unit.type === "document"
+  ) {
     return stopOf(fold(unit.journal), unit.id) !== undefined;
   }
   // A session unit is completed once its operation is committed or refused.

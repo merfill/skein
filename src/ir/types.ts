@@ -75,16 +75,13 @@ export interface MovePayload {
   turn?: number;
 }
 
-// A plan item is one work order the session agent executes as an ordinary unit. `kind` is the
-// agent the item needs (a general answer or a workspace change); it is the planner's mark, and
-// the session agent still chooses the operation it opens. `order` is the item's 1-based place
-// in the plan; items are never rewritten, a rework is a new plan.
-export type PlanItemKind = "general" | "task" | "document";
-
+// A plan item is one work order the session agent executes as an ordinary unit. It carries no
+// operation: the session agent chooses the operation when it executes the item, with the plan
+// and the results of the earlier items in view. `order` is the item's 1-based place in the
+// plan; items are never rewritten, a rework is a new plan.
 export interface PlanItemPayload {
   title: string;
   detail: string;
-  kind: PlanItemKind;
   done?: string;
   order: number;
 }

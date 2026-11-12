@@ -88,8 +88,8 @@ describe("execution plan", () => {
     const draft: PlannerDraft = {
       summary: "Two-step plan",
       items: [
-        { title: "Fix the bug", detail: "Fix the bug in the source.", kind: "task" },
-        { title: "Report", detail: "Report what was fixed.", kind: "general" },
+        { title: "Fix the bug", detail: "Fix the bug in the source." },
+        { title: "Report", detail: "Report what was fixed." },
       ],
     };
     const deps: SessionTurnDeps = {
@@ -136,7 +136,7 @@ describe("execution plan", () => {
   it("stops the plan when an item's unit is abandoned", async () => {
     const { ws } = makeWorkspace();
     const draft: PlannerDraft = {
-      items: [{ title: "Fix it", detail: "Fix it.", kind: "task" }],
+      items: [{ title: "Fix it", detail: "Fix it." }],
     };
     const deps: SessionTurnDeps = {
       sessionAgent: {
@@ -168,7 +168,7 @@ describe("execution plan", () => {
   it("offers the plan menu and executes it from the REPL", async () => {
     const { ws } = makeWorkspace();
     const draft: PlannerDraft = {
-      items: [{ title: "Fix it", detail: "Fix it.", kind: "task" }],
+      items: [{ title: "Fix it", detail: "Fix it." }],
     };
     const deps: SessionTurnDeps = {
       sessionAgent: {
@@ -197,12 +197,12 @@ describe("execution plan", () => {
   it("keeps the first plan untouched when a rework opens a new plan unit", async () => {
     const { ws } = makeWorkspace();
     const firstDraft: PlannerDraft = {
-      items: [{ title: "First plan item", detail: "Do the first thing.", kind: "task" }],
+      items: [{ title: "First plan item", detail: "Do the first thing." }],
     };
     const secondDraft: PlannerDraft = {
       items: [
-        { title: "Revised A", detail: "Do A.", kind: "task" },
-        { title: "Revised B", detail: "Do B.", kind: "general" },
+        { title: "Revised A", detail: "Do A." },
+        { title: "Revised B", detail: "Do B." },
       ],
     };
     const session = createSession();
@@ -242,7 +242,7 @@ describe("execution plan", () => {
   it("shows the active plan to the session agent on each item interpretation", async () => {
     const { ws } = makeWorkspace();
     const draft: PlannerDraft = {
-      items: [{ title: "Fix it", detail: "Fix it.", kind: "task" }],
+      items: [{ title: "Fix it", detail: "Fix it." }],
     };
     const seen: string[] = [];
     let first = true;
@@ -282,7 +282,7 @@ describe("execution plan", () => {
           calls: [
             {
               name: "submit_plan",
-              args: { items: [{ title: "From the cap", detail: "Do it.", kind: "task" }] },
+              args: { items: [{ title: "From the cap", detail: "Do it." }] },
               callId: "final",
             },
           ],
@@ -311,7 +311,7 @@ describe("execution plan", () => {
   it("gives a plan item's general unit the larger plan budget", async () => {
     const { ws } = makeWorkspace({ "a.txt": "hello\n" });
     const draft: PlannerDraft = {
-      items: [{ title: "Investigate", detail: "Investigate it.", kind: "general" }],
+      items: [{ title: "Investigate", detail: "Investigate it." }],
     };
     let calls = 0;
     const generalPropose = async (): Promise<Proposals> => {
@@ -362,7 +362,7 @@ describe("execution plan", () => {
         calls: [
           {
             name: "submit_plan",
-            args: { items: [{ title: "T", detail: "D", kind: "task" }] },
+            args: { items: [{ title: "T", detail: "D" }] },
             callId: "plan:1",
           },
         ],
@@ -383,12 +383,12 @@ describe("execution plan", () => {
     expect(text).not.toContain("[truncated]");
   });
 
-  it("runs a declared acceptance check and aborts the plan when it fails", async () => {
+  it("closes the plan done when the last item completes, with no separate acceptance pass", async () => {
     const { ws } = makeWorkspace();
     const draft: PlannerDraft = {
       summary: "Add a solver",
       items: [
-        { title: "Implement", detail: "Implement the solver.", kind: "task", done: "solver.py exists" },
+        { title: "Implement", detail: "Implement the solver.", done: "solver.py exists" },
       ],
     };
     const deps: SessionTurnDeps = {
@@ -400,46 +400,6 @@ describe("execution plan", () => {
         tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
-      general: {
-        propose: async () => ({ thought: "solver.py is missing.\nVERDICT: FAIL", actions: [] }),
-        workspace: ws,
-        maxTurns: 4,
-      },
-      planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
-    };
-    const session = createSession();
-    const planned = await runSessionTurn(deps, session, "plan it");
-
-    const run = await executePlan(deps, session, planned.plan!.unitId);
-
-    expect(run.status).toBe("aborted");
-    expect(run.acceptance?.ok).toBe(false);
-    expect(run.acceptance?.answer).toContain("VERDICT: FAIL");
-    expect(planFinished(session, "p1")).toEqual({ status: "aborted", completed: 1, total: 1 });
-  });
-
-  it("closes the plan done when the acceptance check passes", async () => {
-    const { ws } = makeWorkspace();
-    const draft: PlannerDraft = {
-      summary: "Add a solver",
-      items: [
-        { title: "Implement", detail: "Implement the solver.", kind: "task", done: "solver.py exists" },
-      ],
-    };
-    const deps: SessionTurnDeps = {
-      sessionAgent: {
-        agent: operations([
-          { kind: "plan", text: "plan it" },
-          { kind: "task", text: "implement it" },
-        ]),
-        tools,
-      },
-      task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
-      general: {
-        propose: async () => ({ thought: "All conditions hold.\nVERDICT: PASS", actions: [] }),
-        workspace: ws,
-        maxTurns: 4,
-      },
       planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
     };
     const session = createSession();
@@ -448,14 +408,15 @@ describe("execution plan", () => {
     const run = await executePlan(deps, session, planned.plan!.unitId);
 
     expect(run.status).toBe("done");
-    expect(run.acceptance?.ok).toBe(true);
     expect(planFinished(session, "p1")).toEqual({ status: "done", completed: 1, total: 1 });
+    // The plan closes on the last item's own result: no acceptance unit is opened.
+    expect([...session.units.values()].filter((unit) => unit.type === "general")).toHaveLength(0);
   });
 
-  it("restores a planner's shell mutation on exit", async () => {
+  it("refuses an off-surface call in the planner and never mutates the workspace", async () => {
     const { ws, root } = makeWorkspace({}, { checkpoints: true });
     const draft: PlannerDraft = {
-      items: [{ title: "Build", detail: "Build it.", kind: "task" }],
+      items: [{ title: "Build", detail: "Build it." }],
     };
     const deps: SessionTurnDeps = {
       sessionAgent: {
@@ -464,9 +425,8 @@ describe("execution plan", () => {
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: {
-        ...plannerFor(draft, [
-          { name: "shell", args: { command: "mkdir leaked" } },
-        ]),
+        // The planner's surface has no `shell`/`bash`/`edit`; the loop must not execute it.
+        ...plannerFor(draft, [{ name: "shell", args: { command: "mkdir leaked" } }]),
         workspace: ws,
         maxTurns: 4,
       },
@@ -476,10 +436,5 @@ describe("execution plan", () => {
     const result = await runSessionTurn(deps, session, "plan only");
     expect(result.plan?.result.plan?.items).toHaveLength(1);
     expect(existsSync(join(root, "leaked"))).toBe(false);
-    expect(
-      unitOf(session, "p1").journal.some(
-        (event) => event.type === "rollback" && event.reason === "plan-read-only",
-      ),
-    ).toBe(true);
   });
 });

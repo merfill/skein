@@ -70,7 +70,7 @@ reached with the memory tools and become observations of the calling unit. See
 
 **A plan.** While a plan is executing, the session agent's context receives a separate `system`
 block: the active plan, its item statuses and the current item. Only the current item's work order
-reaches the unit's agent — a `document` item opens the document unit directly — never the whole
+reaches the unit's agent — the session agent picks the operation and opens the unit — never the whole
 list. The line `plan <id>: done|aborted (n/N)` is
 the special plan-completion element in the session trace; `plan_started`/`plan_finished` are
 session-journal events, and the block is rebuilt from them every turn.

@@ -1,5 +1,5 @@
 import { fold, type State } from "../ir/graph";
-import type { PlanItemKind, PlanItemPayload, PlanPayload } from "../ir/types";
+import type { PlanItemPayload, PlanPayload } from "../ir/types";
 import { attentionOf, unitsInOrder } from "./session";
 import type { SessionState, Unit } from "./types";
 
@@ -11,7 +11,6 @@ export interface PlanItemData {
   id: string;
   title: string;
   detail: string;
-  kind: PlanItemKind;
   done?: string;
   order: number;
 }
@@ -43,8 +42,6 @@ function itemsOf(state: State, planId: string): PlanItemData[] {
     const payload = node.payload as Partial<PlanItemPayload> | undefined;
     const title = typeof payload?.title === "string" ? payload.title : node.label;
     const detail = typeof payload?.detail === "string" ? payload.detail : "";
-    const kind: PlanItemKind =
-      payload?.kind === "general" ? "general" : payload?.kind === "document" ? "document" : "task";
     const order = typeof payload?.order === "number" ? payload.order : items.length + 1;
     items.push({
       seq: node.seq,
@@ -52,7 +49,6 @@ function itemsOf(state: State, planId: string): PlanItemData[] {
         id: node.id,
         title,
         detail,
-        kind,
         ...(typeof payload?.done === "string" && payload.done !== "" ? { done: payload.done } : {}),
         order,
       },
@@ -210,8 +206,7 @@ export function renderPlanState(session: SessionState, plan: PlanData): string {
           : status === "abandoned"
             ? "!"
             : " ";
-    const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
-    lines.push(`[${marker}] ${item.order}. ${item.title} (${kind}, ${status})`);
+    lines.push(`[${marker}] ${item.order}. ${item.title} (${status})`);
     if (item.detail !== "") lines.push(`      ${item.detail}`);
     if (item.done !== undefined) lines.push(`      Done when: ${item.done}`);
   }
@@ -222,7 +217,7 @@ export function renderPlanState(session: SessionState, plan: PlanData): string {
   } else {
     const next = nextPendingItem(session, plan);
     if (next !== undefined) {
-      lines.push(`Next item: ${next.order}. ${next.title} (${next.kind}).`);
+      lines.push(`Next item: ${next.order}. ${next.title}.`);
     }
   }
   return lines.join("\n");

@@ -13,6 +13,7 @@ import {
   type DocumentResult,
 } from "./document";
 import { runGeneralAgent, type GeneralDeps, type GeneralResult } from "./general";
+import { runRevisionUnit, type RevisionDeps } from "./revision";
 import { runRequestObserver } from "./observer";
 import {
   activePlanState,
@@ -23,7 +24,6 @@ import {
   blockedItem,
   nextPendingItem,
   renderPlanState,
-  type PlanData,
 } from "./plan";
 import { runPlanner, type PlannerDeps, type PlannerResult } from "./planner";
 import {
@@ -61,6 +61,7 @@ export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
   general?: GeneralDeps;
+  revision?: RevisionDeps;
   planner?: PlannerDeps;
   document?: DocumentDeps;
   // The general unit's cap when it executes a plan item (a deeper investigation than a
@@ -91,7 +92,7 @@ export interface SessionTurnOptions {
 }
 
 export interface PausedState {
-  agent: "session" | "task" | "general" | "plan" | "document" | "observer";
+  agent: "session" | "task" | "general" | "revision" | "plan" | "document" | "observer";
   // The paused unit: the session unit, the task unit, or the observer unit.
   unitId: string;
   utterance: string;
@@ -123,6 +124,7 @@ export interface SessionTurnResult {
   reply?: string;
   task?: { unitId: string; result: AgentResult };
   general?: { unitId: string; result: GeneralResult };
+  revision?: { unitId: string; result: GeneralResult };
   document?: { unitId: string; result: DocumentResult };
   // The plan unit just developed (the user confirms execution separately).
   plan?: { unitId: string; result: PlannerResult };
@@ -166,6 +168,12 @@ function nextDocumentId(session: SessionState): string {
   let index = 1;
   while (session.units.has(`d${index}`)) index += 1;
   return `d${index}`;
+}
+
+function nextRevisionId(session: SessionState): string {
+  let index = 1;
+  while (session.units.has(`v${index}`)) index += 1;
+  return `v${index}`;
 }
 
 // `progress` checks request closure before syncing the focus unit journal, so the final stop
@@ -234,6 +242,13 @@ function generalContextText(deps: SessionTurnDeps): string {
 
 function documentContextText(deps: SessionTurnDeps): string {
   const workspace = deps.document?.workspace ?? deps.task.workspace;
+  const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
+  const instructions = projectInstructionsText(workspace);
+  return instructions === "" ? facts : `${facts}\n\n${instructions}`;
+}
+
+function revisionContextText(deps: SessionTurnDeps): string {
+  const workspace = deps.revision?.workspace ?? deps.task.workspace;
   const facts = generalFactsText(deps.sessionProbe?.(), workspaceRoot(workspace));
   const instructions = projectInstructionsText(workspace);
   return instructions === "" ? facts : `${facts}\n\n${instructions}`;
@@ -457,6 +472,33 @@ async function dispatch(
     return result;
   }
 
+  if (applied.operation.kind === "revision") {
+    if (deps.revision === undefined) return result;
+    const unitId = nextRevisionId(session);
+    const run = await runRevisionUnit(deps.revision, {
+      request: { id: unitId, text: pending.text },
+      session,
+      open: true,
+      workspace: revisionContextText(deps),
+      ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    });
+    syncUnit(session, unitId, run);
+    settleAttention(session, unitId, run.done, run.paused);
+    result.revision = { unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "revision",
+        unitId,
+        utterance,
+        utteranceTurn: turn,
+        startTurn: unitOf(session, unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   if (applied.operation.kind === "document") {
     if (deps.document === undefined) return result;
     const unitId = nextDocumentId(session);
@@ -548,7 +590,7 @@ export async function runSessionTurn(
 export interface PlanExecutionUnit {
   unitId: string;
   itemId: string;
-  kind: "task" | "general" | "document";
+  kind: "task" | "general" | "revision" | "document";
   result: AgentResult | GeneralResult | DocumentResult;
 }
 
@@ -566,75 +608,8 @@ export interface PlanExecutionResult {
   noDecision?: NoDecisionReason;
   // A re-plan opened during execution.
   plan?: { unitId: string; result: PlannerResult };
-  // The acceptance check the plan ran before closing `done`; `ok: false` turns it `aborted`.
-  acceptance?: PlanAcceptance;
   // Present when the plan had already finished before this call.
   finished?: { status: "done" | "aborted"; completed: number; total: number };
-}
-
-export interface PlanAcceptance {
-  unitId: string;
-  ok: boolean;
-  answer: string;
-}
-
-function lastStopText(events: readonly Event[]): string | undefined {
-  let text: string | undefined;
-  for (const event of events) {
-    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
-    const payload = event.node.payload as { answer?: unknown } | undefined;
-    text = typeof payload?.answer === "string" ? payload.answer : event.node.label;
-  }
-  return text;
-}
-
-// Before a plan closes `done`, verify its declared `done` conditions against the workspace with
-// a read-only general unit. The free-text condition is not machine-checkable, so the check is a
-// model verdict; a FAIL (or a missing verdict) aborts the plan instead of reporting success.
-async function runPlanAcceptance(
-  deps: SessionTurnDeps,
-  session: SessionState,
-  plan: PlanData,
-  request: string,
-  signal?: AbortSignal,
-): Promise<PlanAcceptance | undefined> {
-  const declared = plan.items.filter((item) => item.done !== undefined && item.done !== "");
-  const hasCoding = plan.items.some((item) => item.kind !== "general");
-  if (deps.general === undefined || (declared.length === 0 && !hasCoding)) return undefined;
-  const unitId = nextGeneralId(session);
-  const requestTextValue = [
-    `Verify the execution plan against the original request:`,
-    request,
-    "",
-    "Check every item's done condition against the workspace as it is now. Read-only: read, grep, list, or run read-only commands; change nothing.",
-    "",
-    `Items (${plan.items.length}):`,
-    ...plan.items.map((item) => {
-      const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
-      const done =
-        item.done !== undefined && item.done !== "" ? ` — done when: ${item.done}` : "";
-      return `- ${item.order}. [${kind}] ${item.title}${done}`;
-    }),
-    "",
-    "End your reply with one final line, exactly `VERDICT: PASS` if the request and every done condition hold, or `VERDICT: FAIL` otherwise.",
-  ].join("\n");
-  let run: GeneralResult;
-  try {
-    run = await runGeneralAgent(deps.general, {
-      request: { id: unitId, text: requestTextValue },
-      session,
-      open: true,
-      workspace: generalContextText(deps),
-      ...(signal !== undefined ? { signal } : {}),
-    });
-  } catch {
-    return undefined;
-  }
-  syncUnit(session, unitId, run);
-  settleAttention(session, unitId, run.done, run.paused);
-  const answer = lastStopText(run.events) ?? "";
-  const verdict = /verdict\s*:\s*(pass|fail)/i.exec(answer);
-  return { unitId, ok: verdict?.[1]?.toLowerCase() === "pass", answer };
 }
 
 // Execute a confirmed plan: open its items one after another as ordinary units. The session
@@ -696,61 +671,13 @@ export async function executePlan(
     const item = nextPendingItem(session, plan);
     if (item === undefined) {
       const progress = progressNow();
-      const planRequest = requestText(unitOf(session, planUnitId).journal);
-      const acceptance = await runPlanAcceptance(deps, session, plan, planRequest, options.signal);
-      if (acceptance !== undefined && !acceptance.ok) {
-        recordPlanFinished(session, planUnitId, turn, "aborted", progress.completed, progress.total);
-        return { session, planUnitId, status: "aborted", ...progress, units, acceptance };
-      }
       recordPlanFinished(session, planUnitId, turn, "done", progress.completed, progress.total);
-      return {
-        session,
-        planUnitId,
-        status: "done",
-        ...progress,
-        units,
-        ...(acceptance !== undefined ? { acceptance } : {}),
-      };
+      return { session, planUnitId, status: "done", ...progress, units };
     }
 
+    // Every item goes through the session agent: it sees the plan and the earlier items'
+    // results and chooses the operation (revision / task / general / document / plan).
     const itemText = item.detail !== "" ? item.detail : item.title;
-    if (item.kind === "document") {
-      if (deps.document === undefined) {
-        return { session, planUnitId, status: "blocked", ...progressNow(), units };
-      }
-      const unitId = nextDocumentId(session);
-      const run = await runDocumentUnit(deps.document, {
-        request: { id: unitId, text: itemText },
-        session,
-        open: true,
-        workspace: documentContextText(deps),
-        planItem: item.id,
-        ...(options.signal !== undefined ? { signal: options.signal } : {}),
-      });
-      syncUnit(session, unitId, run);
-      settleAttention(session, unitId, run.done, run.paused);
-      units.push({ unitId, itemId: item.id, kind: "document", result: run });
-      turn += 1;
-      session.utteranceSeq = turn;
-      if (run.paused === true) {
-        return {
-          session,
-          planUnitId,
-          status: "paused",
-          ...progressNow(),
-          units,
-          paused: {
-            agent: "document",
-            unitId,
-            utterance: itemText,
-            utteranceTurn: turn,
-            startTurn: unitOf(session, unitId).turn,
-            planUnitId,
-          },
-        };
-      }
-      continue;
-    }
     const interpretation = await runSessionAgent(deps.sessionAgent, session, itemText, {
       turn,
       workspace: workspaceIntro(deps),
@@ -821,12 +748,20 @@ export async function executePlan(
         plan: dispatched.plan,
       };
     }
-    const run = dispatched.task ?? dispatched.general;
+    const run =
+      dispatched.task ?? dispatched.general ?? dispatched.revision ?? dispatched.document;
     if (run !== undefined) {
       units.push({
         unitId: run.unitId,
         itemId: item.id,
-        kind: dispatched.task !== undefined ? "task" : "general",
+        kind:
+          dispatched.task !== undefined
+            ? "task"
+            : dispatched.general !== undefined
+              ? "general"
+              : dispatched.revision !== undefined
+                ? "revision"
+                : "document",
         result: run.result,
       });
     }
@@ -1018,6 +953,35 @@ export async function resumeTurn(
     return result;
   }
 
+  if (paused.agent === "revision") {
+    if (deps.revision === undefined) return { session, turn: paused.utteranceTurn, paused };
+    const unit = unitOf(session, paused.unitId);
+    const run = await runRevisionUnit(deps.revision, {
+      request: { id: paused.unitId, text: requestText(unit.journal) },
+      seed: unit.journal,
+      startTurn: unit.turn,
+      session,
+      open: false,
+      workspace: revisionContextText(deps),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    });
+    syncUnit(session, paused.unitId, run);
+    settleAttention(session, paused.unitId, run.done, run.paused);
+    const result = makeResult(session, paused.utteranceTurn);
+    result.revision = { unitId: paused.unitId, result: run };
+    if (run.paused === true) {
+      result.paused = {
+        agent: "revision",
+        unitId: paused.unitId,
+        utterance: paused.utterance,
+        utteranceTurn: paused.utteranceTurn,
+        startTurn: unitOf(session, paused.unitId).turn,
+      };
+      recordPause(deps, result.paused);
+    }
+    return result;
+  }
+
   if (paused.agent === "plan") {
     if (deps.planner === undefined) return { session, turn: paused.utteranceTurn, paused };
     const unit = unitOf(session, paused.unitId);
@@ -1173,7 +1137,7 @@ export function cancelTurn(
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
   }
-  if (paused.agent === "document") {
+  if (paused.agent === "document" || paused.agent === "revision") {
     if (sessionFocus(session)?.unitId === paused.unitId) popUnit(session);
     abandonUnit(session, paused.unitId, unitOf(session, paused.unitId).turn);
     telemetry?.record({

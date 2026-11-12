@@ -135,6 +135,8 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push("session: respond");
   } else if (operation.kind === "general") {
     lines.push(`session: general("${operation.text}")`);
+  } else if (operation.kind === "revision") {
+    lines.push(`session: revision("${operation.text}")`);
   } else if (operation.kind === "plan") {
     lines.push(`session: plan("${operation.text}")`);
   } else if (operation.kind === "document") {
@@ -166,6 +168,14 @@ export function renderTurn(result: SessionTurnResult, options: RenderOptions = {
     lines.push(...taskLines(run.events, options));
     const answer = generalAnswer(run.events);
     if (answer !== undefined && answer !== "") lines.push("general answer:", answer);
+  }
+  if (result.revision !== undefined) {
+    const { unitId, result: run } = result.revision;
+    const outcome = run.done ? (run.stopReason ?? "done") : "still open";
+    lines.push(`revision ${unitId}: ${outcome} after ${run.turns} turns`);
+    lines.push(...taskLines(run.events, options));
+    const answer = generalAnswer(run.events);
+    if (answer !== undefined && answer !== "") lines.push("revision answer:", answer);
   }
   if (result.document !== undefined) {
     const { unitId, result: run } = result.document;
@@ -201,8 +211,7 @@ export function renderPlanDraft(draft: PlannerDraft): string {
   const lines: string[] = [];
   if (draft.summary !== undefined) lines.push(draft.summary, "");
   for (const [index, item] of draft.items.entries()) {
-    const kind = item.kind === "document" ? "document" : item.kind === "general" ? "general" : "coding";
-    lines.push(`${index + 1}. **${item.title}** _(${kind})_`);
+    lines.push(`${index + 1}. **${item.title}**`);
     if (item.detail !== "") lines.push(`   ${item.detail}`);
     if (item.done !== undefined) lines.push(`   Done when: ${item.done}`);
   }
@@ -237,14 +246,6 @@ export function renderPlanRun(
       lines.push(`    ${short(answer, 600)}`);
     }
   }
-  if (result.acceptance !== undefined) {
-    lines.push(
-      `  acceptance ${result.acceptance.unitId}: ${result.acceptance.ok ? "pass" : "fail"}`,
-    );
-    if (options.answers !== false && !result.acceptance.ok && result.acceptance.answer !== "") {
-      lines.push(`    ${short(result.acceptance.answer, 600)}`);
-    }
-  }
   if (result.reply !== undefined) lines.push("answer:", result.reply);
   if (result.noDecision !== undefined) lines.push(`no decision: ${result.noDecision}`);
   if (result.plan !== undefined) {
@@ -264,7 +265,12 @@ export function renderPauseMenu(paused: PausedState): string {
   if (paused.agent === "session") {
     return "paused session: [r]esume  [c]discard  [q]uit";
   }
-  return `paused ${paused.agent} ${paused.unitId}: [r]esume  [s]ession  [c]ancel & roll back  [q]uit`;
+  // Document and revision have no snapshot, so cancelling them cannot roll back.
+  const cancel =
+    paused.agent === "document" || paused.agent === "revision"
+      ? "[c]ancel"
+      : "[c]ancel & roll back";
+  return `paused ${paused.agent} ${paused.unitId}: [r]esume  [s]ession  ${cancel}  [q]uit`;
 }
 
 export function renderLeave(result: LeaveResult): string[] {

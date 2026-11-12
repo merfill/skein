@@ -6,6 +6,7 @@ export type ProgressAgent =
   | "session"
   | "task"
   | "general"
+  | "revision"
   | "plan"
   | "document"
   | "observer";

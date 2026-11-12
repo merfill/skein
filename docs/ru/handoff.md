@@ -3,6 +3,101 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-12 — acceptance плана убран
+
+### Что сделано
+
+- **Убран отдельный plan-acceptance.** План закрывается `done`, когда закрыт последний пункт:
+  `completed` пункта = его единица завершилась; отдельного `general`-судьи и `VERDICT: PASS`
+  больше нет. Удалены `PlanAcceptance`/`runPlanAcceptance`/`lastStopText` (`src/session/driver.ts`),
+  рендер в `src/session/view.ts` и TUI-блок/поле лога в `src/tui/app.tsx`; тест в
+  `tests/plan.test.ts` заменён на «план done по последнему пункту, без general-единицы».
+  Причина: судья был второй моделью поверх самоотчёта, слабее информирован (не видел правок
+  пункта), шёл с `generalMaxTurns=9` на весь план и в e2e дал false negative при 7/7 completed
+  (`aborted`), заново привязывая сырой request как цель.
+- **Проверка принадлежит пункту.** `task` уже верифицируется островом Verification; `done`-заметка
+  пункта уходит агенту сессии в `renderPlanState` и входит в work order единицы. Кросс-пунктовая
+  проверка (полный тест-сьют) — явный пункт плана, а не скрытый финальный проход.
+- **Добиты хвосты удаления `kind`.** Из `SESSION_BASE_PROMPT` убрана фраза про `(coding)`-метку
+  (`src/session/session_agent.ts`); описание тула `plan` — «executable work orders»
+  (`src/llm/session_agent.ts`); из доков убрано «пункт `document` открывается напрямую»
+  (`sessions.md` §11, `projection.md`, EN/RU); из тестовых фикстур (`tui_app`, `tui_view_model`,
+  `budget_pause`) убрано поле `kind` у пунктов плана.
+- **Паузное меню.** Для `document`/`revision` cancel без «& roll back» (`session/view.ts`,
+  `tui/panels.tsx`): снимка/отката у них нет.
+- Доки EN/RU `sessions.md` §8: явно сказано, что отдельного acceptance-прохода нет.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **655 passed / 40 skipped**
+  (минус два acceptance-теста, плюс один «done по последнему пункту»).
+
+### Открыто
+
+- Временные скрипты (`.z3-e2e.ts`, `.route-probe.ts`, `.plan-probe.ts`, `.print-plan.ts`) оставлены
+  в корне по решению владельца — могут понадобиться для перепрогона; в коммит не входят.
+- Live-перепрогон z3-e2e не делался: по решению владельца не требуется.
+- ankyra: изменения от e2e владелец проверит и закоммитит сам из TUI (см. ниже, 2026-11-11).
+- **Осознанный остаток:** `done`-условие пункта движком не проверяется (у `task` остров
+  Verification читает request; у `general`/`revision`/`document` слота критерия нет). Обсуждение
+  отложено.
+
+## 2026-11-11 — `revision`, план без `kind`, планировщик read-only
+
+### Что сделано
+
+- **Новая единица `revision`** (session-level, request-anchored, как `general`/`document`):
+  выполняет изменение, уже описанное в запросе — правит существующие файлы и запускает нужные
+  команды (добавить зависимость, обновить lock, поставить пакет). Одно состояние на `request`,
+  без `move`/островов, закрытие — текстовым ответом. Изменяющая: нет read-only снимка и отката.
+- **Реализация `revision`.** `src/llm/revision.ts` (`REVISION_BASE_PROMPT`, положительный;
+  proposer с полным набором инструментов вкл. side-effecting `bash` и `webfetch`);
+  `src/session/revision.ts` — обёртка над `runGeneralAgent`, который параметризован
+  (`unitType`/`agent`/`basePrompt`/`stateLabel`/`finalInstruction`), так что раннер один.
+- **Маршрутизация агента сессии.** Новая операция `revision`: «изменение задано — `revision`;
+  причину/способ искать или новый код — `task`; крупный prose — `document`; только чтение —
+  `general`». Wiring: `types`/`operations`/`session.unitCompleted`, `progress`/`telemetry`,
+  `driver` (`nextRevisionId`=`v1`, `dispatch`, `resume`, `cancel` без откатов, `executePlan`),
+  `cli` deps; рендер/TUI (`session_outline`, `view`, `view_model`, `app`, `trace_lines`, `repl`).
+- **`kind` убран из пунктов плана.** Планировщик больше не помечает операцию: `PlanItemKind`
+  удалён, пункт — work order (`title`/`detail`/`done`). `executePlan` на каждый пункт зовёт
+  агента сессии (видит план и результаты прошлых пунктов и сам выбирает операцию); `document`
+  не открывается напрямую по `kind`. Причина: метка `(coding)` перевешивала маршрут (docs/config
+  уходил в `task`/Patch; live e2e: 53 хода, budget). Риппл: `ir/types`, `session/planner`,
+  `llm/planner` (схема `submit_plan`), `session/plan`/`view`/`driver`, `tui/view_model`, тесты и
+  доки EN/RU.
+- **Планировщик строго read-only.** `PLANNER_TOOL_NAMES` без `shell` (`src/llm/planner.ts`);
+  `modelPlannerAgent` фильтрует вызовы вне поверхности (один repair, затем drop); в `runPlanner`
+  — барьер `PLANNER_READONLY = {read,grep,list,recall,search}`. Причина: провайдер отдавал
+  `bash`/`edit` вне поверхности, планировщик их исполнял (`bash sed -n` кусками вместо `read` с
+  8K; 17 `bash` в одном прогоне) и мог мутировать дерево. Теперь только read/grep/list; доки
+  `sessions.md` §8 EN/RU обновлены, тест `plan.test` проверяет, что off-surface вызов не
+  исполняется.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **656 passed / 40 skipped**
+  (включая `revision_unit`).
+- **Пробник планировщика** (z3-запрос): только `read/grep/list` (нет `bash`/`shell`/`edit`),
+  план сдан за 18 ходов.
+- **Live e2e в `~/dev/ankyra`** («напиши план для добавления решателя z3»): план из 7 пунктов;
+  исполнение — item 1 → `revision v1`, 2 → task r1, 3 → `revision v2`, 4 → `revision v3`,
+  5 → `revision v4`, 6 → task r2, 7 → task r3. Docs/config/verify-доки ушли в `revision`,
+  код/тесты — в `task`; **все 7 пунктов completed**. План `aborted (7/7)` только из-за acceptance.
+
+### Открыто
+
+- **ankyra: рабочее дерево содержит реальные изменения от e2e** — новые
+  `src/ankyra/engine/backends.py`, `src/ankyra/engine/smt/prove.py`, `tests/test_engine_smt.py`,
+  `tests/test_engine_backends.py`; изменены `verify.py`, `settings.py`, `pyproject.toml`,
+  `uv.lock`, `.env.example`, `AGENTS.md`, `README.md`, `ARCHITECTURE.md`,
+  `docs/l2_plan(.ru).md`, `docs/logic_layer(.ru).md`, `docs/quality_findings(.ru).md`. Item 7
+  сам сообщил 671 passed (без z3) / 681 (с `--extra smt`), но прогон не проверялся вручную —
+  владелец решит keep/revert и закоммитит из TUI.
+- Чекпойнт/откат для `revision` намеренно не делался.
+
 ## 2026-11-11 — `general`/`plan` без `move`; агенты в документации
 
 ### Что сделано

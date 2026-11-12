@@ -183,7 +183,6 @@ function planJournal(): Event[] {
     node("i1", "plan_item", "Deps", {
       title: "Deps",
       detail: "Add z3-solver",
-      kind: "task",
       order: 1,
       done: "z3 imports",
     }),
@@ -191,7 +190,6 @@ function planJournal(): Event[] {
     node("i2", "plan_item", "Adapter", {
       title: "Adapter",
       detail: "Wrap z3",
-      kind: "task",
       order: 2,
     }),
     edge("body", "i2", "plan_item"),

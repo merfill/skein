@@ -406,8 +406,8 @@ describe("TUI app", () => {
             args: {
               summary: "Add Z3",
               items: [
-                { title: "Deps", detail: "Add z3-solver", kind: "task" },
-                { title: "Adapter", detail: "Wrap z3", kind: "task" },
+                { title: "Deps", detail: "Add z3-solver" },
+                { title: "Adapter", detail: "Wrap z3" },
               ],
             },
             callId: "planner:submit",
@@ -488,7 +488,7 @@ describe("TUI app", () => {
         calls: [
           {
             name: "submit_plan",
-            args: { items: [{ title: "Implement", detail: "Do it.", kind: "task" }] },
+            args: { items: [{ title: "Implement", detail: "Do it." }] },
             callId: "planner:submit",
           },
         ],

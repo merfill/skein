@@ -20,9 +20,6 @@ import { proposalTools, type ExtraToolDefinition } from "./tools";
 const planItemSchema = z.object({
   title: z.string().min(1).max(200),
   detail: z.string().min(1).max(4000),
-  // `coding` is the model-facing name for the IR `task` kind; the parser normalizes it.
-  // `document` opens the document unit for a large text artifact (docs, reports).
-  kind: z.enum(["general", "task", "coding", "document"]),
   done: z.string().max(1000).optional(),
 });
 
@@ -37,12 +34,15 @@ export const PLAN_TOOLS: Record<string, ExtraToolDefinition> = {
   ...GENERAL_TOOLS,
   submit_plan: {
     description:
-      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent, with its kind (`general` = read-only answer, `coding` = workspace change, `document` = one large text artifact whose detail names the target path). `detail` must carry the facts that work order needs (paths, commands, acceptance). If the request is to add/implement/fix/change something, every deliverable is a `coding` item that makes the change itself — never a `general` item that only gathers facts for a step not in the list. Keep the plan linear and minimal.",
+      "Submit the completed plan. Call it exactly once, after you have read enough. `items` is an ordered list; each item is one self-contained work order for a later agent. `detail` must carry the facts that work order needs (paths, commands, acceptance). If the request is to add/implement/fix/change something, every deliverable is an item that makes the change itself — never an item that only gathers facts for a step not in the list. Keep the plan linear and minimal.",
     schema: submitPlanSchema,
   },
 };
 
-const PLANNER_TOOL_NAMES = ["read", "grep", "list", "recall", "search", "shell", "submit_plan"];
+// Read-only surface: the planner inspects files and writes only the plan. It gets no `shell`
+// (a command can mutate the tree) and no write tools; unknown names are refused, never
+// executed (docs/en/sessions.md §8).
+const PLANNER_TOOL_NAMES = ["read", "grep", "list", "recall", "search", "submit_plan"];
 
 export interface PlannerModelOptions {
   settings?: Settings;
@@ -99,6 +99,18 @@ export function modelPlannerAgent(
           ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
         const calls = toCalls(result.toolCalls);
+        // The surface is the only thing the planner may execute. The provider can return a
+        // tool name that was never offered (`bash`, `edit`, ...); refuse it and, when the
+        // model insists, drop it — never reach `toProposal`/`executeAction` with it.
+        const allowed = new Set(final ? ["submit_plan"] : PLANNER_TOOL_NAMES);
+        const kept = calls.filter((call) => allowed.has(call.name));
+        if (kept.length !== calls.length && repair === undefined) {
+          repair = {
+            role: "user",
+            content: `Only these tools are available: ${[...allowed].join(", ")}. Do not call any other tool.`,
+          };
+          continue;
+        }
         if (result.finishReason === "length" && !reasoningOff && options.rebuild !== undefined) {
           reasoningOff = true;
           repair = {
@@ -109,7 +121,7 @@ export function modelPlannerAgent(
           };
           continue;
         }
-        if (calls.length === 0 && repair === undefined) {
+        if (kept.length === 0 && repair === undefined) {
           repair = {
             role: "user",
             content: final
@@ -119,7 +131,7 @@ export function modelPlannerAgent(
           continue;
         }
         const reply: PlannerReply = {
-          calls,
+          calls: kept,
           thought: result.text,
           ...(result.reasoning !== undefined && result.reasoning !== ""
             ? { reasoning: result.reasoning }
