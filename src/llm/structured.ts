@@ -8,6 +8,7 @@ import {
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
+  type ToolChoice,
   type ToolSet,
 } from "ai";
 import { z } from "zod";
@@ -64,6 +65,7 @@ export interface ModelCall {
   settings: Settings;
   maxTokens?: number;
   tools?: ToolSet;
+  toolChoice?: ToolChoice<ToolSet>;
   json?: boolean;
   streaming: boolean;
   usageHandlers?: unknown[];
@@ -95,6 +97,7 @@ export async function callModel(call: ModelCall): Promise<ModelReply> {
     maxOutputTokens: call.maxTokens ?? call.settings.maxTokens,
     ...(call.abortSignal !== undefined ? { abortSignal: call.abortSignal } : {}),
     ...(call.tools !== undefined ? { tools: call.tools, stopWhen: stepCountIs(1) } : {}),
+    ...(call.toolChoice !== undefined ? { toolChoice: call.toolChoice } : {}),
     ...(call.json === true
       ? {
           providerOptions: {

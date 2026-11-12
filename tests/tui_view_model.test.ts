@@ -259,6 +259,57 @@ describe("TUI plan view", () => {
   });
 });
 
+describe("TUI request-anchored document unit", () => {
+  it("shows a document unit's request-anchored tape with its own usage", () => {
+    const session = createSession();
+    openUnit(
+      session,
+      "d1",
+      "document",
+      [
+        node("d1", "request", "docs/z3_solver.md", { text: "write docs/z3_solver.md" }),
+        node("t1", "turns", "turns"),
+        edge("d1", "t1", "turns"),
+        node("a1", "action", "append docs/z3_solver.md", {
+          command: "append docs/z3_solver.md",
+          turn: 0,
+        }),
+        edge("t1", "a1", "turn"),
+        node("o1", "observation", "written", { output: "written" }),
+        edge("a1", "o1", "result"),
+        node("s1", "stop", "written", { answer: "written" }),
+        edge("d1", "s1", "stop"),
+      ],
+      1,
+    );
+
+    const view = buildTuiView(session, [
+      {
+        type: "model_call",
+        sessionId: "local",
+        agent: "document",
+        unitId: "d1",
+        turn: 0,
+        model: "m",
+        startedAt: 0,
+        endedAt: 1,
+        status: "ok",
+        usage: { inputTokens: 100, outputTokens: 20 },
+      },
+    ]);
+
+    expect(view.current?.unitId).toBe("d1");
+    expect(view.history.map((task) => task.unitId)).toContain("d1");
+    expect(view.current?.states).toHaveLength(1);
+    expect(view.current?.states[0]?.island).toBe("document");
+    expect(view.current?.states[0]?.actions.map((action) => action.label)).toContain(
+      "append docs/z3_solver.md",
+    );
+    expect(view.current?.tokensIn).toBe(100);
+    expect(view.current?.tokensOut).toBe(20);
+  });
+});
+
 describe("TUI header usage", () => {
   it("counts session-agent usage even when no task has run", () => {
     const session = createSession();

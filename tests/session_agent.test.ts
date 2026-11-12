@@ -211,39 +211,24 @@ describe("session agent: bounded unit loop", () => {
   });
 });
 
-describe("session agent: workspace intro", () => {
+describe("session agent: messages", () => {
   const context = { utterance: "hi", outline: "", history: [] };
 
-  it("explains the project and includes the material map", () => {
-    const messages = buildSessionMessages({
-      ...context,
-      workspace: { root: "/proj", map: "Workspace root: /proj\nWorkspace repository: none" },
-    });
-    const text = String(messages[1]?.content);
-    expect(messages[1]?.role).toBe("system");
-    expect(text).toContain("the project tree this session works in");
-    expect(text).toContain("route reading, analysis and explanation to `general`");
-    expect(text).toContain("Workspace root: /proj");
-  });
-
-  it("falls back to the root when there is no map", () => {
-    const messages = buildSessionMessages({ ...context, workspace: { root: "/proj" } });
-    const text = String(messages[1]?.content);
-    expect(text).toContain("The tree is not indexed here");
-    expect(text).toContain("root: /proj");
-  });
-
-  it("adds no workspace message without an intro", () => {
+  it("starts with the base prompt and the earlier-tasks outline", () => {
     const messages = buildSessionMessages(context);
+    expect(messages[0]?.role).toBe("system");
     expect(messages[1]?.role).toBe("system");
     expect(String(messages[1]?.content)).toContain("Earlier tasks");
+    expect(
+      messages.some((message) => String(message.content).includes("Workspace:")),
+    ).toBe(false);
   });
 });
 
 describe("session agent: model reply mapping", () => {
   it("maps operation tools and keeps read-only calls", () => {
     expect(
-      toSessionReply([{ toolName: "task", input: { text: "do it" }, toolCallId: "x" }]),
+      toSessionReply([{ toolName: "task", input: { request: "do it" }, toolCallId: "x" }]),
     ).toEqual({ operation: { kind: "task", text: "do it" } });
     expect(
       toSessionReply([{ toolName: "unit", input: { id: "r1" }, toolCallId: "x" }]),

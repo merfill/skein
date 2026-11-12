@@ -147,7 +147,7 @@ describe("session driver: one utterance turn", () => {
     }
   });
 
-  it("orients the session agent with the workspace root only", async () => {
+  it("does not orient the session agent with a workspace message", async () => {
     const session = createSession();
     const made = makeWorkspace();
     let seen: ModelMessage[] = [];
@@ -167,19 +167,21 @@ describe("session driver: one utterance turn", () => {
 
     await runSessionTurn(turnDeps, session, "what language is this project?");
 
-    const intro = seen.find(
-      (message) =>
-        message.role === "system" &&
-        typeof message.content === "string" &&
-        message.content.startsWith("Workspace:"),
-    );
-    expect(intro).toBeDefined();
-    const text = String(intro?.content);
-    expect(text).toContain("this session works in");
-    expect(text).toContain(made.root);
-    expect(text).toContain("The tree is not indexed here");
-    expect(text).not.toContain("Workspace repository");
-    expect(text).not.toContain("README.md");
+    expect(
+      seen.some(
+        (message) =>
+          message.role === "system" &&
+          typeof message.content === "string" &&
+          message.content.startsWith("Workspace:"),
+      ),
+    ).toBe(false);
+    expect(
+      seen.some(
+        (message) =>
+          typeof message.content === "string" &&
+          message.content.includes("The tree is not indexed here"),
+      ),
+    ).toBe(false);
   });
 
   it("keeps the task isolated: it sees only the reformulated request", async () => {

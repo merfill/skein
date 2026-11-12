@@ -118,7 +118,9 @@ The request is reference, not the goal. The state is never a turn, and a turn is
 - **Method:** reply with the final report as text, with no tool calls. Read the tape — the request,
   the states the task passed, what each did, the files it changed, how the result was checked —
   and write the report in GitHub-flavored Markdown: what was done and where, how it was verified,
-  and what remains open.
+  and what remains open. Keep it as short as the result allows: lead with the answer and include
+  only the detail the user needs; do not enumerate files, states or checks, and do not restate the
+  request, unless the user asked for a detailed report.
 - **Transition:** terminal state; closing it ends the request.
 
 ### Tool surface

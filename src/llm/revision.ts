@@ -19,7 +19,7 @@ export interface RevisionModelOptions {
 // condition names the result, there is no prohibition list (docs/en/sessions.md).
 export const REVISION_BASE_PROMPT = [
   "You carry out the change a request describes in a workspace.",
-  "Read what the change touches, make the edits, and run the commands it needs: add the dependency, update the lock, install the package. Read the result back. When the workspace matches the request, reply with what changed as text only; your reply is the result and is shown to the user as-is.",
+  "Read what the change touches, make the edits, and run the commands it needs: add the dependency, update the lock, install the package. Read the result back. When the workspace matches the request, reply with what changed as text only; your reply is the result and is shown to the user as-is. Reply in the language of the request. Write clearly and as concisely as the result allows: what changed and anything the user must act on; go into detail — files, steps, background — only when the request asks for it.",
 ].join("\n\n");
 
 // The revision unit has the workspace tools the task registry already defines, including the

@@ -92,8 +92,9 @@ The executor binds the offered tools from `Context.applicable`, which is derived
 - the terminal state offers none, because the model closes it with text.
 
 This is the **task agent's** surface. The `general`, `plan` and `document` units are
-request-anchored: they are not offered `move` or `decline`; `general` gets the read-only tools, and
-`plan`/`document` get the read-only tools plus `submit_plan`.
+request-anchored: they are not offered `move` or `decline`; `general` gets the read-only tools;
+`plan` gets the read-only tools plus `submit_plan`; `document` gets the read-only tools (including
+`webfetch`) plus `start_document` for its gather phase, and then no tools while it writes.
 
 The per-state tool sets are listed in `states.md`. `bash` is dual-use, but the state's instruction
 still bounds its work: Verification must not change the artifact, and End has no tools.

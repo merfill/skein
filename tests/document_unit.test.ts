@@ -40,13 +40,14 @@ function lastUserText(messages: readonly ModelMessage[]): string {
   return "";
 }
 
-function outline(path: string, titles: string[]): DocumentPlanReply {
+function outline(path: string, titles: string[], documentTitle?: string): DocumentPlanReply {
   return {
     calls: [
       {
-        name: "submit_plan",
+        name: "start_document",
         args: {
           path,
+          ...(documentTitle !== undefined ? { title: documentTitle } : {}),
           items: titles.map((title) => ({ title, brief: `Write ${title}.` })),
         },
         callId: "outline",
@@ -110,6 +111,74 @@ describe("document unit", () => {
     expect(file).toContain("## Intro\n\nHello intro.");
     expect(file).toContain("## Body\n\nHello body.");
     expect(file.indexOf("## Intro")).toBeLessThan(file.indexOf("## Body"));
+  });
+
+  it("writes the outline title as the document's H1 before the first section", async () => {
+    const { ws, root } = makeWorkspace();
+    const deps = documentDeps(
+      ws,
+      async () => outline("docs/out.md", ["Intro"], "Z3 solver integration"),
+      bodyByHint({ "1": "Hello intro." }),
+    );
+
+    const run = await runDocumentUnit(deps, {
+      request: { id: "d1", text: "create docs/out.md" },
+    });
+
+    expect(run.outline?.title).toBe("Z3 solver integration");
+    expect(readFileSync(join(root, "docs/out.md"), "utf8")).toMatch(
+      /^# Z3 solver integration\n\n## Intro\n\nHello intro\./,
+    );
+  });
+
+  it("discards a tool-call reply in the write phase and retries", async () => {
+    const { ws, root } = makeWorkspace();
+    let calls = 0;
+    const deps = documentDeps(
+      ws,
+      async () => outline("docs/out.md", ["Intro"]),
+      async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            text: '<｜｜DSML｜｜ invoke name="shell">cat src/foo</｜｜DSML｜｜ invoke>',
+            finishReason: "stop",
+          };
+        }
+        return { text: "Clean intro body.", finishReason: "stop" };
+      },
+    );
+
+    const run = await runDocumentUnit(deps, {
+      request: { id: "d1", text: "create docs/out.md" },
+    });
+
+    expect(run.stopReason).toBe("summarized");
+    const file = readFileSync(join(root, "docs/out.md"), "utf8");
+    expect(file).toContain("Clean intro body.");
+    expect(file).not.toContain("DSML");
+    expect(file).not.toContain("cat src/foo");
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  it("stops without writing when the write phase keeps returning tool-call replies", async () => {
+    const { ws, root } = makeWorkspace();
+    const deps = documentDeps(
+      ws,
+      async () => outline("docs/out.md", ["Intro"]),
+      async () => ({
+        text: '<｜｜DSML｜｜ calls>cat src/foo</｜｜DSML｜｜ calls>',
+        finishReason: "stop",
+      }),
+    );
+
+    const run = await runDocumentUnit(deps, {
+      request: { id: "d1", text: "create docs/out.md" },
+    });
+
+    expect(run.stopReason).toBe("invalid_section");
+    expect(run.done).toBe(false);
+    expect(existsSync(join(root, "docs/out.md"))).toBe(false);
   });
 
   it("continues a section cut by the output limit instead of losing it", async () => {

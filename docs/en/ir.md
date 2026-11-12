@@ -81,11 +81,12 @@ its tape hangs off the request. It is closed by the model's text reply, recorded
 
 ### 1.4 A document
 
-A document unit produces one text file section by section. The model first submits an outline (the
-target path and an ordered list of section briefs), then replies with one section body at a time as
-plain text. The executor appends each body to the file and decides when the unit is done: after the
-last section it asks for a short summary and records the request's `stop`. The unit has no `move`
-and no tool argument carries the file.
+A document unit produces one text file section by section. In a gather phase it may inspect with
+read-only tools and then submits an outline (the target path, the document title and an ordered list
+of section briefs); the write phase offers no tools, so it replies with one section body at a time
+as plain text. The executor writes the title as `# …`, appends each body under `## <section>`, and
+decides when the unit is done: after the last section it asks for a short summary and records the
+request's `stop`. The unit has no `move` and no tool argument carries the file.
 
 ### 1.5 The observer
 

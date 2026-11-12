@@ -45,11 +45,31 @@ const searchSchema = z.object({
   count: z.number().int().positive().optional(),
 });
 const respondSchema = z.object({ text: z.string() });
-const taskSchema = z.object({ text: z.string() });
-const generalSchema = z.object({ text: z.string() });
-const revisionSchema = z.object({ text: z.string() });
-const documentSchema = z.object({ text: z.string() });
-const planSchema = z.object({ text: z.string() });
+const taskSchema = z.object({
+  request: z
+    .string()
+    .describe(
+      "The user's request restated: the goal, the facts the task needs, and how completion is judged.",
+    ),
+});
+const generalSchema = z.object({
+  request: z
+    .string()
+    .describe("The user's request restated: the question, with the dialogue's references resolved."),
+});
+const revisionSchema = z.object({
+  request: z
+    .string()
+    .describe(
+      "The user's request restated: the files and steps the change needs, and the done condition.",
+    ),
+});
+const documentSchema = z.object({ request: z.string() });
+const planSchema = z.object({
+  request: z
+    .string()
+    .describe("The user's request restated: the plan's subject and the requirements the user stated."),
+});
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
@@ -85,37 +105,37 @@ const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAn
   {
     name: "respond",
     description:
-      "Answer the user from the dialogue and earlier work: greeting, thanks, confirmation, clarification or a direct factual pointer.",
+      "Answer the user from the dialogue and earlier work: greeting, thanks, confirmation, clarification or a direct factual pointer. The reply is shown to the user as-is: GitHub-flavored Markdown, in the user's language; default to the shortest answer and add detail only when the user asked for it.",
     schema: respondSchema,
   },
   {
     name: "general",
     description:
-      "Ask the general agent for an answer that requires investigation. `text` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. The general agent chooses how to work and how much detail to give; it never creates or changes a file.",
+      "Answer the user's question. `request` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. It never creates or changes a file.",
     schema: generalSchema,
   },
   {
     name: "revision",
     description:
-      "Carry out a change the request already describes: edit existing files and run the commands it needs — add a dependency, update the lock, install a package. `text` is a self-contained order naming the files and steps and the done condition. Choose it for a described change to existing artifacts (documentation, configuration, dependencies, renames, refactors, additive edits), including a plan item whose detail names the files and steps; choose `task` for new code or files, or when the cause or the approach must be found.",
+      "Carry out a change the request already describes: edit existing files and run the commands it needs — add a dependency, update the lock, install a package. `request` is the user's request restated. Choose it for a described change to existing artifacts (documentation, configuration, dependencies, renames, refactors, additive edits), including a plan item whose detail names the files and steps; choose `task` for new code or files, or when the cause or the approach must be found.",
     schema: revisionSchema,
   },
   {
-    name: "document",
+    name: "write_document",
     description:
-      "Create one large text file (documentation, a plan, a report) section by section. `text` is a self-contained order: the target path, what the file must establish, the required sections/decisions, the material to cite, and the done condition. Use it instead of `general` whenever the user asks to create or write a file, and instead of `task` when the deliverable is mostly prose.",
+      "Write a text file the user asked for. `request` is the user's request restated: what the document is about, the target path when the user gave one, and anything the user explicitly asked the file to include.",
     schema: documentSchema,
   },
   {
     name: "task",
     description:
-      "Write new code or files, or run side-effecting commands, or find a cause. The coding agent sees only this text, so it must be self-contained: the goal, the facts it needs and how completion is judged. For a described change to existing artifacts choose `revision`; for a large written document choose `document`.",
+      "Write new code or files, or run side-effecting commands, or find a cause. The coding agent sees only this request. For a described change to existing artifacts choose `revision`; for a large written document choose `write_document`.",
     schema: taskSchema,
   },
   {
     name: "plan",
     description:
-      "Develop an execution plan: a read-only agent inspects the workspace and returns an ordered list of executable work orders. The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
+      "Develop an execution plan: an ordered list of executable work orders. The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
     schema: planSchema,
   },
 ];
@@ -141,23 +161,23 @@ function operationOf(name: string, input: unknown): SessionOperation | undefined
     }
     case "task": {
       const value = taskSchema.parse(input);
-      return { kind: "task", text: value.text };
+      return { kind: "task", text: value.request };
     }
     case "general": {
       const value = generalSchema.parse(input);
-      return { kind: "general", text: value.text };
+      return { kind: "general", text: value.request };
     }
     case "revision": {
       const value = revisionSchema.parse(input);
-      return { kind: "revision", text: value.text };
+      return { kind: "revision", text: value.request };
     }
-    case "document": {
+    case "write_document": {
       const value = documentSchema.parse(input);
-      return { kind: "document", text: value.text };
+      return { kind: "document", text: value.request };
     }
     case "plan": {
       const value = planSchema.parse(input);
-      return { kind: "plan", text: value.text };
+      return { kind: "plan", text: value.request };
     }
     default:
       return undefined;
@@ -245,7 +265,7 @@ export function modelSessionAgent(
             repair = {
               role: "user",
               content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `revision`, `document`, `task`, `plan`.",
+                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `revision`, `write_document`, `task`, `plan`.",
             };
             continue;
           }

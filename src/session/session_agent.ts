@@ -38,12 +38,11 @@ import { sessionOutline, unitOutline } from "./session_outline";
 import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
 export const SESSION_BASE_PROMPT = [
-  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent. Choose by the result the user wants:\n- `respond` — the answer follows from the dialogue and earlier work.\n- `general` — the user wants an answer, not a file; the workspace stays unchanged.\n- `revision` — the user or a plan item asks for a change that is already described: edit existing files and run the commands it needs (add a dependency, update the lock, install a package); a dedicated editing agent carries it out.\n- `document` — the user asks you to create or write a file (documentation, a plan, a report, a spec), especially a long one; a dedicated agent reads the material, plans the sections and writes the file section by section. Use it whenever a file is the deliverable, even if the facts must be read first.\n- `task` — the user wants new code or files, or a change whose cause or approach must be found, or a command run that changes the workspace; for a described change to existing artifacts use `revision`, and for a large written file use `document`.\n- `plan` — the user wants a multi-step execution plan; a read-only agent inspects the workspace and returns an ordered list of executable work orders (including the coding steps that make the change), not a research outline.\n\nAn execution-plan item is a work order, not a decision about the operation: the planner does not classify it. Route by the item's content — a fully described change to existing artifacts (documentation, configuration, dependencies, renames, refactors, additive edits) plus the commands it needs goes to `revision`; writing new code or files, or finding a cause, goes to `task`.",
-  "`general` receives the user's own words, with the dialogue's references resolved. Keep their wording, scope and level of detail. The general agent chooses how to work and how much detail to give.",
-  "`revision` receives a self-contained order: the files to change, the steps and commands, and the done condition. It changes the workspace and closes with a report.",
-  "`task` receives a work order: the goal, the facts the task needs and how completion is judged. It changes the workspace, and the coding agent sees only this text.",
+  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent.",
   "Ask when the user's intent is unclear; if the dialogue resolves it, proceed.",
-  "`respond` is shown to the user as-is: GitHub-flavored Markdown. Answer as briefly as possible and only what the user asked.",
+  "Answer in the same language the user asked in.",
+  "Pass the user's request verbatim; if it refers to earlier messages, assemble it from them; add nothing else.",
+  "The operations read the workspace themselves; you do not need to gather facts first.",
 ].join("\n\n");
 
 export interface SessionToolCall {
@@ -108,8 +107,6 @@ export interface SessionUnitRunInput {
   surveyLimit?: number;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
-  // The engine-owned workspace orientation (root and material map).
-  workspace?: WorkspaceIntro;
   // The active execution plan, rendered for the session agent (statuses and the next item).
   plan?: string;
   // A user pause: the in-flight model call is aborted and the loop returns `paused`.
@@ -130,18 +127,10 @@ export interface SessionUnitRunResult {
   paused?: boolean;
 }
 
-export interface WorkspaceIntro {
-  // The root as the agents see it (`displayRoot` in a container, else the host root).
-  root: string;
-  // The rendered material map (an index, not content); absent when the probe failed.
-  map?: string;
-}
-
 export interface SessionContext {
   utterance: string;
   outline: string;
   history: TapeMessage[];
-  workspace?: WorkspaceIntro;
   // The active execution plan as a system turn (plan execution mode only).
   plan?: string;
 }
@@ -212,7 +201,6 @@ export function seedSessionUnit(utterance: string): Event[] {
 export function projectSessionUnit(
   journal: readonly Event[],
   outline = "",
-  workspace?: WorkspaceIntro,
   plan?: string,
 ): SessionContext {
   let utterance = "";
@@ -247,39 +235,13 @@ export function projectSessionUnit(
     utterance,
     outline,
     history,
-    ...(workspace !== undefined ? { workspace } : {}),
     ...(plan !== undefined && plan !== "" ? { plan } : {}),
   };
-}
-
-// The engine-owned orientation fact: the session agent does not read files, so it needs to be
-// told that a project tree exists, where it is, and that material work belongs to general.
-function workspaceMessage(workspace: WorkspaceIntro): string {
-  const lines = [
-    'Workspace: the project tree this session works in. The general agent reads it and the coding agent changes it; requests like "the project", "this repo" or "this codebase" refer to it.',
-  ];
-  if (workspace.map !== undefined && workspace.map !== "") {
-    lines.push(
-      "The workspace map below is an index, not the content. Do not answer about the project from it alone: route reading, analysis and explanation to `general`.",
-      "",
-      workspace.map,
-    );
-  } else {
-    lines.push(
-      "The tree is not indexed here. Route reading, analysis and explanation to `general`; do not enumerate directories or files in the brief.",
-      "",
-      `root: ${workspace.root}`,
-    );
-  }
-  return lines.join("\n");
 }
 
 export function buildSessionMessages(context: SessionContext): ModelMessage[] {
   return [
     { role: "system", content: SESSION_BASE_PROMPT },
-    ...(context.workspace !== undefined
-      ? [{ role: "system" as const, content: workspaceMessage(context.workspace) }]
-      : []),
     { role: "system", content: `Earlier tasks:\n${context.outline}` },
     ...(context.plan !== undefined ? [{ role: "system" as const, content: context.plan }] : []),
     { role: "user", content: context.utterance },
@@ -385,7 +347,7 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
       return { journal, turns, paused: true };
     }
     const messages = buildSessionMessages(
-      projectSessionUnit(journal, outline, input.workspace, input.plan),
+      projectSessionUnit(journal, outline, input.plan),
     );
     if (surveys >= surveyLimit) {
       messages.push({
@@ -578,8 +540,6 @@ export interface RunSessionAgentOptions {
   startTurn?: number;
   // The outline captured when the unit first opened; required to rebuild the same prefix.
   outline?: string;
-  // The engine-owned workspace orientation (root and material map).
-  workspace?: WorkspaceIntro;
   // The active execution plan, rendered for the session agent.
   plan?: string;
   // The plan item this interpretation executes; the opened unit records the link.
@@ -691,7 +651,6 @@ export async function runSessionAgent(
       ...(options.signal !== undefined ? { signal: options.signal } : {}),
       ...(deps.telemetry !== undefined ? { telemetry: deps.telemetry } : {}),
       ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
-      ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
       ...(options.plan !== undefined ? { plan: options.plan } : {}),
       outline,
       ...(maxTurns !== undefined ? { maxTurns } : {}),

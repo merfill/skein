@@ -43,7 +43,7 @@ Keep the source material intact: copy raw artifacts before any command that may 
 
 The workspace root, the repository status and the environment are engine-recorded facts: they are already read — do not re-probe or re-derive them. The tree itself is not indexed: list what you need. If a block is marked partial, only the unlisted facts are unknown.
 
-Never expose or commit secrets or keys. Report concisely; no preamble or summary unless asked.`,
+Never expose or commit secrets or keys. Report concisely and to the point: the shortest answer that serves the request, with extra detail only when the user asked for it. No preamble or summary unless asked.`,
   },
 ];
 

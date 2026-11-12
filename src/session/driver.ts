@@ -42,7 +42,6 @@ import {
   runSessionAgent,
   type RunSessionAgentResult,
   type SessionAgentDeps,
-  type WorkspaceIntro,
 } from "./session_agent";
 import { generalFactsText, projectInstructionsText } from "./session_workspace";
 import type {
@@ -75,10 +74,6 @@ export interface SessionTurnDeps {
   // The driver records pause/resume/cancel here; the loops receive their own copy.
   telemetry?: TelemetrySink;
   onProgress?: ProgressSink;
-}
-
-function workspaceIntro(deps: SessionTurnDeps): WorkspaceIntro {
-  return { root: workspaceRoot(deps.task.workspace) };
 }
 
 export interface SessionTurnOptions {
@@ -565,7 +560,6 @@ export async function runSessionTurn(
   const plan = activePlanState(session);
   const interpretation = await runSessionAgent(deps.sessionAgent, session, utterance, {
     turn,
-    workspace: workspaceIntro(deps),
     ...(plan !== undefined ? { plan } : {}),
     ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
@@ -680,7 +674,6 @@ export async function executePlan(
     const itemText = item.detail !== "" ? item.detail : item.title;
     const interpretation = await runSessionAgent(deps.sessionAgent, session, itemText, {
       turn,
-      workspace: workspaceIntro(deps),
       plan: renderPlanState(session, plan),
       planItem: item.id,
       planUnitId,
@@ -887,7 +880,6 @@ export async function resumeTurn(
     const interpretation = await runSessionAgent(deps.sessionAgent, session, paused.utterance, {
       turn: paused.utteranceTurn,
       unitId: paused.unitId,
-      workspace: workspaceIntro(deps),
       ...(plan !== undefined ? { plan } : {}),
       ...(paused.startTurn !== undefined ? { startTurn: paused.startTurn } : {}),
       ...(paused.outline !== undefined ? { outline: paused.outline } : {}),

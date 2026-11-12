@@ -3,6 +3,43 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-12 — session prompts: write_document, verbatim, gather 10+3
+
+### Что сделано
+
+- **Краткость и язык отчётов.** End/B2/general/revision: положительная формулировка «коротко и по
+  возможности, детали — только если просили»; язык — «Answer in the same language the user asked
+  in». Document: H1 из `title`, скоуп «только по теме/запросу».
+- **TUI: document-юнит в панели.** `view_model` не знал `document` (фильтр, requestAnchored,
+  агент) — добавлен; регрессионный тест.
+- **Document: `start_document`, две фазы, гейт.** `submit_plan` → `start_document`; gather —
+  read-only + `webfetch`; write — без инструментов, ответ с tool-разметкой/пустой отбрасывается
+  (ретрай, затем `invalid_section`); сбор ограничен 10 шагами, затем предупреждение + 3, затем
+  принудительный `start_document` (`toolChoice: "required"`); в описании `start_document` —
+  «plan the structure around the request: include only information directly related to it».
+- **Session agent: убран workspace system message** (и мёртвые поля/`workspaceIntro`). Модель
+  больше не получает «The general agent reads it… route reading/analysis to general».
+- **Тул `document` → `write_document`** (model-facing; внутренний `SessionOperation.kind` остался
+  `document`). Обновлены `task` (choose `write_document`), repair-сообщение, тесты.
+- **Базовый промпт** теперь: роль, «Ask when unclear», язык, «Pass the user's request verbatim;
+  if it refers to earlier messages, assemble it from them; add nothing else», «The operations read
+  the workspace themselves; you do not need to gather facts first». Описания тулов сокращены
+  (general/revision/task/document/plan), без «inspects/reads workspace» и без ТЗ.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **657 passed / 40 skipped**.
+- Live (копии ankyra): 5/5 `write_document` на «напиши документ о решателе z3»; rewrite →
+  `revision`; «составь план» → `plan`; `write_document` создал `docs/z3.md` (8 секций, 285 строк,
+  H1, 0 DSML, без Logic-LM); 10+3+forced `start_document` убрал `no_outline`.
+
+### Открыто
+
+- Длина переформулировки всё ещё гуляет (модель иногда добавляет аспекты); `respond` на
+  неоднозначный «как проверить решатель?» просит уточнение вместо `general`.
+- Heavy/live sandbox не запускались.
+
 ## 2026-11-12 — acceptance плана убран
 
 ### Что сделано

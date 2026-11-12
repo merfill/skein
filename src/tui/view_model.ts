@@ -184,7 +184,7 @@ function usageFor(
   unitId: string,
   startTurn: number,
   endTurn: number,
-  agent: "task" | "general" | "revision",
+  agent: "task" | "general" | "revision" | "document",
 ): {
   input: number;
   output: number;
@@ -222,7 +222,7 @@ function usageFor(
 function turnDetailsFor(
   events: readonly MetricEvent[],
   unitId: string,
-  agent: "task" | "general" | "revision",
+  agent: "task" | "general" | "revision" | "document",
   startTurn: number,
   endTurn: number,
 ): TaskTurn[] {
@@ -287,7 +287,7 @@ function buildTask(
   // single state so the panel keeps its turns and token totals.
   const requestAnchored =
     rawIds.length === 0 &&
-    (unit.type === "general" || unit.type === "revision") &&
+    (unit.type === "general" || unit.type === "revision" || unit.type === "document") &&
     rootId !== undefined &&
     (turnsOf(state, rootId) !== undefined || stopOf(state, rootId) !== undefined);
   const ids = requestAnchored && rootId !== undefined ? [rootId] : rawIds;
@@ -305,12 +305,24 @@ function buildTask(
       unit.id,
       start,
       end,
-      unit.type === "revision" ? "revision" : unit.type === "general" ? "general" : "task",
+      unit.type === "revision"
+        ? "revision"
+        : unit.type === "general"
+          ? "general"
+          : unit.type === "document"
+            ? "document"
+            : "task",
     );
     const turnDetails = turnDetailsFor(
       telemetry,
       unit.id,
-      unit.type === "revision" ? "revision" : unit.type === "general" ? "general" : "task",
+      unit.type === "revision"
+        ? "revision"
+        : unit.type === "general"
+          ? "general"
+          : unit.type === "document"
+            ? "document"
+            : "task",
       start,
       end,
     );
@@ -445,7 +457,11 @@ export function buildTuiView(
   const now = options.now ?? Date.now();
   const timings = options.timings ?? new Map<string, TaskTiming>();
   const tasks = unitsInOrder(session).filter(
-    (unit) => unit.type === "task" || unit.type === "general" || unit.type === "revision",
+    (unit) =>
+      unit.type === "task" ||
+      unit.type === "general" ||
+      unit.type === "revision" ||
+      unit.type === "document",
   );
   const byTask = new Map<string, TaskView>();
   tasks.forEach((unit, index) => {

@@ -28,15 +28,34 @@ import type { SessionState } from "./types";
 
 export const DOCUMENT_BASE_PROMPT = [
   "You are a document-writing agent. Your job is to produce ONE file in the workspace (Markdown by default), in the language of the request.",
-  "Phase 1 — plan. Read only what the order requires (read, grep, list, recall; `shell` only for read-only commands). Then call `submit_plan` exactly once with the file `path` and an ordered list of `items`. Each item is one section: a short `title` and a self-contained `brief` with what the section must establish and the exact facts, quotes or file:line references it must use. Do not write the document yet; do not put the whole document into the plan.",
-  "Phase 2 — sections. You will be asked for one item at a time: 'Write item i of N'. Reply with that section's Markdown body ONLY — the executor writes '## <title>'. Do not start with a heading and never emit '#' or '##' headings; use '###' or deeper for subsections. No code fence around the whole reply, no commentary, no other items. Keep the section focused on its brief rather than restating it. Do not repeat sections already written. If your reply is cut by the output limit, continue on the next request from exactly where it stopped.",
-  "Phase 3 — summary. When asked, reply with a short summary of the file, based on the plan items and the written file.",
-  "Ground every claim in the brief or the material you read; never invent citations. The file is the deliverable.",
+  "Gather phase. You have read-only tools (read, grep, list, recall, search, `shell` for read-only commands, webfetch). Use them to collect the facts the document needs. You have a limited number of inspection steps; the engine states the budget and forces a concise outline at the cap. When you have enough, call `start_document` exactly once with the file `path`, a short document `title`, and an ordered list of `items`. Each item is one section: a short `title` and a self-contained `brief` that carries every fact, quote or file:line reference the section needs. Plan non-overlapping sections; a checklist is a short reference to the checks, not a second run. Do not write the document here.",
+  "Write phase. After `start_document` you have NO tools: you cannot read, run or fetch anything. The brief is the material you write from, and the file written so far is in the request. For each item you will be asked: 'Write item i of N'. Reply with that section's Markdown body ONLY — the executor writes '## <title>'. Do not start with a heading and never emit '#' or '##' headings; use '###' or deeper for subsections. Write only the new section: do not repeat commands, facts or sentences already in the file — refer back to earlier sections by title. No code fence around the whole reply, no commentary, no other items. Do not repeat sections already written. If the brief lacks a fact, omit it or say it is not established — do not invent citations or try to call a tool. If your reply is cut by the output limit, continue on the next request from exactly where it stopped.",
+  "Summary. When asked, reply with a short summary of the file, based on the plan items and the written file.",
+  "Stay on the file's subject: write clearly and as concisely as the section's brief allows, include a fact, module or command only when the document needs it, and add background or orientation to other parts of the project only when the order asks for it. The file is the deliverable.",
 ].join("\n\n");
 
 const MAX_SECTIONS = 40;
-const TAIL_CHARS = 800;
+// Gather budget: the first steps are free; at GATHER_STEPS the model is warned and gets
+// GATHER_GRACE more inspection steps, then the outline is forced.
+const GATHER_STEPS = 10;
+const GATHER_GRACE = 3;
+const SECTION_FILE_CHARS = 60_000;
 const SUMMARY_FILE_CHARS = 24_000;
+// The write phase has no tools; a reply that is a tool call (or its native markup) is discarded
+// and retried, never written to the file.
+const MAX_SECTION_REPAIRS = 2;
+const SECTION_NO_TOOLS =
+  "You have no tools in this phase. The brief is the material. Reply with the section's Markdown body only; do not emit a tool call or tool-call markup.";
+const SUMMARY_NO_TOOLS =
+  "You have no tools in this phase. Reply with a short plain-text summary of the written file; do not emit a tool call or tool-call markup.";
+
+function looksLikeToolMarkup(text: string): boolean {
+  return (
+    text.includes("DSML") ||
+    text.includes("\uFF5C") ||
+    /<\/?(tool_calls|function_calls)\b/i.test(text)
+  );
+}
 
 export interface DocumentPlanCall {
   name: string;
@@ -76,7 +95,7 @@ export interface DocumentDeps {
   write: DocumentTextAgent;
   workspace: Workspace;
   maxTurns: number;
-  // Cap on the read-only outline phase (inspection turns before `submit_plan`).
+  // Cap on the read-only outline phase (inspection turns before `start_document`).
   maxPlanTurns: number;
   // Cap on continuation requests for one section cut by the output limit.
   maxContinuations?: number;
@@ -106,6 +125,7 @@ export interface DocumentSection {
 
 export interface DocumentOutline {
   path: string;
+  title?: string;
   items: DocumentSection[];
 }
 
@@ -183,6 +203,7 @@ function actionPayload(
 function parseOutline(args: Record<string, unknown>): DocumentOutline | undefined {
   const path = typeof args.path === "string" ? args.path.trim() : "";
   if (path === "") return undefined;
+  const title = typeof args.title === "string" ? args.title.trim() : "";
   const raw = args.items;
   if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_SECTIONS) return undefined;
   const items: DocumentSection[] = [];
@@ -193,17 +214,17 @@ function parseOutline(args: Record<string, unknown>): DocumentOutline | undefine
     if (typeof value.brief !== "string" || value.brief.trim() === "") return undefined;
     items.push({ order: index + 1, title: value.title.trim(), brief: value.brief.trim() });
   }
-  return { path, items };
+  return { path, ...(title !== "" ? { title } : {}), items };
 }
 
-// The submitted outline is the first action on the tape; it carries the raw `submit_plan` call
+// The submitted outline is the first action on the tape; it carries the raw `start_document` call
 // so the tape history shows it like any other tool call.
 function outlineOf(state: State, requestId: string): DocumentOutline | undefined {
   const turns = turnsOf(state, requestId);
   if (turns === undefined) return undefined;
   for (const actionId of childrenOf(state, turns)) {
     const payload = actionPayload(state, actionId);
-    if (payload?.call?.name !== "submit_plan") continue;
+    if (payload?.call?.name !== "start_document") continue;
     const args =
       typeof payload.call.args === "object" && payload.call.args !== null
         ? (payload.call.args as Record<string, unknown>)
@@ -230,7 +251,7 @@ function countReadTurns(state: State, requestId: string): number {
   if (turns === undefined) return 0;
   let count = 0;
   for (const actionId of childrenOf(state, turns)) {
-    if (actionPayload(state, actionId)?.call?.name !== "submit_plan") count += 1;
+    if (actionPayload(state, actionId)?.call?.name !== "start_document") count += 1;
   }
   return count;
 }
@@ -278,6 +299,7 @@ function outlineHistory(state: State, requestId: string): TapeMessage[] {
 function renderOutline(outline: DocumentOutline): string {
   return [
     `Document: ${outline.path}`,
+    ...(outline.title !== undefined ? [`Title: ${outline.title}`] : []),
     `Sections (${outline.items.length}):`,
     ...outline.items.map((item) => `${item.order}. ${item.title} — ${item.brief}`),
   ].join("\n");
@@ -295,6 +317,12 @@ function baseMessages(
   ];
 }
 
+function writtenSoFar(previous: string): string {
+  if (previous.trim() === "") return "(the file is empty)";
+  if (previous.length <= SECTION_FILE_CHARS) return previous;
+  return `…[the file is long; showing its last ${SECTION_FILE_CHARS} characters]\n${previous.slice(-SECTION_FILE_CHARS)}`;
+}
+
 function sectionMessages(
   state: State,
   requestId: string,
@@ -303,16 +331,13 @@ function sectionMessages(
   item: DocumentSection,
   previous: string,
 ): ModelMessage[] {
-  const tail =
-    previous.trim() === ""
-      ? ""
-      : `\nThe file currently ends with:\n…${previous.slice(-TAIL_CHARS)}\n`;
+  const soFar = writtenSoFar(previous);
   return [
     ...baseMessages(state, requestId, workspace),
     { role: "system", content: `Document plan:\n${renderOutline(outline)}` },
     {
       role: "user",
-      content: `Write item ${item.order} of ${outline.items.length}: "${item.title}".\nBrief: ${item.brief}\n${tail}\nReply with the Markdown body only: no '# ' or '## ' heading, subsections at '###' or deeper.`,
+      content: `Write item ${item.order} of ${outline.items.length}: "${item.title}".\nBrief: ${item.brief}\n\nThe document written so far (do not repeat it):\n---\n${soFar}\n---\n\nReply with the Markdown body only: no '# ' or '## ' heading, subsections at '###' or deeper. Write only the new section; do not repeat commands, facts or sentences already in the file — refer back to earlier sections by title.`,
     },
   ];
 }
@@ -383,8 +408,12 @@ function recordOutline(
       label: `plan ${outline.path}`,
       payload: {
         call: {
-          name: "submit_plan",
-          args: { path: outline.path, items: outline.items },
+          name: "start_document",
+          args: {
+            path: outline.path,
+            ...(outline.title !== undefined ? { title: outline.title } : {}),
+            items: outline.items,
+          },
         },
         outline,
         turn,
@@ -667,17 +696,19 @@ export async function runDocumentUnit(
     outline = outlineOf(state, requestId);
 
     if (outline === undefined) {
-      if (countReadTurns(state, requestId) >= deps.maxPlanTurns) {
+      const readSteps = countReadTurns(state, requestId);
+      const gatherHard = GATHER_STEPS + GATHER_GRACE;
+      if (readSteps >= gatherHard) {
         const messages = [
           ...baseMessages(state, requestId, input.workspace),
           {
             role: "system" as const,
             content:
-              "The outline must be submitted now. Call `submit_plan` with the path and the ordered sections; do not inspect anything else.",
+              "The inspection limit is reached. Call `start_document` now with the path and the ordered sections; do not inspect anything else. The engine starts writing as soon as you submit.",
           },
         ];
         const reply = await callPlan(messages, true);
-        const submit = reply.calls.find((call) => call.name === "submit_plan");
+        const submit = reply.calls.find((call) => call.name === "start_document");
         if (submit !== undefined) {
           const parsed = parseOutline(submit.args);
           if (parsed !== undefined) {
@@ -697,17 +728,27 @@ export async function runDocumentUnit(
       }
 
       const messages = historyMessages(outlineHistory(state, requestId));
+      const remaining = gatherHard - readSteps;
+      const limitHint =
+        readSteps >= GATHER_STEPS
+          ? `Inspection limit reached: ${remaining} inspection step(s) left. Finish inspecting and call \`start_document\`; after the last step the engine starts writing.`
+          : undefined;
       const reply = await callPlan(
         [
           { role: "system", content: DOCUMENT_BASE_PROMPT },
           ...(input.workspace !== undefined
             ? [{ role: "system" as const, content: input.workspace }]
             : []),
+          {
+            role: "system" as const,
+            content: `Inspection budget: ${GATHER_STEPS} steps; then ${GATHER_GRACE} more with a warning, then the engine forces the outline.`,
+          },
+          ...(limitHint !== undefined ? [{ role: "system" as const, content: limitHint }] : []),
           ...messages,
         ],
         false,
       );
-      const submit = reply.calls.find((call) => call.name === "submit_plan");
+      const submit = reply.calls.find((call) => call.name === "start_document");
       if (submit !== undefined) {
         const parsed = parseOutline(submit.args);
         if (parsed !== undefined) {
@@ -799,9 +840,16 @@ export async function runDocumentUnit(
         : "";
       let body = "";
       let reasoning: string | undefined;
+      let repairs = 0;
+      let failed = false;
       for (let continuation = 0; ; continuation += 1) {
         if (isAborted(input.signal)) {
           paused = true;
+          break;
+        }
+        if (turn >= maxTurns) {
+          stopReason = "max_turns";
+          failed = true;
           break;
         }
         const messages =
@@ -815,13 +863,40 @@ export async function runDocumentUnit(
                 item,
                 body,
               );
-        const reply = await callText(messages);
+        const reply = await callText(
+          repairs === 0
+            ? messages
+            : [...messages, { role: "system" as const, content: SECTION_NO_TOOLS }],
+        );
+        turn += 1;
+        if (looksLikeToolMarkup(reply.text) || (reply.text.trim() === "" && reply.finishReason !== "length")) {
+          if (repairs >= MAX_SECTION_REPAIRS) {
+            stopReason = "invalid_section";
+            failed = true;
+            break;
+          }
+          repairs += 1;
+          body = "";
+          reasoning = undefined;
+          // Retry the same section from the start (discard the leaked reply entirely).
+          continuation = -1;
+          continue;
+        }
         body += reply.text;
         if (reasoning === undefined) reasoning = reply.reasoning;
         if (reply.finishReason !== "length" || continuation >= maxContinuations) break;
       }
-      if (paused) break;
-      if (written.size === 0) deps.workspace.write(outline.path, "");
+      if (paused || failed) break;
+      if (body.trim() === "") {
+        stopReason = "invalid_section";
+        break;
+      }
+      if (written.size === 0) {
+        // The first section starts the file: the executor owns the top-level title, the model
+        // only supplies section bodies (`## …`).
+        const head = outline.title !== undefined ? `# ${outline.title}\n\n` : "";
+        deps.workspace.write(outline.path, head);
+      }
       const chunk = `## ${item.title}\n\n${body.trim()}\n\n`;
       emit?.({
         type: "tool_started",
@@ -856,7 +931,6 @@ export async function runDocumentUnit(
         status: "ok",
         preview: `## ${item.title} (+${bytes} bytes)`,
       });
-      turn += 1;
       continue;
     }
 
@@ -864,14 +938,28 @@ export async function runDocumentUnit(
       const file = deps.workspace.exists(outline.path)
         ? deps.workspace.read(outline.path)
         : "";
-      const reply = await callText(
-        summaryMessages(state, requestId, input.workspace, outline, file),
-      );
+      let summary = "";
+      for (let attempt = 0; attempt < 2 && turn < maxTurns; attempt += 1) {
+        const messages = summaryMessages(state, requestId, input.workspace, outline, file);
+        const reply = await callText(
+          attempt === 0
+            ? messages
+            : [...messages, { role: "system" as const, content: SUMMARY_NO_TOOLS }],
+        );
+        turn += 1;
+        const text = reply.text.trim();
+        if (text !== "" && !looksLikeToolMarkup(text)) {
+          summary = text;
+          break;
+        }
+      }
+      if (summary === "") {
+        summary = `Written ${outline.items.length} section(s) to ${outline.path}.`;
+      }
       const before = events.length;
-      recordSummary(events, requestId, reply.text.trim(), turn);
+      recordSummary(events, requestId, summary, turn);
       emit?.({ type: "events_added", unitId: requestId, events: events.slice(before) });
       emit?.({ type: "state_changed", unitId: requestId, turn, state: "document", closed: true });
-      turn += 1;
       done = true;
       stopReason = "summarized";
       break;

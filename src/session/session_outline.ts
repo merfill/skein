@@ -222,7 +222,7 @@ function documentEnding(unit: Unit): string {
         }
       | undefined;
     if (node.kind !== "action") continue;
-    if (payload?.call?.name === "submit_plan") {
+    if (payload?.call?.name === "start_document") {
       const outline = payload.outline;
       if (outline !== undefined) {
         path = typeof outline.path === "string" ? outline.path : "";

@@ -70,7 +70,7 @@ Strategy lives in the tool descriptions and the tape.
 | ID | Block | Behavior |
 |---|---|---|
 | B1 | `role` | A coding agent; exactly one state at a time; the state is its goal with its own completion condition; work until it holds, then reply with text only; after the closure choose the next state with `move`; each turn is tool calls, run in order, independent calls batched |
-| B2 | `principles` | Follow the project; work only the state's goal; prefer the dedicated tools; inspect narrowly; the result comes from the material or the specification; do not reconstruct an external version from memory; keep the material intact; do not re-probe executor facts; no secrets; concise output |
+| B2 | `principles` | Follow the project; work only the state's goal; prefer the dedicated tools; inspect narrowly; the result comes from the material or the specification; do not reconstruct an external version from memory; keep the material intact; do not re-probe executor facts; no secrets; concise output — the shortest answer unless asked |
 
 ### Situation prompts
 

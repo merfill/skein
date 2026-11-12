@@ -163,7 +163,9 @@ export const ISLANDS: Record<IslandId, Island> = {
       "Read the tape — the request, the states the task passed, what each of them did, the files " +
       "it changed, and how the result was checked — and write the report from those records in " +
       "GitHub-flavored Markdown: what was done and where, how it was verified, and what is still " +
-      "open. Your reply is shown to the user as-is.",
+      "open. Keep it as short as the result allows: lead with the answer, then only the detail " +
+      "the user needs to act. Do not enumerate files, states or checks, and do not restate the " +
+      "request, unless the user asked for a detailed report. Your reply is shown to the user as-is.",
     applies: [],
     next: [],
   },

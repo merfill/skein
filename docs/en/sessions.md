@@ -75,12 +75,14 @@ goes to the task unit. `search` remains a memory tool over stored bodies, not a 
 
 The task agent receives only the work order. It does not read the session L0, other units' journals
 or the history tools; otherwise the task would turn into a monotone tape and lose focus. Continuity
-is transferred through the **formulation**, not through shared history.
+is transferred through the **formulation**, not through shared history. The order is written in the
+user's language and keeps its scope, so the unit's answer comes back in that language.
 
-After a task finishes, the driver asks the session agent for a **report** and records it in the
-same session unit that proposed the task. The report is the user-facing Markdown answer: what was
-done, where, how it was verified and what remains open. It closes nothing and does not open a new
-unit.
+After a task finishes, its End state writes the **report** — the task's own closing reply, which is
+the user-facing Markdown answer: what was done, where, how it was verified and what remains open.
+The session records that result in the session trace; it does not ask for a second report and does
+not open a new unit. Keep the report as short as the result allows and add detail only when the user
+asked for it.
 
 ## 5. Operations
 
@@ -187,13 +189,18 @@ The document agent produces one text file (Markdown by default) in the request's
 it section by section. The unit has one state anchored on the request: `move` is not used, the tape
 hangs off the request, and the executor decides when it is done.
 
-1. **Outline.** The agent may inspect the material with the read-only tools and then calls
-   `submit_plan` once with the target `path` and an ordered list of sections, each a title and a
-   self-contained brief. That JSON fixes the number of sections.
-2. **Sections.** For each item the executor asks for one section; the agent replies with the
-   Markdown body only, and the executor appends `## <title>`. A body cut by the output cap is
-   continued by a bounded follow-up request. The body is plain text, never a tool argument, so a
-   large section is not a truncated JSON string.
+1. **Gather.** The agent inspects the material with the read-only tools (including `webfetch`): it
+   has 10 inspection steps, then a warning with 3 more, then the executor forces `start_document`.
+   It calls `start_document` once with the target `path`, a short document `title`, and an ordered
+   list of sections, each a title and a self-contained brief. That JSON fixes the number of
+   sections. The plan stays around the request (only information directly related to it). The
+   writer has no tools, so each brief must carry the facts its section needs; briefs stay within
+   the file's subject.
+2. **Write.** For each item the executor asks for one section and offers no tools; the agent
+   replies with the Markdown body only, and the executor writes `# <title>` before the first
+   `## <section>`. A tool-call reply is discarded and retried, never written. A body cut by the
+   output cap is continued by a bounded follow-up request. The body is plain text, never a tool
+   argument, so a large section is not a truncated JSON string.
 3. **Summary.** After the last section the agent writes a short summary from the plan and the file;
    the executor records it and closes the unit with the request's `stop`.
 

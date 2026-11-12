@@ -27,23 +27,33 @@ const outlineItemSchema = z.object({
   brief: z.string().min(1).max(4000),
 });
 
-const submitPlanSchema = z.object({
+const startDocumentSchema = z.object({
   path: z.string().min(1).max(1000),
+  title: z.string().min(1).max(200).optional(),
   items: z.array(outlineItemSchema).min(1).max(40),
 });
 
-// The outline tool is terminal and not an IR `Action`: the document loop records the plan
-// and drives the section turns itself.
+// The outline tool both ends the gather phase and starts the write phase: the document loop
+// records the plan, removes the tools and drives the section turns itself.
 export const DOCUMENT_TOOLS: Record<string, ExtraToolDefinition> = {
   ...GENERAL_TOOLS,
-  submit_plan: {
+  start_document: {
     description:
-      "Submit the section plan for the document. Call it exactly once, after you have read enough. `path` is the file to write; `items` is an ordered list of sections, each a short `title` and a self-contained `brief` with the facts, quotes or file:line references that section must use. Do not write the document here.",
-    schema: submitPlanSchema,
+      "Gather is over: submit the section plan and start writing. Call it exactly once, after you have collected the facts the document needs. `path` is the file to write, `title` is the document's top-level title, and `items` is an ordered list of sections, each a short `title` and a self-contained `brief`. The writer has NO tools, so every brief must carry the facts, quotes or file:line references its section needs. Plan the structure around the request: include only information directly related to it. Plan non-overlapping sections; a checklist is a short reference to the checks, not a second run. Keep every brief within the file's subject: no project background, layer overview or sibling-doc orientation the order did not ask for. Do not write the document here.",
+    schema: startDocumentSchema,
   },
 };
 
-const DOCUMENT_TOOL_NAMES = ["read", "grep", "list", "recall", "search", "shell", "submit_plan"];
+const DOCUMENT_TOOL_NAMES = [
+  "read",
+  "grep",
+  "list",
+  "recall",
+  "search",
+  "shell",
+  "webfetch",
+  "start_document",
+];
 
 function toolsFor(names: readonly string[]): ToolSet {
   return proposalTools(new Set(names), undefined, DOCUMENT_TOOLS);
@@ -89,7 +99,8 @@ export function modelDocumentPlanAgent(
           model: base,
           messages: repair === undefined ? messages : [...messages, repair],
           settings,
-          tools: final ? toolsFor(["submit_plan"]) : tools(),
+          tools: final ? toolsFor(["start_document"]) : tools(),
+          ...(final ? { toolChoice: "required" as const } : {}),
           streaming: settings.streaming,
           ...(callOptions.signal !== undefined ? { abortSignal: callOptions.signal } : {}),
         });
@@ -99,8 +110,8 @@ export function modelDocumentPlanAgent(
           repair = {
             role: "user",
             content: final
-              ? "Your reply hit the output limit. Do not reason; call `submit_plan` now with a concise outline: the path and the ordered sections."
-              : "Your reply hit the output limit. Do not reason; inspect less and call `submit_plan` with a concise outline.",
+              ? "Your reply hit the output limit. Do not reason; call `start_document` now with a concise outline: the path and the ordered sections."
+              : "Your reply hit the output limit. Do not reason; inspect less and call `start_document` with a concise outline.",
           };
           continue;
         }
@@ -108,8 +119,8 @@ export function modelDocumentPlanAgent(
           repair = {
             role: "user",
             content: final
-              ? "Call `submit_plan` now with the completed outline; do not inspect anything else."
-              : "Use a read-only tool to inspect the workspace, or call `submit_plan` when the outline is ready.",
+              ? "Call `start_document` now with the completed outline; do not inspect anything else."
+              : "Use a read-only tool to inspect the workspace, or call `start_document` when the outline is ready.",
           };
           continue;
         }
@@ -134,7 +145,7 @@ export function modelDocumentPlanAgent(
           repair = {
             role: "user",
             content:
-              "Your tool call was invalid. Call a read-only tool or `submit_plan` with arguments matching its schema.",
+              "Your tool call was invalid. Call a read-only tool or `start_document` with arguments matching its schema.",
           };
           continue;
         }

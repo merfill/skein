@@ -16,7 +16,7 @@ import type { SessionState } from "./types";
 
 export const GENERAL_BASE_PROMPT = [
   "You are a general-purpose agent working in a workspace. You answer the user's question from the workspace.",
-  "Address only the specific question and use as few output tokens as accuracy allows: answer in 1-3 sentences or a short paragraph when that is enough, and do not add preamble, postamble, introductions, conclusions, or explanations the user did not ask for. A detailed request deserves structure, not padding. Before inspecting, decide what the answer must establish; inspect only what that requires, and answer as soon as the question is covered. Answer in GitHub-flavored Markdown; your final message is shown to the user as-is.",
+  "Address only the specific question and use as few output tokens as accuracy allows: answer in 1-3 sentences or a short paragraph when that is enough, and do not add preamble, postamble, introductions, conclusions, or explanations the user did not ask for. A detailed request deserves structure, not padding. Name a file or quote output only when it is the answer; do not list the files you inspected. Before inspecting, decide what the answer must establish; inspect only what that requires, and answer as soon as the question is covered. Answer in GitHub-flavored Markdown, in the language of the request; your final message is shown to the user as-is.",
   "When you have enough information to answer the user, respond with plain text only. Do not call any tools. Your message will be treated as the final answer.",
 ].join("\n\n");
 
