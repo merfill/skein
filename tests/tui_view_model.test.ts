@@ -246,7 +246,7 @@ describe("TUI plan view", () => {
     openUnit(session, "r1", "task", taskJournal(), 6, "i1");
     recordPlanStarted(session, "p1", 0);
 
-    const view = buildTuiView(session, [], { planUnitId: "p1" });
+    const view = buildTuiView(session, telemetry(), { planUnitId: "p1" });
 
     expect(view.plan).toMatchObject({
       status: "executing",
@@ -255,6 +255,9 @@ describe("TUI plan view", () => {
       total: 2,
     });
     expect(view.plan?.items[0]?.status).toBe("suspended");
+    // The item's unit owns its turns and tokens; an item that has not opened has none.
+    expect(view.plan?.items[0]).toMatchObject({ turns: 6, tokensIn: 300, tokensOut: 30 });
+    expect(view.plan?.items[1]?.turns).toBeUndefined();
     expect(view.current?.unitId).toBe("r1");
   });
 });

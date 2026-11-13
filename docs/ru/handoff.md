@@ -3,6 +3,36 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-13 — метеринг всей сессии в harness; токены пунктов в PlanPanel
+
+### Что сделано
+
+- **`tests/sandbox/session-plan.ts` метрит всю сессию.** `memoryTelemetry()` проброшен в
+  `sessionAgent`/`task`/`general`/`planner` (+ верхний `telemetry`), поэтому `model_call` пишут
+  все циклы. `run.json.usage` — `usageTotals` по всем агентам плюс разбивка `byAgent`
+  (`session/plan/task/general/revision/document`); `TurnMeter` и комментарий «task only» убраны;
+  в финальный лог добавлены `in/out/rsn/cost`.
+- **`usageOf` несёт cost.** Если провайдер отдаёт `usage.raw.cost`, он попадает в `Usage.cost`
+  (поле и `usageTotals.cost` уже были, но нигде не заполнялись).
+- **PlanPanel: ходы и токены пункта.** `PlanItemView` получил `turns/tokensIn/tokensOut`;
+  `buildPlanView` агрегирует их по юнитам пункта через `unitStats`; `planItemRow` печатает
+  `· Nt in/out` после заголовка (у ещё не открытых пунктов — пусто).
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **650 passed / 40 skipped**.
+- `tests/tui_view_model.test.ts`: пункт плана показывает `turns/tokensIn/tokensOut` своего юнита.
+- **Live virtual `fix-ocaml-gc`** (20 turns): план done 3/3, reward=1. `usage`: 74 calls,
+  in 307701 / out 19303 / rsn 5664 / cache 188416 / cost 7.13; `byAgent` — session 34,
+  plan 5, task 18, general 17 (cost заполняется провайдером). Раньше task-only показал бы
+  18 calls / 73931 in.
+
+### Открыто
+
+- Реальный Docker-прогон harness'а не делался (только virtual).
+- Working tree не закоммичен.
+
 ## 2026-11-13 — session-агент: промпты в одном файле, память убрана
 
 ### Что сделано

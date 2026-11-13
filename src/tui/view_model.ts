@@ -23,7 +23,7 @@ import type {
   SessionState,
   Unit,
 } from "../session/types";
-import { usageTotals, type MetricEvent } from "../session/telemetry";
+import { unitStats, usageTotals, type MetricEvent } from "../session/telemetry";
 
 export interface TaskTiming {
   startedAt?: number;
@@ -104,6 +104,10 @@ export interface PlanItemView {
   title: string;
   status: PlanItemStatus;
   done?: string;
+  // Usage of the item's unit(s): the work done for this plan item, once it has opened.
+  turns?: number;
+  tokensIn?: number;
+  tokensOut?: number;
 }
 
 export interface PlanView {
@@ -386,11 +390,33 @@ function buildTask(
   };
 }
 
+function planItemUsage(
+  session: SessionState,
+  telemetry: readonly MetricEvent[],
+  itemId: string,
+): { turns: number; tokensIn: number; tokensOut: number } | undefined {
+  const units = unitsInOrder(session).filter((unit) => unit.planItem === itemId);
+  if (units.length === 0) return undefined;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  for (const unit of units) {
+    const stats = unitStats(telemetry, unit.id);
+    tokensIn += stats.inputTokens;
+    tokensOut += stats.outputTokens;
+  }
+  return {
+    turns: units.reduce((sum, unit) => sum + unit.turn, 0),
+    tokensIn,
+    tokensOut,
+  };
+}
+
 function buildPlanView(
   session: SessionState,
   requestedUnitId: string | undefined,
   timings: Map<string, TaskTiming>,
   now: number,
+  telemetry: readonly MetricEvent[],
 ): PlanView | undefined {
   const unitId = requestedUnitId ?? activePlanUnitId(session);
   if (unitId === undefined) return undefined;
@@ -429,13 +455,17 @@ function buildPlanView(
     status,
     completed: progress.completed,
     total: progress.total,
-    items: progress.items.map(({ item, status: itemStatus }) => ({
-      id: item.id,
-      order: item.order,
-      title: item.title,
-      status: itemStatus,
-      ...(item.done !== undefined ? { done: item.done } : {}),
-    })),
+    items: progress.items.map(({ item, status: itemStatus }) => {
+      const usage = planItemUsage(session, telemetry, item.id);
+      return {
+        id: item.id,
+        order: item.order,
+        title: item.title,
+        status: itemStatus,
+        ...(item.done !== undefined ? { done: item.done } : {}),
+        ...(usage !== undefined ? usage : {}),
+      };
+    }),
     ...(activeItemId !== undefined ? { activeItemId } : {}),
     ...progressOf(),
   };
@@ -479,7 +509,7 @@ export function buildTuiView(
     );
   });
 
-  const plan = buildPlanView(session, options.planUnitId, timings, now);
+  const plan = buildPlanView(session, options.planUnitId, timings, now, telemetry);
   let currentId = options.currentUnitId;
   if (currentId === undefined) {
     const planOwnsFocus = plan?.status === "ready" || plan?.status === "building";

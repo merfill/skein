@@ -109,6 +109,8 @@ export function usageOf(usage: LanguageModelUsage | undefined): Usage | undefine
   if (usage.inputTokenDetails?.cacheWriteTokens !== undefined) {
     result.cacheWriteTokens = usage.inputTokenDetails.cacheWriteTokens;
   }
+  const cost = usage.raw?.["cost"];
+  if (typeof cost === "number") result.cost = cost;
   return Object.keys(result).length > 0 ? result : undefined;
 }
 

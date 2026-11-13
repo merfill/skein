@@ -1,7 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { TurnMeter } from "../../bench/metrics";
 import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import type { Context } from "../../src/ir/project";
@@ -18,6 +17,7 @@ import {
 import { createSession } from "../../src/session/session";
 import { createSessionAgentDeps } from "../../src/llm/session_agent";
 import type { SessionAgent } from "../../src/session/session_agent";
+import { memoryTelemetry, usageTotals } from "../../src/session/telemetry";
 import { renderPlanDraft, renderPlanRun } from "../../src/session/view";
 import type { Action, Proposals } from "../../src/llm/schemas";
 import { cleanupContainers } from "./docker";
@@ -96,14 +96,12 @@ function lastStop(events: readonly Event[]): string | undefined {
 }
 
 function proposer(capture?: (label: string) => void) {
-  const meter = new TurnMeter();
   let turn = 0;
   const propose = async (context: Context): Promise<Proposals> => {
     capture?.(`turn-${turn}`);
     const started = Date.now();
     const proposal = await proposeModel(model, context, {
       settings,
-      usageHandlers: [meter],
       onError: (error) =>
         console.error(`llm call failed: ${error instanceof Error ? error.message : String(error)}`),
     });
@@ -116,7 +114,7 @@ function proposer(capture?: (label: string) => void) {
     turn += 1;
     return proposal;
   };
-  return { propose, meter, turns: () => turn };
+  return { propose, turns: () => turn };
 }
 
 interface RunEnv {
@@ -129,7 +127,8 @@ interface RunEnv {
 
 async function run(id: string, env: RunEnv, options: Options, dir: string): Promise<number> {
   const capture = env.opened?.capture;
-  const { propose, meter, turns } = proposer(capture);
+  const { propose, turns } = proposer(capture);
+  const telemetry = memoryTelemetry();
   const sessionDeps = createSessionAgentDeps(model, { settings });
   const real = sessionDeps.agent;
   // The harness forces the first operation to `plan`; later interpretations (one per item)
@@ -147,24 +146,28 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
   };
 
   const deps: SessionTurnDeps = {
-    sessionAgent: { ...sessionDeps, agent },
+    sessionAgent: { ...sessionDeps, agent, telemetry: telemetry.sink },
     task: {
       propose,
       workspace: env.workspace,
       maxTurns: options.maxTurns ?? 80,
       probe: (workspace) => probeSession(workspace, { network: options.network }),
+      telemetry: telemetry.sink,
     },
     general: {
       propose: modelGeneralProposer(model, { settings }),
       workspace: env.workspace,
       maxTurns: settings.generalMaxTurns,
+      telemetry: telemetry.sink,
     },
     planGeneralMaxTurns: settings.planGeneralMaxTurns,
     planner: {
       agent: modelPlannerAgent(model, { settings }),
       workspace: env.workspace,
       maxTurns: settings.plannerMaxTurns,
+      telemetry: telemetry.sink,
     },
+    telemetry: telemetry.sink,
   };
 
   const session = createSession();
@@ -216,6 +219,25 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
     throw new Error("no verification target");
   }
 
+  const usage = usageTotals(telemetry.events);
+  const byAgent = Object.fromEntries(
+    (["session", "plan", "task", "general", "revision", "document"] as const).map((agent) => {
+      const totals = usageTotals(
+        telemetry.events.filter((event) => event.type === "model_call" && event.agent === agent),
+      );
+      return [
+        agent,
+        {
+          calls: totals.calls,
+          inputTokens: totals.inputTokens,
+          outputTokens: totals.outputTokens,
+          reasoningTokens: totals.reasoningTokens,
+          cachedInputTokens: totals.cachedInputTokens,
+          costRub: totals.cost,
+        },
+      ];
+    }),
+  );
   writeFileSync(
     join(dir, "plan.json"),
     JSON.stringify({ planUnitId: planned.plan.unitId, plan, events: planned.plan.result.events }, null, 2),
@@ -241,13 +263,16 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
         reward: verification.reward,
         check: verification.check,
         taskTurns: turns(),
-        // Task proposer tokens only; session/planner/general calls are not metered here.
+        // Every model call (session, planner, task, general, revision, document) records its
+        // usage on the telemetry sink, so this is the whole session, not just the task pass.
         usage: {
-          calls: meter.calls,
-          inputTokens: meter.inputTokens,
-          outputTokens: meter.outputTokens,
-          reasoningTokens: meter.reasoningTokens,
-          costRub: meter.costRub,
+          calls: usage.calls,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          reasoningTokens: usage.reasoningTokens,
+          cachedInputTokens: usage.cachedInputTokens,
+          costRub: usage.cost,
+          byAgent,
         },
       },
       null,
@@ -257,7 +282,8 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
 
   console.info(
     `\n=== ${id}: plan ${run.status} (${run.completed}/${run.total}), reward=${verification.reward}, ` +
-      `task turns=${turns()}, trace=${dir} ===`,
+      `task turns=${turns()}, in=${usage.inputTokens} out=${usage.outputTokens} ` +
+      `rsn=${usage.reasoningTokens} cost=${usage.cost.toFixed(2)}, trace=${dir} ===`,
   );
   if (verification.check.code !== 0) {
     console.info(`check failed (exit ${verification.check.code}): ${short(verification.check.stderr)}`);

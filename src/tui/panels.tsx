@@ -271,6 +271,10 @@ function planItemRow(item: PlanItemView, activeItemId: string | undefined, width
           ? "!"
           : "·";
   const active = item.id === activeItemId;
+  const usage =
+    item.turns !== undefined && item.turns > 0
+      ? ` · ${item.turns}t ${compactTokens(item.tokensIn ?? 0)}/${compactTokens(item.tokensOut ?? 0)}`
+      : "";
   return (
     <T
       key={item.id}
@@ -281,7 +285,7 @@ function planItemRow(item: PlanItemView, activeItemId: string | undefined, width
           ? { dimColor: true }
           : {})}
     >
-      {oneLine(`${mark} ${item.order}. ${item.title}`, width)}
+      {oneLine(`${mark} ${item.order}. ${item.title}${usage}`, width)}
     </T>
   );
 }
