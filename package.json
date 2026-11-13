@@ -1,18 +1,41 @@
 {
-  "name": "skein",
-  "version": "0.0.0",
-  "private": true,
+  "name": "skein-swe",
+  "version": "0.1.0",
+  "description": "A coding agent whose context is a projection of its IR.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "skein": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/merfill/skein.git"
+  },
+  "keywords": [
+    "coding-agent",
+    "llm",
+    "agent",
+    "cli",
+    "terminal"
+  ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --packages=external --banner:js='#!/usr/bin/env node' --outfile=dist/cli.js && chmod +x dist/cli.js",
+    "prepublishOnly": "npm run build",
     "cli": "tsx src/cli.ts",
     "bench": "tsx bench/run.ts",
     "bench:gate": "tsx bench/gate.ts",
+    "campaign": "tsx tests/sandbox/campaign.ts",
     "replay": "tsx bench/replay.ts"
   },
   "dependencies": {
@@ -29,6 +52,7 @@
   "devDependencies": {
     "@types/node": "^26.6.3",
     "@types/react": "^19.3.0",
+    "esbuild": "^0.28.2",
     "ink-testing-library": "^4.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

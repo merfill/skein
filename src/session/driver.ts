@@ -21,9 +21,12 @@ import {
   planModeOf,
   planOfSession,
   planProgress,
+  planItemAttempts,
   blockedItem,
   nextPendingItem,
   renderPlanState,
+  type PlanItemData,
+  type PlanRetry,
 } from "./plan";
 import { runPlanner, type PlannerDeps, type PlannerResult } from "./planner";
 import {
@@ -66,6 +69,9 @@ export interface SessionTurnDeps {
   // The general unit's cap when it executes a plan item (a deeper investigation than a
   // one-off question). Falls back to `general.maxTurns` when absent.
   planGeneralMaxTurns?: number;
+  // Extra attempts a plan item gets after its unit ends `abandoned`. `0` keeps the old
+  // "first failure aborts the plan" behavior; the default in the CLI is one retry.
+  planItemRetries?: number;
   // How many turns to add when the user continues a task that reached its cap.
   budgetExtend?: number;
   // A lazy, session-scoped probe: the general unit gets the workspace facts. The session
@@ -608,8 +614,9 @@ export interface PlanExecutionResult {
 
 // Execute a confirmed plan: open its items one after another as ordinary units. The session
 // agent is re-invoked for each item (it chooses `task` or `general` and reformulates the work
-// order); the engine records the link, derives the item's status from the unit's journal and
-// advances. An item that ends `abandoned` stops the plan instead of being skipped.
+// order); the engine records the link, derives the item's status from the latest attempt's
+// journal and advances. An item that ends `abandoned` is retried up to `planItemRetries`
+// times; when the budget is exhausted the plan is aborted instead of being skipped.
 export async function executePlan(
   deps: SessionTurnDeps,
   session: SessionState,
@@ -642,6 +649,7 @@ export async function executePlan(
     return { completed: progress.completed, total: progress.total };
   };
 
+  const maxAttempts = 1 + Math.max(0, deps.planItemRetries ?? 0);
   for (;;) {
     if (options.signal?.aborted === true) {
       return {
@@ -653,16 +661,25 @@ export async function executePlan(
       };
     }
     const blocked = blockedItem(session, plan);
+    let item: PlanItemData | undefined;
+    let retry: PlanRetry | undefined;
     if (blocked !== undefined) {
-      if (blocked.status === "abandoned") {
+      if (blocked.status !== "abandoned") {
+        // A live unit under the plan (a pause); resume it before continuing.
+        return { session, planUnitId, status: "paused", ...progressNow(), units };
+      }
+      const attempts = planItemAttempts(session, blocked.item.id);
+      if (attempts >= maxAttempts) {
         const progress = progressNow();
         recordPlanFinished(session, planUnitId, turn, "aborted", progress.completed, progress.total);
         return { session, planUnitId, status: "aborted", ...progress, units };
       }
-      // A live unit under the plan (a pause); resume it before continuing.
-      return { session, planUnitId, status: "paused", ...progressNow(), units };
+      // The item ended abandoned and still has attempts left: reopen it as a retry.
+      item = blocked.item;
+      retry = { itemId: item.id, attempt: attempts + 1, max: maxAttempts };
+    } else {
+      item = nextPendingItem(session, plan);
     }
-    const item = nextPendingItem(session, plan);
     if (item === undefined) {
       const progress = progressNow();
       recordPlanFinished(session, planUnitId, turn, "done", progress.completed, progress.total);
@@ -674,7 +691,7 @@ export async function executePlan(
     const itemText = item.detail !== "" ? item.detail : item.title;
     const interpretation = await runSessionAgent(deps.sessionAgent, session, itemText, {
       turn,
-      plan: renderPlanState(session, plan),
+      plan: renderPlanState(session, plan, retry),
       planItem: item.id,
       planUnitId,
       ...(options.signal !== undefined ? { signal: options.signal } : {}),

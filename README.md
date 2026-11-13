@@ -25,30 +25,63 @@ carried by the reformulation and the session trace.
 Requires Node.js >= 22.
 
 ```bash
-npm install
-npm run cli -- --dir ~/project
+npx skein-swe auth login    # choose a provider, paste a key
+npx skein-swe doctor        # one-token check that the key and model work
+npx skein-swe               # start the TUI in the current directory
 ```
 
-On the first run Skein offers local runtimes (Ollama, LM Studio, vLLM) and the providers
-with a free tier. You can also configure a provider explicitly:
+Or install globally (`skein` is the binary):
 
 ```bash
-npm run cli -- auth login
-npm run cli -- doctor
+npm install -g skein-swe
+skein auth login
+skein doctor
+skein --dir ~/project
 ```
 
-See `docs/en/providers.md` for the full provider catalog, config precedence and free options.
+The first run offers local runtimes (Ollama, LM Studio, vLLM) and the providers with a free
+tier; `skein auth login` configures a provider explicitly. See `docs/en/providers.md` for the
+catalog, config precedence and free options. Keys are yours: there is no hosted gateway.
+
+### Docker
+
+```bash
+docker build -t skein .
+docker run --rm -it -v "$PWD:/workspace" -e SKEIN_API_KEY=... skein
+```
+
+The agent runs inside the container; the image is a minimal Node runtime with `git`, so extend
+it with the toolchain your project needs. Pass the provider explicitly when needed:
+
+```bash
+docker run --rm -it -v "$PWD:/workspace" \
+  -e SKEIN_PROVIDER=openrouter -e SKEIN_MODEL=<model> -e OPENROUTER_API_KEY=<key> \
+  skein --dir /workspace
+```
+
+Local runtimes (Ollama, LM Studio, vLLM) work the same way with `--base-url`; no model is
+bundled or downloaded for you. See `docs/en/providers.md`.
+
+### From a source checkout
+
+```bash
+npm install
+npm run build
+npm run cli -- --dir ~/project
+```
 
 ## Commands
 
 ```bash
 npm run typecheck                                  # tsc --noEmit
 SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'   # offline tests
-npm run cli -- --dir <project>                     # TUI
-npm run cli -- --dir <project> --plain             # line REPL
-npm run cli -- auth login                          # provider setup
-npm run cli -- models                              # list models
-npm run cli -- doctor                              # test the connection
+npm run build                                      # dist/cli.js (npm bin `skein`)
+npm run cli -- --dir <project>                     # TUI (source)
+skein --dir <project>                              # TUI (built/installed)
+skein --dir <project> --plain                      # line REPL
+skein auth login                                   # provider setup
+skein models                                       # list models
+skein doctor                                       # test the connection
 ```
 
 Live model scenarios and the Docker sandbox are opt-in and cost money/time:

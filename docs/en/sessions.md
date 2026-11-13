@@ -141,9 +141,13 @@ the operation (`revision`, `task`, `general`, `document` or `plan`), and reformu
 self-contained work order. The item runs as an ordinary unit linked to it (`planItem`); only the
 current item's work order reaches the unit's agent — never the whole list.
 
-An item's status is derived from its unit's journal: `completed` means the item is done;
-`abandoned` stops the plan and records `plan_finished` with status `aborted`; `active/suspended` is
-a pause. After the last item, `plan_finished { status, n/N }` is recorded — the special
+An item's status is derived from its **latest** attempt's unit journal: `completed` means the item
+is done; `active/suspended` is a pause. An `abandoned` attempt is retried in a new unit for the
+same `planItem` (up to `planItemRetries` extra attempts — one by default; `0` restores the old
+"first failure aborts" behavior). The retry's plan block tells the session agent that it is
+reopening the item and which attempt this is. When the retry budget is exhausted the plan is
+aborted and records `plan_finished` with status `aborted`. After the last item,
+`plan_finished { status, n/N }` is recorded — the special
 plan-completion element in the session trace. `plan_started`/`plan_finished` are session-journal
 events; the mode and cursor are derived, never stored. There is no separate acceptance pass: the
 plan is done when the last item's unit closes. An item's `done` note is the work order's own check,

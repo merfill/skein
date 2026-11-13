@@ -128,12 +128,24 @@ export function planFinished(
   return undefined;
 }
 
-// The unit opened for a plan item, if any.
+// The latest unit opened for a plan item, if any. A retry opens a new unit for the same item,
+// so the item's status must follow the last attempt, not the first.
 export function unitOfPlanItem(session: SessionState, itemId: string): Unit | undefined {
-  for (const unit of session.units.values()) {
-    if (unit.planItem === itemId) return unit;
+  let found: Unit | undefined;
+  for (const unit of unitsInOrder(session)) {
+    if (unit.planItem === itemId) found = unit;
   }
-  return undefined;
+  return found;
+}
+
+// How many attempts a plan item has had. Retries are ordinary `open_unit` events with the same
+// `planItem`, so the count is derived from the journal, never stored.
+export function planItemAttempts(session: SessionState, itemId: string): number {
+  let count = 0;
+  for (const unit of unitsInOrder(session)) {
+    if (unit.planItem === itemId) count += 1;
+  }
+  return count;
 }
 
 export function planItemStatus(
@@ -192,25 +204,45 @@ export function activePlanState(session: SessionState): string | undefined {
   return plan !== undefined ? renderPlanState(session, plan) : undefined;
 }
 
+// A retry of an abandoned plan item: the engine opens the item again, and the session agent
+// must see why it is being asked for the same item a second time.
+export interface PlanRetry {
+  itemId: string;
+  attempt: number;
+  max: number;
+}
+
 // The plan as the session agent reads it during execution: item statuses and the current one.
-export function renderPlanState(session: SessionState, plan: PlanData): string {
+export function renderPlanState(
+  session: SessionState,
+  plan: PlanData,
+  retry?: PlanRetry,
+): string {
   const progress = planProgress(session, plan);
   const blocked = blockedItem(session, plan);
   const lines = [`Execution plan (unit ${plan.planUnitId}) ${progress.completed}/${progress.total} done:`];
   for (const { item, status } of progress.items) {
-    const marker =
-      status === "completed"
+    const retrying = retry !== undefined && retry.itemId === item.id;
+    const marker = retrying
+      ? ">"
+      : status === "completed"
         ? "x"
         : status === "active" || status === "suspended"
           ? ">"
           : status === "abandoned"
             ? "!"
             : " ";
-    lines.push(`[${marker}] ${item.order}. ${item.title} (${status})`);
+    lines.push(`[${marker}] ${item.order}. ${item.title} (${retrying ? "retrying" : status})`);
     if (item.detail !== "") lines.push(`      ${item.detail}`);
     if (item.done !== undefined) lines.push(`      Done when: ${item.done}`);
   }
-  if (blocked !== undefined) {
+  if (retry !== undefined) {
+    const retryItem = plan.items.find((item) => item.id === retry.itemId);
+    lines.push(
+      `Retrying item ${retryItem?.order ?? "?"} ` +
+        `(attempt ${retry.attempt} of ${retry.max}): the previous attempt was abandoned; open it again.`,
+    );
+  } else if (blocked !== undefined) {
     lines.push(
       `Current item ${blocked.item.order} is ${blocked.status}; resolve it before opening another.`,
     );

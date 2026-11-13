@@ -1,4 +1,4 @@
-import { statSync, type Stats } from "node:fs";
+import { realpathSync, statSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { createInterface, emitKeypressEvents } from "node:readline";
@@ -283,6 +283,7 @@ async function main(): Promise<void> {
         telemetry: telemetry.sink,
       },
       planGeneralMaxTurns: args.maxTurns ?? agentSettings.planGeneralMaxTurns,
+      planItemRetries: agentSettings.planItemRetries,
       budgetExtend: agentSettings.budgetExtend,
       planner: {
         agent: modelPlannerAgent(model, {
@@ -364,7 +365,15 @@ async function main(): Promise<void> {
 }
 
 const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+// npm installs the binary as a symlink (`node_modules/.bin/skein`): resolve it before comparing
+// with `import.meta.url`, otherwise the installed CLI is a silent no-op.
+let resolvedEntry: string | undefined;
+try {
+  resolvedEntry = entry !== undefined ? realpathSync(entry) : undefined;
+} catch {
+  resolvedEntry = entry;
+}
+if (resolvedEntry !== undefined && import.meta.url === pathToFileURL(resolvedEntry).href) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

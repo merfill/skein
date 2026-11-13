@@ -3,6 +3,188 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-13 — B4: кампания K=5 (`campaign.ts`)
+
+### Что сделано
+
+- **`tests/sandbox/campaign.ts`** — обёртка над `matrix.ts` на все 13 задач. Одна задача за раз,
+  поэтому `--concurrency` — это **общий** лимит одновременно запущенных клеток (5 = 5
+  контейнеров, не 5 на задачу). `net on|off` — обычные значения сетки; каждая клетка в своём
+  процессе, `off`-proxy изолирован. Wall-clock таймаут не передаётся.
+- **Флаги:** `--tasks`, `--agents`, `--nets`, `--repeat` (5), `--concurrency` (5),
+  `--task-concurrency task=n` (per-task override: `fix-ocaml-gc=3`, т.к. verifier пересобирает
+  OCaml и CPU-heavy), `--out`, `--resume`, `--only-failed`, `--dry`. `--max-steps` =
+  `task.maxTurns` (60 для `fix-ocaml-gc`) для паритета с Skein. Preflight: `SKEIN_LIVE=true`,
+  Docker, opencode-бинарь, кэш задач.
+- **Сводки:** `manifest.json` (commit, node, модели, K, сети, concurrency, timeout=none),
+  `summary.json`, `summary.md`, `summary.csv`; при обрыве читается `manifest.json` задачи.
+- `opencode.ts` экспортирует `DEFAULT_MODEL`, чтобы протокол писал реальную модель.
+- **Docs:** `docs/en/testing.md` §4.1, `roadmap.md` B4.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `--dry` (бесплатно): **13 задач, 260 клеток, 250 runnable** (у `crack-7z-hash` `net=off`
+  `unsupported`); у `fix-ocaml-gc` `--max-steps 60`, у остальных 80.
+- Пилот `regex-log` (K=1, on): Skein 1/1 (8 ходов, 1.54₽), opencode 1/1 (17 ходов).
+- **Кампания завершена** (`finishedAt` 2026-11-13T13:24:11Z; out `bench/runs/matrix/campaign-k5/`):
+  протокол `--repeat 5 --concurrency 10 --task-concurrency fix-ocaml-gc=3`, оба net, без
+  timeout. **250 runnable клеток, 246 solved (98.4%)**; 10 `unsupported` (`crack-7z-hash`
+  off). По группам: Skein/on **63/65**, Skein/off **60/60**, opencode/on **65/65**,
+  opencode/off **58/60**. Skein cost **182.72₽** (opencode стоимость не отдаёт; счёт
+  провайдера выше). Сводки: `summary.md` / `summary.json` / `summary.csv`.
+
+### Токены и стоимость (для статьи)
+
+Полный разбор: `bench/results/campaign-k5/token-comparison.md` (+ `.csv`); сырые клетки —
+`bench/runs/matrix/campaign-k5/`. Solved-only (по 123 прогона, все solved):
+
+| | Skein | opencode | opencode/Skein |
+|---|---:|---:|---:|
+| input | 31.38M | 47.63M | 1.52× |
+| cache read | 26.88M | 45.22M | 1.68× |
+| fresh input | 4.50M | 2.41M | 0.53× |
+| output | 1.24M | 936.7k | 0.75× |
+| reasoning | 812.7k | 624.5k | 0.77× |
+| total (in+out) | 32.62M | 48.56M | 1.49× |
+| cache hit | 85.7% | 94.9% | — |
+| turns | 2447 | 1800 | 0.74× |
+| cost | 178.22₽ | ~125.65₽ (оценка) | 0.71× |
+
+Цены, точно подогнанные по фактическому счёту Skein (R²=1.0): fresh input **17.80₽/1M**,
+cache read **0.356₽/1M**, output **71.20₽/1M**. opencode cost не отдаёт — оценка по тем же
+ценам (тот же endpoint). Вывод: opencode тратит в 1.49× больше токенов, но почти всё кэш
+(94.9%), поэтому по деньгам дешевле; Skein компактнее, но больше fresh input/output.
+All-runs (с провалами): Skein 33.49M/182.72₽, opencode 55.19M/~138.44₽.
+
+По состояниям (все 125 Skein-прогонов, `state-cost.md`): Construction **35.5%** денег
+(64.86₽), Patch **26.1%** (47.67₽), Research **23.8%** (43.49₽), Verification **8.6%**
+(15.71₽), End 6.0%. Patch+Verification = 34.7% денег, но **36.8% ходов** (925). То есть по
+ходам Patch+Verification действительно больше всех, а по деньгам Construction ≈
+Patch+Verification; Verification дешёвая. Дорогие задачи: `cobol` (Construction 32.7₽),
+`custom-memory` (Patch 21.3 + Verif 6.5), `fix-ocaml` (Patch 18.5 + Verif 5.8),
+`password` (Research 19.1), `regex` (Construction 14.0). Против opencode по деньгам хуже
+всего: `custom-memory` +14.9₽, `password` +9.2₽, `fix-code` +6.5₽, `git-leak` +6.5₽;
+дешевле только `fix-ocaml` (0.83×). Причина — больше fresh input и output/reasoning;
+opencode берёт кэшем.
+
+### Наблюдения (кампания)
+
+- **`fix-git`, Skein `net=on`, повтор r4 — `reward=0` (19/20 solved).** Не сбой харнесса:
+  агент нашёл висячий коммит `650dba4` («Move to Stanford»), но **не влил** его в `master` —
+  остановился на диагнозе (`stopReason=request_addressed`, 6 ходов). Verifier упал на
+  `test_about_file` и `test_layout_file` (файлы не в нужном состоянии). В остальных 4 повторах
+  on и всех 5 off агент делал мерж.
+- Причина — premature stop: состояние Research закрылось текстом, хотя условие перехода в End
+  («required result exists and matches the request») не выполнено. Воспроизводимость под
+  вопросом (вариантивность провайдера); сейчас **ничего не меняем**.
+- Кандидат на потом (не применён): проверка в `transitionInstruction` — перед End сверять
+  исходный запрос («если просят изменение, изменение должно быть сделано; диагноз — не
+  результат») + A/B на `fix-git` K=10. Оценивать отдельно, не в середине кампании.
+- **`fix-ocaml-gc`, Skein on r5 — `reward=0` (19/20):** `stopReason=max_turns` (65 ходов);
+  verifier нашёл `/app/ocaml/tests.txt` без «40 tests passed» (только make enter/leave).
+  Бюджетный промах, не сбой харнесса.
+- **`db-wal-recovery`, opencode off r2/r4 — `reward=0` (18/20):** 40/57 шагов,
+  56/92 bash-вызова, огромный input (2.3M/4.2M, в основном cache). Причину ещё не разбирали.
+
+### Открыто
+
+- Кампания завершена; разобрать `db-wal-recovery`/opencode off r2/r4 (причину провала) и,
+  при желании, `fix-ocaml-gc` r5 (бюджет ходов).
+- Старые opencode-результаты — K=1 (Harbor), в кампанию не входят: выбран свежий K=5.
+- Отдельный вопрос честности: verifier крутится в контейнере агента (скрипты `/tests`
+  перекладываются после агента, но системные бинарники агент мог изменить). Не усиливали.
+- Дальше по плану (`roadmap.md`): first-run `doctor`/TUI на чистой машине, Docker
+  live-приёмка, тег `v0.1.0` + Zenodo, отчёт/статья. Провалы кампании — материал для статьи,
+  не блокеры.
+- Рабочее дерево не закоммичено.
+
+## 2026-11-13 — дистрибутив v0.1: npm-пакет и Docker
+
+### Что сделано
+
+- **Пакет.** `package.json`: `name: skein-swe` (npm-имя `skein` занято), `version: 0.1.0`,
+  `private` снят, `bin: { skein: dist/cli.js }`, `files: [dist, README, LICENSE]`,
+  `license: MIT` (LICENSE уже был), repository/keywords/description. Сборка — `esbuild`
+  (`npm run build`), зависимости внешние (`--packages=external`), shebang в баннере.
+- **Найден и исправлен баг установленного бинаря.** `src/cli.ts` сравнивал
+  `import.meta.url` с `pathToFileURL(process.argv[1])`; при запуске через симлинк
+  `node_modules/.bin/skein` пути различались, и CLI молча ничего не делал. Теперь
+  `process.argv[1]` резолвится через `realpathSync`.
+- **`readVersion` работает в обоих layout.** Пробует `../../package.json` (src) и
+  `../package.json` (dist), поэтому `skein --version` корректен и в dev, и в пакете.
+- **Docker.** `Dockerfile` (multi-stage: `node:22-slim`, `npm ci` → build → prune; runtime —
+  non-root `node`, `git`/`bash`/`curl`/`procps`, `/workspace`), `.dockerignore`.
+  Ориентир — провайдеры (BYOK); compose с Ollama и автозагрузкой модели убраны по решению
+  (локальные рантаймы остаются через `--base-url`, но без встроенной/скачиваемой модели).
+- **README.** Установка через `npx skein-swe` / `npm i -g skein-swe`, бинарь `skein`,
+  Docker (с провайдером через env), source-checkout; команды обновлены.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **652 passed / 40 skipped**.
+- `npm run build` → `dist/cli.js` (526 KB); `node dist/cli.js --version/--help`.
+- `npm pack` — 4 файла (LICENSE, README, dist/cli.js, package.json); установка тарбола в
+  `/tmp/skein-install` → `node_modules/.bin/skein --version/--help/auth list` работает.
+- `docker build -t skein:0.1.0 .` — успешно; `docker run --rm skein:0.1.0
+  --version/--help/auth list` — работает (config в `/home/node`).
+
+### Открыто
+
+- Полный прогон в Docker на маленькой задаче с реальным провайдером не делался.
+- `skein doctor`/TUI на чистой машине с реальным ключом не проверялись.
+- npm publish не делался; тег `v0.1.0` и Zenodo-архив — позже.
+- Лицензия: сейчас MIT; Apache-2.0 — только по решению.
+- Рабочее дерево не закоммичено.
+
+## 2026-11-13 — A1: retry `abandoned`-пункта плана
+
+### Что сделано
+
+- **Пункт плана повторяется, а не убивает план.** `executePlan` при `abandoned`-последней
+  попытке открывает новый unit с тем же `planItem`; лимит — `1 + planItemRetries`
+  (`SKEIN_PLAN_ITEM_RETRIES`, дефолт 1; `0` — старое поведение). Исчерпали — `plan_finished
+  aborted`, как раньше.
+- **Статус пункта — по последней попытке.** `unitOfPlanItem` теперь возвращает последний unit
+  пункта (через `unitsInOrder`), а не первый. Добавлен `planItemAttempts`.
+- **Retry виден агенту сессии.** `renderPlanState(session, plan, retry?)` печатает пункт как
+  `retrying` и строку «Retrying item N (attempt k of M): the previous attempt was abandoned;
+  open it again».
+- **Настройка прокинута:** `Settings.planItemRetries` → `SessionTurnDeps.planItemRetries` (CLI,
+  live-harness `session-plan`), `.env.example`.
+- **Тесты:** retry → completed; retry-бюджет исчерпан → aborted; старый тест закреплён
+  `planItemRetries: 0`; проверка retry-строки в план-блоке.
+- **Доки:** `sessions.md` §8 EN/RU, `roadmap.md` (A1 сделано).
+- **Live-harness:** `session-plan` теперь подключает `revision`/`document` депсы (как CLI) —
+  раньше `revision`-операции молча отбрасывались, и план крутился на одном пункте. Добавлен
+  `--fail-first-item`: первая попытка первого пункта принудительно уходит в `no_decision`
+  (инъекция в реальную операцию `task`/`general`/`revision`, без форсирования маршрута).
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **652 passed / 40 skipped**
+  (+2 теста).
+- **Live virtual `fix-ocaml-gc` с `--fail-first-item`, до фикса harness:**
+  план done 3/3, **reward=0**: `revision`-пункты 2/3 отбрасывались (не было депсов), план
+  крутился на них; retry пункта 1 выбрал `general` и «ответил» вместо фикса. Cost 6.64.
+- **Live virtual `fix-ocaml-gc` с `--fail-first-item`, после фикса:** план done 3/3, **reward=1**.
+  Пункт 1: `task r1 no_decision` (инъекция) → `task r2 request_addressed` (retry); пункты 2/3 —
+  `revision v1/v2`. 55 calls, in 241396 / out 17480 / rsn 8841, cost 4.50; byAgent: session 4,
+  plan 4, task 18, revision 29.
+
+### Открыто
+
+- `skip` пункта и явное «вернуть решение агенту сессии» — не делались (A1 — только retry).
+- `plan_finished` не несёт причину (`retries_exhausted` и т.п.) — отдельное изменение схемы.
+- **Найдено live:** retry может выбрать `general` и закрыть пункт ответом, не выполнив work order;
+  план при этом `done`, хотя задача не решена. Это тот самый «done-условие не проверяется»
+  (см. 2026-11-12) — кандидат в A-фазу/отчёт.
+- `executePlan` не отличает «dispatch ничего не открыл» (нет депса/отказ) от «пункт ещё pending»:
+  при отсутствии депса возможен цикл. Починено в harness через депсы; общий guard не добавлен.
+- Рабочее дерево не закоммичено.
+
 ## 2026-11-13 — метеринг всей сессии в harness; токены пунктов в PlanPanel
 
 ### Что сделано

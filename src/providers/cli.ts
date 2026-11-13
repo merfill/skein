@@ -23,13 +23,21 @@ import {
 // agent path in `src/cli.ts` stays unaware of the subcommand details.
 
 function readVersion(): string {
-  try {
-    const raw = readFileSync(new URL("../../package.json", import.meta.url), "utf8");
-    const pkg = JSON.parse(raw) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
+  // Source layout is `src/providers/cli.ts` (../../package.json); the bundled CLI is
+  // `dist/cli.js` (../package.json). Try both so `--version` works in dev and installed.
+  for (const url of [
+    new URL("../../package.json", import.meta.url),
+    new URL("../package.json", import.meta.url),
+  ]) {
+    try {
+      const raw = readFileSync(url, "utf8");
+      const pkg = JSON.parse(raw) as { version?: unknown };
+      if (typeof pkg.version === "string") return pkg.version;
+    } catch {
+      // try the next layout
+    }
   }
+  return "0.0.0";
 }
 
 export function printVersion(output: (line: string) => void = console.log): void {

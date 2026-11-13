@@ -23,7 +23,7 @@ import type { SandboxTask } from "./task";
 //
 // Cost discipline: docs/en/testing.md §3.6.
 
-const DEFAULT_MODEL = "routerai/~deepseek/deepseek-v4-flash-latest";
+export const DEFAULT_MODEL = "routerai/~deepseek/deepseek-v4-flash-latest";
 const DEFAULT_OPENCODE_BIN = join(homedir(), ".opencode", "bin", "opencode");
 // The only host the `off` proxy lets through: the model API opencode must reach.
 const API_HOST = "routerai.ru";

@@ -15,6 +15,7 @@ import {
 import {
   latestPlan,
   planFinished,
+  planItemAttempts,
   planItemStatus,
   planModeOf,
   planOfSession,
@@ -150,6 +151,7 @@ describe("execution plan", () => {
         maxTurns: 6,
       },
       planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
+      planItemRetries: 0,
     };
     const session = createSession();
     await runSessionTurn(deps, session, "plan then fail");
@@ -160,6 +162,93 @@ describe("execution plan", () => {
     expect(planItemStatus(session, "p1:plan:body:item:1")).toBe("abandoned");
     expect(planFinished(session, "p1")).toEqual({ status: "aborted", completed: 0, total: 1 });
     expect(planModeOf(session)).toBeUndefined();
+  });
+
+  it("retries an abandoned item once, then completes it", async () => {
+    const { ws } = makeWorkspace();
+    const draft: PlannerDraft = {
+      items: [{ title: "Fix it", detail: "Fix it." }],
+    };
+    const seen: string[] = [];
+    let calls = 0;
+    const sessionAgent: SessionAgent = async (messages) => {
+      calls += 1;
+      if (calls === 1) return { operation: { kind: "plan", text: "plan the work" } };
+      if (calls === 3) {
+        for (const message of messages) {
+          if (message.role === "system" && message.content.includes("Execution plan")) {
+            seen.push(message.content);
+          }
+        }
+      }
+      return { operation: { kind: "task", text: "fix it" } };
+    };
+    let taskRuns = 0;
+    const propose: Proposer = async (context) => {
+      taskRuns += 1;
+      // Two empty proposals end the first attempt `no_decision` (abandoned); later calls are
+      // the retry, which must actually finish.
+      if (taskRuns <= 2) return { thought: "", actions: [] };
+      return taskProposer(context);
+    };
+    const deps: SessionTurnDeps = {
+      sessionAgent: { agent: sessionAgent },
+      task: { propose, workspace: ws, maxTurns: 6 },
+      planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
+      planItemRetries: 1,
+    };
+    const session = createSession();
+    const planned = await runSessionTurn(deps, session, "plan then retry");
+    const itemId = planOfSession(session, "p1")?.items[0]?.id;
+    expect(planned.plan?.unitId).toBe("p1");
+    expect(itemId).toBeDefined();
+
+    const run = await executePlan(deps, session, "p1");
+
+    expect(run.status).toBe("done");
+    expect(run.completed).toBe(1);
+    expect(run.total).toBe(1);
+    expect(run.units).toHaveLength(2);
+    expect(planItemAttempts(session, itemId as string)).toBe(2);
+    expect(planItemStatus(session, itemId as string)).toBe("completed");
+    expect(planFinished(session, "p1")).toEqual({ status: "done", completed: 1, total: 1 });
+    expect(seen.join("\n")).toContain("Retrying item 1 (attempt 2 of 2)");
+  });
+
+  it("aborts the plan when the retry budget is exhausted", async () => {
+    const { ws } = makeWorkspace();
+    const draft: PlannerDraft = {
+      items: [{ title: "Fix it", detail: "Fix it." }],
+    };
+    const deps: SessionTurnDeps = {
+      sessionAgent: {
+        agent: operations([
+          { kind: "plan", text: "plan the work" },
+          { kind: "task", text: "fix it" },
+          { kind: "task", text: "fix it" },
+        ]),
+      },
+      task: {
+        propose: async () => ({ thought: "", actions: [] }),
+        workspace: ws,
+        maxTurns: 6,
+      },
+      planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
+      planItemRetries: 1,
+    };
+    const session = createSession();
+    await runSessionTurn(deps, session, "plan then fail twice");
+    const itemId = planOfSession(session, "p1")?.items[0]?.id;
+    expect(itemId).toBeDefined();
+
+    const run = await executePlan(deps, session, "p1");
+
+    expect(run.status).toBe("aborted");
+    expect(run.completed).toBe(0);
+    expect(run.units).toHaveLength(2);
+    expect(planItemAttempts(session, itemId as string)).toBe(2);
+    expect(planItemStatus(session, itemId as string)).toBe("abandoned");
+    expect(planFinished(session, "p1")).toEqual({ status: "aborted", completed: 0, total: 1 });
   });
 
   it("offers the plan menu and executes it from the REPL", async () => {

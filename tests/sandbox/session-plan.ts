@@ -5,8 +5,10 @@ import { loadSettings } from "../../src/config/settings";
 import type { Event } from "../../src/ir/events";
 import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
+import { modelDocumentPlanAgent, modelDocumentTextAgent } from "../../src/llm/document";
 import { modelGeneralProposer } from "../../src/llm/general";
 import { modelPlannerAgent } from "../../src/llm/planner";
+import { modelRevisionProposer } from "../../src/llm/revision";
 import { propose as proposeModel } from "../../src/loop/propose";
 import { probeSession } from "../../src/loop/probe";
 import {
@@ -40,6 +42,8 @@ import { sandboxWorkspace, cleanupSandboxes, type SandboxSpec } from "./workspac
 // The first interpretation is forced to `plan` (the harness tests the plan driver, not the
 // session agent's route choice; the route is covered offline). Then `executePlan` walks the
 // items with the real session agent, the task/general agents and the task's own verifier.
+// `--fail-first-item` forces the first item's first attempt to end `no_decision`, so the
+// driver's retry path runs against the real model (the plan must still finish).
 // Run only with the owner's go-ahead; it costs model calls (and Docker for a real task).
 
 const settings = loadSettings();
@@ -51,6 +55,7 @@ interface Options {
   maxTurns?: number;
   network: NetworkMode;
   dir?: string;
+  failFirstItem: boolean;
 }
 
 function arg(name: string, fallback: string): string {
@@ -68,6 +73,7 @@ function optionsOf(): Options {
     ...(turns !== "" ? { maxTurns: Number(turns) } : {}),
     network: parseNetworkMode(arg("--net", "on")),
     ...(dir !== "" ? { dir } : {}),
+    failFirstItem: process.argv.includes("--fail-first-item"),
   };
 }
 
@@ -95,11 +101,41 @@ function lastStop(events: readonly Event[]): string | undefined {
   return text;
 }
 
-function proposer(capture?: (label: string) => void) {
+type ProposerKind = "task" | "general" | "revision";
+
+// `--fail-first-item` is fault injection for the retry path: the first plan item's first
+// attempt ends `no_decision` instead of running the real model. `task` needs two empty
+// proposals, `general`/`revision` need one. The first proposer call belongs to the first item
+// because planning uses the separate planner agent.
+function failureInjector(enabled: boolean): (kind: ProposerKind) => boolean {
+  let armed = enabled;
+  let used = 0;
+  return (kind) => {
+    if (!armed) return false;
+    const limit = kind === "task" ? 2 : 1;
+    if (used >= limit) {
+      armed = false;
+      return false;
+    }
+    used += 1;
+    if (used >= limit) armed = false;
+    return true;
+  };
+}
+
+function proposer(
+  capture: ((label: string) => void) | undefined,
+  fail: (kind: ProposerKind) => boolean,
+) {
   let turn = 0;
   const propose = async (context: Context): Promise<Proposals> => {
     capture?.(`turn-${turn}`);
     const started = Date.now();
+    if (fail("task")) {
+      console.info(`  [task t${turn}] injected-failure ${Date.now() - started}ms`);
+      turn += 1;
+      return { thought: "", actions: [] };
+    }
     const proposal = await proposeModel(model, context, {
       settings,
       onError: (error) =>
@@ -127,16 +163,17 @@ interface RunEnv {
 
 async function run(id: string, env: RunEnv, options: Options, dir: string): Promise<number> {
   const capture = env.opened?.capture;
-  const { propose, turns } = proposer(capture);
+  const fail = failureInjector(options.failFirstItem);
+  const { propose, turns } = proposer(capture, fail);
   const telemetry = memoryTelemetry();
   const sessionDeps = createSessionAgentDeps(model, { settings });
   const real = sessionDeps.agent;
   // The harness forces the first operation to `plan`; later interpretations (one per item)
   // are the real agent.
-  let forced = true;
+  let calls = 0;
   const agent: SessionAgent = async (messages, callOptions) => {
-    if (forced) {
-      forced = false;
+    calls += 1;
+    if (calls === 1) {
       return {
         operation: { kind: "plan", text: env.request },
         reasoning: "session-plan harness: force plan mode",
@@ -144,6 +181,9 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
     }
     return real(messages, callOptions);
   };
+
+  const generalBase = modelGeneralProposer(model, { settings });
+  const revisionBase = modelRevisionProposer(model, { settings });
 
   const deps: SessionTurnDeps = {
     sessionAgent: { ...sessionDeps, agent, telemetry: telemetry.sink },
@@ -155,16 +195,43 @@ async function run(id: string, env: RunEnv, options: Options, dir: string): Prom
       telemetry: telemetry.sink,
     },
     general: {
-      propose: modelGeneralProposer(model, { settings }),
+      propose: async (messages, callOptions) => {
+        if (fail("general")) {
+          console.info("  [general] injected-failure");
+          return { thought: "", actions: [] };
+        }
+        return generalBase(messages, callOptions);
+      },
       workspace: env.workspace,
       maxTurns: settings.generalMaxTurns,
       telemetry: telemetry.sink,
     },
+    revision: {
+      propose: async (messages, callOptions) => {
+        if (fail("revision")) {
+          console.info("  [revision] injected-failure");
+          return { thought: "", actions: [] };
+        }
+        return revisionBase(messages, callOptions);
+      },
+      workspace: env.workspace,
+      maxTurns: options.maxTurns ?? settings.maxTurns,
+      telemetry: telemetry.sink,
+    },
     planGeneralMaxTurns: settings.planGeneralMaxTurns,
+    planItemRetries: settings.planItemRetries,
     planner: {
       agent: modelPlannerAgent(model, { settings }),
       workspace: env.workspace,
       maxTurns: settings.plannerMaxTurns,
+      telemetry: telemetry.sink,
+    },
+    document: {
+      plan: modelDocumentPlanAgent(model, { settings }),
+      write: modelDocumentTextAgent(model, { settings }),
+      workspace: env.workspace,
+      maxTurns: options.maxTurns ?? settings.maxTurns,
+      maxPlanTurns: options.maxTurns ?? settings.plannerMaxTurns,
       telemetry: telemetry.sink,
     },
     telemetry: telemetry.sink,

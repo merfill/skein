@@ -200,6 +200,28 @@ The task is an argument; a full campaign is one call per task. `--turns` (Skein)
 The result is `bench/runs/matrix/<ts>-<task>/` with `manifest.json`, `summary.json` and
 `cells/<agent>-net<mode>-r<n>/`.
 
+The full campaign (`tests/sandbox/campaign.ts`) runs all 13 tasks. It runs **one task at a
+time**, so `--concurrency` is the total number of simultaneous cells (containers): `5` means
+five cells in flight, not five per task. `net on|off` are ordinary grid values; each cell is its
+own child process, so the `off` allowlist proxy stays isolated. No wall-clock timeout is passed.
+
+```sh
+# free: print the grid and the per-task commands without running anything
+npx tsx tests/sandbox/campaign.ts --repeat 5 --concurrency 5 --dry
+
+# the campaign (owner's go-ahead; real containers and model calls)
+SKEIN_LIVE=true npx tsx tests/sandbox/campaign.ts --repeat 5 --concurrency 5
+
+# a CPU-heavy task (the OCaml verifier rebuilds) gets its own lower cell limit
+SKEIN_LIVE=true npx tsx tests/sandbox/campaign.ts --repeat 5 \
+  --concurrency 10 --task-concurrency fix-ocaml-gc=3
+```
+
+The result is `bench/runs/matrix/campaign-<ts>/` with `manifest.json` (protocol: commit, node,
+Skein/opencode models, K, nets, concurrency, no timeout), `summary.json`, `summary.md`,
+`summary.csv`, and one `<task>/` directory per matrix. `--resume` and `--only-failed` pass
+through; a task that needs the network is `unsupported` for `net=off`.
+
 ### 4.2 The opencode baseline
 
 ```sh

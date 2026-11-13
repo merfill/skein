@@ -36,6 +36,9 @@ export interface Settings {
   planGeneralMaxTurns: number;
   // The plan unit's safety cap: it closes when it submits a plan, this only bounds a loop.
   plannerMaxTurns: number;
+  // Extra attempts a plan item gets after its unit ends `abandoned` (0 = abort on the first
+  // failure, the old behavior).
+  planItemRetries: number;
   // When a task reaches its turn cap, the session pauses instead of ending; continuing
   // extends the cap by this many turns.
   budgetExtend: number;
@@ -88,6 +91,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     generalMaxTurns: num(env.SKEIN_GENERAL_MAX_TURNS, 9),
     planGeneralMaxTurns: num(env.SKEIN_PLAN_GENERAL_MAX_TURNS, 30),
     plannerMaxTurns: num(env.SKEIN_PLANNER_MAX_TURNS, 24),
+    planItemRetries: num(env.SKEIN_PLAN_ITEM_RETRIES, 1),
     budgetExtend: num(env.SKEIN_BUDGET_EXTEND, 10),
     stateCycleEntries: num(env.SKEIN_STATE_CYCLE_ENTRIES, DEFAULT_STATE_CYCLE_ENTRIES),
     stateLongTurns: num(env.SKEIN_STATE_LONG_TURNS, DEFAULT_STATE_LONG_TURNS),

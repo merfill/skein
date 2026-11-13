@@ -1,0 +1,17 @@
+{
+  "generatedAt": "2026-11-13T10:43:43.116Z",
+  "gitCommit": "059734f63f7bb99fc7fdbe13ba169d676d26fdd8",
+  "node": "v22.22.1",
+  "skeinModel": "~deepseek/deepseek-v4-flash-latest",
+  "skeinReasoningEffort": "low",
+  "opencodeModel": "routerai/~deepseek/deepseek-v4-flash-latest",
+  "opencodeReasoningEffort": "low",
+  "agents": "skein,opencode",
+  "nets": "on,off",
+  "repeat": 5,
+  "concurrency": 10,
+  "taskConcurrency": "fix-ocaml-gc=3",
+  "tasks": "regex-log,fix-git,log-summary-date-ranges,openssl-selfsigned-cert,git-leak-recovery,cobol-modernization,modernize-scientific-stack,fix-ocaml-gc,custom-memory-heap-crash,password-recovery,crack-7z-hash,db-wal-recovery,fix-code-vulnerability",
+  "resume": true,
+  "timeout": "none"
+}
