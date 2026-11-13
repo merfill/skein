@@ -12,15 +12,15 @@ export const SESSION_TOOL_DESCRIPTIONS = {
   general:
     "Answer the user's question or explain something from the workspace: read, search and analyze. It does not change the workspace. `request` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail.",
   revision:
-    "Run a command or operation the request names in the workspace — tests, a build, an example or demo (a temporary script to run it is fine), git, dependency/lock/package changes — and make the non-code edits it needs. It does not write or change code. `request` is the user's request restated, with the command and its done condition.",
+    "Run a command or operation the request names in the workspace — tests, a build, an example or demo (a temporary script to run it is fine), git, dependency/lock/package changes — and make non-code changes: create or edit files such as configs, JSON/YAML, reports and lockfiles. It does not write or change code. `request` is the user's request restated, with the command and its done condition.",
   write_document:
-    "Write a text file the user asked for. `request` is the user's request restated: what the document is about, the target path when the user gave one, and anything the user explicitly asked the file to include.",
+    "Write a long-form prose document (Markdown, multiple sections). Use it for documents, not for data, config or report files. `request` is the user's request restated: what the document is about, the target path when the user gave one, and anything the user explicitly asked the file to include.",
   task: "Write or change code in the repository: add a feature, fix a defect, refactor, or find the cause of a defect. The coding agent sees only this request.",
   plan: "Develop an execution plan: an ordered list of executable work orders. The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
 } as const;
 
 export const SESSION_REQUEST_DESCRIPTIONS = {
-  task: "The user's request restated: the goal, the facts the task needs, and how completion is judged.",
+  task: "The user's request restated without dropping anything: the goal, the facts the task needs, every deliverable and constraint the user stated (files to create, formats, commands to run), and how completion is judged.",
   general:
     "The user's request restated: the question, with the dialogue's references resolved.",
   revision:

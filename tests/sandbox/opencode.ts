@@ -33,6 +33,8 @@ export interface OpenCodeOptions {
   // the model API (the agent must localize without the network).
   network: "on" | "off";
   model?: string;
+  // The opencode binary to mount; defaults to `OPENCODE_BIN` or `~/.opencode/bin/opencode`.
+  bin?: string;
   // opencode's reasoning variant (--variant); "low" keeps the comparison with Skein's low.
   reasoningEffort?: string;
   // Agentic-step cap (opencode's `agent.build.steps`), to match Skein's `maxTurns`.
@@ -41,6 +43,13 @@ export interface OpenCodeOptions {
   maxSeconds?: number;
   dir?: string;
   quiet?: boolean;
+  // A multi-turn session: the user's lines, fed one at a time. The first runs `opencode run`,
+  // each later one continues the same session (`--continue`), so the agent carries its state
+  // across lines. Absent: the task's own single instruction (the benchmark path).
+  messages?: string[];
+  // Runs after the agent and before the verifier, while the workspace is still live. Used to
+  // capture per-session artifacts (the written document, the diff) for manual grading.
+  afterAgent?: (workspace: DockerWorkspace) => void;
 }
 
 export interface OpenCodeResult {
@@ -50,9 +59,32 @@ export interface OpenCodeResult {
   check: CommandResult;
   rewardSource: "reward.txt" | "missing";
   metric: OpenCodeMetric;
+  // One entry per user line when `messages` was given; empty for a single-instruction run.
+  turnMetrics?: OpenCodeMetric[];
   elapsedMs: number;
   dir: string;
   run: CommandResult;
+}
+
+// Sum the per-call fields; `perCall` is a list, so it concatenates. The session total is the
+// sum over its turns, comparable with the single-instruction metric.
+function addMetric(total: OpenCodeMetric, turn: OpenCodeMetric): OpenCodeMetric {
+  return {
+    steps: total.steps + turn.steps,
+    toolCalls: total.toolCalls + turn.toolCalls,
+    inputTokens: total.inputTokens + turn.inputTokens,
+    outputTokens: total.outputTokens + turn.outputTokens,
+    visibleOutput: total.visibleOutput + turn.visibleOutput,
+    reasoningTokens: total.reasoningTokens + turn.reasoningTokens,
+    cacheRead: total.cacheRead + turn.cacheRead,
+    perCall: [...total.perCall, ...turn.perCall],
+    byTool: Object.fromEntries(
+      [...new Set([...Object.keys(total.byTool), ...Object.keys(turn.byTool)])].map((name) => [
+        name,
+        (total.byTool[name] ?? 0) + (turn.byTool[name] ?? 0),
+      ]),
+    ),
+  };
 }
 
 export async function runOpenCodeTask(
@@ -66,7 +98,7 @@ export async function runOpenCodeTask(
   const model = options.model ?? DEFAULT_MODEL;
   const variant = options.reasoningEffort ?? "low";
   const maxSeconds = options.maxSeconds ?? 2400;
-  const opencodeBin = process.env.OPENCODE_BIN ?? DEFAULT_OPENCODE_BIN;
+  const opencodeBin = options.bin ?? process.env.OPENCODE_BIN ?? DEFAULT_OPENCODE_BIN;
   if (!existsSync(opencodeBin)) {
     throw new Error(`opencode binary not found: ${opencodeBin} (set OPENCODE_BIN)`);
   }
@@ -84,7 +116,14 @@ export async function runOpenCodeTask(
   mkdirSync(dir, { recursive: true });
 
   const { root, request } = materializeTask(task);
-  writeFileSync(join(root, ".skein", "instruction.txt"), request);
+  const messages = options.messages ?? [request];
+  if (options.messages === undefined) {
+    writeFileSync(join(root, ".skein", "instruction.txt"), request);
+  } else {
+    messages.forEach((message, index) =>
+      writeFileSync(join(root, ".skein", `turn-${index + 1}.txt`), message),
+    );
+  }
 
   // opencode config (passed with OPENCODE_CONFIG, so the host's global config is ignored).
   // The warm-up run uses the real API; once it is done the baseURL is pointed at the logging
@@ -153,17 +192,44 @@ export async function runOpenCodeTask(
         ? ""
         : `HTTP_PROXY=${proxy.url} HTTPS_PROXY=${proxy.url} ALL_PROXY=${proxy.url} ` +
           "NO_PROXY=localhost,127.0.0.1,host.docker.internal ";
-    const command =
+    const base =
       `${proxyEnv}${configEnv} opencode run --auto --format json --variant ${variant} ` +
-      `-m ${model} "$(cat /app/.skein/instruction.txt)"`;
-
+      `-m ${model}`;
     const started = Date.now();
-    const run = ws.exec(command, maxSeconds * 1000);
+    let run: CommandResult;
+    let metric: OpenCodeMetric;
+    const turnMetrics: OpenCodeMetric[] = [];
+    if (options.messages === undefined) {
+      run = ws.exec(`${base} "$(cat /app/.skein/instruction.txt)"`, maxSeconds * 1000);
+      metric = parseOpenCodeStream(run.stdout);
+      writeFileSync(join(dir, "opencode.txt"), run.stdout);
+      writeFileSync(join(dir, "opencode.err.txt"), run.stderr);
+    } else {
+      let stdout = "";
+      let stderr = "";
+      let last: CommandResult | undefined;
+      metric = parseOpenCodeStream("");
+      for (let index = 0; index < messages.length; index += 1) {
+        const source = `"$(cat /app/.skein/turn-${index + 1}.txt)"`;
+        const cont = index === 0 ? "" : "--continue ";
+        const result = ws.exec(`${base} ${cont}${source}`, maxSeconds * 1000);
+        stdout += result.stdout;
+        stderr += result.stderr;
+        writeFileSync(join(dir, `opencode-turn-${index + 1}.txt`), result.stdout);
+        const turn = parseOpenCodeStream(result.stdout);
+        turnMetrics.push(turn);
+        metric = addMetric(metric, turn);
+        last = result;
+      }
+      run = last ?? { code: 1, stdout: "", stderr: "no messages" };
+      run = { ...run, stdout, stderr };
+      writeFileSync(join(dir, "opencode.txt"), stdout);
+      writeFileSync(join(dir, "opencode.err.txt"), stderr);
+    }
     const elapsedMs = Date.now() - started;
 
-    writeFileSync(join(dir, "opencode.txt"), run.stdout);
-    writeFileSync(join(dir, "opencode.err.txt"), run.stderr);
-    const metric = parseOpenCodeStream(run.stdout);
+    // Capture session artifacts before the verifier stages its own files.
+    options.afterAgent?.(ws);
 
     // The task's own `tests/test.sh`, staged and run in the agent's container after it —
     // exactly the engine path, so the two agents have identical acceptance.
@@ -175,7 +241,7 @@ export async function runOpenCodeTask(
     writeFileSync(
       join(dir, "metrics.json"),
       JSON.stringify(
-        { task: task.id, agent: "opencode", network: options.network, networkAgent: "bridge", networkVerifier: "bridge", acceptance: "test.sh", rewardSource: outcome.rewardSource, model, variant, reward, check: checked, metric, elapsedMs },
+        { task: task.id, agent: "opencode", network: options.network, networkAgent: "bridge", networkVerifier: "bridge", acceptance: "test.sh", rewardSource: outcome.rewardSource, model, variant, reward, check: checked, metric, elapsedMs, ...(turnMetrics.length > 0 ? { turns: messages.length, turnMetrics } : {}) },
         null,
         2,
       ),
@@ -187,7 +253,7 @@ export async function runOpenCodeTask(
           `(visible ${metric.visibleOutput} + reason ${metric.reasoningTokens}) cacheR=${metric.cacheRead}`,
       );
     }
-    return { task: task.id, network: options.network, reward, check: checked, rewardSource: outcome.rewardSource, metric, elapsedMs, dir, run };
+    return { task: task.id, network: options.network, reward, check: checked, rewardSource: outcome.rewardSource, metric, elapsedMs, dir, run, ...(turnMetrics.length > 0 ? { turnMetrics } : {}) };
   } finally {
     await proxy?.close();
     if (logProxy !== undefined) {

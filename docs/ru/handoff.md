@@ -3,6 +3,71 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-13 — сессионный сценарий: обзор → identify → report → fix → test → doc (K=1)
+
+### Что сделано
+
+- **`tests/sandbox/session-scenario.ts`** — сессионный прогон на репозитории
+  `fix-code-vulnerability` (bottle): один репозиторий, шесть пользовательских реплик в одной
+  сессии. Skein идёт реальным `runSessionTurn` (без форса операции), opencode — `opencode run`
+  + `--continue` в том же контейнере. Verifier — родной `test.sh`. Артефакты на прогон:
+  `turns.json`, `turn-N.json` (operation/reasoning/answer/usage), `units.json`, `session.json`,
+  `document.md`, `diff.txt`, `run.json`; сводки `summary.md/json`.
+- **Шесть реплик, каждая — одна цель:** обзор → identify (CWE) → создать `report.jsonl` →
+  fix → `pytest` → документ по изменению.
+- **`opencode.ts`:** `messages?: string[]` (несколько реплик через `--continue`), `bin?`,
+  `afterAgent?` для захвата файлов до verifier; одиночный task-путь не изменился.
+- **Описания сессии:** `write_document` — «long-form prose document (Markdown, multiple
+  sections), not data/config/report files»; `revision` — «create or edit files such as
+  configs, JSON/YAML, reports and lockfiles» в дополнение к командам. Живая матрица 5×:
+  report → `revision` 5/5, document → `document` 5/5, tests/commit → `revision`, overview/
+  explain → `general`, fix → `task` 5/5, plan → `plan` 4/5.
+- **«Сырой» бенч-`instruction.md` как реплика не работает:** это план из 6 шагов (1–3 анализ),
+  роутер честно берёт `general` 5/5 — даже первой репликой и при трёх вариантах базового
+  промпта про «цель». Разбиение на однозначные реплики решает это.
+
+### Проверено (K=1, оба агента, сеть off)
+
+- `bench/runs/session-scenario/pilot6b-k1/`: **Skein reward=1**, маршруты
+  `general/general/revision/task/revision/document`; **opencode reward=1**.
+
+| | Skein | opencode |
+|---|---:|---:|
+| шаги/ходы | 63 | 24 |
+| input всего | 342.8k | 672.1k |
+| fresh input | 113.7k | 35.8k |
+| cache | 229.1k (67%) | 636.3k (95%) |
+| output | 22.6k | 8.4k |
+| cost | 3.71₽ | ~1.46₽ (оценка) |
+
+Skein byAgent: session 6/11.3k, general 16/99.9k, revision 6/20.1k, task 20/92.5k,
+document 21/119.1k (output 11.8k). opencode: 24 steps, tools 27 (bash 23, glob 1, write 2,
+edit 1).
+
+### Почему Skein дороже и в 2.6× больше шагов
+
+- **Каждый юнит заново читает workspace.** Outline несёт только короткий (240 симв.) итог
+  прошлой единицы, не прочитанное содержимое: overview (9 ходов) → identify снова читает (7)
+  → fix снова читает (20) → document снова собирает факты (21). У opencode один растущий
+  транскрипт, факты переиспользуются, повторного чтения нет.
+- **Отсюда кэш:** у opencode префикс растёт и кэшируется (95%), у Skein контексты единиц
+  разные (67%) → больше fresh input.
+- **Документ:** 33 KB / 265 строк и 11.8k output против 4 KB у opencode; секционная запись —
+  21 ход. Это выбор полноты, но он дорогой.
+- **Вывод:** изоляция контекста меняет «размывание» на «повторную работу». На короткой
+  сессии это проигрыш по деньгам; выигрыш мог бы быть в качестве/дрейфе на длинной.
+
+### Открыто
+
+- **Тест как сравнение неудачен:** одна задача вручную разложена на 6 единиц, и повторное
+  чтение — артефакт разбиения, а не свойство контекстной модели. Честный замер — одна цель на
+  реплику (или длинная сессия с разными задачами), а не разрезанный план.
+- K=3 не запускался (по решению владельца: хватит замеров).
+- `report.jsonl` — бухгалтерия бенчмарка, не цель пользователя; в сценарии это отдельная
+  реплика, которая идёт в `revision`.
+- Рабочее дерево не закоммичено: новые `tests/sandbox/session-scenario.ts`, правки
+  `tests/sandbox/opencode.ts`, `src/session/session_agent_prompts.ts`.
+
 ## 2026-11-13 — B4: кампания K=5 (`campaign.ts`)
 
 ### Что сделано
