@@ -5,13 +5,12 @@ import type { Proposals } from "../src/llm/schemas";
 import type { Proposer } from "../src/loop/propose";
 import { runSessionTurn, type SessionTurnDeps } from "../src/session/driver";
 import { createSession } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { renderTurn } from "../src/session/view";
 import { cleanupWorkspaces, makeWorkspace, move } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 const proposer: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
@@ -32,65 +31,9 @@ function unreachable(): SessionTurnDeps["task"] {
 }
 
 describe("session view", () => {
-  it("shows tool calls and results, then the Markdown answer", async () => {
-    const session = createSession();
-    let calls = 0;
-    const agent: SessionAgent = async () => {
-      calls += 1;
-      return calls === 1
-        ? {
-            toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }],
-            reasoning: "look at r1",
-          }
-        : { operation: { kind: "respond", text: "## Answer\n\ntext" } };
-    };
-
-    const result = await runSessionTurn(
-      { sessionAgent: { agent, tools }, task: unreachable() },
-      session,
-      "hi",
-    );
-    const lines = renderTurn(result);
-
-    expect(lines).toContain('  call: unit({"id":"r1"})');
-    expect(lines).toContain("  result: UNIT r1");
-    expect(lines).toContain("session: respond");
-    expect(lines).toContain("answer:");
-    expect(lines).toContain("## Answer\n\ntext");
-    expect(lines.join("\n")).not.toContain("Thought:");
-
-    const verbose = renderTurn(result, { verbose: true });
-    expect(verbose).toContain("  Thought:");
-    expect(verbose.join("\n")).toContain("look at r1");
-  });
-
-  it("previews a long tool result and expands it only with --verbose", async () => {
-    const long = "x".repeat(700);
-    const session = createSession();
-    let calls = 0;
-    const agent: SessionAgent = async () => {
-      calls += 1;
-      return calls === 1
-        ? { toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }] }
-        : { operation: { kind: "respond", text: "ok" } };
-    };
-    const longTools: SessionTools = { unit: () => long };
-
-    const result = await runSessionTurn(
-      { sessionAgent: { agent, tools: longTools }, task: unreachable() },
-      session,
-      "hi",
-    );
-    const preview = renderTurn(result).join("\n");
-    expect(preview).toContain("[truncated; use --verbose]");
-    expect(preview).not.toContain(long);
-
-    expect(renderTurn(result, { verbose: true }).join("\n")).toContain(long);
-  });
-
   it("shows why a turn ended without a decision", async () => {
     const result = await runSessionTurn(
-      { sessionAgent: { agent: async () => ({}), tools }, task: unreachable() },
+      { sessionAgent: { agent: async () => ({}) }, task: unreachable() },
       createSession(),
       "hi",
     );
@@ -103,7 +46,6 @@ describe("session view", () => {
       {
         sessionAgent: {
           agent: async () => ({ operation: { kind: "task", text: "fix it" } }),
-          tools,
         },
         task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
       },

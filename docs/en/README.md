@@ -27,7 +27,7 @@ Russian: [../ru/README.md](../ru/README.md).
 ## Sessions and controllability
 
 - [sessions.md](sessions.md) — sessions, the container of units, the session, general, task,
-  plan and document agents, the observer, memory tools, the outline and isolation.
+  plan and document agents, the observer, the outline and isolation.
 
 ## Providers
 

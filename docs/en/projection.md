@@ -64,9 +64,8 @@ list of every file a build touched.
 created.
 
 **A session.** The session agent reads the trace of each unit, not its details: the unit id and
-type, the request or utterance, the result, the status, and the answer or operation. Details are
-reached with the memory tools and become observations of the calling unit. See
-`sessions.md`.
+type, the request or utterance, the result, the status, and the answer or operation. The trace is
+the summary it routes from: it cannot open a unit or read its turns. See `sessions.md`.
 
 **A plan.** While a plan is executing, the session agent's context receives a separate `system`
 block: the active plan, its item statuses and the current item. Only the current item's work order

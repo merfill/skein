@@ -11,7 +11,6 @@ import { childrenOf, fold, stopOf, turnsOf } from "../src/ir/graph";
 import { runSessionTurn, type SessionTurnDeps } from "../src/session/driver";
 import { attentionOf, createSession } from "../src/session/session";
 import { sessionOutline, unitOutline } from "../src/session/session_outline";
-import { stateDetail, stateTurnHistory } from "../src/session/session_memory";
 import { memoryTelemetry } from "../src/session/telemetry";
 import type { Proposals } from "../src/llm/schemas";
 import { buildTuiView } from "../src/tui/view_model";
@@ -58,7 +57,6 @@ function deps(): SessionTurnDeps {
   return {
     sessionAgent: {
       agent: async () => ({ operation: { kind: "general", text: "analyse NOTES.md" } }),
-      tools: {} as never,
     },
     task: {
       propose: async () => ({ actions: [] }),
@@ -113,9 +111,6 @@ describe("general unit", () => {
     expect(unitStates).toContain("g1 general");
     expect(unitStates).toContain("closed:");
     expect(unitStates).toContain("turns=1");
-    expect(stateDetail(session, "g1", "g1")).toContain("state g1: general");
-    expect(stateDetail(session, "g1", "g1")).toContain("read NOTES.md");
-    expect(stateTurnHistory(session, "g1", "g1")).toContain("read NOTES.md");
 
     const view = buildTuiView(session, telemetry.events);
     expect(view.current?.unitId).toBe("g1");
@@ -133,8 +128,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "analyse NOTES.md" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
       general: {
         propose: async (): Promise<Proposals> => {
@@ -175,8 +169,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "overview" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
       general: {
         propose: async (messages): Promise<Proposals> => {
@@ -228,8 +221,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "read big" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
       general: {
         propose: async (messages): Promise<Proposals> => {
@@ -267,8 +259,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "cat big" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 2 },
       general: {
         propose: async (messages): Promise<Proposals> => {
@@ -329,8 +320,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "look around" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 4 },
       general: {
         propose: async (input) => {
@@ -371,8 +361,7 @@ describe("general unit", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "general", text: "inspect" } }),
-        tools: {} as never,
-      },
+        },
       task: { propose: async () => ({ thought: "", actions: [] }), workspace: ws, maxTurns: 4 },
       general: {
         propose: async () => {

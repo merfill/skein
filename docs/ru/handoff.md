@@ -3,6 +3,45 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-13 — session-агент: промпты в одном файле, память убрана
+
+### Что сделано
+
+- **Промпты session-агента сведены в один файл.** `SESSION_AGENT_BASE_PROMPT`, описания шести
+  операций, `request`-описания, repair/invalid — в `src/session/session_agent_prompts.ts`;
+  `src/llm/session_agent.ts` и `src/session/session_agent.ts` импортируют оттуда. Тексты перенесены
+  байт-в-байт (сверено с HEAD).
+- **У session-агента больше нет памяти.** Удалены тулы `unit`/`state`/`turns`/`body`/`search`,
+  `SessionTools`/`createSessionTools`/`defaultSessionTools`, `executeTool`, `toolCalls` в
+  `SessionReply`, `tools` в deps, `surveyLimit`/`surveys` и `SESSION_FORCED_DECISION_MESSAGE`.
+  Агент сессии — только `respond` + операции `general/revision/write_document/task/plan`, один
+  вызов модели на реплику (цикл и `maxTurns` у сессии убраны).
+- **Удалён `src/session/session_memory.ts`** и его тест (после удаления тулов не использовался).
+  `session_outline.ts` (L0) остаётся — он нужен `sessionOutline` и TUI.
+- **Тесты**: memory-тесты удалены/переписаны; `session_scenario` проверяет ответ из L0-трейса;
+  `session_pause` — паузу до применения операции; из моков убраны `tools`/`toolCalls`.
+- **Доки EN/RU**: `sessions.md` §2/§3/§4, `concepts.md`, `projection.md`, `ir.md`, `README.md` —
+  след сессии описан как сводка L0 без инструментов истории.
+- **Формулировки операций разнесены по типу работы:** `task` — только код (фича/дефект/рефакторинг/
+  поиск причины); `revision` — выполнить команду или операцию (тесты, сборка, пример/демо, git,
+  зависимости/lock) и не-кодовые правки; `general` — вопрос/объяснение по рабочей области без
+  изменений. Слово «mutable» из описаний убрано; `request` у `revision` — «команда/операция и
+  done condition».
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **650 passed / 40 skipped**.
+- **Live route matrix** (10 реплик × 5): «запусти пример с z3 и покажи вывод» → `revision` 5/5,
+  «прогони тесты» → `revision` 5/5, `task`/`document` — 5/5, «объясни engine/clause.py» → `general`
+  5/5. «что изменено в рабочей копии?» — `revision` 2 / `general` 3: обе приемлемы (read-only-запрос).
+
+### Открыто
+
+- Многоходовый REPL-пробник маршрутизации не запускался (только одиночные реплики).
+- Working tree не закоммичен; `src/session/session_agent_prompts.ts` — новый файл.
+- Sandbox/live-сценарии (`tests/sandbox/**`) не запускались.
+
 ## 2026-11-12 — revision: описанные мутации, task — только кодирование
 
 ### Что сделано

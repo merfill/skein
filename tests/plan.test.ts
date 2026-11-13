@@ -23,7 +23,7 @@ import {
 import type { PlannerAgent, PlannerDraft, PlannerReply } from "../src/session/planner";
 import { runPlanner } from "../src/session/planner";
 import { createSession, unitOf } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
 import { runRepl } from "../src/session/repl";
 import type { SessionOperation } from "../src/session/types";
@@ -31,7 +31,6 @@ import { cleanupWorkspaces, makeWorkspace, move } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 const taskProposer: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
@@ -99,7 +98,6 @@ describe("execution plan", () => {
           { kind: "task", text: "fix the bug" },
           { kind: "general", text: "report on the fix" },
         ]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       general: {
@@ -144,7 +142,6 @@ describe("execution plan", () => {
           { kind: "plan", text: "plan the work" },
           { kind: "task", text: "fix it" },
         ]),
-        tools,
       },
       // No proposal: the unit ends `no_decision`, which the driver records as abandoned.
       task: {
@@ -176,7 +173,6 @@ describe("execution plan", () => {
           { kind: "plan", text: "plan" },
           { kind: "task", text: "fix it" },
         ]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
@@ -212,7 +208,6 @@ describe("execution plan", () => {
           { kind: "plan", text: "plan it" },
           { kind: "plan", text: "rework the plan" },
         ]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       general: {
@@ -259,7 +254,7 @@ describe("execution plan", () => {
       return { operation: { kind: "task", text: "fix it" } };
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: sessionAgent, tools },
+      sessionAgent: { agent: sessionAgent },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
     };
@@ -295,7 +290,6 @@ describe("execution plan", () => {
     const deps: SessionTurnDeps = {
       sessionAgent: {
         agent: operations([{ kind: "plan", text: "plan it" }]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: { agent, workspace: ws, maxTurns: 2 },
@@ -328,7 +322,6 @@ describe("execution plan", () => {
           { kind: "plan", text: "plan it" },
           { kind: "general", text: "investigate" },
         ]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       // The base general budget would stop after one turn; the plan item must get more.
@@ -397,7 +390,6 @@ describe("execution plan", () => {
           { kind: "plan", text: "plan it" },
           { kind: "task", text: "implement it" },
         ]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: { ...plannerFor(draft), workspace: ws, maxTurns: 4 },
@@ -421,7 +413,6 @@ describe("execution plan", () => {
     const deps: SessionTurnDeps = {
       sessionAgent: {
         agent: operations([{ kind: "plan", text: "plan" }]),
-        tools,
       },
       task: { propose: taskProposer, workspace: ws, maxTurns: 6 },
       planner: {

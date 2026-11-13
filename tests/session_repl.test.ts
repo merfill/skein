@@ -6,13 +6,12 @@ import type { Proposer } from "../src/loop/propose";
 import type { SessionTurnDeps } from "../src/session/driver";
 import { runRepl } from "../src/session/repl";
 import { createSession } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import type { SessionOperation } from "../src/session/types";
 import { cleanupWorkspaces, makeWorkspace, move } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 const proposer: Proposer = async (context: Context): Promise<Proposals> => {
   if (context.situation === "request") {
@@ -31,7 +30,7 @@ function agentFor(operations: SessionOperation[]): SessionAgent {
 
 function deps(operations: SessionOperation[]): SessionTurnDeps {
   return {
-    sessionAgent: { agent: agentFor(operations), tools },
+    sessionAgent: { agent: agentFor(operations) },
     task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
   };
 }

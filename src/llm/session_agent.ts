@@ -14,128 +14,62 @@ import { isAborted } from "../abort";
 import { loadSettings, type Settings } from "../config/settings";
 import { usageOf } from "../session/telemetry";
 import {
-  createSessionTools,
   type SessionAgent,
   type SessionAgentDeps,
   type SessionReply,
-  type SessionToolCall,
 } from "../session/session_agent";
+import {
+  SESSION_INVALID_TOOL_MESSAGE,
+  SESSION_REPAIR_MESSAGE,
+  SESSION_REQUEST_DESCRIPTIONS,
+  SESSION_TOOL_DESCRIPTIONS,
+} from "../session/session_agent_prompts";
 import type { SessionOperation } from "../session/types";
 
-const unitSchema = z.object({ id: z.string() });
-const stateSchema = z.object({ unit: z.string(), id: z.string() });
-const turnsSchema = z.object({
-  unit: z.string(),
-  id: z.string(),
-  from: z.number().int().optional(),
-  to: z.number().int().optional(),
-});
-const bodySchema = z.object({
-  unit: z.string(),
-  id: z.string(),
-  start: z.number().int().positive().optional(),
-  end: z.number().int().positive().optional(),
-});
-const searchSchema = z.object({
-  unit: z.string(),
-  pattern: z.string(),
-  before: z.number().int().nonnegative().optional(),
-  after: z.number().int().nonnegative().optional(),
-  from: z.number().int().nonnegative().optional(),
-  count: z.number().int().positive().optional(),
-});
 const respondSchema = z.object({ text: z.string() });
 const taskSchema = z.object({
-  request: z
-    .string()
-    .describe(
-      "The user's request restated: the goal, the facts the task needs, and how completion is judged.",
-    ),
+  request: z.string().describe(SESSION_REQUEST_DESCRIPTIONS.task),
 });
 const generalSchema = z.object({
-  request: z
-    .string()
-    .describe("The user's request restated: the question, with the dialogue's references resolved."),
+  request: z.string().describe(SESSION_REQUEST_DESCRIPTIONS.general),
 });
 const revisionSchema = z.object({
-  request: z
-    .string()
-    .describe(
-      "The user's request restated: the files and steps the change needs, and the done condition.",
-    ),
+  request: z.string().describe(SESSION_REQUEST_DESCRIPTIONS.revision),
 });
 const documentSchema = z.object({ request: z.string() });
 const planSchema = z.object({
-  request: z
-    .string()
-    .describe("The user's request restated: the plan's subject and the requirements the user stated."),
+  request: z.string().describe(SESSION_REQUEST_DESCRIPTIONS.plan),
 });
 
 const TOOL_DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[] = [
   {
-    name: "unit",
-    description:
-      "Return one unit's structure: states and closures. Call with the unit id from the trace (e.g. r1, g1, m1). General, plan and document units have one request-anchored state whose id is the unit id.",
-    schema: unitSchema,
-  },
-  {
-    name: "state",
-    description:
-      "Return a state's turns: each action, its result id and outcome (L2). Call with { unit, id }; use the state id printed by `unit` (for general/plan/document it is the unit id).",
-    schema: stateSchema,
-  },
-  {
-    name: "turns",
-    description:
-      "Return a state's turns: action, result id and outcome, plus the agent's reasoning (bounded). Call with { unit, id, from?, to? }; use the state id printed by `unit` (for general/plan/document it is the unit id).",
-    schema: turnsSchema,
-  },
-  {
-    name: "body",
-    description:
-      "Return a result in full (or a line window) when its preview was cut off. `unit` is the unit that produced it; `id` is the result id printed with it. `start`/`end` select lines.",
-    schema: bodySchema,
-  },
-  {
-    name: "search",
-    description:
-      "Search a unit's observation bodies by regular expression. Call with { unit, pattern, before?, after?, from?, count? }.",
-    schema: searchSchema,
-  },
-  {
     name: "respond",
-    description:
-      "Answer the user from the dialogue and earlier work: greeting, thanks, confirmation, clarification or a direct factual pointer. The reply is shown to the user as-is: GitHub-flavored Markdown, in the user's language; default to the shortest answer and add detail only when the user asked for it.",
+    description: SESSION_TOOL_DESCRIPTIONS.respond,
     schema: respondSchema,
   },
   {
     name: "general",
-    description:
-      "Answer the user's question. `request` is the user's own words with the dialogue's references resolved, keeping their scope and level of detail. It never creates or changes a file.",
+    description: SESSION_TOOL_DESCRIPTIONS.general,
     schema: generalSchema,
   },
   {
     name: "revision",
-    description:
-      "Use it for any mutable operation the request describes on the existing workspace, except coding: make the edits it names and run the commands it needs, including side-effecting ones. `request` is the user's request restated.",
+    description: SESSION_TOOL_DESCRIPTIONS.revision,
     schema: revisionSchema,
   },
   {
     name: "write_document",
-    description:
-      "Write a text file the user asked for. `request` is the user's request restated: what the document is about, the target path when the user gave one, and anything the user explicitly asked the file to include.",
+    description: SESSION_TOOL_DESCRIPTIONS.write_document,
     schema: documentSchema,
   },
   {
     name: "task",
-    description:
-      "Write new code, fix a defect, or find a cause. The coding agent sees only this request.",
+    description: SESSION_TOOL_DESCRIPTIONS.task,
     schema: taskSchema,
   },
   {
     name: "plan",
-    description:
-      "Develop an execution plan: an ordered list of executable work orders. The plan is shown to the user, who decides whether to execute it. Use it for a request that needs several steps, or when the user asks for a plan.",
+    description: SESSION_TOOL_DESCRIPTIONS.plan,
     schema: planSchema,
   },
 ];
@@ -189,13 +123,7 @@ export function toSessionReply(calls: readonly NativeCall[]): SessionReply {
     const operation = operationOf(call.toolName, call.input);
     if (operation !== undefined) return { operation };
   }
-  if (calls.length === 0) return {};
-  const toolCalls: SessionToolCall[] = calls.map((call) => ({
-    name: call.toolName,
-    args: (call.input as Record<string, unknown> | undefined) ?? {},
-    callId: call.toolCallId,
-  }));
-  return { toolCalls };
+  return {};
 }
 
 export interface SessionModelOptions {
@@ -203,10 +131,7 @@ export interface SessionModelOptions {
   onResponse?: (reply: { text: string; toolCalls: readonly NativeCall[] }) => void;
 }
 
-export interface SessionAgentDepsOptions extends SessionModelOptions {
-  maxTurns?: number;
-  surveyLimit?: number;
-}
+export type SessionAgentDepsOptions = SessionModelOptions;
 
 export function createSessionAgentDeps(
   model: LanguageModel,
@@ -214,9 +139,6 @@ export function createSessionAgentDeps(
 ): SessionAgentDeps {
   return {
     agent: modelSessionAgent(model, options),
-    tools: createSessionTools(),
-    ...(options.maxTurns !== undefined ? { maxTurns: options.maxTurns } : {}),
-    ...(options.surveyLimit !== undefined ? { surveyLimit: options.surveyLimit } : {}),
   };
 }
 
@@ -264,8 +186,7 @@ export function modelSessionAgent(
           if (repair === undefined) {
             repair = {
               role: "user",
-              content:
-                "You must call one of the session tools: a read-only `unit`/`state`/`turns`/`body`/`search` query, or an operation `respond`, `general`, `revision`, `write_document`, `task`, `plan`.",
+              content: SESSION_REPAIR_MESSAGE,
             };
             continue;
           }
@@ -294,8 +215,7 @@ export function modelSessionAgent(
         ) {
           repair = {
             role: "user",
-            content:
-              "Your tool call was invalid. Call one of the session tools with arguments matching its schema.",
+            content: SESSION_INVALID_TOOL_MESSAGE,
           };
           continue;
         }

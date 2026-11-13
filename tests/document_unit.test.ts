@@ -20,13 +20,12 @@ import {
 import { planFinished, planItemStatus } from "../src/session/plan";
 import type { PlannerDraft, PlannerReply } from "../src/session/planner";
 import { createSession } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import type { SessionOperation } from "../src/session/types";
 import { cleanupWorkspaces, makeWorkspace } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 function lastUserText(messages: readonly ModelMessage[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -224,7 +223,6 @@ describe("document unit", () => {
           { kind: "plan", text: "plan the doc" },
           { kind: "document", text: "create docs/out.md" },
         ]),
-        tools,
       },
       task: {
         propose: async () => ({ thought: "", actions: [] }),
@@ -255,7 +253,7 @@ describe("document unit", () => {
     const controller = new AbortController();
     let aborted = false;
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: operations([]), tools },
+      sessionAgent: { agent: operations([]) },
       task: {
         propose: async () => ({ thought: "", actions: [] }),
         workspace: ws,
@@ -314,7 +312,6 @@ describe("document unit", () => {
     const deps: SessionTurnDeps = {
       sessionAgent: {
         agent: operations([{ kind: "document", text: "create docs/out.md" }]),
-        tools,
       },
       task: {
         propose: async () => ({ thought: "", actions: [] }),

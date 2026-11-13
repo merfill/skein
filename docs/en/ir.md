@@ -44,10 +44,9 @@ An **observer** unit is a service unit opened when a task is stuck; it is not sh
 trace.
 
 The session agent sees the trace of each unit: its id and type, the request or utterance, the
-result, the status, and the answer or operation. It does not see the details. Details are reached
-with the memory tools (`unit`, `state`, `turns`, `body`, `search`) and become observations of the
-calling unit. The session journal also records push/pop, suspend/resume/abandon, operations,
-refusals, no-decision turns and observer triggers.
+result, the status, and the answer or operation. It does not see the details and has no tools to
+open a unit or read its states and turns. The session journal also records push/pop,
+suspend/resume/abandon, operations, refusals, no-decision turns and observer triggers.
 
 The session agent chooses one of five operations: `respond` answers from the dialogue, `general`
 delegates an investigation, `task` opens a coding task with a self-contained work order, `plan`

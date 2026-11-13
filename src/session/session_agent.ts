@@ -14,6 +14,7 @@ import type { Node } from "../ir/types";
 import { historyMessages } from "../loop/propose";
 import { applyOperation, type OperationResult } from "./operations";
 import type { ProgressSink } from "./progress";
+import { SESSION_AGENT_BASE_PROMPT } from "./session_agent_prompts";
 import {
   openUnit,
   popUnit,
@@ -25,34 +26,10 @@ import {
   takePending,
   unitOf,
 } from "./session";
-import {
-  bodyText,
-  searchUnit,
-  stateDetail,
-  stateTurnHistory,
-  type BodyWindow,
-  type SearchOptions,
-  type TurnRange,
-} from "./session_memory";
-import { sessionOutline, unitOutline } from "./session_outline";
+import { sessionOutline } from "./session_outline";
 import type { NoDecisionReason, SessionOperation, SessionState } from "./types";
 
-export const SESSION_BASE_PROMPT = [
-  "You are the session agent. You are the only agent that sees the dialogue; above is the history of earlier work. You either answer the user or hand the work to another agent.",
-  "Ask when the user's intent is unclear; if the dialogue resolves it, proceed.",
-  "Answer in the same language the user asked in.",
-  "Pass the user's request verbatim; if it refers to earlier messages, assemble it from them; add nothing else.",
-  "The operations read the workspace themselves; you do not need to gather facts first.",
-].join("\n\n");
-
-export interface SessionToolCall {
-  name: string;
-  args: Record<string, unknown>;
-  callId?: string;
-}
-
 export interface SessionReply {
-  toolCalls?: SessionToolCall[];
   operation?: SessionOperation;
   // The session agent's hidden reasoning for this reply, shown back on its tape.
   reasoning?: string;
@@ -66,45 +43,19 @@ export type SessionAgent = (
   options?: { signal?: AbortSignal },
 ) => Promise<SessionReply>;
 
-export interface SessionTools {
-  unit(session: SessionState, id: string): string;
-  state?(session: SessionState, unit: string, id: string): string;
-  turns?(session: SessionState, unit: string, id: string, range?: TurnRange): string;
-  body?(session: SessionState, unit: string, id: string, window?: BodyWindow): string;
-  search?(session: SessionState, unit: string, pattern: string, options?: SearchOptions): string;
-}
-
-export function createSessionTools(): SessionTools {
-  return {
-    unit: (session, id) => unitOutline(session, id),
-    state: (session, unit, id) => stateDetail(session, unit, id),
-    turns: (session, unit, id, range) => stateTurnHistory(session, unit, id, range),
-    body: (session, unit, id, window) => bodyText(session, unit, id, window),
-    search: (session, unit, pattern, options) => searchUnit(session, unit, pattern, options),
-  };
-}
-
-export const defaultSessionTools: SessionTools = createSessionTools();
-
 export interface SessionAgentDeps {
   agent: SessionAgent;
-  tools: SessionTools;
   // Side-channel telemetry; never rendered on the tape.
   telemetry?: TelemetrySink;
-  maxTurns?: number;
-  surveyLimit?: number;
   onProgress?: ProgressSink;
 }
 
 export interface SessionUnitRunInput {
   utterance: string;
   session: SessionState;
-  tools: SessionTools;
   agent: SessionAgent;
   journal?: readonly Event[];
   startTurn?: number;
-  maxTurns?: number;
-  surveyLimit?: number;
   // The session outline (L0) to show; computed before the current session unit is opened.
   outline?: string;
   // The active execution plan, rendered for the session agent (statuses and the next item).
@@ -241,7 +192,7 @@ export function projectSessionUnit(
 
 export function buildSessionMessages(context: SessionContext): ModelMessage[] {
   return [
-    { role: "system", content: SESSION_BASE_PROMPT },
+    { role: "system", content: SESSION_AGENT_BASE_PROMPT },
     { role: "system", content: `Earlier tasks:\n${context.outline}` },
     ...(context.plan !== undefined ? [{ role: "system" as const, content: context.plan }] : []),
     { role: "user", content: context.utterance },
@@ -249,157 +200,49 @@ export function buildSessionMessages(context: SessionContext): ModelMessage[] {
   ];
 }
 
-function stringArg(args: Record<string, unknown>, key: string): string | undefined {
-  const value = args[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function numberArg(args: Record<string, unknown>, key: string): number | undefined {
-  const value = args[key];
-  return typeof value === "number" ? value : undefined;
-}
-
-function executeTool(
-  tools: SessionTools,
-  session: SessionState,
-  name: string,
-  args: Record<string, unknown>,
-): string {
-  try {
-    if (name === "unit") {
-      const id = stringArg(args, "id");
-      return id === undefined ? "missing argument: id" : tools.unit(session, id);
-    }
-    const unit = stringArg(args, "unit");
-    if (unit === undefined) return "missing argument: unit";
-    if (name === "state") {
-      const id = stringArg(args, "id");
-      return id === undefined
-        ? "missing argument: id"
-        : (tools.state?.(session, unit, id) ?? "tool unavailable: state");
-    }
-    if (name === "turns") {
-      const id = stringArg(args, "id");
-      if (id === undefined) return "missing argument: id";
-      const from = numberArg(args, "from");
-      const to = numberArg(args, "to");
-      return (
-        tools.turns?.(session, unit, id, {
-          ...(from !== undefined ? { from } : {}),
-          ...(to !== undefined ? { to } : {}),
-        }) ?? "tool unavailable: turns"
-      );
-    }
-    if (name === "body") {
-      const id = stringArg(args, "id");
-      if (id === undefined) return "missing argument: id";
-      const start = numberArg(args, "start");
-      const end = numberArg(args, "end");
-      return (
-        tools.body?.(session, unit, id, {
-          ...(start !== undefined ? { start } : {}),
-          ...(end !== undefined ? { end } : {}),
-        }) ?? "tool unavailable: body"
-      );
-    }
-    if (name === "search") {
-      const pattern = stringArg(args, "pattern");
-      if (pattern === undefined) return "missing argument: pattern";
-      const before = numberArg(args, "before");
-      const after = numberArg(args, "after");
-      const from = numberArg(args, "from");
-      const count = numberArg(args, "count");
-      return (
-        tools.search?.(session, unit, pattern, {
-          ...(before !== undefined ? { before } : {}),
-          ...(after !== undefined ? { after } : {}),
-          ...(from !== undefined ? { from } : {}),
-          ...(count !== undefined ? { count } : {}),
-        }) ?? "tool unavailable: search"
-      );
-    }
-    return `unknown tool: ${name}`;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-}
-
 export async function runSessionUnit(input: SessionUnitRunInput): Promise<SessionUnitRunResult> {
   const journal = [
     ...(input.journal !== undefined ? input.journal : seedSessionUnit(input.utterance)),
   ];
   const startTurn = input.startTurn ?? 0;
-  let turns = startTurn;
-  const maxTurns = input.maxTurns ?? 12;
-  const surveyLimit = input.surveyLimit ?? 4;
+  const turn = startTurn + 1;
   const outline = input.outline ?? sessionOutline(input.session, { truncate: false });
-  let surveys =
-    input.journal !== undefined
-      ? input.journal.filter(
-          (event) => event.type === "add_node" && event.node.kind === "observation",
-        ).length
-      : 0;
 
   const progressUnitId = sessionFocus(input.session)?.unitId ?? "";
-  for (let turn = startTurn + 1; turn <= maxTurns; turn += 1) {
-    if (isAborted(input.signal)) {
-      input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
-      return { journal, turns, paused: true };
-    }
-    const messages = buildSessionMessages(
-      projectSessionUnit(journal, outline, input.plan),
+  if (isAborted(input.signal)) {
+    input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
+    return { journal, turns: startTurn, paused: true };
+  }
+  const messages = buildSessionMessages(
+    projectSessionUnit(journal, outline, input.plan),
+  );
+  const startedAt = Date.now();
+  input.onProgress?.({
+    type: "turn_started",
+    agent: "session",
+    unitId: progressUnitId,
+    turn,
+  });
+  input.onProgress?.({
+    type: "model_call_started",
+    agent: "session",
+    unitId: progressUnitId,
+    turn,
+  });
+  let reply: SessionReply;
+  try {
+    reply = await input.agent(
+      messages,
+      input.signal !== undefined ? { signal: input.signal } : undefined,
     );
-    if (surveys >= surveyLimit) {
-      messages.push({
-        role: "system",
-        content: "You have inspected enough. Decide now: call `respond`, `general` or `task`.",
-      });
-    }
-    const startedAt = Date.now();
+  } catch (error) {
     input.onProgress?.({
-      type: "turn_started",
+      type: "model_call_finished",
       agent: "session",
       unitId: progressUnitId,
       turn,
+      status: isAborted(input.signal) ? "aborted" : "error",
     });
-    input.onProgress?.({
-      type: "model_call_started",
-      agent: "session",
-      unitId: progressUnitId,
-      turn,
-    });
-    let reply: SessionReply;
-    try {
-      reply = await input.agent(
-        messages,
-        input.signal !== undefined ? { signal: input.signal } : undefined,
-      );
-    } catch (error) {
-      input.onProgress?.({
-        type: "model_call_finished",
-        agent: "session",
-        unitId: progressUnitId,
-        turn,
-        status: isAborted(input.signal) ? "aborted" : "error",
-      });
-      if (input.telemetry !== undefined) {
-        input.telemetry.record({
-          type: "model_call",
-          sessionId: LOCAL_SESSION_ID,
-          agent: "session",
-          unitId: sessionFocus(input.session)?.unitId ?? "",
-          turn,
-          model: "",
-          startedAt,
-          endedAt: Date.now(),
-          status: isAborted(input.signal) ? "aborted" : "error",
-          context: contextSnapshot(messages),
-        });
-      }
-      if (isAborted(input.signal)) return { journal, turns, paused: true };
-      throw error;
-    }
-    turns = turn;
     if (input.telemetry !== undefined) {
       input.telemetry.record({
         type: "model_call",
@@ -407,136 +250,59 @@ export async function runSessionUnit(input: SessionUnitRunInput): Promise<Sessio
         agent: "session",
         unitId: sessionFocus(input.session)?.unitId ?? "",
         turn,
-        model: reply.model ?? "",
+        model: "",
         startedAt,
         endedAt: Date.now(),
-        status: isAborted(input.signal) ? "aborted" : "ok",
-        ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+        status: isAborted(input.signal) ? "aborted" : "error",
         context: contextSnapshot(messages),
       });
     }
-    input.onProgress?.({
-      type: "model_call_finished",
+    if (isAborted(input.signal)) return { journal, turns: turn, paused: true };
+    throw error;
+  }
+  if (input.telemetry !== undefined) {
+    input.telemetry.record({
+      type: "model_call",
+      sessionId: LOCAL_SESSION_ID,
       agent: "session",
-      unitId: progressUnitId,
+      unitId: sessionFocus(input.session)?.unitId ?? "",
       turn,
-      model: reply.model,
+      model: reply.model ?? "",
+      startedAt,
+      endedAt: Date.now(),
       status: isAborted(input.signal) ? "aborted" : "ok",
       ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
-      ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
+      context: contextSnapshot(messages),
     });
-    if (reply.operation !== undefined) {
-      if (isAborted(input.signal)) {
-        input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
-        return { journal, turns, paused: true };
-      }
-      return {
-        journal,
-        operation: reply.operation,
-        ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
-        turns,
-      };
-    }
-    if (reply.toolCalls === undefined || reply.toolCalls.length === 0) {
-      return { journal, turns, noDecision: "empty_reply" };
-    }
-    for (const [index, toolCall] of reply.toolCalls.entries()) {
-      const callId = toolCall.callId ?? `session:call:${journal.length}`;
-      const emitFrom = journal.length;
-      const target = JSON.stringify(toolCall.args).slice(0, 160);
-      input.onProgress?.({
-        type: "tool_started",
-        agent: "session",
-        unitId: progressUnitId,
-        turn,
-        tool: toolCall.name,
-        target,
-      });
-      journal.push({
-        type: "add_node",
-        node: {
-          id: callId,
-          space: "work",
-          kind: "action",
-          label: `session:${toolCall.name}`,
-          // The reply's reasoning belongs to the turn: keep it on its first call.
-          payload: {
-            origin: "model",
-            tool: toolCall.name,
-            args: toolCall.args,
-            callId,
-            ...(index === 0 && reply.reasoning !== undefined
-              ? { reasoning: reply.reasoning }
-              : {}),
-          },
-          seq: journal.length,
-        },
-      });
-      const toolStartedAt = Date.now();
-      const toolResult = executeTool(
-        input.tools,
-        input.session,
-        toolCall.name,
-        toolCall.args,
-      );
-      input.telemetry?.record({
-        type: "tool_call",
-        sessionId: LOCAL_SESSION_ID,
-        agent: "session",
-        unitId: sessionFocus(input.session)?.unitId ?? "",
-        turn,
-        tool: toolCall.name,
-        startedAt: toolStartedAt,
-        endedAt: Date.now(),
-        status: "ok",
-      });
-      journal.push({
-        type: "add_node",
-        node: {
-          id: `session:result:${journal.length}`,
-          space: "work",
-          kind: "observation",
-          label: `session:${toolCall.name}`,
-          payload: {
-            origin: "engine",
-            tool: toolCall.name,
-            callId,
-            result: toolResult,
-          },
-          seq: journal.length,
-        },
-      });
-      input.onProgress?.({
-        type: "events_added",
-        unitId: progressUnitId,
-        events: journal.slice(emitFrom),
-      });
-      input.onProgress?.({
-        type: "tool_finished",
-        agent: "session",
-        unitId: progressUnitId,
-        turn,
-        tool: toolCall.name,
-        target,
-        status: "ok",
-        preview: toolResult,
-      });
-      surveys += 1;
-      if (isAborted(input.signal)) {
-        input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
-        return { journal, turns, paused: true };
-      }
-    }
   }
-
-  return { journal, turns: maxTurns, noDecision: "max_turns" };
+  input.onProgress?.({
+    type: "model_call_finished",
+    agent: "session",
+    unitId: progressUnitId,
+    turn,
+    model: reply.model,
+    status: isAborted(input.signal) ? "aborted" : "ok",
+    ...(reply.usage !== undefined ? { usage: reply.usage } : {}),
+    ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
+  });
+  if (reply.operation !== undefined) {
+    if (isAborted(input.signal)) {
+      input.onProgress?.({ type: "paused", agent: "session", unitId: progressUnitId });
+      return { journal, turns: turn, paused: true };
+    }
+    return {
+      journal,
+      operation: reply.operation,
+      ...(reply.reasoning !== undefined ? { reasoning: reply.reasoning } : {}),
+      turns: turn,
+    };
+  }
+  return { journal, turns: turn, noDecision: "empty_reply" };
 }
 
 export interface RunSessionAgentOptions {
   turn?: number;
   unitId?: string;
-  maxTurns?: number;
-  surveyLimit?: number;
   startTurn?: number;
   // The outline captured when the unit first opened; required to rebuild the same prefix.
   outline?: string;
@@ -639,12 +405,9 @@ export async function runSessionAgent(
   const seed = resuming ? unitOf(session, unitId).journal : undefined;
 
   try {
-    const maxTurns = options.maxTurns ?? deps.maxTurns;
-    const surveyLimit = options.surveyLimit ?? deps.surveyLimit;
     const run = await runSessionUnit({
       utterance: utteranceText,
       session,
-      tools: deps.tools,
       agent: deps.agent,
       ...(seed !== undefined ? { journal: seed } : {}),
       ...(options.startTurn !== undefined ? { startTurn: options.startTurn } : {}),
@@ -653,8 +416,6 @@ export async function runSessionAgent(
       ...(deps.onProgress !== undefined ? { onProgress: deps.onProgress } : {}),
       ...(options.plan !== undefined ? { plan: options.plan } : {}),
       outline,
-      ...(maxTurns !== undefined ? { maxTurns } : {}),
-      ...(surveyLimit !== undefined ? { surveyLimit } : {}),
     });
     const unit = unitOf(session, unitId);
     unit.journal.push(...run.journal.slice(unit.journal.length));

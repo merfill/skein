@@ -7,7 +7,7 @@ import type { Proposals } from "../src/llm/schemas";
 import type { Proposer } from "../src/loop/propose";
 import { runRepl } from "../src/session/repl";
 import { attentionOf, createSession } from "../src/session/session";
-import { createSessionTools, type SessionAgent } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
 import type { SessionTurnDeps } from "../src/session/driver";
 import type { GeneralProposer } from "../src/session/general";
@@ -31,54 +31,28 @@ function textOf(message: ModelMessage): string {
     .join("\n");
 }
 
-function firstObservationId(toolText: string): string | undefined {
-  return /\[(obs:[^\]]+)\]/.exec(toolText)?.[1];
-}
-
 function ruleOf(text: string): string {
-  return /RULE:[^\n]*/.exec(text)?.[0] ?? "RULE: not found";
+  return /RULE:[^"\n]*/.exec(text)?.[0] ?? "RULE: not found";
 }
 
-// Under option A the session agent has no workspace tools: reading is a general unit.
-// It answers from the general unit's journal through the memory tools (`search`/`body`),
-// then carries the rule into coding tasks.
+// The session agent is an orchestrator: it routes and answers from the L0 trace of past units.
+// It carries the rule from the general unit's trace into coding tasks.
 const sessionAgent: SessionAgent = async (messages) => {
   const userIndex = messages.findIndex((message) => message.role === "user");
   const user = userIndex >= 0 ? textOf(messages[userIndex]!) : "";
-  const after = userIndex >= 0 ? messages.slice(userIndex + 1) : messages;
-  const toolTexts = after.filter((message) => message.role === "tool").map(textOf);
-  const calls = after.filter((message) => message.role === "assistant").length;
-  const lastTool = toolTexts.at(-1) ?? "";
+  const rule = ruleOf(messages.map(textOf).join("\n"));
 
   if (user.includes("Прочитай NOTES.md")) {
     return { operation: { kind: "general", text: "Read NOTES.md and report the RULE" } };
   }
 
   if (user.includes("Какое там правило")) {
-    if (calls === 0) {
-      return { toolCalls: [{ name: "search", args: { unit: "g1", pattern: "RULE" }, callId: "s1" }] };
-    }
-    if (calls === 1) {
-      const id = firstObservationId(lastTool);
-      return id === undefined
-        ? { operation: { kind: "respond", text: "Не нашёл правило" } }
-        : { toolCalls: [{ name: "body", args: { unit: "g1", id }, callId: "b1" }] };
-    }
-    return { operation: { kind: "respond", text: `Правило: ${ruleOf(lastTool)}` } };
+    return { operation: { kind: "respond", text: `Правило: ${rule}` } };
   }
 
   if (user.includes("Примени правило")) {
-    if (calls === 0) {
-      return { toolCalls: [{ name: "search", args: { unit: "g1", pattern: "RULE" }, callId: "s2" }] };
-    }
-    if (calls === 1) {
-      const id = firstObservationId(lastTool);
-      return id === undefined
-        ? { operation: { kind: "respond", text: "Не нашёл правило" } }
-        : { toolCalls: [{ name: "body", args: { unit: "g1", id }, callId: "b2" }] };
-    }
     return {
-      operation: { kind: "task", text: `In src/app.txt, apply the rule: ${ruleOf(lastTool)}` },
+      operation: { kind: "task", text: `In src/app.txt, apply the rule: ${rule}` },
     };
   }
 
@@ -172,7 +146,7 @@ describe("synthetic session: general read, memory, reformulation, confirmation",
       "src/app.txt": "TODO\n",
     });
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: sessionAgent, tools: createSessionTools() },
+      sessionAgent: { agent: sessionAgent },
       task: { propose: createTaskProposer(), workspace: workspace.ws, maxTurns: 20 },
       general: { propose: createGeneralProposer(), workspace: workspace.ws, maxTurns: 4 },
     };

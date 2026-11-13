@@ -31,7 +31,7 @@ revision, a plan development, a document write, or an observer run.
 
 | Agent | Scope | Responsibility | Context |
 |---|---|---|---|
-| Session | the dialogue | interprets an utterance, remembers completed work, routes, formulates a task | the dialogue, the traces of past units, memory tools |
+| Session | the dialogue | interprets an utterance, remembers completed work, routes, formulates a task | the dialogue, the traces of past units |
 | Task (coding) | one request | walks the request as a state machine and changes the workspace | only its own request and states |
 | General | one non-coding request | investigates and answers without changing the workspace | its brief, project facts, read-only tools |
 | Revision | one described mutable operation | edits existing files and runs the operation's commands, including side-effecting ones; not coding | its brief, project facts, workspace tools |

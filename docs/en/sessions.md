@@ -28,27 +28,15 @@ The main unit types are:
 The **focus** is the top of the unit stack. At most one unit is active. A **pending** slot holds at
 most one unprocessed user utterance; a new one replaces it.
 
-## 2. Traces and memory
+## 2. Traces
 
 The session agent sees the **trace** of each unit: its id and type, the request or utterance, the
 result, the status, and the answer or operation. A refusal keeps the proposed operation, its reason
 and the model's reasoning; a no-decision turn keeps its reason.
 
-The trace is an address, not a copy. Details are reached with the read-only memory tools:
-
-| Tool | Level | What it returns |
-|---|---|---|
-| `unit` | L1 | the unit's states: id, state kind, `what`, open/closed, closure reason |
-| `state` | L2 | a state's turns: action, status, result id and summary |
-| `turns` | turns | actions with their results and the model's reasoning |
-| `body` | L4 | a stored observation body, optionally a line window |
-| `search` | L4 | pattern matches inside a stored body |
-
-`general`, `revision`, `plan` and `document` have one state anchored on the request: its id is the
-unit id, and `state`/`turns` work with it as with any other state.
-
-The result of a memory call becomes an observation of the calling session unit and is therefore
-addressable in turn. L0 is shown to the session agent in full; the terminal view may bound it.
+The trace is the summary the session agent routes from. It has no tools to open a unit or read its
+states and turns; the unit's own journal stays with the unit. L0 is shown to the session agent in
+full; the terminal view may bound it.
 
 ## 3. The session agent
 
@@ -67,14 +55,14 @@ Before opening a task, the session agent **reformulates** the request from the d
 traces: what to do now, which constraints and findings from the past matter. Confirmation by the
 user is an optional interaction policy, not an IR step.
 
-The session agent has no workspace tools. Material questions go to the general unit; a described
-mutable operation goes to the revision unit; work whose cause or approach must be found goes to the
-task unit. `search` remains a memory tool over stored bodies, not a workspace search.
+The session agent has no workspace tools and no unit-history tools: it routes from the dialogue and
+the L0 trace. Material questions go to the general unit; a described mutable operation goes to the
+revision unit; work whose cause or approach must be found goes to the task unit.
 
 ## 4. Isolation and continuity
 
-The task agent receives only the work order. It does not read the session L0, other units' journals
-or the history tools; otherwise the task would turn into a monotone tape and lose focus. Continuity
+The task agent receives only the work order. It does not read the session L0 or other units'
+journals; otherwise the task would turn into a monotone tape and lose focus. Continuity
 is transferred through the **formulation**, not through shared history. The order is written in the
 user's language and keeps its scope, so the unit's answer comes back in that language.
 

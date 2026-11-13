@@ -15,7 +15,7 @@ import {
 import { runRepl } from "../src/session/repl";
 import { runRequestObserver, type RequestObserver } from "../src/session/observer";
 import { attentionOf, createSession, openUnit } from "../src/session/session";
-import { createSessionTools, type SessionAgent } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { memoryTelemetry } from "../src/session/telemetry";
 import type { Trigger } from "../src/session/types";
 import { cleanupWorkspaces, makeWorkspace, move, read, request, write } from "./ops/helpers";
@@ -72,7 +72,7 @@ function pausingProposer(controller: AbortController): Proposer {
 
 function taskDeps(proposer: Proposer, workspace: SessionTurnDeps["task"]["workspace"]): SessionTurnDeps {
   return {
-    sessionAgent: { agent: START, tools: createSessionTools() },
+    sessionAgent: { agent: START },
     task: { propose: proposer, workspace, maxTurns: 20 },
   };
 }
@@ -172,7 +172,7 @@ describe("task pause, resume and cancel", () => {
 });
 
 describe("session pause and resume", () => {
-  it("keeps the completed tool turns and resumes the same unit", async () => {
+  it("pauses before applying an operation and resumes the same unit", async () => {
     const { ws } = makeWorkspace({ "a.txt": "x\n" });
     const controller = new AbortController();
     const session = withSessionUnit(createSession());
@@ -180,16 +180,13 @@ describe("session pause and resume", () => {
     const agent: SessionAgent = async () => {
       calls += 1;
       if (calls === 1) {
-        return { toolCalls: [{ name: "unit", args: { id: "m1" }, callId: "l1" }] };
-      }
-      if (calls === 2) {
         controller.abort();
         return { operation: { kind: "respond", text: "lost" } };
       }
       return { operation: { kind: "respond", text: "done" } };
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent, tools: createSessionTools() },
+      sessionAgent: { agent },
       task: {
         propose: async () => ({ thought: "", actions: [] }),
         workspace: ws,
@@ -224,12 +221,12 @@ describe("REPL pause menu", () => {
       calls += 1;
       if (calls === 1) {
         current?.abort();
-        return { toolCalls: [{ name: "unit", args: { id: "m1" }, callId: "l1" }] };
+        return { operation: { kind: "respond", text: "lost" } };
       }
       return { operation: { kind: "respond", text: "done" } };
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent, tools: createSessionTools() },
+      sessionAgent: { agent },
       task: {
         propose: async () => ({ thought: "", actions: [] }),
         workspace: ws,
@@ -271,7 +268,7 @@ describe("REPL pause menu", () => {
       return { operation: { kind: "respond", text: "the task is open" } };
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent, tools: createSessionTools() },
+      sessionAgent: { agent },
       task: { propose: pausingProposer(controller), workspace: ws, maxTurns: 20 },
     };
     const output: string[] = [];
@@ -350,7 +347,7 @@ describe("observer pause inside a task", () => {
       return { decision };
     };
     const deps: SessionTurnDeps = {
-      sessionAgent: { agent: START, tools: createSessionTools() },
+      sessionAgent: { agent: START },
       task: {
         propose: COMPLETE,
         workspace: ws,

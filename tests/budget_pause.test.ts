@@ -12,12 +12,11 @@ import {
 import type { PlannerReply } from "../src/session/planner";
 import { runRepl } from "../src/session/repl";
 import { attentionOf, createSession } from "../src/session/session";
-import type { SessionAgent, SessionTools } from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { cleanupWorkspaces, makeWorkspace, move, run } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = { unit: (_session, id) => `UNIT ${id}` };
 
 const sessionAgent: SessionAgent = async () => ({
   operation: { kind: "task", text: "do the work" },
@@ -40,7 +39,7 @@ function busy(): Proposer {
 
 function deps(propose: Proposer, maxTurns: number): SessionTurnDeps {
   return {
-    sessionAgent: { agent: sessionAgent, tools },
+    sessionAgent: { agent: sessionAgent },
     task: { propose, workspace: makeWorkspace().ws, maxTurns },
     budgetExtend: 3,
   };
@@ -127,7 +126,7 @@ describe("budget pause", () => {
       maxTurns: 4,
     };
     const d: SessionTurnDeps = {
-      sessionAgent: { agent, tools },
+      sessionAgent: { agent },
       task: { propose: busy(), workspace: ws, maxTurns: 2 },
       planner,
       budgetExtend: 3,

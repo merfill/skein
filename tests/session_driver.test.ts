@@ -10,19 +10,13 @@ import {
   createSession,
   sessionFocus,
 } from "../src/session/session";
-import type {
-  SessionAgent,
-  SessionTools,
-} from "../src/session/session_agent";
+import type { SessionAgent } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
 import type { SessionOperation } from "../src/session/types";
 import { cleanupWorkspaces, makeWorkspace, move } from "./ops/helpers";
 
 afterEach(cleanupWorkspaces);
 
-const tools: SessionTools = {
-  unit: (_session, id) => `UNIT ${id}`,
-};
 
 // A task that moves straight to the terminal state and stops: enough to exercise the driver
 // without touching the workspace.
@@ -43,7 +37,6 @@ function deps(operations: SessionOperation[]): SessionTurnDeps {
         let index = 0;
         return async () => ({ operation: operations[index++] });
       })() as SessionAgent,
-      tools,
     },
     task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
   };
@@ -92,7 +85,6 @@ describe("session driver: one utterance turn", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "task", text: "fix the build" } }),
-        tools,
       },
       task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
     };
@@ -132,7 +124,7 @@ describe("session driver: one utterance turn", () => {
         : { operation: { kind: "task", text: "fix the build" } };
     };
     const turnDeps: SessionTurnDeps = {
-      sessionAgent: { agent, tools },
+      sessionAgent: { agent },
       task: { propose: proposer, workspace: makeWorkspace().ws, maxTurns: 6 },
     };
 
@@ -160,7 +152,6 @@ describe("session driver: one utterance turn", () => {
           seen = messages;
           return { operation: { kind: "respond", text: "ok" } };
         },
-        tools,
       },
       task: { propose: proposer, workspace: made.ws, maxTurns: 6 },
     };
@@ -194,7 +185,6 @@ describe("session driver: one utterance turn", () => {
     const turnDeps: SessionTurnDeps = {
       sessionAgent: {
         agent: async () => ({ operation: { kind: "task", text: "fix the parser in parser.c" } }),
-        tools,
       },
       task: { propose: isolated, workspace: makeWorkspace().ws, maxTurns: 6 },
     };

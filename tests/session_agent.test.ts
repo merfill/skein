@@ -16,7 +16,6 @@ import {
   runSessionUnit,
   seedSessionUnit,
   type SessionAgent,
-  type SessionTools,
 } from "../src/session/session_agent";
 import { sessionOutline } from "../src/session/session_outline";
 
@@ -53,10 +52,6 @@ function move(id: string, island: string, seq: number): Event[] {
   ];
 }
 
-const tools: SessionTools = {
-  unit: (_session, id) => `UNIT ${id}`,
-};
-
 function taskSession() {
   const session = createSession();
   openUnit(session, "r1", "task", [request(), ...move("m1", "patch", 1)]);
@@ -65,44 +60,32 @@ function taskSession() {
 }
 
 describe("session agent: bounded unit loop", () => {
-  it("surveys a unit read-only, then answers", async () => {
+  it("takes an operation in one call and shows the outline", async () => {
     const session = taskSession();
     const taskJournal = session.units.get("r1")?.journal ?? [];
     const taskLength = taskJournal.length;
     const seen: ModelMessage[][] = [];
-    let calls = 0;
     const agent: SessionAgent = async (messages) => {
       seen.push(messages);
-      calls += 1;
-      if (calls === 1) {
-        return { toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }] };
-      }
       return { operation: { kind: "respond", text: "hello" } };
     };
 
-    const result = await runSessionAgent({ agent, tools }, session, "hello", { turn: 5 });
+    const result = await runSessionAgent({ agent }, session, "hello", { turn: 5 });
 
     expect(result.unitId).toBe("session:1");
     expect(result.applied?.ok).toBe(true);
     expect(attentionOf(session, "session:1")).toBe("completed");
-    expect(result.journal.some((event) =>
-      event.type === "add_node" &&
-      event.node.kind === "observation" &&
-      (event.node.payload as { result?: string }).result === "UNIT r1",
-    )).toBe(true);
     expect(taskJournal).toHaveLength(taskLength);
     expect(seen[0]?.[1]?.role).toBe("system");
     expect(seen[0]?.[2]).toEqual({ role: "user", content: "hello" });
-    expect(seen[1]?.length).toBeGreaterThan(seen[0]?.length ?? 0);
   });
 
-  it("takes one operation per run and ignores any tool calls in the same reply", async () => {
+  it("takes one operation per run", async () => {
     const session = taskSession();
     const agent: SessionAgent = async () => ({
-      toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }],
       operation: { kind: "respond", text: "done" },
     });
-    const result = await runSessionAgent({ agent, tools }, session, "hi");
+    const result = await runSessionAgent({ agent }, session, "hi");
     expect(result.operation).toEqual({ kind: "respond", text: "done" });
     expect(result.journal).toHaveLength(1);
   });
@@ -114,7 +97,7 @@ describe("session agent: bounded unit loop", () => {
     const agent: SessionAgent = async () => ({
       operation: { kind: "task", text: "  " },
     });
-    const result = await runSessionAgent({ agent, tools }, session, "start something");
+    const result = await runSessionAgent({ agent }, session, "start something");
     expect(result.applied?.ok).toBe(false);
     const refusal = result.journal.at(-1);
     expect(refusal?.type).toBe("add_node");
@@ -141,7 +124,7 @@ describe("session agent: bounded unit loop", () => {
       operation: { kind: "respond", text: "hi" },
       reasoning: "the user only greeted me",
     });
-    const result = await runSessionAgent({ agent, tools }, session, "hi");
+    const result = await runSessionAgent({ agent }, session, "hi");
     expect(result.reasoning).toBe("the user only greeted me");
     expect(
       session.journal.some(
@@ -157,7 +140,7 @@ describe("session agent: bounded unit loop", () => {
   it("records an empty reply as no_decision", async () => {
     const session = taskSession();
     const agent: SessionAgent = async () => ({});
-    const result = await runSessionAgent({ agent, tools }, session, "hi");
+    const result = await runSessionAgent({ agent }, session, "hi");
     expect(result.operation).toBeUndefined();
     expect(result.applied).toBeUndefined();
     expect(result.noDecision).toBe("empty_reply");
@@ -171,23 +154,6 @@ describe("session agent: bounded unit loop", () => {
     expect(attentionOf(session, "session:1")).toBe("suspended");
   });
 
-  it("records max_turns when the loop runs out", async () => {
-    const session = taskSession();
-    const agent: SessionAgent = async () => ({
-      toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "c1" }],
-    });
-    const result = await runSessionAgent({ agent, tools }, session, "hi", { maxTurns: 2 });
-    expect(result.operation).toBeUndefined();
-    expect(result.noDecision).toBe("max_turns");
-    expect(
-      session.journal.some(
-        (event) => event.type === "no_decision" && event.reason === "max_turns",
-      ),
-    ).toBe(true);
-    expect(sessionOutline(session)).toContain("no decision: max_turns");
-    expect(attentionOf(session, "session:1")).toBe("suspended");
-  });
-
   it("replays the journal and shows L0 as a system message", async () => {
     const session = taskSession();
     const journal = seedSessionUnit("hello");
@@ -196,7 +162,7 @@ describe("session agent: bounded unit loop", () => {
       messages = input;
       return { operation: { kind: "respond", text: "ok" } };
     };
-    const result = await runSessionUnit({ utterance: "hello", session, tools, agent, journal });
+    const result = await runSessionUnit({ utterance: "hello", session, agent, journal });
     expect(result.operation).toEqual({ kind: "respond", text: "ok" });
     expect(messages[2]).toEqual({ role: "user", content: "hello" });
     expect(
@@ -226,12 +192,12 @@ describe("session agent: messages", () => {
 });
 
 describe("session agent: model reply mapping", () => {
-  it("maps operation tools and keeps read-only calls", () => {
+  it("maps operation tools", () => {
     expect(
       toSessionReply([{ toolName: "task", input: { request: "do it" }, toolCallId: "x" }]),
     ).toEqual({ operation: { kind: "task", text: "do it" } });
     expect(
       toSessionReply([{ toolName: "unit", input: { id: "r1" }, toolCallId: "x" }]),
-    ).toEqual({ toolCalls: [{ name: "unit", args: { id: "r1" }, callId: "x" }] });
+    ).toEqual({});
   });
 });
