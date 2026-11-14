@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Skein — a coding agent whose context is a projection of its IR</title>
+    <meta
+      name="description"
+      content="Skein is a coding agent with a non-monotone context: the model sees a deterministic projection of a typed event journal, not a growing message tape."
+    />
+    <link rel="canonical" href="https://skein-swe.dev/" />
+    <link rel="alternate" hreflang="en" href="https://skein-swe.dev/" />
+    <link rel="alternate" hreflang="ru" href="https://skein-swe.dev/ru/" />
+    <link rel="alternate" hreflang="x-default" href="https://skein-swe.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Skein" />
+    <meta property="og:title" content="Skein — a coding agent whose context is a projection of its IR" />
+    <meta
+      property="og:description"
+      content="Skein is a coding agent with a non-monotone context: the model sees a deterministic projection of a typed event journal, not a growing message tape."
+    />
+    <meta property="og:url" content="https://skein-swe.dev/" />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./">Skein</a>
+      <nav>
+        <a href="https://github.com/merfill/skein">GitHub</a>
+        <a href="https://github.com/merfill/skein/blob/main/docs/en/README.md">Docs</a>
+        <a href="ru/" lang="ru">Русский</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">v0.1 · source release</p>
+        <h1>A coding agent whose context is a projection of its IR.</h1>
+        <p class="lead">
+          Skein does not replay a growing message tape. The executor records a typed event
+          journal; every turn rebuilds the model's context from that journal. The model proposes,
+          the executor records, and the journal is the protocol.
+        </p>
+        <p class="actions">
+          <a class="button" href="https://github.com/merfill/skein">View source</a>
+          <a class="button ghost" href="#install">Install</a>
+        </p>
+        <p class="note">
+          The npm package and Docker image are published after acceptance. Until then, install
+          from a source checkout as shown below.
+        </p>
+      </section>
+
+      <section id="idea">
+        <h2>How it works</h2>
+        <div class="grid three">
+          <article>
+            <h3>Journal, not tape</h3>
+            <p>
+              Events are appended to a monotone typed IR. Nodes are never rewritten, so the full
+              history stays addressable even when it is not shown.
+            </p>
+          </article>
+          <article>
+            <h3>Projection, not memory</h3>
+            <p>
+              The prompt is rebuilt from scratch each turn. Content can leave the view as the
+              focus moves, while <code>recall</code> and <code>search</code> still reach it.
+            </p>
+          </article>
+          <article>
+            <h3>States with a goal</h3>
+            <p>
+              Work moves through states such as Research, Patch, Construction and Verification.
+              Each has an explicit goal and completion condition, and closes by the model's text.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="install">
+        <h2>Install</h2>
+        <p class="note">Requires Node.js 22 or newer.</p>
+        <div class="grid two">
+          <article>
+            <h3>Linux / macOS</h3>
+            <pre><code>git clone https://github.com/merfill/skein.git
+cd skein
+npm install
+npm run build
+npm pack
+npm install -g ./skein-swe-*.tgz
+skein --version</code></pre>
+          </article>
+
+          <article>
+            <h3>Windows: bash required</h3>
+            <p>
+              The agent's shell tool runs <code>/bin/bash</code>, so Node must run in an
+              environment that provides it.
+            </p>
+            <ul>
+              <li>
+                <strong>WSL2 (recommended):</strong> install Ubuntu, then follow the Linux steps
+                inside it. Keep projects in the WSL filesystem (<code>~/project</code>), not under
+                <code>/mnt/c</code>.
+              </li>
+              <li>
+                <strong>Git Bash / MSYS2:</strong> works when <code>/bin/bash</code> is reachable
+                from the shell that launches <code>skein</code>.
+              </li>
+              <li>
+                <strong>Docker Desktop:</strong> run the Linux image below.
+              </li>
+            </ul>
+            <p class="note">Native PowerShell or cmd without bash is not supported.</p>
+          </article>
+
+          <article class="wide">
+            <h3>Docker</h3>
+            <pre><code>git clone https://github.com/merfill/skein.git
+cd skein
+docker build -t skein:0.1.0 .
+docker run --rm -it \
+  -v "$HOME/project:/workspace" \
+  -e SKEIN_API_KEY=... \
+  -e SKEIN_MODEL=... \
+  skein:0.1.0</code></pre>
+            <p class="note">
+              The provider is passed with environment variables; no model is bundled. On Windows
+              PowerShell use <code>${HOME}</code> for the mount path.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="configure">
+        <h2>Configure</h2>
+        <p>Point Skein at a provider with the interactive setup, or with environment variables:</p>
+        <pre><code>skein auth login     # provider, masked key, model
+skein doctor         # checks the key and the model
+skein --dir ~/project</code></pre>
+        <pre><code>export SKEIN_API_KEY=...
+export SKEIN_MODEL=...
+skein</code></pre>
+        <p class="note">
+          Local runtimes such as Ollama, LM Studio and vLLM work through <code>--base-url</code>.
+          See the providers guide in the documentation.
+        </p>
+      </section>
+
+      <section id="links">
+        <h2>Links</h2>
+        <ul class="links">
+          <li><a href="https://github.com/merfill/skein">Source code (GitHub)</a></li>
+          <li>
+            <a href="https://github.com/merfill/skein/blob/main/docs/en/README.md"
+              >Documentation</a
+            >
+          </li>
+          <li><span>npm package <em>after release</em></span></li>
+          <li><span>Docker image <em>after release</em></span></li>
+          <li><span>Zenodo DOI <em>after release</em></span></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <span>MIT licensed</span>
+      <a href="https://github.com/merfill/skein">github.com/merfill/skein</a>
+    </footer>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>

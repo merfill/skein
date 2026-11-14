@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Skein — кодирующий агент, чей контекст есть проекция его IR</title>
+    <meta
+      name="description"
+      content="Skein — кодирующий агент с немонотонным контекстом: модель видит детерминированную проекцию типизированного журнала событий, а не растущую ленту сообщений."
+    />
+    <link rel="canonical" href="https://skein-swe.dev/ru/" />
+    <link rel="alternate" hreflang="en" href="https://skein-swe.dev/" />
+    <link rel="alternate" hreflang="ru" href="https://skein-swe.dev/ru/" />
+    <link rel="alternate" hreflang="x-default" href="https://skein-swe.dev/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Skein" />
+    <meta property="og:title" content="Skein — кодирующий агент, чей контекст есть проекция его IR" />
+    <meta
+      property="og:description"
+      content="Skein — кодирующий агент с немонотонным контекстом: модель видит детерминированную проекцию типизированного журнала событий, а не растущую ленту сообщений."
+    />
+    <meta property="og:url" content="https://skein-swe.dev/ru/" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta name="twitter:card" content="summary" />
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../">Skein</a>
+      <nav>
+        <a href="https://github.com/merfill/skein">GitHub</a>
+        <a href="https://github.com/merfill/skein/blob/main/docs/ru/README.md">Документация</a>
+        <a href="../" lang="en">English</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">v0.1 · исходники</p>
+        <h1>Кодирующий агент, чей контекст — проекция его IR.</h1>
+        <p class="lead">
+          Skein не переигрывает растущую ленту сообщений. Исполнитель пишет типизированный
+          журнал событий, и каждый ход заново собирает контекст модели из этого журнала. Модель
+          предлагает, исполнитель записывает, журнал — протокол.
+        </p>
+        <p class="actions">
+          <a class="button" href="https://github.com/merfill/skein">Исходники</a>
+          <a class="button ghost" href="#install">Установка</a>
+        </p>
+        <p class="note">
+          npm-пакет и Docker-образ публикуются после приёмки. До этого ставьте из checkout
+          репозитория, как показано ниже.
+        </p>
+      </section>
+
+      <section id="idea">
+        <h2>Как это устроено</h2>
+        <div class="grid three">
+          <article>
+            <h3>Журнал, а не лента</h3>
+            <p>
+              События дописываются в монотонный типизированный IR. Узлы не переписываются,
+              поэтому вся история остаётся адресуемой, даже когда не показана.
+            </p>
+          </article>
+          <article>
+            <h3>Проекция, а не память</h3>
+            <p>
+              Промпт собирается заново на каждом ходу. Содержимое может уходить из вида при смене
+              фокуса, но остаётся достижимым через <code>recall</code> и <code>search</code>.
+            </p>
+          </article>
+          <article>
+            <h3>Состояния с целью</h3>
+            <p>
+              Работа идёт через состояния Research, Patch, Construction, Verification и другие. У
+              каждого явная цель и условие завершения; закрывается оно текстом модели.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="install">
+        <h2>Установка</h2>
+        <p class="note">Нужен Node.js 22 или новее.</p>
+        <div class="grid two">
+          <article>
+            <h3>Linux / macOS</h3>
+            <pre><code>git clone https://github.com/merfill/skein.git
+cd skein
+npm install
+npm run build
+npm pack
+npm install -g ./skein-swe-*.tgz
+skein --version</code></pre>
+          </article>
+
+          <article>
+            <h3>Windows: нужен bash</h3>
+            <p>
+              Shell-инструмент агента запускает <code>/bin/bash</code>, поэтому Node должен
+              работать там, где он есть.
+            </p>
+            <ul>
+              <li>
+                <strong>WSL2 (рекомендуется):</strong> поставьте Ubuntu и повторите шаги для
+                Linux внутри неё. Проекты держите в файловой системе WSL (<code>~/project</code>),
+                а не в <code>/mnt/c</code>.
+              </li>
+              <li>
+                <strong>Git Bash / MSYS2:</strong> работает, если <code>/bin/bash</code> доступен
+                из той оболочки, которая запускает <code>skein</code>.
+              </li>
+              <li>
+                <strong>Docker Desktop:</strong> запустите Linux-образ ниже.
+              </li>
+            </ul>
+            <p class="note">Нативные PowerShell и cmd без bash не поддерживаются.</p>
+          </article>
+
+          <article class="wide">
+            <h3>Docker</h3>
+            <pre><code>git clone https://github.com/merfill/skein.git
+cd skein
+docker build -t skein:0.1.0 .
+docker run --rm -it \
+  -v "$HOME/project:/workspace" \
+  -e SKEIN_API_KEY=... \
+  -e SKEIN_MODEL=... \
+  skein:0.1.0</code></pre>
+            <p class="note">
+              Провайдер задаётся переменными окружения; модель в образ не встроена. В Windows
+              PowerShell для пути монтирования используйте <code>${HOME}</code>.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="configure">
+        <h2>Настройка</h2>
+        <p>Укажите провайдера интерактивно или переменными окружения:</p>
+        <pre><code>skein auth login     # провайдер, скрытый ключ, модель
+skein doctor         # проверка ключа и модели
+skein --dir ~/project</code></pre>
+        <pre><code>export SKEIN_API_KEY=...
+export SKEIN_MODEL=...
+skein</code></pre>
+        <p class="note">
+          Локальные рантаймы вроде Ollama, LM Studio и vLLM подключаются через
+          <code>--base-url</code>. См. руководство по провайдерам в документации.
+        </p>
+      </section>
+
+      <section id="links">
+        <h2>Ссылки</h2>
+        <ul class="links">
+          <li><a href="https://github.com/merfill/skein">Исходный код (GitHub)</a></li>
+          <li>
+            <a href="https://github.com/merfill/skein/blob/main/docs/ru/README.md"
+              >Документация</a
+            >
+          </li>
+          <li><span>npm-пакет <em>после релиза</em></span></li>
+          <li><span>Docker-образ <em>после релиза</em></span></li>
+          <li><span>DOI на Zenodo <em>после релиза</em></span></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <span>Лицензия MIT</span>
+      <a href="https://github.com/merfill/skein">github.com/merfill/skein</a>
+    </footer>
+
+    <script src="../app.js" defer></script>
+  </body>
+</html>
