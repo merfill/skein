@@ -29,8 +29,9 @@ Ollama локально.
   `.env.example`.
 - [x] Docker-образ запускается; ориентир на провайдеров (BYOK), локальные рантаймы — через
   `--base-url`, без встроенной/автозагружаемой модели.
-- [ ] BYOK/local/free-tier first-run: `auth login` → `doctor` → TUI на чистой машине
-  (проверены `--version`/`--help`/`auth list`; `doctor`/TUI — нужен ключ/модель).
+- [x] BYOK/local/free-tier first-run: `auth login` → `doctor` → TUI на чистой машине
+  (2026-11-14: офлайн-приёмка пакета в изолированном HOME + live в Docker — `doctor`, маленькая
+  задача, старт TUI; см. handoff).
 - [x] Reproducible bench: `tests/sandbox/campaign.ts` (dry/resume/only-failed, сводки
   `summary.{json,md,csv}`) и артефакты для Фазы C.
 - [ ] Тег `v0.1.0` + архив на Zenodo (DOI).

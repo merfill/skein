@@ -31,6 +31,40 @@
 with Docker and the task images and launch real containers and verifiers. For an ordinary check,
 always use `--exclude 'tests/sandbox/**'`.
 
+### 1.1 First-run acceptance (release)
+
+A clean install must reach a working provider without a repo checkout. The offline half is free;
+the live half needs a real key and the owner's go-ahead.
+
+Offline (pack, install into an isolated HOME, no key):
+
+```sh
+npm run build
+npm pack --pack-destination /tmp/skein-firstrun
+mkdir -p /tmp/skein-firstrun/install && cd /tmp/skein-firstrun/install
+npm init -y && npm install /tmp/skein-firstrun/skein-swe-0.1.0.tgz
+export HOME=/tmp/skein-firstrun/home XDG_CONFIG_HOME=$HOME/.config XDG_DATA_HOME=$HOME/.local/share
+node_modules/.bin/skein --version      # skein 0.1.0
+node_modules/.bin/skein --help
+node_modules/.bin/skein auth list      # no keys -> suggests `skein auth login`
+node_modules/.bin/skein doctor         # not ready: API key is not set; exit 1
+node_modules/.bin/skein </dev/null     # no TTY -> clear "run auth login" error; exit 1
+```
+
+Live (real key, network) — in the Docker image or a fresh HOME:
+
+```sh
+skein auth login          # provider, masked key, model
+skein doctor              # models + one-token chat ok
+skein --dir <project>     # the TUI starts
+```
+
+Then run one small task to completion, and confirm provider failures (401/404/timeout) print a
+clear error. `npx skein-swe` itself is only testable after the package is published.
+
+With Docker, `--env-file` does not strip quotes (a `SKEIN_MODEL='...'` value reaches the API with
+the quotes). Source `.env` and pass variables with `-e VAR`, or keep the values unquoted.
+
 ## 2. Offline tests
 
 `.env` is gitignored and sets `SKEIN_LIVE=true`; an environment variable wins over the file. For an

@@ -83,6 +83,13 @@ export async function runAuthCommand(
 ): Promise<number> {
   const sub = args[0];
   if (sub === "login") {
+    if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+      console.error(
+        "`skein auth login` needs an interactive terminal; " +
+          "set the provider's API key variable (e.g. SKEIN_API_KEY) instead",
+      );
+      return 1;
+    }
     const local = await detectLocalProviders();
     const io = createTerminalIo();
     try {

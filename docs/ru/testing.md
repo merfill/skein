@@ -31,6 +31,41 @@
 самостоятельно включаются на машине с Docker и образами задач и поднимают настоящие контейнеры и
 верификаторы. Для обычной проверки всегда используй `--exclude 'tests/sandbox/**'`.
 
+### 1.1 Приёмка first-run (релиз)
+
+Чистая установка должна доходить до рабочего провайдера без checkout репозитория. Офлайн-половина
+бесплатна; живой половине нужен реальный ключ и разрешение владельца.
+
+Офлайн (сборка, установка в изолированный HOME, без ключа):
+
+```sh
+npm run build
+npm pack --pack-destination /tmp/skein-firstrun
+mkdir -p /tmp/skein-firstrun/install && cd /tmp/skein-firstrun/install
+npm init -y && npm install /tmp/skein-firstrun/skein-swe-0.1.0.tgz
+export HOME=/tmp/skein-firstrun/home XDG_CONFIG_HOME=$HOME/.config XDG_DATA_HOME=$HOME/.local/share
+node_modules/.bin/skein --version      # skein 0.1.0
+node_modules/.bin/skein --help
+node_modules/.bin/skein auth list      # ключей нет -> подсказка про `skein auth login`
+node_modules/.bin/skein doctor         # not ready: API key is not set; exit 1
+node_modules/.bin/skein </dev/null     # не-TTY -> понятная ошибка "run auth login"; exit 1
+```
+
+Живая (реальный ключ, сеть) — в Docker-образе или свежем HOME:
+
+```sh
+skein auth login          # провайдер, скрытый ключ, модель
+skein doctor              # список моделей + однотокенный чат ok
+skein --dir <project>     # TUI запускается
+```
+
+Затем один маленький прогон задачи до конца и проверка, что ошибки провайдера (401/404/timeout)
+печатаются понятно. Сам `npx skein-swe` проверяется только после публикации пакета.
+
+В Docker `--env-file` не снимает кавычки (значение `SKEIN_MODEL='...'` уходит в API вместе с
+кавычками). Делай `source .env` и передавай переменные через `-e VAR` либо держи значения без
+кавычек.
+
 ## 2. Офлайн-тесты
 
 `.env` в `.gitignore` и выставляет `SKEIN_LIVE=true`; переменная окружения важнее файла. Для

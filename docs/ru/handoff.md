@@ -3,6 +3,49 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-14 — v0.1 first-run приёмка (офлайн + Docker) — **сделано**
+
+### Что сделано
+
+- **Офлайн-приёмка пакета.** `npm run build` → `npm pack` (4 файла, 120.3 kB) → установка тарбола
+  в `/tmp` с изолированными `HOME`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME`. Проверено: `--version`
+  (`skein 0.1.0`), `--help`, `auth list` (ключей нет → подсказка), `doctor` без ключа
+  (`not ready: API key is not set`, exit 1), `skein </dev/null` (не-TTY → понятная ошибка,
+  exit 1).
+- **Найден и исправлен баг first-run.** `skein auth login` без TTY печатал меню и **молча
+  выходил с exit 0**, ничего не сохранив: readline на EOF не резолвит `question`, event loop
+  опустошается. В `runAuthCommand` добавлен guard (stdin/stdout не TTY → сообщение «нужен
+  интерактивный терминал; задай ключ через env» + exit 1) — как уже было в `ensureProvider`.
+  `runAuthLogin` и тесты не менялись.
+- **Live в Docker** (образ `skein:0.1.0` из HEAD; провайдер/модель из `.env`):
+  - `doctor` — 608 моделей, `chat: ok in 1087ms`;
+  - `--plain` маленькая задача — маршрут `revision v1`, `write` + `wc -c`/`od -c`, `hello.txt`
+    = `hi` (2 байта), 3 хода;
+  - TUI стартует: status bar (workspace, `deepseek-v4-flash`, ctx, `.skein/session.log`, mouse),
+    живёт до таймаута.
+- **Gotcha Docker:** `--env-file` не снимает кавычки — `SKEIN_MODEL='...'` уходил в API как
+  `''...''` (400 «Model not found»). Для приёмки использован `source .env` + `-e VAR`. Заметка
+  добавлена в чеклист.
+- **Доки:** §1.1 «First-run acceptance» в `docs/en/testing.md` и `docs/ru/testing.md` — офлайн-
+  команды, live-чеклист, предупреждение про кавычки `--env-file`.
+
+### Проверено
+
+- `npm run typecheck` — чистый.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **652 passed / 40 skipped**.
+- `tests/providers_auth.test.ts` + `tests/providers_config.test.ts` — 17 passed (guard не задел
+  визард).
+- `docker build -t skein:0.1.0 .` — успешно.
+
+### Открыто
+
+- `npx skein-swe` проверяется только после `npm publish`; публикация не делалась.
+- Тег `v0.1.0` + Zenodo DOI — за владельцем (нужен аккаунт/токен).
+- Интерактивный `auth login` с живым ключом не гонялся (покрыт scripted-io тестами); в Docker
+  основной путь — env.
+- Рабочее дерево: `src/providers/cli.ts`, `docs/{en,ru}/testing.md`, этот handoff — не
+  закоммичены.
+
 ## 2026-11-13 — сессионный сценарий: обзор → identify → report → fix → test → doc (K=1)
 
 ### Что сделано
