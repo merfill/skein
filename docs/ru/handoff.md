@@ -65,9 +65,12 @@
 
 ### Открыто
 
-- Деплой и push не делались; домен не куплен.
-- После публикации добавить `https://skein-swe.dev` в README и в профиль репозитория.
-- `site/CNAME`, `.github/workflows/pages.yml`, правки HTML не закоммичены.
+- Домен не куплен; GitHub Pages не включён. Push сделан (`fc23c7a`); workflow `Deploy site`
+  запустился и упал на `actions/configure-pages` — в Settings → Pages нужно переключить Source на
+  GitHub Actions.
+- С `site/CNAME=skein-swe.dev` и без DNS превью на `merfill.github.io/skein` может редиректить на
+  несуществующий домен; для превью временно убрать CNAME или сначала настроить домен и DNS.
+- После деплоя добавить `https://skein-swe.dev` в README и в профиль репозитория.
 
 ## 2026-11-14 — README для внешнего читателя и OpenReview
 
