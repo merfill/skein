@@ -7,9 +7,8 @@ monotone typed journal, and what the model sees each turn is a deterministic pro
 journal. The model proposes; a deterministic executor records and derives. The journal and the
 projection function are the protocol.
 
-> **Status: v0.1, source release.** The comparative evaluation is complete. The npm package and
-> Docker image are not published yet — install from a checkout as shown below. A technical report
-> and an OpenReview submission are planned.
+> **Status: v0.1.** The comparative evaluation is complete. Install from npm (`skein-swe`), from
+> Docker Hub, or from a checkout. A technical report and an OpenReview submission are planned.
 
 ## Contents
 
@@ -78,20 +77,34 @@ The session agent has six operations:
 Requires **Node.js >= 22** and **bash**.
 
 ```bash
-git clone https://github.com/merfill/skein.git
-cd skein
-npm install
-npm run build
-npm pack
-npm install -g ./skein-swe-*.tgz
+npm install -g skein-swe
 
 skein auth login       # choose a provider, paste a key, pick a model
 skein doctor           # one-token check that the key and model work
 skein --dir ~/project  # start the TUI in that workspace
 ```
 
-After the first npm release, the shorter path will be `npm install -g skein-swe` or
-`npx skein-swe`.
+If your npm global prefix is a system directory (for example `/usr/local`), install into your home
+directory instead and add it to `PATH`; `sudo` is not needed:
+
+```bash
+npm install -g --prefix "$HOME/.local" skein-swe
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To try without a global install, prefix the commands with `npx -p skein-swe skein`. To build from a
+checkout:
+
+```bash
+git clone https://github.com/merfill/skein.git
+cd skein
+npm install
+npm run build
+npm pack
+npm install -g --prefix "$HOME/.local" ./skein-swe-*.tgz
+export PATH="$HOME/.local/bin:$PATH"
+skein --version
+```
 
 ### Configure without the wizard
 
@@ -124,16 +137,18 @@ Native PowerShell or cmd without bash is not supported.
 
 ### Docker
 
+The image is published on Docker Hub:
+
 ```bash
-git clone https://github.com/merfill/skein.git
-cd skein
-docker build -t skein:0.1.0 .
+docker pull mefrill/skein-swe:0.1.0
 docker run --rm -it \
-  -v "$HOME/project:/workspace" \
-  -e SKEIN_API_KEY=... \
-  -e SKEIN_MODEL=... \
-  skein:0.1.0
+  -v "$PWD:/workspace" \
+  -e ROUTERAI_API_KEY=... \
+  -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
+  mefrill/skein-swe:0.1.0
 ```
+
+Or build it from a checkout with `docker build -t skein:0.1.0 .`.
 
 The agent runs inside the container; the image is a minimal Node runtime with `git`, so extend it
 with the toolchain your project needs. Pass the provider explicitly when needed, for example
