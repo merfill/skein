@@ -177,12 +177,14 @@ export function runTestSh(task: SandboxTask, container: DockerWorkspace): Verifi
 
 // `test.sh` writes the verdict to `/logs/verifier/reward.txt`; its exit code is not the
 // reward (the scripts end with a successful `echo`, even when pytest failed). A missing file
-// is a verifier failure, not a pass.
+// is a verifier failure, not a pass. Rewards are not always binary: terminal-bench writes
+// 0/1, while Long-Horizon-Terminal-Bench writes a normalized float in [0, 1].
 function readReward(container: DockerWorkspace): { reward: number; source: "reward.txt" | "missing" } {
   const result = container.exec("cat /logs/verifier/reward.txt");
   const raw = result.stdout.trim();
-  if (result.code === 0 && (raw === "0" || raw === "1")) {
-    return { reward: Number(raw), source: "reward.txt" };
+  const value = Number(raw);
+  if (result.code === 0 && raw !== "" && Number.isFinite(value) && value >= 0) {
+    return { reward: value, source: "reward.txt" };
   }
   return { reward: 0, source: "missing" };
 }
