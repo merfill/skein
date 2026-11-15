@@ -218,6 +218,13 @@ async function main(): Promise<void> {
   }
 
   const args = parseArgs(argv);
+  if (args.plain !== true && process.stdin.isTTY !== true) {
+    process.stderr.write(
+      "skein needs an interactive terminal for the TUI; use `skein --plain` for non-interactive input.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
   const root = resolveCliDir(args.dir);
   const provider = await ensureProvider(args);
   let settings = applyProvider(loadSettings(), provider);
