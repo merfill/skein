@@ -1,0 +1,5 @@
+group,solved,failed,unsupported
+skein_on,63,2,0
+skein_off,60,0,5
+opencode_on,65,0,0
+opencode_off,58,2,5

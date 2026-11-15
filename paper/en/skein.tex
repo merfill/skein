@@ -1,0 +1,959 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setmainfont{Liberation Serif}
+\setsansfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}[Scale=0.82]
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\usepackage{microtype}
+\setlength{\emergencystretch}{3em}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{positioning,arrows.meta}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hidelinks]{hyperref}
+\usepackage{url}
+
+\definecolor{skeinc}{HTML}{2F6F9F}
+\definecolor{openc}{HTML}{C66A2B}
+\definecolor{freshc}{HTML}{2F6F9F}
+\definecolor{cachec}{HTML}{9CB8CC}
+\definecolor{outc}{HTML}{C66A2B}
+
+\title{\textbf{Skein: A Coding Agent with a Non-Monotone Context}\\[0.4em]
+\large Architecture and Measurements on Ported Terminal-Bench Tasks}
+\author{Vladimir Lapshin\\[0.3em]
+\small Independent researcher\\[0.2em]
+\small \texttt{mefrill@yandex.ru}}
+\date{Preprint, November 2026}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Agents built on large language models typically keep their work history as a growing tape of
+messages---a linear transcript replayed to the model---and reduce context management to
+truncation and compaction. We describe Skein, a coding agent built around two design decisions.
+First, history is stored in an append-only journal of typed events, and the model's context is
+recomputed from scratch on every turn by a deterministic projection of that journal. The
+projection is non-monotone: completed phases leave the visible context but remain addressable
+through the \texttt{recall} and \texttt{search} tools. Second, work is organized into states
+whose goal and stopping criterion are stored as journal data; admissible transitions are
+specified by a protocol, and the model decides when to transition. On 13 tasks ported from
+Terminal-Bench ($K=5$, network enabled and disabled, 250 executed runs), we compare Skein with
+opencode, a conventional tape-based agent, using the same model and verifiers. The solve rate is
+identical (123 of 125 each; 98.4\% overall), but the cost structure differs: Skein uses 33\%
+fewer total tokens, yet 1.87$\times$ more fresh (uncached) input, and is 1.42$\times$ more
+expensive on solved runs (1.32$\times$ across all runs). Fresh input costs 50$\times$ more than
+cache reads, and opencode has a higher cache share. We interpret the increase in fresh input as
+the cost of isolation as currently implemented---prefix instability and a higher turn count; at
+opencode's cache share the costs are nearly equal (127.4 vs 125.7 RUB, Russian rubles). Goal drift was not
+measured; explicit re-reads are rare (9 of 170 \texttt{read} calls), and re-reads performed via
+\texttt{bash} are not separately accounted for. The cost premium is specific to a 50$\times$
+price ratio: at ratios of 5$\times$ or less, Skein becomes cheaper. The potential benefits of the
+architecture---goal retention and controllability---are not measured here; we state them as
+hypotheses and outline the next phase of journal-based context management.
+\end{abstract}
+
+\noindent\textbf{Keywords:} coding agent, LLM agents, context management, event journal, event
+sourcing, context projection, context isolation, prefix caching, work states, Terminal-Bench.
+
+\section{Introduction}
+
+A coding agent is a program that reads a project, makes changes, and checks the result by
+following the decisions of a language model. A typical implementation follows the ReAct
+loop~\cite{yao2023react}: the model reasons and chooses an action; the executor runs a tool and
+returns an observation. The history of such a loop is naturally stored as a tape of messages:
+a system instruction, the user's request, and pairs of action and observation. The tape is
+monotone---it only grows.
+
+A growing tape has three well-known problems. First, the history exceeds the model's context window on
+long tasks. Second, models use long context unevenly: information in the middle is less
+accessible than information at the beginning and the end~\cite{liu2023lost}; separately from
+this positional effect, we observe an engineering phenomenon---the original goal gets buried deep
+into the history (hereafter, goal drift; this is an observation, not a
+result~\cite{liu2023lost}). Third, compaction and truncation either lose facts or rewrite them,
+and the exact state of the work becomes unrecoverable.
+
+Skein rests on a different assumption: \emph{history is data, and context is a derived
+representation}. The engine records actions and observations in an append-only typed event
+journal (called IR in the code; hereafter, the journal); the messages for the model are
+assembled from the journal on every turn by the function $project()$. This separation is a
+direct analogue of event sourcing and command--query responsibility segregation
+(CQRS)~\cite{fowler2005event,fowler2011cqrs}: the journal is the only writable model, and the
+context is a recomputable read model. The projection is deterministic (a pure function) and
+non-monotone in what it shows\footnote{Here ``non-monotone'' means that the visible representation can
+shrink when the focus changes; it is not non-monotonic logic, in which conclusions may be
+retracted.}: content leaves the context when the focus moves, without disappearing from the
+journal.
+
+The second decision is to organize work into states with an explicit goal and stopping
+criterion, stored as journal data rather than as constants in code. Admissible transitions are
+specified by the protocol; the model decides on a transition, and the executor records the
+transition fact. This distinguishes states both from one-shot subagents and from graphs hard-coded
+in the implementation (Section~\ref{sec:states}).
+
+The contributions of this work are:
+\begin{enumerate}[leftmargin=1.4em,itemsep=0.2em]
+  \item an architecture in which the agent's context is a deterministic non-monotone projection
+  of an append-only journal, with addressable access to hidden history (\texttt{recall},
+  \texttt{search}); positioning against event sourcing, OpenHands, MemGPT, and subagents;
+  \item a state protocol: the goal, stopping criterion, and transition topology are journal
+  data interpreted by the protocol rather than by code;
+  \item a controlled comparison with opencode on 13 ported Terminal-Bench tasks ($K=5$, two
+  network modes), with a decomposition of tokens and cost by state and an analysis of the cost
+  structure and the role of prefix caching in the economics of a long tape;
+  \item an analysis of failures and a program for measuring the claimed but as yet unmeasured
+  properties (goal retention and controllability).
+\end{enumerate}
+
+The source code, documentation, and installation instructions are available in the
+repository \url{https://github.com/merfill/skein}, on the website
+\url{https://skein-swe.dev}, and as the npm package \texttt{skein-swe}
+(\url{https://www.npmjs.com/package/skein-swe}).
+
+This work is the first phase of the project. The implemented core is deliberately small and
+centered on the journal: history is stored as an append-only IR journal, and on top of it sit a
+single state graph inside \texttt{task}, six session operations, and two tools for accessing
+hidden history (\texttt{recall}, \texttt{search}). This is enough to measure the cost of context
+isolation and to implement the state contract as data, but not to draw conclusions about other modes
+of work or about the claimed benefits. We treat the reported numbers as a baseline, not as a
+final evaluation of the architecture.
+
+Non-goals: a claim of state-of-the-art performance on a benchmark, cost optimization, and a test
+of portability across models. With one API provider and one model, the comparison shows that
+Skein is not cheaper than opencode; the goal of the paper is to describe the mechanics and to
+measure their consequences.
+
+\section{Related Work}
+
+\subsection{Coding Agents and Phased Pipelines}
+
+SWE-bench~\cite{jimenez2024swebench} made repository-level tasks a standard for agent evaluation; Terminal-Bench~\cite{terminalbench} moves the idea into the terminal. SWE-agent shows
+that the design of the agent--computer interface substantially affects
+performance~\cite{yang2024sweagent}. Agentless demonstrates that a rigid phased pipeline of
+localization, repair, and validation, without autonomous planning, is competitive with
+agents~\cite{xia2024agentless}. The state sequence of Skein is close to such a pipeline in
+form, but the model chooses transitions between phases according to the protocol rather than a
+schedule in code; the goal and criterion of each phase are journal data.
+
+opencode~\cite{opencode} is an open-source terminal agent and our baseline: one growing tape, a
+set of tools (shell, read, search, edit, write), and a loop that runs until the model stops or
+the limit is exhausted. It represents the main class of implementations.
+
+\subsection{History as Data: Journal, Projection, and Memory}
+
+Event sourcing~\cite{fowler2005event} and CQRS~\cite{fowler2011cqrs} specify a pattern in which
+the application state is fully derived from an event journal and the write and read models are
+separated. Skein applies this pattern to the context of a language-model agent: the journal is
+the source of truth, and the context is a derived representation.
+
+Lost in the Middle~\cite{liu2023lost} motivates abandoning a long tape, but it measures
+positional accessibility rather than goal drift. MemGPT~\cite{packer2023memgpt} manages memory
+hierarchically, and its main context is also non-monotone. The key difference in Skein is the
+way the view changes: MemGPT \emph{edits} the representation through model-driven memory
+operations, whereas Skein \emph{recomputes} it from an immutable journal. Editing accumulates
+the model's decisions about what to remember; recomputation does not. CoALA~\cite{sumers2024coala}
+provides a taxonomy of memory and action spaces; Generative Agents~\cite{park2023generative}
+uses a memory stream with retrieval, that is, an editable memory rather than recomputation from
+an immutable journal; Letta~\cite{letta} is the production successor of the MemGPT line.
+OpenHands~\cite{openhands2024,openhandsSdk2025} is the closest relative: an event stream and a
+Condenser that forms the model's representation by discarding events and replacing them with
+summaries. OpenHands condensation edits and compresses the representation (the MemGPT line);
+Skein recomputes it deterministically from an immutable journal and preserves addressable access
+to the hidden part. Our contribution is not event sourcing as such, but its application to the
+agent's context together with a state contract in the journal. Reflexion adds verbal feedback on
+top of the tape~\cite{shinn2023reflexion}. LangGraph persists graph state through
+checkpoints~\cite{langgraphPersistence}, but both the topology and the node contracts are
+defined in code.
+
+\subsection{Subagents and Context Isolation}
+
+The orchestrator--workers pattern is described in Anthropic's overview~\cite{anthropic2024building}
+and in their multi-agent research system~\cite{anthropic2025multiagent}. In deepagents, a
+subagent is an explicit entity: the \texttt{task} tool, an isolated context, its own system
+instruction, and a set of tools~\cite{langchain2025deepagents}; the motivation is to avoid
+cluttering the parent's context with intermediate results~\cite{dbreunig2025context}.
+
+Functionally, the Skein operations \texttt{general}, \texttt{revision}, \texttt{plan}, and
+\texttt{write\_document} are subagents in this sense. The differences in mechanism are: (i)
+isolation is structural---each unit of work has its own journal and its own projection rather
+than a separate tape; (ii) for states inside \texttt{task}, the goal and stopping criterion are
+journal data, and the transition topology is specified by the protocol. The deepagents framework also has
+\texttt{CompiledSubAgent}, an arbitrary LangGraph workflow that is technically an automaton as
+well; but its goal and criterion are defined by the graph's code rather than by data, and are
+therefore not transferable across topologies without changing the code. The subagent
+specification in deepagents is declarative too, so the novelty is not declarativeness as such
+but the fact that the contract and the transition facts live in the journal and can be checked
+after the fact. Declarative frameworks such as CrewAI~\cite{crewai} define roles and tasks in
+YAML, but they do not journal transitions and do not recompute the context from an immutable
+journal. We return to this distinction in Section~\ref{sec:states}.
+
+\section{Architecture}
+\label{sec:arch}
+
+\subsection{Terms}
+
+The terms used in the rest of the paper are listed below.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Terms and their relations.}
+\label{tab:terms}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Term & Definition \\
+\midrule
+Session & an ordered set of units of work; the session agent routes messages \\
+Unit of work & an isolated journal plus a projection; opened by an operation \\
+Operation & the type of a unit of work (\texttt{respond}, \texttt{general}, \ldots; Table~\ref{tab:ops}) \\
+State & a protocol node inside a unit of work: goal, criterion, tools, transitions \\
+Journal & an append-only sequence of typed events and nodes (IR in code) \\
+Projection & the pure function $project(journal) \rightarrow \texttt{Context}$ \\
+Turn & one model call (a message $\rightarrow$ action $\rightarrow$ observation cycle);
+for opencode we count an agent step \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Journal and Projection}
+
+The journal is monotone: events are only appended, nodes are never rewritten, and the full
+history remains addressable even when it is not shown to the model. A node is a record with the
+fields \texttt{id}, \texttt{space}, \texttt{kind}, \texttt{label}, \texttt{payload}, and
+\texttt{seq}; an edge has \texttt{id}, \texttt{from}, \texttt{to}, \texttt{kind}, and
+\texttt{provenance}. The event types are \texttt{add\_node}, \texttt{add\_edge},
+\texttt{descend}, \texttt{return}, \texttt{mutate}, \texttt{revert}, \texttt{rollback}, and
+\texttt{record\_rejection}. The node types are \texttt{request}, \texttt{move}, \texttt{turns},
+\texttt{action}, \texttt{observation}, \texttt{stop}, \texttt{unactionable},
+\texttt{constraint}, \texttt{fact}, \texttt{hint}, \texttt{memo}, \texttt{plan},
+\texttt{plan\_item}, \texttt{file}, \texttt{symbol}, and \texttt{test}. The edge types are
+\texttt{move}, \texttt{unactionable}, \texttt{turns}, \texttt{turn}, \texttt{stop},
+\texttt{result}, \texttt{mutates}, \texttt{plan}, and \texttt{plan\_item}. The events
+\texttt{mutate}, \texttt{revert}, and \texttt{rollback} do not rewrite nodes; they record a new
+version of an artifact or a rollback, and the versions are kept in the journal. The model's
+note in the working instruction is the \texttt{what} field of the \texttt{move} event: it is
+written when the state is entered and is not rewritten; the projection reads it as an unverified
+guess.
+
+The projection is deterministic: the context is fully determined by the journal and the
+projection parameters, which makes it possible to reproduce the context from the journal. Note
+that determinism of the projection \emph{does not} mean determinism of the agent's behavior:
+the decisions are made by a stochastic model. The property has been checked on 400 random
+journals (\texttt{tests/ops/ir\_properties.test.ts}) and on the 125 journals of the measurement campaign (the full series of runs) stored in
+the \texttt{result.json} of each cell: two calls to \texttt{project()} on the same journal
+produce an identical context (125/125).
+
+The projection is non-monotone. An open state shows:
+\begin{itemize}[leftmargin=1.4em,itemsep=0.15em]
+  \item \texttt{Start state} and a brief description;
+  \item its own turns---a monotone list of actions and observations;
+  \item the working instruction for the turn: \texttt{Goal} (the state's goal), the model's
+  unverified note, \texttt{Done when} (the stopping criterion), \texttt{Plan} (the state's
+  instruction), and an explicit note that the original request is context, not the state's goal.
+\end{itemize}
+A closed state shows only \texttt{Start state} and \texttt{Finish state}. Closing a state does
+not delete its nodes: they remain accessible through \texttt{recall} and \texttt{search}.
+\texttt{recall(id, start?, end?)} reads a stored result by the identifier shown on the tape
+(from the beginning when no window is given, and paginates a large body when a window is given);
+\texttt{search(id, pattern, before?, after?)} matches a regular expression against a stored
+result (stdout and stderr) and returns line windows with context. Both tools are read-only, are
+always available, and append the returned text to the open state's tape; a repeated
+\texttt{recall} without a window is rejected when the body is already in view. There is no
+separate token budget: the size is controlled by the window and pagination. The view can shrink
+without losing data.
+
+Message 0 is the base role instruction; the user's request is the first \texttt{user} turn. The
+state map is not part of the base instruction: the request instruction names the entry
+states, and the transition instruction names the reachable states and the rules, locally for the
+current move. An open state never sees the goal of another state. The motivation is not to
+create a ``second goal'' out of the transition map; this is a design hypothesis, not a measured
+result.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  every node/.style={font=\small},
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=5pt, minimum height=8mm},
+  arr/.style={-{Stealth[length=2mm]}},
+  lbl/.style={font=\scriptsize},
+]
+\node[box] (journal) at (0,0) {journal\\(append-only)};
+\node[box] (proj) at (4.1,0) {$project()$};
+\node[box] (ctx) at (7.6,0) {\texttt{Context}\\(view)};
+\node[box] (llm) at (11.2,0) {model};
+\node[box] (exec) at (7.6,-2.1) {tool\\executor};
+\draw[arr] (journal) -- (proj);
+\draw[arr] (proj) -- (ctx);
+\draw[arr] (ctx) -- (llm);
+\draw[arr] (llm) |- node[lbl,right,pos=0.25]{action} (exec);
+\draw[arr] (exec) -| node[lbl,below,pos=0.25]{events (append)} (journal);
+\draw[arr,dashed] (llm.north) .. controls +(0,1.3) and +(0,1.3) ..
+  node[lbl,above]{\texttt{recall} / \texttt{search}} (journal.north);
+\end{tikzpicture}
+\caption{Work cycle: the journal is the single source of truth; the context is a derived view
+recomputed every turn. The dashed arrow is addressable access to hidden history.}
+\label{fig:cycle}
+\end{figure}
+
+\subsection{Session and Operations}
+
+The session agent parses each user message and either answers it or opens a unit of work with a
+self-contained work order (Table~\ref{tab:ops}). Each operation opens its own journal: work on a
+document does not carry file reads from an investigation, and fixing a defect does not drag in a
+plan.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Session operations.}
+\label{tab:ops}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Operation & Purpose \\
+\midrule
+\texttt{respond} & answer from the dialogue and earlier work \\
+\texttt{general} & read-only investigation, no changes \\
+\texttt{revision} & a mutating operation already described in the request \\
+\texttt{task} & a coding task with a reformulated request \\
+\texttt{plan} & a work plan, read-only \\
+\texttt{write\_document} & a large Markdown document, section by section \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{States: Contract as Data}
+\label{sec:states}
+
+A state is defined by four elements: a goal (\texttt{what}), a stopping criterion (\texttt{Done
+when}), a set of tools, and admissible transitions. The goal and criterion are journal data that
+appear in the working instruction at the decision point. Transitions are specified by the
+protocol: the transition instruction names the reachable states and the rules; the model
+decides; the executor records the transition fact in the journal.
+
+More precisely, this is an automaton whose \emph{structure} (nodes, contracts, admissible
+transitions) is data and whose \emph{transition function} is the model. At present one graph is
+implemented inside \texttt{task}; a run may start in \texttt{Patch}, \texttt{Research}, or \texttt{Construction}, and the
+transitions are as follows:
+\[
+\begin{aligned}
+&\text{Research} \rightarrow \{\text{End},\ \text{Patch}\}, \\
+&\text{Patch} \rightarrow \{\text{Verification},\ \text{Research}\}, \\
+&\text{Construction} \rightarrow \{\text{End},\ \text{Research}\}, \\
+&\text{Verification} \rightarrow \{\text{End},\ \text{Patch}\}.
+\end{aligned}
+\]
+\texttt{End} is terminal. The architecture permits other topologies but does not implement them; drawing
+general conclusions about topologies from one graph would be premature. Note that the model
+chooses the transition, so this is not a classical deterministic finite automaton but an
+automaton with a data-defined topology and a model as the transition function.
+
+\begin{table}[h]
+\centering
+\small
+\caption{States of the \texttt{task} unit of work: purpose and admissible transitions.}
+\label{tab:states}
+\begin{tabular}{@{}lll@{}}
+\toprule
+State & Purpose & Next \\
+\midrule
+\texttt{Research} & investigate the workspace (read-only) & \texttt{End}, \texttt{Patch} \\
+\texttt{Patch} & locate and fix a defect & \texttt{Verification}, \texttt{Research} \\
+\texttt{Construction} & create a new artifact from a specification & \texttt{End}, \texttt{Research} \\
+\texttt{Verification} & run checks and tests & \texttt{End}, \texttt{Patch} \\
+\texttt{End} & finish and report to the parent & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The difference from a subagent is not that a subagent has no goal (it does: the text of the
+subtask), but that the goal, criterion, and transitions live in the journal, while the
+transition facts are journaled and can be checked after the fact. ``Data versus code'' is a
+consequence, not the main thesis; the difference from \texttt{CompiledSubAgent} and LangGraph is
+the same: there the contract is hard-coded in the graph.
+
+The practical consequence we expect is that when the goal and criterion are present at the decision
+point, the model is less likely to take the request as a broader task. This is a hypothesis; we
+outline how to test it in Section~\ref{sec:future}. The other side is that, as long as the criterion is not
+machine-checked, a premature stop is possible---we observed one
+(Section~\ref{sec:discussion}).
+
+\section{Experimental Setup}
+
+\subsection{Tasks and Environment}
+
+We use 13 tasks ported from Terminal-Bench~\cite{terminalbench}. Each task runs in a Docker
+container: the task places its files, the agent works with the shell and tools, and the task's
+built-in verifier assigns a reward (0 or 1). The verifier is created anew from the task cache
+at check time, so the reward does not depend on files left by the agent (a trust limitation is
+discussed in Section~\ref{sec:limitations}).
+
+Each run is a (task, agent) pair under a fixed network mode, with $K=5$ repeats. The network is
+enabled or disabled by an isolating proxy; with \texttt{off}, the network is removed from the
+agent only, while the verifier keeps it because its script installs the environment itself. The
+factor tests whether the agent can work without external resources. Ten
+\texttt{crack-7z-hash} runs were not started with the network off (the task is marked
+unsupported in that mode). Both agents use the same model
+\texttt{deepseek/deepseek-v4-flash-latest} with reasoning effort set to low, from one provider, through
+one API endpoint. The limit is the number of turns, with no wall-clock limit; opencode is
+version 1.19.5. The task set and the verifier scripts are the same for both agents, so the
+comparison is fair with respect to the model and the checks; the architecture, prompts, and
+tools differ (Section~\ref{sec:limitations}).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Experiment protocol.}
+\label{tab:protocol}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Parameter & Value \\
+\midrule
+Tasks & 13 ported Terminal-Bench tasks \\
+Repeats & $K=5$ \\
+Network modes & on / off (isolating proxy) \\
+Agents & Skein; opencode 1.19.5 \\
+Model & \texttt{deepseek/deepseek-v4-flash-latest}, reasoning: low; the same for both \\
+Concurrency & 10 (\texttt{fix-ocaml-gc}: 3) \\
+Limit & 80 model calls; \texttt{fix-ocaml-gc}: 60; +5 in the grace window at \texttt{End} \\
+Timeout & none \\
+Runs & 260 planned, 250 executed \\
+Campaign date & 2026-11-13 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Metrics and Comparison Sets}
+
+We record the reward, the number of turns, input tokens (fresh and read from cache), output
+tokens, reasoning tokens, and cost. The solved rate is computed over all executed runs. Token
+comparisons use solved runs (123 per agent). The solved sets \emph{differ in composition} (the
+agents fail on different tasks), so the aggregates contain a selection effect. We report both
+versions: the full solved sets (Table~\ref{tab:tokens}) and the intersection of 121 pairs in
+which both runs are solved (Table~\ref{tab:intersection}). The conclusion holds on the
+intersection.
+
+opencode does not return cost. The prices are obtained by solving a 3$\times$3 linear system derived from the provider's
+aggregate bill for Skein: fresh
+input is 17.80 RUB per 1M tokens, cache read is 0.356 RUB per 1M, so fresh input costs 50$\times$ more than
+cache reads, and output is 71.20 RUB per 1M. Cache writes were not charged in these runs
+(\texttt{cacheWrite = 0}); reasoning tokens are included in output, so there is no separate
+price for them. The 50$\times$ ratio is a price ratio, not a measured effect; the measured cache
+share of input is 85.7\% for Skein and 94.9\% for opencode. For opencode the RUB figure is an
+estimate under the same price model, not a bill. Prices are in RUB (Russian rubles), the
+currency of the provider's bill; we use a reference rate of 80 RUB per USD; at this rate, 178.22 RUB is about
+2.23 USD and 125.65 RUB about 1.57 USD. The rate is approximate and was not the billing rate.
+
+\section{Results}
+
+\subsection{Solved Tasks: Parity on a Saturated Suite}
+
+Of the 250 executed runs, 246 are solved (98.4\%); each agent solves 123 of 125. A total of 260
+runs were planned (13 tasks $\times$ 2 agents $\times$ 2 network modes $\times$ 5 repeats); 10
+\texttt{crack-7z-hash} cells of the task $\times$ agent $\times$ network $\times$ repeat matrix
+were not started with the network off, so 250 were executed and
+network-mode comparisons use the 12 common tasks. By group: Skein---63/65 (network on) and 60/60
+(off); opencode---65/65 and 58/60. Skein's failures are \texttt{fix-git} (one repeat, a
+premature stop) and \texttt{fix-ocaml-gc} (one repeat, turn limit), both with the network on.
+opencode's failures are two repeats of \texttt{db-wal-recovery} with the network off. Rates: a
+premature stop in 1 of 125 Skein runs (0.8\%), a turn-limit miss in 1 of 125 (0.8\%); opencode
+has two failures of 125 (1.6\%), both on one task and mode. Across all runs, including failures,
+Skein costs 182.72 RUB and opencode about 138.44 RUB; both solve 123 of 125. At the run level,
+there are two discordant pairs in each direction (exact McNemar test, $p=1.0$): no difference is detected; the
+Wilson 95\% interval for 123/125 is [94.4\%, 99.6\%]. This is not a proof of equivalence but an
+absence of detected differences.
+
+An important caveat: our ported subset is saturated (98.4\%) and does not distinguish the
+agents by quality; the comparison is informative only about the cost structure. We do not use
+external figures for the full Terminal-Bench as a contrast, because benchmark versions and the
+leaderboard change. Testing the claimed benefits requires long and difficult tasks
+(Section~\ref{sec:future}).
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.95\textwidth, height=6cm,
+  ybar, bar width=14pt,
+  ymin=0, ymax=70,
+  ylabel={runs},
+  symbolic x coords={skein_on,skein_off,opencode_on,opencode_off},
+  xtick=data,
+  xticklabels={Skein (on),Skein (off),opencode (on),opencode (off)},
+  enlarge x limits=0.18,
+  legend style={at={(0.5,-0.18)},anchor=north,legend columns=3,draw=none,font=\small},
+  tick label style={font=\small},
+  label style={font=\small},
+]
+\addplot[fill=skeinc,draw=none] table[x=group,y=solved,col sep=comma]{../figures/fig_solved.csv};
+\addplot[fill=outc,draw=none] table[x=group,y=failed,col sep=comma]{../figures/fig_solved.csv};
+\addplot[fill=cachec,draw=none] table[x=group,y=unsupported,col sep=comma]{../figures/fig_solved.csv};
+\legend{solved,failed,not run}
+\end{axis}
+\end{tikzpicture}
+\caption{Outcomes by group. There are 260 runs in total; 10 were not run
+(\texttt{crack-7z-hash}, network off).}
+\label{fig:solved}
+\end{figure}
+
+\subsection{What the Journals Show}
+
+Across 125 Skein runs, \texttt{recall} was never called and \texttt{search} was called twice in
+two runs; in the same runs \texttt{bash} was called 1985 times, \texttt{read} 170 times, and
+\texttt{grep} 8 times. Thus addressable access to hidden history was almost unused on these
+short tasks, and the benefits of \texttt{recall}/\texttt{search} are not tested here. States
+were used moderately: 301 \texttt{move} events across 125 runs (median 2); the engine rejected 22
+actions out of 2518 (0.9\%).
+
+\subsection{Tokens and Cost: Less Volume, a Higher Bill}
+
+opencode uses 1.49$\times$ more total tokens, but almost all of the excess is cache read (94.9\%
+of input vs 85.7\% for Skein). Skein is more compact in total input, but it has 1.87$\times$ more
+fresh input tokens and 1.33$\times$ more output tokens: units of work do not share a growing
+prefix and may re-read the workspace. Skein also has more turns (1.36$\times$). With a
+50$\times$ price difference between cache and fresh input, this makes opencode cheaper: 125.65
+vs 178.22 RUB, that is, opencode is 29.5\% cheaper and Skein 1.42$\times$ more expensive
+(Table~\ref{tab:tokens}, Figure~\ref{fig:tokens}).
+
+The cache share in the first repeat is close to that in later repeats (Skein 86.7\% vs 85.3\%;
+opencode 94.4\% vs 95.2\%), so cross-run prefix reuse does not explain the gap. At the task
+level, opencode is cheaper on 12 of 13 tasks (sign test, $p\approx0.0034$); it is more expensive
+only on \texttt{fix-ocaml-gc}.
+
+Decomposition: Skein makes 1.36$\times$ as many steps, but only 1.27$\times$ as many model API
+calls. Output
+per turn is nearly equal (507 vs 520), while fresh input per API call is 1.47$\times$ larger
+(1.37$\times$ per step). \texttt{End} accounts for 9.8\% of turns; without \texttt{End} the step ratio is 1.22.
+The growth in fresh input therefore comes from more calls at almost the same output per call, not
+longer answers.
+
+Tool counts over 125 runs: Skein---1985 \texttt{bash}, 170 \texttt{read}, 113 \texttt{write},
+70 \texttt{edit}, 48 \texttt{list}, 8 \texttt{grep}; opencode---1982 \texttt{bash}, 75
+\texttt{read}, 83 \texttt{write}, 70 \texttt{edit} (it has no \texttt{grep}/\texttt{list};
+search goes through \texttt{bash}). Skein makes more explicit \texttt{read}s (170 vs 75), while
+\texttt{bash} is nearly the same; this does not prove repeated reading across states
+(Section~\ref{sec:discussion}).
+
+By API calls: Skein has 2447 (one turn is one call), opencode has 1923 calls at 1800 steps (1.07
+calls per step). On solved runs the ratio is 1.27, not 1.36 by steps. Fresh input per API call
+is 1840 vs 1252 tokens (1.47$\times$; 1.37$\times$ per step). The number of \texttt{bash} calls
+is nearly equal (1985 vs 1982), so the difference in turns reflects granularity and protocol overhead, not a
+larger amount of terminal work. A Skein turn is one model call and may contain several tool actions; the
+action counts therefore exceed the turn count, and a \texttt{move} is an action inside a turn, not an
+extra turn.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Tokens and cost, solved runs only (123 per agent; the sets differ in composition,
+see \S4.2). Ratios use unrounded values. Turns: for Skein, model calls; for opencode, agent
+steps; opencode's model API calls are a separate row. opencode cost is an estimate.}
+\label{tab:tokens}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & Skein & opencode & opencode/Skein \\
+\midrule
+Input, total (M) & 31.38 & 47.63 & 1.52 \\
+\quad cache read (M) & 26.88 & 45.22 & 1.68 \\
+\quad fresh (M) & 4.50 & 2.41 & 0.53 \\
+Output (M) & 1.24 & 0.94 & 0.75 \\
+Reasoning (M) & 0.81 & 0.62 & 0.77 \\
+Total, input+output (M) & 32.62 & 48.56 & 1.49 \\
+Cache share of input & 85.7\% & 94.9\% & --- \\
+Turns/steps & 2447 & 1800 & 0.74 \\
+Model API calls & 2447 & 1923 & 0.79 \\
+Cost (RUB) & 178.22 & \textasciitilde125.65 & 0.71 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Intersection check: 121 run pairs in which both agents solve the task. opencode cost
+is an estimate. Ratios are opencode/Skein.}
+\label{tab:intersection}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & Skein & opencode & opencode/Skein \\
+\midrule
+Input, total (M) & 31.08 & 45.11 & 1.45 \\
+\quad cache read (M) & 26.64 & 42.79 & 1.61 \\
+\quad fresh (M) & 4.44 & 2.32 & 0.52 \\
+Output (M) & 1.22 & 0.92 & 0.76 \\
+Reasoning (M) & 0.80 & 0.62 & 0.78 \\
+Turns/steps & 2407 & 1751 & 0.73 \\
+Cost (RUB) & 175.60 & 122.26 & 0.70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the intersection, Skein is 1.44$\times$ more expensive (opencode is 30.4\% cheaper), so the
+conclusion does not change. A paired bootstrap over the 121 pairs (5000 resamples) gives a 95\%
+interval for the opencode/Skein cost ratio of 0.70 [0.59, 0.81]; a cluster bootstrap over the 13
+tasks gives [0.50, 0.85]. For the fresh-input ratio the interval is 0.52 [0.44, 0.61]. All three
+intervals exclude 1, so the direction is robust to selection and clustering. Pairing by repeat
+index is artificial (runs are independent), and the coverage of a cluster interval over 13 tasks
+is unstable; the intervals are therefore descriptive rather than a strict paired design.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.8\textwidth, height=6cm,
+  ybar stacked, bar width=26pt,
+  ymin=0, ymax=55,
+  ylabel={M tokens},
+  symbolic x coords={Skein,opencode},
+  xtick=data,
+  enlarge x limits=0.5,
+  legend style={at={(0.5,-0.16)},anchor=north,legend columns=3,draw=none,font=\small},
+  tick label style={font=\small},
+  label style={font=\small},
+]
+\addplot[fill=freshc,draw=none] table[x=agent,y=fresh,col sep=comma]{../figures/fig_tokens.csv};
+\addplot[fill=cachec,draw=none] table[x=agent,y=cache,col sep=comma]{../figures/fig_tokens.csv};
+\addplot[fill=outc,draw=none] table[x=agent,y=output,col sep=comma]{../figures/fig_tokens.csv};
+\legend{fresh input,cache,output}
+\end{axis}
+\end{tikzpicture}
+\caption{Token composition, solved runs (aggregates over 123 runs per agent). opencode's extra
+volume is almost entirely cache; Skein has a larger fresh-input share.}
+\label{fig:tokens}
+\end{figure}
+
+The medians and interquartile ranges per run are given in Table~\ref{tab:medians}. The median
+opencode run is cheaper; Skein does not aim at minimum cost, so the median cost says little
+about the quality of context management.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Medians per run and interquartile ranges (in brackets) on the 12 common tasks (without
+\texttt{crack-7z-hash}). Turns: for Skein, model calls; for opencode, steps. opencode cost is an
+estimate.}
+\label{tab:medians}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Agent / network & Turns/steps & Fresh input, k & Output, k & Cost, RUB \\
+\midrule
+Skein, on & 14 [11--30] & 22.2 [17.7--56.8] & 4.5 [2.8--14.5] & 0.70 [0.54--2.25] \\
+Skein, off & 15 [10.8--24.3] & 25.0 [17.4--46.7] & 7.3 [3.0--12.3] & 1.00 [0.58--1.99] \\
+opencode, on & 9 [7--20] & 10.3 [4.1--26.5] & 2.9 [1.6--10.1] & 0.40 [0.20--1.42] \\
+opencode, off & 9 [7--19] & 10.4 [4.7--26.4] & 2.7 [1.5--11.4] & 0.44 [0.23--1.37] \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the 12 common tasks the anomaly persists: the median output of Skein is higher with
+\texttt{off} than with \texttt{on} (7.3k vs 4.5k), while for opencode it is lower (2.7k vs
+2.9k); this is not an effect of task composition. The 1.42$\times$ difference is based on sums; the
+medians are 0.70 vs 0.40 (a ratio of 1.75), but the IQRs overlap substantially, and Skein is
+cheaper in 23 of the 121 pairs (19\%). The direction is stable, but the magnitude depends on
+the aggregate.
+
+\subsection{Decomposition by Skein State}
+
+Across all 125 Skein runs, \texttt{Construction} is the most expensive state (35.5\% of cost),
+followed by \texttt{Patch} (26.1\%) and \texttt{Research} (23.8\%). \texttt{Verification} is
+cheap: 8.6\% of cost at 11.6\% of turns. \texttt{Patch} and \texttt{Verification} together
+account for 34.7\% of cost and 36.7\% of turns (925 of 2518). \texttt{End} takes about two turns
+per run (248/125) and 6.0\% of cost---the overhead of finishing. \texttt{Construction} is
+expensive mainly because of \texttt{cobol-modernization} (32.7 RUB) and
+\texttt{regex-log} (14.0 RUB), tasks that create an artifact from scratch; this is task
+composition, not inefficiency of the state itself. The decomposition is approximate: the model
+chooses the state label, and the transition turn is assigned to the new state.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Cost by Skein state (all 125 runs, including failures).}
+\label{tab:state}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+State & Turns & Turn share & Cost \\
+\midrule
+\texttt{Construction} & 760 & 30.2\% & 64.86 RUB (35.5\%) \\
+\texttt{Patch} & 634 & 25.2\% & 47.67 RUB (26.1\%) \\
+\texttt{Research} & 585 & 23.2\% & 43.49 RUB (23.8\%) \\
+\texttt{Verification} & 291 & 11.6\% & 15.71 RUB (8.6\%) \\
+\texttt{End} & 248 & 9.8\% & 10.98 RUB (6.0\%) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{The Economics of Cache and Output}
+
+Fresh input costs 50$\times$ more than cache reads (17.80 / 0.356), and the
+measured cache share of input is 85.7\% for Skein and 94.9\% for opencode. An agent with a larger
+total volume (opencode) therefore turns out to be cheaper than an agent with a smaller volume
+but a larger fresh-input share (Skein).
+
+The 52.6 RUB gap decomposes not only into cache (Table~\ref{tab:costsplit}): fresh input
+contributes +37.2 RUB, output +21.6 RUB, and cache saves 6.5 RUB. Output is the largest cost
+item for both agents (49.5\% for Skein, 53.1\% for opencode), and about 66\% of output is
+reasoning. Without cache, Skein is 29\% cheaper (646.9 vs 914.5 RUB): cache reverses the sign (at
+the current price and cache share). If Skein had opencode's cache share (94.9\%) at its own
+input, the costs would be nearly equal (127.4 vs 125.7 RUB). The optimization target is
+therefore more precise: stabilizing the prefix inside a state, rather than reducing the number
+of tokens as such.
+
+Price sensitivity (Table~\ref{tab:sensitivity}): at a fresh/cache ratio of 5$\times$, Skein is
+slightly cheaper (264.1 vs 270.6 RUB); at 10$\times$, opencode is 12\% cheaper; at 50$\times$,
+29\%; at 100$\times$, 32\%. Break-even is about 5.5$\times$. To match opencode at the current
+price, Skein would need a cache share of 95.2\% (it is now 85.7\%).
+
+\begin{table}[t]
+\centering
+\small
+\caption{Cost at different fresh/cache price ratios (solved runs; token volumes are fixed to the
+measured values and only the prices are recomputed). At 5$\times$ Skein is slightly cheaper;
+break-even is about 5.5$\times$.}
+\label{tab:sensitivity}
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+fresh/cache & Skein, RUB & opencode, RUB & opencode/Skein \\
+\midrule
+5   & 264.1 & 270.6 & 1.03 \\
+10  & 216.2 & 190.1 & 0.88 \\
+20  & 192.3 & 149.8 & 0.78 \\
+50  & 178.0 & 125.7 & 0.71 \\
+100 & 173.2 & 117.6 & 0.68 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The practical conclusion: under the current caching regime, total tokens are a poor proxy for
+cost, and cost is a poor proxy for the quality of context management. Comparing architectures
+by money on short tasks is uninformative in both directions.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Decomposition of the cost gap (Skein $-$ opencode, solved runs). The sum differs from
+52.6 RUB because of rounding.}
+\label{tab:costsplit}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Component & Contribution, RUB & Share of gap \\
+\midrule
+Fresh input ($+2.09$M $\times$ 17.80) & $+37.2$ & $+71\%$ \\
+Output ($+0.30$M $\times$ 71.20) & $+21.6$ & $+41\%$ \\
+Cache ($-18.34$M $\times$ 0.356) & $-6.5$ & $-12\%$ \\
+\midrule
+Total & $+52.3$ & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The Cost of the Current Implementation: Prefix and Re-reading}
+
+Context isolation is not free: the brief summary of the previous unit does not carry the content
+that was read, so the next unit may read the workspace anew; on a tape, facts are reused from
+the cache. The measurement is possible only for explicit \texttt{read}s: there are 170 \texttt{read}
+calls, 9 of which (5.3\%) target a file already read in a different state; reads made through
+\texttt{bash} (1985 calls) are not separately accounted for. The first working turn of a state has a cache share
+of 66.2\% versus 87.1\% on subsequent turns; this is direct evidence of prefix instability when
+entering a state, although the first turns account for only about 2\% of input. Entry effects alone explain
+only about 0.4 percentage points of the 9.2-point cache-share gap; the remainder is within-state
+prefix behavior. We interpret the
+increase in fresh input as the cost of the current implementation of isolation---prefix
+instability and more turns---not as a proven property of the architecture. An illustrative case
+(not part of the experiment: a different setup, one repository, six user messages, $K=1$): Skein
+took 63 steps versus 24 for opencode, 113.7k fresh input versus 35.8k, 3.71 RUB versus about
+1.46 RUB, and a cache share of 67\% versus 95\% in a short session. Whether there is a gain on
+long work is an open question. Prediction: for a monolithic tape, compaction or truncation may
+invalidate the prefix, and then opencode's cache advantage disappears precisely on long tasks;
+this is a hypothesis, not a measurement. The two longest tasks by total turns are
+\texttt{fix-ocaml-gc} (392) and \texttt{custom-memory-heap-crash} (390). On the first, Skein is
+cheaper per solved run (2.58 vs 2.81 RUB); on the second it is more expensive (2.87 vs 1.38
+RUB); this is more likely a selection effect than a property of the architecture.
+
+\subsection{States and Subagents: What Exactly Differs}
+
+Functionally, \texttt{general}, \texttt{revision}, \texttt{plan}, and \texttt{write\_document}
+are subagents. The substantive difference of \texttt{task} is the contract as data: the goal,
+criterion, and transition topology live in the journal and are interpreted by the protocol, and
+transition facts are recorded. This makes topologies objects of study (they can be changed,
+compared, and reproduced without changing code) rather than a property of the implementation.
+At present a single state graph is implemented; the question of other topologies (migrations,
+incident investigations, a document with fact checking) remains open---a separate direction,
+not the current phase of the project.
+
+\subsection{Failures}
+
+\texttt{fix-git}, Skein, network on, r4: the agent found a dangling commit but did not merge it
+into the branch; the \texttt{Research} state closed with a textual diagnosis, after which the
+model moved to \texttt{End}. The \texttt{Research}$\rightarrow$\texttt{End} transition is allowed
+by the topology, but its precondition,
+``the required result exists,'' was not satisfied. The engine does not check the criterion, so
+the transition was recorded as admissible. This is a premature stop, not an inadmissible
+transition. The other repeats performed the merge.
+
+\texttt{fix-ocaml-gc}, Skein, network on, r5: the limit of 60 turns was exhausted; as the run
+approached \texttt{End}, the engine granted a grace window of 5 more turns, so the run stopped at 65. The
+verifier did not find the expected test output. This is a turn-limit miss, not a harness
+failure.
+
+\texttt{db-wal-recovery}, opencode, network off, r2 and r4: 40--57 steps, 2.3M--4.2M input
+tokens (mostly cache). The cause has not been analyzed; this is material for analysis, not a
+conclusion about the method.
+
+\section{Limitations}
+\label{sec:limitations}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=0.2em]
+  \item \textbf{Saturated suite.} 98.4\% solved: the subset does not distinguish quality; the
+  conclusions are limited to the cost structure on short tasks.
+  \item \textbf{One model, one API provider.} Reasoning effort set to low; portability was not tested.
+  The exact model snapshot is not pinned: the name contains \texttt{latest}.
+  \item \textbf{Different tools and prompts.} The agents' tool sets differ; no
+  \texttt{recall}/\texttt{search} ablation was performed, so the effect of the architecture is
+  not separated from the effect of the tool interface.
+  \item \textbf{opencode cost is an estimate} based on prices derived from Skein's bill. Token
+  conclusions are more reliable than monetary ones.
+  \item \textbf{Different solved sets.} Aggregates over 123 solved runs contain a selection
+  effect; the intersection is 121 pairs, and its results are reported in
+  Table~\ref{tab:intersection}.
+  \item \textbf{Small sample.} $K=5$, 13 tasks; medians and interquartile ranges are reported,
+  and bootstrap intervals for ratios are computed, but there are no full cluster-level tests.
+  \item \textbf{Contamination.} The Terminal-Bench tasks are public and may have been in the
+  model's training data; we did not control for this.
+  \item \textbf{The stopping criterion is not machine-checked.} A state closes with a
+  textual reply from the model; cycle and premature-stop detection is deferred.
+  \item \textbf{Determinism of the projection $\neq$ reproducibility of behavior.} The projection
+  was checked on 400 synthetic and 125 real journals (identical context); the agent's behavior
+  is stochastic.
+  \item \textbf{The key benefits are not measured.} Goal retention and controllability are
+  hypotheses that motivate the architecture, not results.
+  \item \textbf{Repeated reads are not measured directly.} In the Skein journals,
+  \texttt{read} appears 170 times, 9 of which (5.3\%) re-read a file in another state; most work
+  goes through \texttt{bash}, so we do not isolate the cost of re-reading.
+  \item \textbf{One state topology}; the state accounting is approximate (the model chooses the
+  label).
+  \item \textbf{Trust in the verifier.} The verifier scripts are staged after the agent, but the
+  agent could in principle have changed system binaries; verifier isolation was not hardened.
+  \item \textbf{Prompt injection.} \texttt{recall}/\texttt{search} return untrusted file text to
+  the tape; for an agent working on third-party repositories this is an attack surface, and we
+  did not defend against it.
+  \item \textbf{Sampling parameters are not pinned.} Temperature and related parameters are not
+  specified in the protocol.
+  \item \textbf{Task selection.} The 13 tasks are the available ported Terminal-Bench tasks, not
+  a random sample; external validity is limited.
+  \item \textbf{Projection cost.} \texttt{project()} recomputes the context over the whole
+  journal on every turn ($O(n)$ per turn); long tasks will need snapshots or memoization.
+  \item \textbf{The interaction with the network mode is unexplained.} The median output of
+  Skein is higher with \texttt{off} than with \texttt{on} (7.3k vs 4.5k), while for opencode it
+  is lower; we do not interpret this.
+  \item \textbf{Environment.} Only \texttt{/bin/bash} (Windows: WSL2/Docker); 13 ported tasks,
+  not the full set.
+\end{itemize}
+
+\section{Availability}
+
+The source code, documentation, and campaign materials are available at
+\url{https://github.com/merfill/skein}. A project description and installation instructions are
+at \url{https://skein-swe.dev}. The npm package is \texttt{skein-swe}
+(\url{https://www.npmjs.com/package/skein-swe}); the Docker image is
+\url{https://hub.docker.com/r/mefrill/skein-swe} (the Docker Hub account is \texttt{mefrill},
+not \texttt{merfill}). Documentation is in \texttt{docs/en} and \texttt{docs/ru}; campaign
+materials are in \texttt{bench/results/campaign-k5/}; the cell journals are in
+\texttt{result.json} (field \texttt{events}), with a 125/125 replay; raw runs are published with
+the release. The text is licensed under CC BY 4.0.
+
+\section{Conclusion and Future Work}
+\label{sec:future}
+
+What is measured: on a saturated suite of short tasks, Skein and opencode solve the same number;
+Skein uses fewer total tokens but more fresh input and output, and at a 50$\times$ price
+difference for cache it is 1.42$\times$ more expensive. We interpret this as the cost of the
+current implementation of isolation: prefix instability and more turns; with opencode's cache
+share, the costs are nearly equal (127.4 vs 125.7 RUB). Goal drift was not measured; explicit
+repeated \texttt{read}s are rare (9 of 170), and reads through \texttt{bash} are not separately accounted for.
+The hypotheses that motivated the architecture (goal retention at the decision point and
+controllability through a contract as data) are not yet measured.
+
+The next phase is the development of the journal as the basis of context, not an expansion of
+functionality for its own sake:
+\begin{enumerate}[leftmargin=1.4em,itemsep=0.2em]
+  \item non-monotone context: the projection from the journal should control what the model
+  sees and preserve addressable access to hidden history; this is the primary direction;
+  \item reasoning (the Ankyra project---a research project in which the journal is used as a
+  store for reasoning traces): the journal should store not only actions and observations but
+  also reasoning traces, and the projection should choose which of them to show;
+  \item rollback to checkpoints: the journal allows returning to a saved state of the work and
+  continuing from another branch; this is an operation on the journal, not on the tape;
+  \item the observer agent: it is currently non-operational; restoring it is again work on the
+  journal, because the observer reads the journal and proposes hints or a stop.
+\end{enumerate}
+
+\appendix
+
+\section{Reproduction}
+
+\begin{sloppypar}
+Materials: \texttt{bench/results/campaign-k5/}---the protocol (\texttt{manifest.json}), summaries
+(\texttt{summary.md}, \texttt{summary.json}, \texttt{summary.csv}), token comparison
+(\texttt{token-comparison.md}), and per-state cost (\texttt{state-cost.md}). Raw runs and
+journals are in \texttt{bench/runs/matrix/campaign-k5/}; the cell journals are in
+\texttt{*/*cells/*/result.json} (field \texttt{events}), with a 125/125 replay.
+\end{sloppypar}
+
+The campaign is run through \texttt{tests/sandbox/campaign.ts}: \texttt{--repeat 5},
+\texttt{--concurrency 10}, \texttt{--task-concurrency fix-ocaml-gc=3}, both network modes, and no
+wall-clock limit; a trial run without containers is \texttt{--dry}. Docker, the task cache, and
+the opencode binary are required; \texttt{SKEIN\_LIVE=true}.
+
+\section{Per-Task Results}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Solved runs and cost by task (solved only; opencode cost is an estimate). The
+denominators differ, so normalized RUB/run columns are added. For \texttt{crack-7z-hash} the
+denominator is 5 (network off was not run). Sums may differ from Table~\ref{tab:tokens} by a few
+slightly, because of rounding.}
+\label{tab:pertask}
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Task & Skein & opencode & S, RUB & O, RUB & S, RUB/run & O, RUB/run \\
+\midrule
+cobol-modernization & 10/10 & 10/10 & 36.73 & 34.09 & 3.67 & 3.41 \\
+crack-7z-hash & 5/5 & 5/5 & 5.32 & 4.98 & 1.06 & 1.00 \\
+custom-memory-heap-crash & 10/10 & 10/10 & 28.68 & 13.78 & 2.87 & 1.38 \\
+db-wal-recovery & 10/10 & 8/10 & 8.64 & 5.95 & 0.86 & 0.74 \\
+fix-code-vulnerability & 10/10 & 10/10 & 10.78 & 4.26 & 1.08 & 0.43 \\
+fix-git & 9/10 & 10/10 & 5.44 & 1.95 & 0.60 & 0.20 \\
+fix-ocaml-gc & 9/10 & 10/10 & 23.21 & 28.09 & 2.58 & 2.81 \\
+git-leak-recovery & 10/10 & 10/10 & 8.27 & 1.82 & 0.83 & 0.18 \\
+log-summary-date-ranges & 10/10 & 10/10 & 5.03 & 3.24 & 0.50 & 0.32 \\
+modernize-scientific-stack & 10/10 & 10/10 & 4.98 & 2.33 & 0.50 & 0.23 \\
+openssl-selfsigned-cert & 10/10 & 10/10 & 5.50 & 2.35 & 0.55 & 0.24 \\
+password-recovery & 10/10 & 10/10 & 19.66 & 10.46 & 1.97 & 1.05 \\
+regex-log & 10/10 & 10/10 & 15.99 & 12.35 & 1.60 & 1.23 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\clearpage
+\bibliographystyle{plainnat}
+\bibliography{../refs}
+
+\end{document}
