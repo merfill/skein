@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Skein — a coding agent whose context is a projection of its IR</title>
+    <title>Skein — a terminal coding agent</title>
     <meta
       name="description"
-      content="Skein is a coding agent with a non-monotone context: the model sees a deterministic projection of a typed event journal, not a growing message tape."
+      content="Skein is a terminal coding agent: the model sees a context rebuilt from an event journal on every turn, not an ever-growing message tape."
     />
     <link rel="canonical" href="https://skein-swe.dev/" />
     <link rel="alternate" hreflang="en" href="https://skein-swe.dev/" />
@@ -14,10 +14,10 @@
     <link rel="alternate" hreflang="x-default" href="https://skein-swe.dev/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Skein" />
-    <meta property="og:title" content="Skein — a coding agent whose context is a projection of its IR" />
+    <meta property="og:title" content="Skein — a terminal coding agent" />
     <meta
       property="og:description"
-      content="Skein is a coding agent with a non-monotone context: the model sees a deterministic projection of a typed event journal, not a growing message tape."
+      content="Skein is a terminal coding agent: the model sees a context rebuilt from an event journal on every turn, not an ever-growing message tape."
     />
     <meta property="og:url" content="https://skein-swe.dev/" />
     <meta property="og:locale" content="en_US" />
@@ -25,7 +25,7 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <header class="site-header">
+    <header class="site-header wide">
       <a class="brand" href="./">Skein</a>
       <nav>
         <a href="https://github.com/merfill/skein">GitHub</a>
@@ -34,120 +34,586 @@
       </nav>
     </header>
 
-    <main>
+    <main class="wide">
       <section class="hero">
-        <p class="eyebrow">v0.1 · source release</p>
-        <h1>A coding agent whose context is a projection of its IR.</h1>
+        <p class="eyebrow">v0.1 · source</p>
+        <h1>Skein is a terminal coding agent</h1>
         <p class="lead">
-          Skein does not replay a growing message tape. The executor records a typed event
-          journal; every turn rebuilds the model's context from that journal. The model proposes,
-          the executor records, and the journal is the protocol.
+          It helps you write code: it reads the project, makes changes, runs builds and tests. What
+          sets it apart is how its context works: the history lives in an event journal, and the
+          tape the model sees is rebuilt from it on every turn.
         </p>
         <p class="actions">
           <a class="button" href="https://github.com/merfill/skein">View source</a>
           <a class="button ghost" href="#install">Install</a>
         </p>
         <p class="note">
-          The npm package and Docker image are published after acceptance. Until then, install
-          from a source checkout as shown below.
+          Skein is on npm (<code>skein-swe</code>) and Docker Hub. The fastest start is
+          <code>npx -p skein-swe skein</code>.
         </p>
       </section>
 
-      <section id="idea">
-        <h2>How it works</h2>
-        <div class="grid three">
-          <article>
-            <h3>Journal, not tape</h3>
-            <p>
-              Events are appended to a monotone typed IR. Nodes are never rewritten, so the full
-              history stays addressable even when it is not shown.
-            </p>
-          </article>
-          <article>
-            <h3>Projection, not memory</h3>
-            <p>
-              The prompt is rebuilt from scratch each turn. Content can leave the view as the
-              focus moves, while <code>recall</code> and <code>search</code> still reach it.
-            </p>
-          </article>
-          <article>
-            <h3>States with a goal</h3>
-            <p>
-              Work moves through states such as Research, Patch, Construction and Verification.
-              Each has an explicit goal and completion condition, and closes by the model's text.
-            </p>
-          </article>
+      <div class="layout">
+        <aside class="sidebar">
+          <nav class="toc" aria-label="Contents">
+            <p class="toc-title">Contents</p>
+            <ol>
+              <li><a href="#start">Quick start</a></li>
+              <li><a href="#intro">Introduction</a></li>
+              <li><a href="#ordinary">How a coding agent usually works</a></li>
+              <li><a href="#difference">How Skein is different</a></li>
+              <li><a href="#example">One task end to end: fix-ocaml-gc</a></li>
+              <li><a href="#mechanics">Mechanics</a></li>
+              <li><a href="#evaluation">Evaluation and limitations</a></li>
+              <li><a href="#install">Install</a></li>
+              <li class="toc-sub"><a href="#windows">Windows</a></li>
+            </ol>
+          </nav>
+        </aside>
+        <article class="content">
+
+      <section id="start">
+        <h2>Quick start</h2>
+        <p>A short path, using RouterAI as an example — a Russian OpenAI-compatible provider.</p>
+        <ol>
+          <li>Sign up at <a href="https://routerai.ru/">routerai.ru</a> and create an API key.</li>
+          <li>
+            Install Skein: <code>npm install -g skein-swe</code> (or run it without installing —
+            <code>npx -p skein-swe skein</code>). Requires Node.js 22 or newer and
+            <code>bash</code>; if a global install needs root, see <a href="#install">Install</a>.
+          </li>
+          <li>
+            Save the key and check that it and the model respond:
+            <pre><code>skein auth login routerai
+skein doctor</code></pre>
+          </li>
+          <li>
+            Start the agent in your project directory:
+            <pre><code>skein --dir ~/project</code></pre>
+          </li>
+        </ol>
+        <p class="note">
+          Instead of the interactive login, set <code>ROUTERAI_API_KEY</code> in the environment.
+          <code>auth login</code> lists free and local options first and prints a key link for the
+          selected provider.
+        </p>
+      </section>
+
+      <section id="intro">
+        <h2>Introduction</h2>
+        <p>
+          Skein is a terminal coding agent. “Terminal” here means the agent runs in a terminal: you
+          type commands in the chat pane, watch what the agent does in the observation pane, and
+          follow the work in the task pane. “Coding agent” means it helps write software: it reads
+          the project, makes changes, runs builds and tests.
+        </p>
+        <p>
+          Skein is built differently from traditional coding agents. To see how, let us first look
+          at how a coding agent usually works and where that design falls short.
+        </p>
+      </section>
+
+      <section id="ordinary">
+        <h2>How a coding agent usually works</h2>
+        <p>
+          An ordinary coding agent runs a ReAct loop: the model reasons, picks an action, the
+          executor runs a tool and returns the result, and then the model reasons again. The model
+          gets a system prompt and the user's task, and at each step chooses the next action: read a
+          file, find a string, edit code, run a command. The result is appended to the history, and
+          the loop repeats until the model says “done” or the budget runs out.
+        </p>
+        <p>
+          An agent like this usually has a small set of tools: read a file, find a file or a string
+          by pattern, edit a file, create a file. The main one is the shell (<code>shell</code> or
+          <code>bash</code>): it runs any command in the terminal — build the project, run tests,
+          commit, launch a script. Often the shell is enough for almost everything, and the separate
+          tools exist for convenience and safety on common actions. Skein adds two tools that other
+          agents usually do not have — <code>recall</code> and <code>search</code>; they pull from
+          the journal what has left the tape. More on them below.
+        </p>
+        <p>
+          The model's context is more than the history of actions. It holds the system prompt, the
+          task, all the reasoning and tool output; for the model this is the only memory. There is
+          no separate state — the goal lives in the text of this history. When the history no longer
+          fits the model's window, it is truncated or compacted.
+        </p>
+        <p>
+          Model providers do not re-run the model on text it has already read: they keep its
+          internal state and find it by the prompt prefix — that is the prompt cache. So input tokens
+          that were already present in the previous call usually cost orders of magnitude less than
+          new ones. A long history stops being expensive, and price and latency move to the
+          background. Two other problems remain: attention and control.
+        </p>
+        <p>
+          <strong>Attention.</strong> The goal competes with kilobytes of old tool output. The model
+          rediscovers what it already knows, returns to ground it has covered, and gradually loses
+          the original task.
+        </p>
+        <p>
+          <strong>Control.</strong> A step has no clear boundary, and compaction rewrites the
+          history. It is hard to say from the history what the model “knew” at the moment of a
+          decision, and even harder to reproduce that later.
+        </p>
+
+        <h3>Why we compare with opencode</h3>
+        <p>
+          opencode is an open terminal coding agent that follows the same scheme. It is a fair
+          comparison not because it is “bad”, but because it can be put under the same conditions:
+          the same provider and model, the same reasoning mode, the same tasks and containers, and a
+          headless run (<code>opencode run</code>, <code>--continue</code>). In our
+          <code>fix-ocaml-gc</code> run it solved the task in 54 steps, and its context grew from
+          about 3k to 300k characters. The cache made this cheap, but the history stayed a history.
+        </p>
+      </section>
+
+      <section id="difference">
+        <h2>How Skein is different</h2>
+        <p>Skein is built around a different idea: history is data, not a prompt.</p>
+        <p>
+          A note on the word “tape”. Below it means what the model sees on input: for an ordinary
+          agent that is the growing history; for Skein it is the projection of the journal. It is
+          the same visible model context, just built differently.
+        </p>
+        <ul>
+          <li>
+            <strong>History is stored, not rewritten.</strong> Instead of a growing tape, Skein has
+            a typed journal that is only appended to. Journal nodes are never rewritten, so the
+            history stays complete and addressable.
+          </li>
+          <li>
+            <strong>The prompt is rebuilt.</strong> On every turn the model's context is rebuilt
+            from the journal, deterministically: the same events produce the same tape. The tape is
+            non-monotone: when the focus moves, closed states leave the screen but stay in the
+            journal and remain available through <code>recall</code> and <code>search</code>.
+          </li>
+          <li>
+            <strong>Explicit states.</strong> A step of work is a state with a goal
+            (<code>what</code>), a completion condition (<code>Done when</code>) and its own set of
+            tools. Transitions between states are explicit. The user's request is a reference, not
+            the active goal: the active goal belongs to the state.
+          </li>
+          <li>
+            <strong>The model proposes, the executor records.</strong> The model has no hidden
+            memory; refusals and tool failures are the only facts the engine adds.
+          </li>
+          <li>
+            <strong>A session over separate tasks.</strong> The whole dialogue between the user and
+            the agent (a session) consists of separate units of work, each with its own journal.
+            Units are isolated, and only a short summary of each is visible outside. Continuity
+            rests on reformulating the request and on those summaries.
+          </li>
+        </ul>
+        <p>
+          <code>recall</code> and <code>search</code> are Skein's special tools.
+          <code>recall</code> returns a specific turn or fragment of earlier work;
+          <code>search</code> searches the journal. In an ordinary agent, the history either sits
+          entirely in context or has already been compacted, and there is no way to pull an exact
+          fact out of it.
+        </p>
+        <p>
+          What it buys: the goal stays salient at the decision point, every step has a clear
+          boundary, and the journal can be reproduced and checked.
+        </p>
+        <p>
+          What it does not buy: it is not a cost optimization. Isolation can be more expensive
+          because of re-reading the project. The condition is checked by the model's text, not by
+          the engine, so a premature stop is possible.
+        </p>
+      </section>
+
+      <section id="example">
+        <h2>One task end to end: fix-ocaml-gc</h2>
+        <p>
+          Let us walk one real task from the user's first message to the final answer. This is an
+          illustrative example: it shows how Skein works and how its path differs from an ordinary
+          agent such as opencode on the same task.
+        </p>
+        <p>
+          The user writes that they broke the OCaml garbage collector while trying to reduce free
+          space in the major heap, and the compiler crashes during bootstrap. They ask to
+          investigate and make sure the basic testsuite passes.
+        </p>
+        <p>
+          The engine records the request, probes the workspace, and asks the model to choose a
+          starting state. The first turn looks like this, schematically:
+        </p>
+        <pre><code>[system]  base prompt: role and how to work
+[human]   request
+[system]  workspace facts: root, no VCS, network off, make/gcc/perl available
+[human]   choose a starting state: Patch / Construction / Research</code></pre>
+
+        <h3>Patch</h3>
+        <p>
+          The model chooses <code>Patch</code> and formulates the subject of work: a broken
+          run-length-compressed sweep in the major GC. The state's projection looks like this:
+        </p>
+        <pre><code>[system]  Start state Patch
+[system]  workspace facts
+[human]   Goal: find the defect in the existing artifact and make the needed fix
+          Done when: the plan is done — the bug is found and fixed
+          Plan: 1) find the file and the cause  2) fix it and stop with a report</code></pre>
+        <p>Then the work happens inside the state. Schematically:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Action</th><th>What it gave</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>list /app</code></td><td>project structure</td></tr>
+              <tr><td><code>cat HACKING.adoc</code></td><td>how to build the compiler</td></tr>
+              <tr><td><code>find -newermt</code></td><td>recently changed files</td></tr>
+              <tr>
+                <td><code>grep</code> in <code>shared_heap.c</code></td>
+                <td>suspicious pool traversal loops</td>
+              </tr>
+              <tr>
+                <td><code>edit</code></td>
+                <td><code>p += Whsize_hd(hd)</code> → <code>p += wh</code></td>
+              </tr>
+            </tbody>
+          </table>
         </div>
+        <p>
+          After 18 turns the model replies with text — the engine records
+          <code>Finish state Patch</code> with the result: the cause is in <code>pool_sweep</code>,
+          the free block size is stored in the header, and the step must advance by the size-class
+          width.
+        </p>
+
+        <h3>Transition</h3>
+        <p>
+          The projection collapses. Only the base prompt, the request,
+          <code>Start state Patch</code>, <code>Finish state Patch</code> and the question about the
+          next state reach the tape:
+        </p>
+        <pre><code>[system]  Choose exactly one next state:
+          Verification — the change is in place and the lines have been read back
+          Research — this is a situation, not a defect to find and fix</code></pre>
+        <p>
+          At the peak of Patch the context was about 116k characters; at the transition, about 4.5k.
+          This is not deletion: the journal is intact, and only what is needed for the next-step
+          decision reaches the tape.
+        </p>
+
+        <h3>Verification</h3>
+        <p>The model moves to the verification state.</p>
+        <pre><code>[system]  Start state Verification
+[human]   Goal: verify the changed artifact against acceptance
+          Done when: acceptance passes, the result is derived from the material
+          Plan: run the acceptance command and read the output;
+                a zero exit code is not proof; do not change the artifact here</code></pre>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Action</th><th>What it gave</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>./configure</code></td><td>build setup</td></tr>
+              <tr>
+                <td><code>make -j16</code></td>
+                <td>the compiler built, bootstrap passed</td>
+              </tr>
+              <tr>
+                <td><code>make -C testsuite one DIR=tests/basic</code></td>
+                <td><code>40 tests passed</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The model replies with text — <code>Finish state Verification</code>.</p>
+
+        <h3>End</h3>
+        <pre><code>[system]  Start state End
+[system]  This is End. Read the tape — the request, the states you went through,
+          what each did, which files changed, how it was verified —
+          and write the final report.</code></pre>
+        <p>
+          Final answer: the defect is in <code>pool_sweep</code>
+          (<code>runtime/shared_heap.c</code>), fixed with <code>p += wh</code>; the build passes
+          and the basic testsuite reports <code>40 tests passed</code>.
+        </p>
+
+        <h3>What matters here</h3>
+        <ul>
+          <li>The context is not a transcript. Each state has its own projection, and it is rebuilt from scratch.</li>
+          <li>The request stays a reference; the active goal belongs to the state.</li>
+          <li>The model's text is the boundary of a state (<code>stop</code>).</li>
+          <li>A closed state leaves the tape but stays in the journal.</li>
+          <li>
+            The context still grows, but the cache makes it cheap. The point is not saving money but
+            that the model sees the goal, not the whole history.
+          </li>
+        </ul>
+      </section>
+
+      <section id="mechanics">
+        <h2>Mechanics</h2>
+
+        <h3>States and transitions</h3>
+        <p>
+          Each task moves through explicit states. A state is a stage of work with a goal (what
+          exactly needs to be done), a completion condition (how to tell the stage is finished) and
+          its own set of tools. A state has a short list of turns, and after each turn the model
+          sees it again, not the whole task history.
+        </p>
+        <p>There are five states:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>State</th><th>What it does</th><th>Where it can go</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Research</td>
+                <td>works out the situation and derives the needed result from the material</td>
+                <td>End, Patch</td>
+              </tr>
+              <tr>
+                <td>Patch</td>
+                <td>finds the defect in the existing artifact and fixes it</td>
+                <td>Verification, Research</td>
+              </tr>
+              <tr>
+                <td>Construction</td>
+                <td>builds a new artifact from a specification</td>
+                <td>End, Research</td>
+              </tr>
+              <tr>
+                <td>Verification</td>
+                <td>checks the change against the task's condition</td>
+                <td>End (passes), Patch (fails)</td>
+              </tr>
+              <tr>
+                <td>End</td>
+                <td>finishes the request with a final report</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The usual route is <code>Research → Patch → Verification → End</code>. If the check does
+          not pass, the work returns to <code>Patch</code> and keeps fixing. The model chooses the
+          transition, but the engine defines the allowed ones: from <code>Patch</code> you can go to
+          <code>Verification</code> or <code>Research</code>, but not straight to <code>End</code>.
+        </p>
+        <p>
+          A state closes when the model replies with text. The engine records that reply as
+          <code>stop</code> and moves the result into the journal. There is no separate check that
+          the goal was reached: the condition is written in the state, but the engine does not
+          enforce it. So a premature stop is possible — a known limitation.
+        </p>
+
+        <h3>Agents and units of work</h3>
+        <p>
+          The user's messages are handled by a separate agent — the session agent. It does not work
+          with files directly: the workspace tools are not available to it. Instead, for each
+          message it chooses one of six operations: <code>respond</code>, <code>general</code>,
+          <code>revision</code>, <code>task</code>, <code>plan</code>, <code>write_document</code>.
+        </p>
+        <p>
+          An operation opens a unit of work — a separate task with its own event journal. Inside a
+          unit the agent reads files, edits code and runs commands, but those steps do not leave it:
+          the session agent sees only a short summary of the unit. So units do not interfere with
+          each other, and the session stays coherent through the reformulation of the request and
+          those summaries.
+        </p>
+        <ul>
+          <li><code>task</code> — the state loop described above;</li>
+          <li><code>general</code> — examines the workspace without changes;</li>
+          <li><code>revision</code> — a change already described in the request (edits and commands);</li>
+          <li><code>plan</code> — a plan of work without changes;</li>
+          <li><code>write_document</code> — a large Markdown document, section by section;</li>
+          <li><code>respond</code> — an answer from the dialogue and earlier work.</li>
+        </ul>
+
+        <h3>The tape</h3>
+        <p>
+          The tape is what the model sees on input. It is rebuilt from the journal on every turn,
+          and the order of blocks is always the same:
+        </p>
+        <ol>
+          <li>the base prompt — the agent's role and general rules;</li>
+          <li>the user's request — as a reference, not as the active goal;</li>
+          <li><code>Start state</code> — which state the work started in;</li>
+          <li>a brief note about the workspace;</li>
+          <li>the state's turns — actions and observations;</li>
+          <li>the working prompt — the goal, completion condition and plan of this state;</li>
+          <li><code>Finish state</code> — the result once the state is closed.</li>
+        </ol>
+        <p>
+          Only the journal determines the order and the content. The same events always produce the
+          same tape — in that sense the build is deterministic. But it is non-monotone: when the
+          focus moves to another state, the closed state leaves the tape. That is not a loss — the
+          journal is intact, and <code>recall</code> and <code>search</code> can bring back what is
+          needed.
+        </p>
+
+        <h3>Session and isolation</h3>
+        <p>
+          A session is the whole dialogue between the user and the agent. Each message becomes a
+          separate unit of work: it has its own journal, its own set of states and its own summary.
+          Units are isolated from each other: inside the next unit the step-by-step history of the
+          previous one is not visible, only its short summary. So units do not inflate each other and
+          do not drag along each other's tool output.
+        </p>
+        <p>
+          The price of isolation is re-reading the workspace. If a new task needs the same facts as
+          the previous one, the agent has to read them again: they are not on the new unit's tape.
+          Session continuity rests on two things: reformulating the request with the earlier
+          messages in mind, and the short summaries of the units already completed.
+        </p>
+
+        <h3>Journal</h3>
+        <p>
+          The journal is the history of work as typed records: the request, turns, actions,
+          observations, transitions between states, and stops. It is only appended to: nodes are
+          never rewritten or deleted. So the journal can reconstruct what the agent did, in what
+          order, and with what result.
+        </p>
+        <p>
+          The tape is built from the journal, not the other way around. If something left the tape
+          when the focus moved, it stays in the journal. The <code>recall</code> and
+          <code>search</code> tools pull a specific turn out of it or find what is needed in the
+          journal — so the model can bring back a fact without re-reading everything.
+        </p>
+      </section>
+
+      <section id="evaluation">
+        <h2>Evaluation and limitations</h2>
+        <p>
+          We compared Skein with opencode on thirteen tasks. Each task was solved five times, with
+          and without network, by both agents — 250 runs available for evaluation in total. 246 were
+          solved (98.4%). By group: Skein with network — 63 of 65, Skein without network — 60 of 60,
+          opencode with network — 65 of 65, opencode without network — 58 of 60. The whole series
+          used one provider and one model — <code>deepseek-v4-flash</code> with low reasoning effort;
+          this is not a claim of a state-of-the-art result.
+        </p>
+        <p>Token measurements (solved runs only, 123 per agent):</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th></th><th class="num">Skein</th><th class="num">opencode</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>input</td><td class="num">31.38M</td><td class="num">47.63M</td></tr>
+              <tr><td>from cache</td><td class="num">26.88M</td><td class="num">45.22M</td></tr>
+              <tr><td>new input</td><td class="num">4.50M</td><td class="num">2.41M</td></tr>
+              <tr><td>output</td><td class="num">1.24M</td><td class="num">0.94M</td></tr>
+              <tr><td>cache hit</td><td class="num">85.7%</td><td class="num">94.9%</td></tr>
+              <tr><td>turns</td><td class="num">2447</td><td class="num">1800</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The picture: opencode spends more tokens, but almost all of them are cache hits, so it is
+          cheaper in money. Skein is smaller in total volume, but has more new input tokens and
+          output: units do not share one growing prompt, so they re-read the workspace more often.
+        </p>
+        <p>
+          Hence the main conclusion: the difference is not about money. The cache makes a long tape
+          cheap, so comparing by cost is pointless. The point is elsewhere — keeping the goal
+          salient at the decision point and making a step reproducible. These properties are harder
+          to measure, and we did not measure them automatically.
+        </p>
+        <p>Limitations:</p>
+        <ul>
+          <li>
+            the engine does not check a state's completion condition, so a premature stop is
+            possible;
+          </li>
+          <li>isolation trades drift for repeated work and can cost more;</li>
+          <li>the whole series used one provider, one model and low reasoning effort;</li>
+          <li>
+            the shell tool requires <code>/bin/bash</code>; on Windows, use WSL2, Git Bash/MSYS2 or
+            Docker.
+          </li>
+        </ul>
+        <p class="note">
+          The protocol, all runs, tokens and per-state cost live in
+          <code>bench/results/campaign-k5/</code>; the raw data is published with the release.
+        </p>
       </section>
 
       <section id="install">
         <h2>Install</h2>
-        <p class="note">Requires Node.js 22 or newer.</p>
-        <div class="grid two">
-          <article>
-            <h3>Linux / macOS</h3>
-            <pre><code>git clone https://github.com/merfill/skein.git
+        <p>Requires Node.js 22 or newer and <code>bash</code>.</p>
+        <pre><code>npm install -g skein-swe
+skein --version</code></pre>
+        <p class="note">
+          If your npm global prefix is a system directory (for example <code>/usr/local</code>), a
+          plain <code>npm install -g</code> fails with <code>EACCES</code>. Install with
+          <code>--prefix "$HOME/.local"</code> and put <code>~/.local/bin</code> on
+          <code>PATH</code>: <code>sudo</code> is not needed. With nvm or volta the global prefix is
+          already in your home directory. You can also run it without installing:
+          <code>npx -p skein-swe skein</code>.
+        </p>
+        <h3>From source</h3>
+        <pre><code>git clone https://github.com/merfill/skein.git
 cd skein
 npm install
 npm run build
 npm pack
-npm install -g ./skein-swe-*.tgz
+npm install -g --prefix "$HOME/.local" ./skein-swe-*.tgz
+export PATH="$HOME/.local/bin:$PATH"
 skein --version</code></pre>
-          </article>
-
-          <article>
-            <h3>Windows: bash required</h3>
-            <p>
-              The agent's shell tool runs <code>/bin/bash</code>, so Node must run in an
-              environment that provides it.
-            </p>
-            <ul>
-              <li>
-                <strong>WSL2 (recommended):</strong> install Ubuntu, then follow the Linux steps
-                inside it. Keep projects in the WSL filesystem (<code>~/project</code>), not under
-                <code>/mnt/c</code>.
-              </li>
-              <li>
-                <strong>Git Bash / MSYS2:</strong> works when <code>/bin/bash</code> is reachable
-                from the shell that launches <code>skein</code>.
-              </li>
-              <li>
-                <strong>Docker Desktop:</strong> run the Linux image below.
-              </li>
-            </ul>
-            <p class="note">Native PowerShell or cmd without bash is not supported.</p>
-          </article>
-
-          <article class="wide">
-            <h3>Docker</h3>
-            <pre><code>git clone https://github.com/merfill/skein.git
-cd skein
-docker build -t skein:0.1.0 .
+        <p>
+          Next, point Skein at a provider, a key and a model — interactively or with environment
+          variables:
+        </p>
+        <pre><code>skein auth login
+skein doctor</code></pre>
+        <p>
+          <code>skein doctor</code> checks that the key and the model respond. If everything is
+          fine, the interface starts:
+        </p>
+        <pre><code>skein --dir ~/project</code></pre>
+        <h3 id="windows">Windows</h3>
+        <p>
+          The agent needs <code>/bin/bash</code>, so on Windows the reliable path is WSL2 or Docker.
+          Native PowerShell and <code>cmd</code> without bash will not work.
+        </p>
+        <p><strong>WSL2 (recommended):</strong></p>
+        <ol>
+          <li>
+            In an administrator PowerShell, run <code>wsl --install -d Ubuntu</code> and reboot.
+          </li>
+          <li>
+            Inside Ubuntu, install Node.js 22:
+            <pre><code>curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs</code></pre>
+          </li>
+          <li>
+            Keep projects in the WSL home directory (<code>~/project</code>), not under
+            <code>/mnt/c</code>: it is faster and avoids permission problems.
+          </li>
+          <li>Then repeat the Linux install steps inside WSL.</li>
+        </ol>
+        <p>
+          <strong>Docker Desktop:</strong> run the Linux image from the block below — no Node needed
+          inside.
+        </p>
+        <p>
+          <strong>Git Bash / MSYS2:</strong> may work only if <code>/bin/bash</code> is reachable
+          from the launching shell, but in practice native Windows Node often cannot find that
+          path. WSL2 or Docker is more reliable.
+        </p>
+        <h3>Docker</h3>
+        <p>The published image is on Docker Hub:</p>
+        <pre><code>docker pull mefrill/skein-swe:0.1.0
 docker run --rm -it \
-  -v "$HOME/project:/workspace" \
-  -e SKEIN_API_KEY=... \
-  -e SKEIN_MODEL=... \
-  skein:0.1.0</code></pre>
-            <p class="note">
-              The provider is passed with environment variables; no model is bundled. On Windows
-              PowerShell use <code>${HOME}</code> for the mount path.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section id="configure">
-        <h2>Configure</h2>
-        <p>Point Skein at a provider with the interactive setup, or with environment variables:</p>
-        <pre><code>skein auth login     # provider, masked key, model
-skein doctor         # checks the key and the model
-skein --dir ~/project</code></pre>
-        <pre><code>export SKEIN_API_KEY=...
-export SKEIN_MODEL=...
-skein</code></pre>
+  -v "$PWD:/workspace" \
+  -e ROUTERAI_API_KEY=... \
+  -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
+  mefrill/skein-swe:0.1.0</code></pre>
         <p class="note">
-          Local runtimes such as Ollama, LM Studio and vLLM work through <code>--base-url</code>.
-          See the providers guide in the documentation.
+          The provider is set with environment variables; no model is bundled. The
+          <code>latest</code> tag points to the newest version. On Windows PowerShell use
+          <code>${PWD}</code>, in <code>cmd</code> use <code>%cd%</code>; <code>--env-file</code>
+          does not strip quotes from values.
+        </p>
+        <p>
+          Build from source: <code>docker build -t skein:0.1.0 .</code> in the repository root.
         </p>
       </section>
 
@@ -156,18 +622,18 @@ skein</code></pre>
         <ul class="links">
           <li><a href="https://github.com/merfill/skein">Source code (GitHub)</a></li>
           <li>
-            <a href="https://github.com/merfill/skein/blob/main/docs/en/README.md"
-              >Documentation</a
-            >
+            <a href="https://github.com/merfill/skein/blob/main/docs/en/README.md">Documentation</a>
           </li>
-          <li><span>npm package <em>after release</em></span></li>
-          <li><span>Docker image <em>after release</em></span></li>
+          <li><a href="https://www.npmjs.com/package/skein-swe">npm package (skein-swe)</a></li>
+          <li><a href="https://hub.docker.com/r/mefrill/skein-swe">Docker image (Docker Hub)</a></li>
           <li><span>Zenodo DOI <em>after release</em></span></li>
         </ul>
       </section>
+        </article>
+      </div>
     </main>
 
-    <footer>
+    <footer class="wide">
       <span>MIT licensed</span>
       <a href="https://github.com/merfill/skein">github.com/merfill/skein</a>
     </footer>

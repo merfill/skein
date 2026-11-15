@@ -24,3 +24,27 @@ for (const pre of document.querySelectorAll("pre")) {
   });
   pre.append(button);
 }
+
+// Highlights the table-of-contents entry for the section currently in view.
+const tocLinks = [...document.querySelectorAll('.toc a[href^="#"]')];
+const tocSections = tocLinks
+  .map((link) => document.getElementById(link.getAttribute("href").slice(1)))
+  .filter(Boolean);
+
+if (tocSections.length) {
+  const updateActive = () => {
+    const edge = window.scrollY + 140;
+    let current = tocSections[0];
+    for (const section of tocSections) {
+      if (section.getBoundingClientRect().top + window.scrollY <= edge) {
+        current = section;
+      }
+    }
+    for (const link of tocLinks) {
+      link.classList.toggle("active", link.getAttribute("href") === `#${current.id}`);
+    }
+  };
+  updateActive();
+  window.addEventListener("scroll", updateActive, { passive: true });
+  window.addEventListener("resize", updateActive);
+}
