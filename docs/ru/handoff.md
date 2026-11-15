@@ -3,6 +3,44 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-15 — препринт на Zenodo (EN), RU-версия синхронизирована
+
+### Что сделано
+
+- **EN-препринт опубликован на Zenodo** 2026-11-15: DOI `10.5281/zenodo.24253692`,
+  <https://zenodo.org/records/24253692>. Тип — Preprint, лицензия CC BY 4.0, файл — `skein.pdf`.
+  Автор — Vladimir Lapshin (Independent researcher, `mefrill@yandex.ru`).
+- **EN-версия** `paper/en/skein.tex` / `.pdf` (16 стр.), **RU** `paper/ru/skein.tex` / `.pdf`
+  (17 стр.). Сборка — `paper/build.sh` / `paper/build-en.sh`; обе чистые (0 overfull / missing /
+  undefined). RU синхронизирована с EN: `Terminal-Bench`, API-вызовы (2447/1923), 66.2/87.1,
+  23/121, «один граф состояний», «как её проверить».
+- **Вошло после ревью:** OpenHands/CrewAI; replay 125/125 на реальных журналах (`result.json`,
+  поле `events`); `read` 9/170; первый ход состояния 66.2% vs 87.1% (эффект входа ≈0.4 п.п. из
+  9.2 п.п. разрыва доли кэша); чувствительность к тарифу (break-even 5.5×, паритет при доле
+  кэша 95.2%); Construction = `cobol` + `regex` (72% стоимости состояния); USD по условному
+  курсу 80 руб./долл.; CC BY 4.0; email и аффилиация; статус Preprint.
+- **Харнесс:** `readReward` теперь принимает не только 0/1, но и дробный reward (LHTB);
+  `typecheck` и офлайн-тесты чистые.
+- **LHTB-пилот** (2048, great-expectations-audit) остался smoke-test'ом: один `task`/состояние,
+  архитектуру не проверяет; в статью не вошёл. Файлы `tests/sandbox/tasks/lhtb-*` и правки
+  `campaign/matrix/registry/sandbox-run/opencode-run` оставлены некоммиченными по решению
+  владельца.
+
+### Проверено
+
+- EN 16 стр., RU 17 стр.; 0 overfull / missing / undefined.
+- `npm run typecheck`; `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` —
+  652 passed / 40 skipped.
+- Zenodo: title, автор, CC BY 4.0, Preprint, 2026-11-15.
+
+### Открыто
+
+- ORCID у автора нет; affiliation в метаданных Zenodo не заполнена (`None`).
+- На Zenodo один файл (EN PDF); RU PDF — в репозитории, не на Zenodo.
+- Related identifiers (GitHub, сайт, npm, Docker) в Zenodo не заполнены.
+- DOI добавлен в README; в PDF и на сайте — при следующей версии.
+- LHTB-пилот не включён; следующая фаза — журнал/Ankyra/checkpoints/observer (раздел 9).
+
 ## 2026-11-15 — сайт опубликован на `skein-swe.dev` (Cloudflare DNS + GitHub Pages)
 
 ### Что сделано

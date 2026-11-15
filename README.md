@@ -10,7 +10,8 @@ projection function are the protocol.
 > **Status: v0.1.** The comparative evaluation is complete. Install from npm (`skein-swe`), from
 > Docker Hub, or from a checkout. A technical report and an OpenReview submission are planned.
 >
-> Project page: <https://skein-swe.dev>.
+> Project page: <https://skein-swe.dev>. Preprint:
+> [10.5281/zenodo.24253692](https://doi.org/10.5281/zenodo.24253692).
 
 ## Contents
 
