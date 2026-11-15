@@ -9,6 +9,8 @@ projection function are the protocol.
 
 > **Status: v0.1.** The comparative evaluation is complete. Install from npm (`skein-swe`), from
 > Docker Hub, or from a checkout. A technical report and an OpenReview submission are planned.
+>
+> Project page: <https://skein-swe.dev>.
 
 ## Contents
 
@@ -220,6 +222,8 @@ site/         static project page
 ## Documentation
 
 Start at `docs/README.md`. The core reading:
+
+- <https://skein-swe.dev> — the project page (EN and RU), from `site/`.
 
 - `docs/en/concepts.md` — the non-monotone context, the agents and the states.
 - `docs/en/ir.md` — the conceptual IR model.
