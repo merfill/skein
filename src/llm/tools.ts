@@ -430,7 +430,7 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "open_hypothesis":
       action = {
-        operator: "claim_open",
+        operator: "open_hypothesis",
         kind: a.kind,
         label: a.label,
         suppose: a.suppose,
@@ -440,10 +440,15 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "close_hypothesis":
       action = {
-        operator: "claim_close",
+        operator: "close_hypothesis",
         id: a.id,
         verdict: a.verdict,
-        grounds: Array.isArray(a.grounds) ? a.grounds : [],
+        grounds: Array.isArray(a.grounds)
+          ? a.grounds.map((ground) => {
+              const text = String(ground);
+              return text.startsWith("obs:") ? text : `obs:${text}`;
+            })
+          : [],
       };
       break;
     default:

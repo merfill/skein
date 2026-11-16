@@ -24,10 +24,11 @@ export const WORK_KINDS = [
   // session-level artifact (the session agent's execution list), never task knowledge.
   "plan",
   "plan_item",
-  // The `inquiry` unit's hypotheses: an open `claim` and its `claim_verdict` closure. They
-  // hang off the request/another claim by `claim` edges and are not state turns.
-  "claim",
-  "claim_verdict",
+  // The `inquiry` unit's hypotheses: an open `hypothesis` and its `hypothesis_verdict`
+  // closure. They hang off the request/another hypothesis by `hypothesis` edges and are not
+  // state turns.
+  "hypothesis",
+  "hypothesis_verdict",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -97,10 +98,11 @@ export interface PlanPayload {
 }
 
 // One hypothesis of the `inquiry` unit. The model declares it, the engine records it; the
-// expectations are stored, never parsed. A `claim` node hangs off its parent claim (or the
-// request) by a `claim` edge; `parentId` is the parent's claim id (absent for a root).
-export interface ClaimPayload {
-  claimId: string;
+// expectations are stored, never parsed. A `hypothesis` node hangs off its parent hypothesis
+// (or the request) by a `hypothesis` edge; `parentId` is the parent's hypothesis id (absent for
+// a root).
+export interface HypothesisPayload {
+  hypothesisId: string;
   kind: "probe" | "change";
   label: string;
   suppose: string;
@@ -110,9 +112,10 @@ export interface ClaimPayload {
   turn?: number;
 }
 
-// The closure of a claim: a separate immutable node, so the open claim is never rewritten.
-export interface ClaimVerdictPayload {
-  claimId: string;
+// The closure of a hypothesis: a separate immutable node, so the open hypothesis is never
+// rewritten.
+export interface HypothesisVerdictPayload {
+  hypothesisId: string;
   verdict: "confirmed" | "refuted" | "done" | "dropped";
   grounds: string[];
   turn?: number;
@@ -135,8 +138,8 @@ export const EDGE_KINDS = [
   // them out of the `move`/`turn` ordered-children maps.
   "plan",
   "plan_item",
-  // `inquiry`: request/claim → claim, and claim → claim_verdict.
-  "claim",
+  // `inquiry`: request/hypothesis → hypothesis, and hypothesis → hypothesis_verdict.
+  "hypothesis",
   "verdict",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];

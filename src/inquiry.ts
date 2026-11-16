@@ -3,11 +3,11 @@ import type { ModelMessage } from "ai";
 import { isAborted } from "./abort";
 import type { Event } from "./ir/events";
 import {
-  activeClaimPath,
+  activeHypothesisPath,
   childrenOf,
-  claimChildrenOf,
-  claimNodes,
-  claimVerdictOf,
+  hypothesisChildrenOf,
+  hypothesisNodes,
+  hypothesisVerdictOf,
   fold,
   turnsOf,
   type State,
@@ -15,16 +15,17 @@ import {
 import { actionResultText, observationText, type TapeMessage } from "./ir/project";
 import { historyMessages } from "./loop/propose";
 import type { InquiryProposer } from "./llm/inquiry";
-import type { ClaimPayload } from "./ir/types";
+import type { HypothesisPayload, HypothesisVerdictPayload, Node } from "./ir/types";
 import { executeAction } from "./tools";
 import type { Workspace } from "./tools/workspace";
 
 export const INQUIRY_BASE_PROMPT = [
   "# Role",
   "You are a software engineering agent with access to the user's filesystem. You solve the user's tasks.",
-  "You work by hypotheses. A hypothesis names what you suppose and two observable outcomes: what you will see if right, and what you will see if wrong. The active hypothesis is the current goal; the request is reference, not the goal. Reads are free; open a hypothesis before a side-effecting command or a file change, and close it with a verdict and the ids of the results it rests on. Grounds are results observed after the hypothesis opened; to reuse an earlier result, recall it.",
-  "An expectation must be checkable at the moment you close it. Do not put into if_true a condition that your own change will invalidate.",
-  "Develop the active hypothesis: run the checks and actions the work needs, and close it when the outcome is observed. Open a new hypothesis only when you consider it different from the hypotheses already shown in OPEN and CLOSED and justified as new work; if an open hypothesis already asks the question, develop that one. A bash action runs under the active hypothesis; a file write takes a change hypothesis. A text reply ends the work when the result is observed or you cannot continue.",
+  "You work by hypotheses: you put a hypothesis forward and close it when its outcome is observed. This uses the `open_hypothesis` and `close_hypothesis` tools. A hypothesis is a claim together with what you expect to see if you are right and if you are wrong.",
+  "At the start of the work, call `open_hypothesis` to formulate the user's request as the root hypothesis: the result that must hold when the work is done, with the observation that shows it. Work inside the root, and close it last, once the hypotheses you opened under it are closed.",
+  "An expectation is an observation that holds when you close the hypothesis, after the work it describes.",
+  "Develop the active hypothesis: run the checks and actions the work needs, and close it when the outcome is observed. Open a new hypothesis only when you consider it different from the hypotheses already shown in OPEN and CLOSED and justified as new work; if an open hypothesis already asks the question, develop that one. A text reply ends the work when the result is observed or you cannot continue.",
   "Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result. The engine records a tool-free reply as the result and marks open hypotheses unresolved.",
   "Context markers: CLOSED — settled hypotheses with their verdicts; OPEN — the hypotheses currently open.",
   "## General instructions for the work",
@@ -54,9 +55,9 @@ export interface InquiryInput {
   signal?: AbortSignal;
 }
 
-export interface UnresolvedClaim {
+export interface UnresolvedHypothesis {
   id: string;
-  kind: ClaimPayload["kind"];
+  kind: HypothesisPayload["kind"];
   suppose: string;
   ifTrue: string;
   ifFalse: string;
@@ -69,7 +70,7 @@ export interface InquiryResult {
   stopReason: string | null;
   turns: number;
   final: string;
-  unresolved: UnresolvedClaim[];
+  unresolved: UnresolvedHypothesis[];
 }
 
 export function seedInquiry(request: { id: string; text: string }): Event[] {
@@ -128,9 +129,9 @@ function groundSummary(state: State, ref: string): string {
   return joined.length > 160 ? `${joined.slice(0, 160)}…` : joined;
 }
 
-function closedLine(state: State, claim: ClaimPayload): string {
-  const verdict = claimVerdictOf(state, claim.claimId);
-  if (verdict === undefined) return `${claim.claimId} ${claim.kind}: ${claim.suppose}`;
+function closedLine(state: State, hypothesis: HypothesisPayload): string {
+  const verdict = hypothesisVerdictOf(state, hypothesis.hypothesisId);
+  if (verdict === undefined) return `${hypothesis.hypothesisId} ${hypothesis.kind}: ${hypothesis.suppose}`;
   const seen = new Set<string>();
   const summaries: string[] = [];
   for (const ref of verdict.grounds) {
@@ -141,22 +142,22 @@ function closedLine(state: State, claim: ClaimPayload): string {
     if (summaries.length === 2) break;
   }
   const grounds = verdict.grounds.length > 0 ? ` (${verdict.grounds.join(", ")})` : "";
-  return `${claim.claimId} ${claim.kind} «${claim.suppose}» — ${verdict.verdict}: ${summaries.join("; ")}${grounds}`;
+  return `${hypothesis.hypothesisId} ${hypothesis.kind} «${hypothesis.suppose}» — ${verdict.verdict}: ${summaries.join("; ")}${grounds}`;
 }
 
 function closedTree(state: State): string {
-  const roots = claimNodes(state)
-    .map((node) => node.payload as ClaimPayload | undefined)
+  const roots = hypothesisNodes(state)
+    .map((node) => node.payload as HypothesisPayload | undefined)
     .filter(
-      (claim): claim is ClaimPayload =>
-        claim !== undefined && claim.parentId === undefined && claimVerdictOf(state, claim.claimId) !== undefined,
+      (hypothesis): hypothesis is HypothesisPayload =>
+        hypothesis !== undefined && hypothesis.parentId === undefined && hypothesisVerdictOf(state, hypothesis.hypothesisId) !== undefined,
     );
   if (roots.length === 0) return "";
   const lines: string[] = ["CLOSED"];
-  const render = (claim: ClaimPayload, depth: number): void => {
-    lines.push(`${"  ".repeat(depth)}${closedLine(state, claim)}`);
-    for (const child of claimChildrenOf(state, claim.claimId)) {
-      if (claimVerdictOf(state, child.claimId) !== undefined) render(child, depth + 1);
+  const render = (hypothesis: HypothesisPayload, depth: number): void => {
+    lines.push(`${"  ".repeat(depth)}${closedLine(state, hypothesis)}`);
+    for (const child of hypothesisChildrenOf(state, hypothesis.hypothesisId)) {
+      if (hypothesisVerdictOf(state, child.hypothesisId) !== undefined) render(child, depth + 1);
     }
   };
   for (const root of roots) render(root, 1);
@@ -164,17 +165,17 @@ function closedTree(state: State): string {
 }
 
 function openPath(state: State): string {
-  const path = activeClaimPath(state);
+  const path = activeHypothesisPath(state);
   if (path.length === 0) return "OPEN: none";
   const lines: string[] = ["OPEN"];
-  const activeId = path[path.length - 1]?.claimId;
-  for (const claim of path) {
-    const marker = claim.claimId === activeId ? " [ACTIVE]" : "";
-    lines.push(`${claim.claimId} ${claim.kind}: ${claim.suppose}${marker}`);
-    lines.push(`  if true: ${claim.ifTrue}`);
-    lines.push(`  if false: ${claim.ifFalse}`);
-    for (const child of claimChildrenOf(state, claim.claimId)) {
-      if (claimVerdictOf(state, child.claimId) !== undefined) {
+  const activeId = path[path.length - 1]?.hypothesisId;
+  for (const hypothesis of path) {
+    const marker = hypothesis.hypothesisId === activeId ? " [ACTIVE]" : "";
+    lines.push(`${hypothesis.hypothesisId} ${hypothesis.kind}: ${hypothesis.suppose}${marker}`);
+    lines.push(`  if true: ${hypothesis.ifTrue}`);
+    lines.push(`  if false: ${hypothesis.ifFalse}`);
+    for (const child of hypothesisChildrenOf(state, hypothesis.hypothesisId)) {
+      if (hypothesisVerdictOf(state, child.hypothesisId) !== undefined) {
         lines.push(`  closed ${closedLine(state, child)}`);
       }
     }
@@ -182,10 +183,27 @@ function openPath(state: State): string {
   return lines.join("\n");
 }
 
+function hypothesisResultText(callName: string | undefined, result: Node | undefined): string | undefined {
+  if (callName === "close_hypothesis" && result?.kind === "hypothesis_verdict") {
+    const verdict = result.payload as HypothesisVerdictPayload | undefined;
+    if (verdict !== undefined) {
+      const grounds = verdict.grounds.length > 0 ? ` (${verdict.grounds.join(", ")})` : "";
+      return `${verdict.hypothesisId} ${verdict.verdict}${grounds}`;
+    }
+  }
+  if (callName === "open_hypothesis" && result?.kind === "hypothesis") {
+    const hypothesis = result.payload as HypothesisPayload | undefined;
+    if (hypothesis !== undefined) {
+      return `${hypothesis.hypothesisId} opened ${hypothesis.kind}: ${hypothesis.label}`;
+    }
+  }
+  return undefined;
+}
+
 function activeHistory(state: State, requestId: string): TapeMessage[] {
   const turns = turnsOf(state, requestId);
   if (turns === undefined) return [];
-  const active = new Set(activeClaimPath(state).map((claim) => claim.claimId));
+  const active = new Set(activeHypothesisPath(state).map((hypothesis) => hypothesis.hypothesisId));
   const history: TapeMessage[] = [];
   for (const actionId of childrenOf(state, turns)) {
     const action = state.nodes.get(actionId);
@@ -194,7 +212,7 @@ function activeHistory(state: State, requestId: string): TapeMessage[] {
       | {
           call?: { name?: unknown; args?: unknown };
           reasoning?: unknown;
-          claimId?: unknown;
+          hypothesisId?: unknown;
         }
       | undefined;
     const callName = typeof payload?.call?.name === "string" ? payload.call.name : undefined;
@@ -202,11 +220,9 @@ function activeHistory(state: State, requestId: string): TapeMessage[] {
     const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
     const refused =
       (result?.payload as { refused?: unknown } | undefined)?.refused === true;
-    const claimId = typeof payload?.claimId === "string" ? payload.claimId : undefined;
-    const isClaimTool = callName === "claim_open" || callName === "claim_close";
-    if (isClaimTool) {
-      if (!refused) continue;
-    } else if ((claimId === undefined || !active.has(claimId)) && !refused) {
+    const hypothesisId = typeof payload?.hypothesisId === "string" ? payload.hypothesisId : undefined;
+    const isHypothesisTool = callName === "open_hypothesis" || callName === "close_hypothesis";
+    if (!isHypothesisTool && !refused && (hypothesisId === undefined || !active.has(hypothesisId))) {
       continue;
     }
     const reasoning =
@@ -230,7 +246,9 @@ function activeHistory(state: State, requestId: string): TapeMessage[] {
       history.push({ role: "assistant", text: action.label, ...reasoning });
     }
     const written = callName === "write" || callName === "edit" || callName === "apply_patch";
-    const text = written ? action.label : actionResultText(state, actionId);
+    const text =
+      hypothesisResultText(callName, result) ??
+      (written ? action.label : actionResultText(state, actionId));
     const ref = resultId ?? actionId;
     history.push({ role: "tool", text: `[${ref}] ${text}`, callId: actionId });
   }
@@ -264,14 +282,14 @@ function endInquiry(
   events: readonly Event[],
   text: string,
   turn: number,
-): { events: Event[]; unresolved: UnresolvedClaim[] } {
-  const path = activeClaimPath(state);
-  const unresolved: UnresolvedClaim[] = path.map((claim) => ({
-    id: claim.claimId,
-    kind: claim.kind,
-    suppose: claim.suppose,
-    ifTrue: claim.ifTrue,
-    ifFalse: claim.ifFalse,
+): { events: Event[]; unresolved: UnresolvedHypothesis[] } {
+  const path = activeHypothesisPath(state);
+  const unresolved: UnresolvedHypothesis[] = path.map((hypothesis) => ({
+    id: hypothesis.hypothesisId,
+    kind: hypothesis.kind,
+    suppose: hypothesis.suppose,
+    ifTrue: hypothesis.ifTrue,
+    ifFalse: hypothesis.ifFalse,
   }));
   const seq = nextNodeSeq(state);
   const stopId = `w:stop:${seq}`;
@@ -316,7 +334,7 @@ export async function runInquiryUnit(
   let paused = false;
   let stopReason: string | null = null;
   let final = "";
-  let unresolved: UnresolvedClaim[] = [];
+  let unresolved: UnresolvedHypothesis[] = [];
   const maxTurns = deps.maxTurns;
 
   while (turn < maxTurns) {
@@ -354,7 +372,7 @@ export async function runInquiryUnit(
         deps.workspace,
         turn,
         proposals.reasoning,
-        { claimRules: true },
+        { hypothesisRules: true },
       );
       events.push(...outcome.events);
     }

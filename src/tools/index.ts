@@ -5,15 +5,15 @@ import type { Event } from "../ir/events";
 import {
   actionExecuted,
   actionSucceeded,
-  activeClaim,
-  activeClaimId,
-  activeClaimPath,
+  activeHypothesis,
+  activeHypothesisId,
+  activeHypothesisPath,
   childrenOf,
-  claimChildrenOf,
-  claimNodeOf,
-  claimOpenSeq,
-  claimPayloadOf,
-  claimVerdictOf,
+  hypothesisChildrenOf,
+  hypothesisNodeOf,
+  hypothesisOpenSeq,
+  hypothesisPayloadOf,
+  hypothesisVerdictOf,
   currentFocus,
   currentVersion,
   fold,
@@ -23,7 +23,7 @@ import {
 import { isTerminalIsland } from "../ir/islands";
 import { moveIsland } from "../ir/traversal";
 import type {
-  ClaimVerdictPayload,
+  HypothesisVerdictPayload,
   EdgeKind,
   MovePayload,
   Provenance,
@@ -512,15 +512,15 @@ export interface CommandRefusal {
 function commandRefusal(state: State, apply: Apply, command: string): CommandRefusal | undefined {
   // A repeat is scoped to the hypothesis that made the earlier call: a new hypothesis may
   // re-run what a closed one (or an ancestor) ran, because its grounds must come from after
-  // its own opening. Units without claims have no claimId, so both sides are undefined and
+  // its own opening. Units without hypotheses have no hypothesisId, so both sides are undefined and
   // the original unit-wide behavior is unchanged.
-  const sameClaim = (found: { id: string }): boolean => {
-    const prior = (state.nodes.get(found.id)?.payload as { claimId?: string } | undefined)?.claimId;
-    return prior === activeClaimId(state);
+  const sameHypothesis = (found: { id: string }): boolean => {
+    const prior = (state.nodes.get(found.id)?.payload as { hypothesisId?: string } | undefined)?.hypothesisId;
+    return prior === activeHypothesisId(state);
   };
   if (apply.tool === "read" || apply.tool === "grep") {
     const found = latestAction(state, command);
-    if (found !== undefined && state.lastMutationSeq < found.seq && sameClaim(found)) {
+    if (found !== undefined && state.lastMutationSeq < found.seq && sameHypothesis(found)) {
       const prior = resultId(state, found.id);
       return { reason: `repeated_action: ${prior} already has it; retrieve it by id (recall), do not repeat` };
     }
@@ -528,7 +528,7 @@ function commandRefusal(state: State, apply: Apply, command: string): CommandRef
   if (apply.tool === "bash") {
     if (command.trim() === "") return { reason: "bash needs a command" };
     const found = latestAction(state, bashSignature(apply.command ?? "", apply.workdir, apply.timeout));
-    if (found !== undefined && state.lastMutationSeq < found.seq && sameClaim(found)) {
+    if (found !== undefined && state.lastMutationSeq < found.seq && sameHypothesis(found)) {
       const prior = state.nodes.get(resultId(state, found.id));
       const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
       if (typeof exit === "number") {
@@ -732,12 +732,12 @@ export function executeAction(
   // The model's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
   // action nodes so the projection can show it back on the tape next turn (`docs/en/ir.md §7`).
   reasoning?: string,
-  // Inquiry only: enforce the hypothesis rules (side-effect gate and claim open/close
+  // Inquiry only: enforce the hypothesis rules (side-effect gate and hypothesis open/close
   // validation). Other units pass nothing and keep their behavior.
-  options?: { claimRules?: boolean },
+  options?: { hypothesisRules?: boolean },
 ): ExecOutcome {
-  const claimRules = options?.claimRules === true;
-  const claimId = activeClaimId(state);
+  const hypothesisRules = options?.hypothesisRules === true;
+  const hypothesisId = activeHypothesisId(state);
   let counter = state.seq;
   const next = (): number => {
     counter += 1;
@@ -791,9 +791,9 @@ export function executeAction(
     return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
   };
 
-  // Claim ids are monotone even after a refused open: count the ids already recorded on claim
-  // nodes and on actions, so a failed opening does not reuse its id for the next one.
-  const nextClaimId = (): string => {
+  // Hypothesis ids are monotone even after a refused open: count the ids already recorded on
+  // hypothesis nodes and on actions, so a failed opening does not reuse its id for the next one.
+  const nextHypothesisId = (): string => {
     let max = 0;
     const note = (value: unknown): void => {
       if (typeof value !== "string") return;
@@ -801,13 +801,13 @@ export function executeAction(
       if (match?.[1] !== undefined) max = Math.max(max, Number(match[1]));
     };
     for (const node of state.nodes.values()) {
-      if (node.kind !== "claim" && node.kind !== "action") continue;
-      note((node.payload as { claimId?: unknown } | undefined)?.claimId);
+      if (node.kind !== "hypothesis" && node.kind !== "action") continue;
+      note((node.payload as { hypothesisId?: unknown } | undefined)?.hypothesisId);
     }
     return `C${max + 1}`;
   };
 
-  // The ids a claim may actually cite: observations recorded after it opened, excluding
+  // The ids a hypothesis may actually cite: observations recorded after it opened, excluding
   // refusals. The refusal names them so the model can close instead of guessing; an older,
   // still relevant result can be brought in with `recall`.
   const validGroundsText = (openSeq: number): string => {
@@ -904,7 +904,7 @@ export function executeAction(
         payload: {
           command,
           turn,
-          ...(claimId !== undefined ? { claimId } : {}),
+          ...(hypothesisId !== undefined ? { hypothesisId } : {}),
           ...(reasoning !== undefined ? { reasoning } : {}),
           ...(extra ?? {}),
         },
@@ -1131,66 +1131,67 @@ export function executeAction(
       return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
     }
 
-    case "claim_open": {
-      if (!claimRules) return fail("claim_open is not available in this unit");
+    case "open_hypothesis": {
+      if (!hypothesisRules) return fail("open_hypothesis is not available in this unit");
       const focus = currentFocus(state) ?? state.rootId;
-      if (focus === undefined) return fail("claim_open failed: no current state");
-      const id = nextClaimId();
+      if (focus === undefined) return fail("open_hypothesis failed: no current state");
+      const id = nextHypothesisId();
       const label = `open_hypothesis ${id} ${action.kind}: ${action.label}`;
-      const actionId = buildActionItem(label, label, { call: modelCall(action), claimId: id });
+      const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: id });
       appendTurn(focus, actionId);
       if (action.ifTrue.trim() === "" || action.ifFalse.trim() === "") {
         return refuseAction(actionId, "bad_expectation: both if_true and if_false must be non-empty");
       }
-      const parent = activeClaim(state);
-      const parentNode = parent !== undefined ? claimNodeOf(state, parent.claimId)?.id : state.rootId;
+      const parent = activeHypothesis(state);
+      const parentNode = parent !== undefined ? hypothesisNodeOf(state, parent.hypothesisId)?.id : state.rootId;
       const seq = next();
-      const nodeId = `w:claim:${seq}`;
+      const nodeId = `w:hypothesis:${seq}`;
       events.push({
         type: "add_node",
         node: {
           id: nodeId,
           space: "work",
-          kind: "claim",
+          kind: "hypothesis",
           label: action.label,
           payload: {
-            claimId: id,
+            hypothesisId: id,
             kind: action.kind,
             label: action.label,
             suppose: action.suppose,
             ifTrue: action.ifTrue,
             ifFalse: action.ifFalse,
-            ...(parent !== undefined ? { parentId: parent.claimId } : {}),
+            ...(parent !== undefined ? { parentId: parent.hypothesisId } : {}),
             turn,
           },
           seq,
         },
       });
-      if (parentNode !== undefined) addEdge({ kind: "llm" }, parentNode, nodeId, "claim");
+      if (parentNode !== undefined) addEdge({ kind: "llm" }, parentNode, nodeId, "hypothesis");
+      addEdge({ kind: "llm" }, actionId, nodeId, "result");
       return { events, turn: proposalTurn(label, nodeId), done: false, stopReason: null };
     }
 
-    case "claim_close": {
-      if (!claimRules) return fail("claim_close is not available in this unit");
+    case "close_hypothesis": {
+      if (!hypothesisRules) return fail("close_hypothesis is not available in this unit");
       const focus = currentFocus(state) ?? state.rootId;
-      if (focus === undefined) return fail("claim_close failed: no current state");
-      const claim = claimPayloadOf(state, action.id);
+      if (focus === undefined) return fail("close_hypothesis failed: no current state");
+      const hypothesis = hypothesisPayloadOf(state, action.id);
       const label = `close_hypothesis ${action.id} ${action.verdict}`;
-      const actionId = buildActionItem(label, label, { call: modelCall(action), claimId: action.id });
+      const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: action.id });
       appendTurn(focus, actionId);
-      if (claim === undefined) return refuseAction(actionId, "not_open: no such hypothesis");
-      if (claimVerdictOf(state, action.id) !== undefined) {
+      if (hypothesis === undefined) return refuseAction(actionId, "not_open: no such hypothesis");
+      if (hypothesisVerdictOf(state, action.id) !== undefined) {
         return refuseAction(actionId, "not_open: the hypothesis is already closed");
       }
       const probeVerdicts = ["confirmed", "refuted", "dropped"] as const;
       const changeVerdicts = ["done", "dropped"] as const;
-      if (claim.kind === "probe" && !(probeVerdicts as readonly string[]).includes(action.verdict)) {
+      if (hypothesis.kind === "probe" && !(probeVerdicts as readonly string[]).includes(action.verdict)) {
         return refuseAction(actionId, "bad_verdict: a probe closes confirmed/refuted/dropped");
       }
-      if (claim.kind === "change" && !(changeVerdicts as readonly string[]).includes(action.verdict)) {
+      if (hypothesis.kind === "change" && !(changeVerdicts as readonly string[]).includes(action.verdict)) {
         return refuseAction(actionId, "bad_verdict: a change closes done/dropped");
       }
-      const openSeq = claimOpenSeq(state, action.id) ?? 0;
+      const openSeq = hypothesisOpenSeq(state, action.id) ?? 0;
       if (action.verdict !== "dropped" && action.grounds.length === 0) {
         return refuseAction(
           actionId,
@@ -1231,23 +1232,23 @@ export function executeAction(
           }
         }
       }
-      const openChildren = claimChildrenOf(state, action.id).filter(
-        (child) => claimVerdictOf(state, child.claimId) === undefined,
+      const openChildren = hypothesisChildrenOf(state, action.id).filter(
+        (child) => hypothesisVerdictOf(state, child.hypothesisId) === undefined,
       );
       if (openChildren.length > 0) {
-        const active = activeClaim(state);
-        const path = activeClaimPath(state)
-          .map((claim) => claim.claimId)
+        const active = activeHypothesis(state);
+        const path = activeHypothesisPath(state)
+          .map((hypothesis) => hypothesis.hypothesisId)
           .join(" > ");
         return refuseAction(
           actionId,
-          `children_open: close the active ${active?.claimId ?? "hypothesis"} first. Path: ${path || action.id}.`,
+          `children_open: close the active ${active?.hypothesisId ?? "hypothesis"} first. Path: ${path || action.id}.`,
         );
       }
       const seq = next();
       const verdictId = `w:verdict:${seq}`;
-      const verdictPayload: ClaimVerdictPayload = {
-        claimId: action.id,
+      const verdictPayload: HypothesisVerdictPayload = {
+        hypothesisId: action.id,
         verdict: action.verdict,
         grounds: action.grounds,
         turn,
@@ -1257,14 +1258,15 @@ export function executeAction(
         node: {
           id: verdictId,
           space: "work",
-          kind: "claim_verdict",
+          kind: "hypothesis_verdict",
           label,
           payload: verdictPayload,
           seq,
         },
       });
-      const claimNode = claimNodeOf(state, action.id);
-      if (claimNode !== undefined) addEdge({ kind: "llm" }, claimNode.id, verdictId, "verdict");
+      const hypothesisNode = hypothesisNodeOf(state, action.id);
+      if (hypothesisNode !== undefined) addEdge({ kind: "llm" }, hypothesisNode.id, verdictId, "verdict");
+      addEdge({ kind: "llm" }, actionId, verdictId, "result");
       return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
     }
 
@@ -1414,8 +1416,8 @@ export function executeAction(
         return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
       };
       // Inquiry: a side-effecting call needs an open hypothesis; a write needs a change.
-      if (claimRules) {
-        const active = activeClaim(state);
+      if (hypothesisRules) {
+        const active = activeHypothesis(state);
         if ((apply.tool === "bash" || apply.tool === "fetch") && active === undefined) {
           return failed("no_open: open a hypothesis before a side-effecting command.");
         }

@@ -18,7 +18,7 @@ function open(
   ifTrue = "yes",
   ifFalse = "no",
 ): Action {
-  return { operator: "claim_open", kind, label, suppose, ifTrue, ifFalse };
+  return { operator: "open_hypothesis", kind, label, suppose, ifTrue, ifFalse };
 }
 
 function close(
@@ -26,7 +26,7 @@ function close(
   verdict: "confirmed" | "refuted" | "done" | "dropped",
   grounds: string[],
 ): Action {
-  return { operator: "claim_close", id, verdict, grounds };
+  return { operator: "close_hypothesis", id, verdict, grounds };
 }
 
 function read(path: string): Action {
@@ -48,7 +48,7 @@ function step(
   turn = 0,
 ): { events: Event[]; text: string } {
   const state = fold(events);
-  const outcome = executeAction(action, state, workspace, turn, undefined, { claimRules: true });
+  const outcome = executeAction(action, state, workspace, turn, undefined, { hypothesisRules: true });
   return { events: [...events, ...outcome.events], text: outcome.turn.text };
 }
 
@@ -137,23 +137,23 @@ describe("inquiry", () => {
     expect(result.done).toBe(true);
     expect(result.stopReason).toBe("answered");
     expect(result.unresolved).toEqual([]);
-    const claim = result.events.find(
-      (event) => event.type === "add_node" && event.node.kind === "claim",
+    const hypothesis = result.events.find(
+      (event) => event.type === "add_node" && event.node.kind === "hypothesis",
     );
-    expect(claim).toBeDefined();
+    expect(hypothesis).toBeDefined();
     const verdict = result.events.find(
       (event) =>
         event.type === "add_node" &&
-        event.node.kind === "claim_verdict" &&
+        event.node.kind === "hypothesis_verdict" &&
         (event.node.payload as { verdict?: string }).verdict === "confirmed",
     );
     expect(verdict).toBeDefined();
   });
 
-  it("refuses side effects without a claim and writes without a change", () => {
+  it("refuses side effects without a hypothesis and writes without a change", () => {
     let events = seedInquiry({ id: "r1", text: "t" });
-    const noClaim = step(events, workspace, bash("echo hi"));
-    expect(noClaim.text).toContain("no_open");
+    const noHypothesis = step(events, workspace, bash("echo hi"));
+    expect(noHypothesis.text).toContain("no_open");
 
     events = step(events, workspace, open("probe", "p", "s")).events;
     const probeWrite = step(events, workspace, write("c.txt", "x"));
@@ -272,6 +272,23 @@ describe("inquiry", () => {
     expect(parentLine).toContain("a.txt");
     expect(parentLine).not.toContain("b.txt");
     expect(childLine).toContain("b.txt");
+  });
+
+  it("keeps a successful open and close on the tape", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("change", "root", "make a.txt change")).events;
+    const readStep = step(events, workspace, read("a.txt"));
+    events = readStep.events;
+    const obs = observationId(readStep.events);
+    events = step(events, workspace, close("C1", "done", [obs])).events;
+
+    const all = inquiryMessages(fold(events), { id: "r1", text: "t" })
+      .map(textOf)
+      .join("\n");
+    expect(all).toContain("open_hypothesis");
+    expect(all).toContain("C1 opened change: root");
+    expect(all).toContain("close_hypothesis");
+    expect(all).toContain(`C1 done (${obs})`);
   });
 
   it("records an unresolved hypothesis at a text stop", async () => {

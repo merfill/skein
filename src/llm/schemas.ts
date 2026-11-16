@@ -100,9 +100,9 @@ export const actionSchema = z.discriminatedUnion("operator", [
     after: z.number().int().nonnegative().optional(),
   }),
   // `inquiry`: open/close a hypothesis. The model supplies the text; the engine records it
-  // and (for `claim_close`) checks the structural rules (src/tools/index.ts).
+  // and (for `close_hypothesis`) checks the structural rules (src/tools/index.ts).
   z.object({
-    operator: z.literal("claim_open"),
+    operator: z.literal("open_hypothesis"),
     kind: z.enum(["probe", "change"]),
     label: z.string(),
     suppose: z.string(),
@@ -110,7 +110,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     ifFalse: z.string(),
   }),
   z.object({
-    operator: z.literal("claim_close"),
+    operator: z.literal("close_hypothesis"),
     id: z.string(),
     verdict: z.enum(["confirmed", "refuted", "done", "dropped"]),
     grounds: z.array(z.string()),
@@ -214,7 +214,7 @@ export function modelCall(action: Action): ModelCall {
           ...(action.after !== undefined ? { after: action.after } : {}),
         },
       };
-    case "claim_open":
+    case "open_hypothesis":
       return {
         name: "open_hypothesis",
         args: {
@@ -225,10 +225,17 @@ export function modelCall(action: Action): ModelCall {
           if_false: action.ifFalse,
         },
       };
-    case "claim_close":
+    case "close_hypothesis":
       return {
         name: "close_hypothesis",
-        args: { id: action.id, verdict: action.verdict, grounds: action.grounds },
+        args: {
+          id: action.id,
+          verdict: action.verdict,
+          grounds: action.grounds.map((ground) => {
+            const match = /^obs:(\d+)$/.exec(ground);
+            return match?.[1] !== undefined ? Number(match[1]) : ground;
+          }),
+        },
       };
   }
 }

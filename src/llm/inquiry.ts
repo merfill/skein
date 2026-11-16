@@ -15,7 +15,7 @@ export interface InquiryModelOptions {
   settings?: Settings;
 }
 
-const claimOpenParams = z.object({
+const hypothesisOpenParams = z.object({
   kind: z.enum(["probe", "change"]),
   label: z.string(),
   suppose: z.string(),
@@ -23,24 +23,39 @@ const claimOpenParams = z.object({
   if_false: z.string(),
 });
 
-const claimCloseParams = z.object({
+const hypothesisCloseParams = z.object({
   id: z.string(),
   verdict: z.enum(["confirmed", "refuted", "done", "dropped"]),
-  grounds: z.array(z.string()),
+  grounds: z.array(z.number().int().nonnegative()),
 });
 
 // Tools that exist only in the inquiry unit. They are bound through `extraTools`, so the task
 // registry and the generated base prompt never see them.
 export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   open_hypothesis: {
-    description:
-      "Open a hypothesis before a side-effecting command or a file change. Give what you suppose, what you will see if right (if_true), and what you will see if wrong (if_false); both are required and specific. kind: probe (a claim to test) or change (an edit). Side-effecting: bash, webfetch (any open hypothesis). File change: write, edit, apply_patch (kind=change).",
-    schema: claimOpenParams,
+    description: [
+      "Opens a hypothesis. Arguments:",
+      "- kind: one of",
+      '  - "change": the request asks for a result in the workspace (fix, merge, create); the result is the changed workspace.',
+      '  - "probe": the request asks for an answer (find out what is true); the result is the answer.',
+      "- label: a short name.",
+      "- suppose: what you put forward.",
+      "- if_true: the observation that confirms it.",
+      "- if_false: the observation that refutes it.",
+    ].join("\n"),
+    schema: hypothesisOpenParams,
   },
   close_hypothesis: {
-    description:
-      "Close the active hypothesis with a verdict and grounds: the ids shown in brackets from results recorded after it opened. Verdicts: probe — confirmed, refuted, dropped; change — done, dropped. A change is done when the effect you need is observed; whether the request is satisfied is a separate check. dropped means abandoned, not resolved.",
-    schema: claimCloseParams,
+    description: [
+      "Closes the active hypothesis and only it. Arguments:",
+      "- id: the active hypothesis's id.",
+      "- verdict: one of",
+      '  - "confirmed", "refuted" or "dropped": for a probe.',
+      '  - "done" or "dropped": for a change.',
+      "- grounds: the numbers from the brackets of observations recorded after it opened (e.g. 42 for [obs:42]).",
+      "A change is done when its observed effect holds.",
+    ].join("\n"),
+    schema: hypothesisCloseParams,
   },
 };
 
