@@ -39,6 +39,8 @@ English: [../en/README.md](../en/README.md).
 - [testing.md](testing.md) — как гонять тесты, бенчи и реальные задачи (песочница,
   пошаговый `bench/live-step.ts`, `bench/turn.ts`) и куда попадает вывод.
 
-## Передача работы
+## Черновики и передача работы
 
+- [claims-spec.md](claims-spec.md) — спецификация claims: удостоверение гипотез и долг закрытия
+  (RU-only, для обсуждения; не реализовано).
 - [handoff.md](handoff.md) — рабочий handoff-лог.
