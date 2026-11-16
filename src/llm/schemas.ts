@@ -99,6 +99,22 @@ export const actionSchema = z.discriminatedUnion("operator", [
     before: z.number().int().nonnegative().optional(),
     after: z.number().int().nonnegative().optional(),
   }),
+  // `inquiry`: open/close a hypothesis. The model supplies the text; the engine records it
+  // and (for `claim_close`) checks the structural rules (src/tools/index.ts).
+  z.object({
+    operator: z.literal("claim_open"),
+    kind: z.enum(["probe", "change"]),
+    label: z.string(),
+    suppose: z.string(),
+    ifTrue: z.string(),
+    ifFalse: z.string(),
+  }),
+  z.object({
+    operator: z.literal("claim_close"),
+    id: z.string(),
+    verdict: z.enum(["confirmed", "refuted", "done", "dropped"]),
+    grounds: z.array(z.string()),
+  }),
 ]);
 
 export type Action = z.infer<typeof actionSchema>;
@@ -197,6 +213,22 @@ export function modelCall(action: Action): ModelCall {
           ...(action.before !== undefined ? { before: action.before } : {}),
           ...(action.after !== undefined ? { after: action.after } : {}),
         },
+      };
+    case "claim_open":
+      return {
+        name: "open_hypothesis",
+        args: {
+          kind: action.kind,
+          label: action.label,
+          suppose: action.suppose,
+          if_true: action.ifTrue,
+          if_false: action.ifFalse,
+        },
+      };
+    case "claim_close":
+      return {
+        name: "close_hypothesis",
+        args: { id: action.id, verdict: action.verdict, grounds: action.grounds },
       };
   }
 }

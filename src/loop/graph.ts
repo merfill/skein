@@ -109,6 +109,12 @@ function describeTarget(action: Action): string {
     case "decline":
       target = "decline";
       break;
+    case "claim_open":
+      target = `claim:${action.kind}:${action.label}`;
+      break;
+    case "claim_close":
+      target = `claim:${action.id}:${action.verdict}`;
+      break;
     case "apply":
       target = commandOf(action.action);
       break;

@@ -3,7 +3,9 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync }
 import { dirname, join } from "node:path";
 
 import { probeSession } from "../../src/loop/probe";
+import { runInquiryUnit, type InquiryResult } from "../../src/inquiry";
 import { runAgent, type AgentResult } from "../../src/loop/graph";
+import type { InquiryProposer } from "../../src/llm/inquiry";
 import type { Proposer } from "../../src/loop/propose";
 import type { CommandResult, Workspace } from "../../src/tools/workspace";
 import { createCheckpoint, createCheckpointWithBackend, type Checkpoint } from "../../src/tools/checkpoint";
@@ -36,6 +38,11 @@ export interface TaskRun {
   network: NetworkPlan;
   root: string;
   request: string;
+}
+
+// The same run for the `inquiry` unit: it takes messages, not a projection `Context`.
+export interface InquiryTaskRun extends Omit<TaskRun, "result"> {
+  result: InquiryResult;
 }
 
 // The on-disk task root, its request and the verifier command. Shared by the engine harness
@@ -372,6 +379,39 @@ export async function runTask(
   // and with the verifier's network (independent of `--net off`). `checkSetup` is not run: the
   // task's `test.sh` owns its own preparation (fix-ocaml-gc re-clones, rebuilds and recreates
   // tests.txt there).
+  const verification = verifyOpenedTask(task, {
+    workspace,
+    root,
+    check,
+    network,
+    rootless,
+    ...(container !== undefined ? { container } : {}),
+  });
+  return {
+    result,
+    workspace,
+    reward: verification.reward,
+    acceptance: verification.acceptance,
+    rewardSource: verification.rewardSource,
+    check: verification.check,
+    network,
+    root,
+    request,
+  };
+}
+
+// The `inquiry` unit against a real task image: the same open/verify path as `runTask`, but the
+// agent loop is the message-based inquiry runner instead of the state machine.
+export async function runInquiryTask(
+  task: SandboxTask,
+  propose: InquiryProposer,
+  options: SandboxRunOptions = {},
+): Promise<InquiryTaskRun> {
+  const { workspace, root, request, check, network, rootless, container } = openTaskWorkspace(task, options);
+  const result = await runInquiryUnit(
+    { propose, workspace, maxTurns: options.maxTurns ?? task.maxTurns ?? 60 },
+    { request: { id: "r1", text: request } },
+  );
   const verification = verifyOpenedTask(task, {
     workspace,
     root,

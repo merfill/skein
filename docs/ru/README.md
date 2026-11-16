@@ -41,6 +41,8 @@ English: [../en/README.md](../en/README.md).
 
 ## Черновики и передача работы
 
+- [inquiry.md](inquiry.md) — спецификация единицы работы `inquiry`: кодирование на гипотезах
+  (RU-only, контракт реализации; на вычитку).
 - [claims-spec.md](claims-spec.md) — спецификация claims: удостоверение гипотез и долг закрытия
   (RU-only, для обсуждения; не реализовано).
 - [handoff.md](handoff.md) — рабочий handoff-лог.

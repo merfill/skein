@@ -231,8 +231,9 @@ reconciles active file references with the filesystem, and any drift becomes a `
 ## 7. Non-goals
 
 The IR has no abstract syntax tree, no symbol table, no embeddings, no constraint solver, no
-arithmetic, no user interface and no criterion gate. There are no `check`, `claim`, `decision` or
-`subgoal` kinds.
+arithmetic, no user interface and no criterion gate. There are no `check`, `decision` or
+`subgoal` kinds. The separate `inquiry` unit adds `claim` and `claim_verdict` nodes (hypotheses
+and their closures); they are not state kinds and do not close a state.
 
 ## 8. Where to read more
 

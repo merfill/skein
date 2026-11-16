@@ -5,7 +5,15 @@ import type { Event } from "../ir/events";
 import {
   actionExecuted,
   actionSucceeded,
+  activeClaim,
+  activeClaimId,
+  activeClaimPath,
   childrenOf,
+  claimChildrenOf,
+  claimNodeOf,
+  claimOpenSeq,
+  claimPayloadOf,
+  claimVerdictOf,
   currentFocus,
   currentVersion,
   fold,
@@ -14,7 +22,13 @@ import {
 } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
 import { moveIsland } from "../ir/traversal";
-import type { EdgeKind, MovePayload, Provenance, WitnessEntry } from "../ir/types";
+import type {
+  ClaimVerdictPayload,
+  EdgeKind,
+  MovePayload,
+  Provenance,
+  WitnessEntry,
+} from "../ir/types";
 import type { Action, Apply } from "../llm/schemas";
 import { modelCall } from "../llm/schemas";
 import { crashReport, type CrashReport } from "./crash";
@@ -496,9 +510,17 @@ export interface CommandRefusal {
 // forbidden path or an empty command is a reason, returned here so the engine records it as
 // an observation rather than refusing without a node. The checks are state-only.
 function commandRefusal(state: State, apply: Apply, command: string): CommandRefusal | undefined {
+  // A repeat is scoped to the hypothesis that made the earlier call: a new hypothesis may
+  // re-run what a closed one (or an ancestor) ran, because its grounds must come from after
+  // its own opening. Units without claims have no claimId, so both sides are undefined and
+  // the original unit-wide behavior is unchanged.
+  const sameClaim = (found: { id: string }): boolean => {
+    const prior = (state.nodes.get(found.id)?.payload as { claimId?: string } | undefined)?.claimId;
+    return prior === activeClaimId(state);
+  };
   if (apply.tool === "read" || apply.tool === "grep") {
     const found = latestAction(state, command);
-    if (found !== undefined && state.lastMutationSeq < found.seq) {
+    if (found !== undefined && state.lastMutationSeq < found.seq && sameClaim(found)) {
       const prior = resultId(state, found.id);
       return { reason: `repeated_action: ${prior} already has it; retrieve it by id (recall), do not repeat` };
     }
@@ -506,7 +528,7 @@ function commandRefusal(state: State, apply: Apply, command: string): CommandRef
   if (apply.tool === "bash") {
     if (command.trim() === "") return { reason: "bash needs a command" };
     const found = latestAction(state, bashSignature(apply.command ?? "", apply.workdir, apply.timeout));
-    if (found !== undefined && state.lastMutationSeq < found.seq) {
+    if (found !== undefined && state.lastMutationSeq < found.seq && sameClaim(found)) {
       const prior = state.nodes.get(resultId(state, found.id));
       const exit = (prior?.payload as { exitCode?: unknown } | undefined)?.exitCode;
       if (typeof exit === "number") {
@@ -710,7 +732,12 @@ export function executeAction(
   // The model's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
   // action nodes so the projection can show it back on the tape next turn (`docs/en/ir.md §7`).
   reasoning?: string,
+  // Inquiry only: enforce the hypothesis rules (side-effect gate and claim open/close
+  // validation). Other units pass nothing and keep their behavior.
+  options?: { claimRules?: boolean },
 ): ExecOutcome {
+  const claimRules = options?.claimRules === true;
+  const claimId = activeClaimId(state);
   let counter = state.seq;
   const next = (): number => {
     counter += 1;
@@ -742,6 +769,59 @@ export function executeAction(
       },
     });
     return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
+  };
+
+  // A refused inquiry action is paired with its call, so the model sees what it tried and why
+  // it was not executed (the call is in the tape; the refusal is its tool result).
+  const refuseAction = (actionId: string, text: string): ExecOutcome => {
+    const seq = next();
+    const id = `obs:${seq}`;
+    events.push({
+      type: "add_node",
+      node: {
+        id,
+        space: "work",
+        kind: "observation",
+        label: text,
+        payload: { failed: true, refused: true, output: text },
+        seq,
+      },
+    });
+    addEdge({ kind: "llm" }, actionId, id, "result");
+    return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
+  };
+
+  // Claim ids are monotone even after a refused open: count the ids already recorded on claim
+  // nodes and on actions, so a failed opening does not reuse its id for the next one.
+  const nextClaimId = (): string => {
+    let max = 0;
+    const note = (value: unknown): void => {
+      if (typeof value !== "string") return;
+      const match = /^C(\d+)$/.exec(value);
+      if (match?.[1] !== undefined) max = Math.max(max, Number(match[1]));
+    };
+    for (const node of state.nodes.values()) {
+      if (node.kind !== "claim" && node.kind !== "action") continue;
+      note((node.payload as { claimId?: unknown } | undefined)?.claimId);
+    }
+    return `C${max + 1}`;
+  };
+
+  // The ids a claim may actually cite: observations recorded after it opened, excluding
+  // refusals. The refusal names them so the model can close instead of guessing; an older,
+  // still relevant result can be brought in with `recall`.
+  const validGroundsText = (openSeq: number): string => {
+    const refs: string[] = [];
+    for (const node of state.nodes.values()) {
+      if (node.seq <= openSeq) continue;
+      if (node.kind !== "observation") continue;
+      if ((node.payload as { refused?: unknown } | undefined)?.refused === true) continue;
+      refs.push(node.id);
+    }
+    refs.sort((a, b) => (state.nodes.get(a)?.seq ?? 0) - (state.nodes.get(b)?.seq ?? 0));
+    const shown = refs.slice(-6);
+    const more = refs.length > shown.length ? ` (+${refs.length - shown.length} earlier)` : "";
+    return shown.length > 0 ? `${shown.join(", ")}${more}` : "none";
   };
 
   const ensureFile = (path: string, ref: string): void => {
@@ -821,7 +901,13 @@ export function executeAction(
         space: "work",
         kind: "action",
         label: label ?? command,
-        payload: { command, turn, ...(reasoning !== undefined ? { reasoning } : {}), ...(extra ?? {}) },
+        payload: {
+          command,
+          turn,
+          ...(claimId !== undefined ? { claimId } : {}),
+          ...(reasoning !== undefined ? { reasoning } : {}),
+          ...(extra ?? {}),
+        },
         seq: actionSeq,
       },
     });
@@ -1045,6 +1131,143 @@ export function executeAction(
       return { events, turn: proposalTurn(text, observationId), done: false, stopReason: null };
     }
 
+    case "claim_open": {
+      if (!claimRules) return fail("claim_open is not available in this unit");
+      const focus = currentFocus(state) ?? state.rootId;
+      if (focus === undefined) return fail("claim_open failed: no current state");
+      const id = nextClaimId();
+      const label = `open_hypothesis ${id} ${action.kind}: ${action.label}`;
+      const actionId = buildActionItem(label, label, { call: modelCall(action), claimId: id });
+      appendTurn(focus, actionId);
+      if (action.ifTrue.trim() === "" || action.ifFalse.trim() === "") {
+        return refuseAction(actionId, "bad_expectation: both if_true and if_false must be non-empty");
+      }
+      const parent = activeClaim(state);
+      const parentNode = parent !== undefined ? claimNodeOf(state, parent.claimId)?.id : state.rootId;
+      const seq = next();
+      const nodeId = `w:claim:${seq}`;
+      events.push({
+        type: "add_node",
+        node: {
+          id: nodeId,
+          space: "work",
+          kind: "claim",
+          label: action.label,
+          payload: {
+            claimId: id,
+            kind: action.kind,
+            label: action.label,
+            suppose: action.suppose,
+            ifTrue: action.ifTrue,
+            ifFalse: action.ifFalse,
+            ...(parent !== undefined ? { parentId: parent.claimId } : {}),
+            turn,
+          },
+          seq,
+        },
+      });
+      if (parentNode !== undefined) addEdge({ kind: "llm" }, parentNode, nodeId, "claim");
+      return { events, turn: proposalTurn(label, nodeId), done: false, stopReason: null };
+    }
+
+    case "claim_close": {
+      if (!claimRules) return fail("claim_close is not available in this unit");
+      const focus = currentFocus(state) ?? state.rootId;
+      if (focus === undefined) return fail("claim_close failed: no current state");
+      const claim = claimPayloadOf(state, action.id);
+      const label = `close_hypothesis ${action.id} ${action.verdict}`;
+      const actionId = buildActionItem(label, label, { call: modelCall(action), claimId: action.id });
+      appendTurn(focus, actionId);
+      if (claim === undefined) return refuseAction(actionId, "not_open: no such hypothesis");
+      if (claimVerdictOf(state, action.id) !== undefined) {
+        return refuseAction(actionId, "not_open: the hypothesis is already closed");
+      }
+      const probeVerdicts = ["confirmed", "refuted", "dropped"] as const;
+      const changeVerdicts = ["done", "dropped"] as const;
+      if (claim.kind === "probe" && !(probeVerdicts as readonly string[]).includes(action.verdict)) {
+        return refuseAction(actionId, "bad_verdict: a probe closes confirmed/refuted/dropped");
+      }
+      if (claim.kind === "change" && !(changeVerdicts as readonly string[]).includes(action.verdict)) {
+        return refuseAction(actionId, "bad_verdict: a change closes done/dropped");
+      }
+      const openSeq = claimOpenSeq(state, action.id) ?? 0;
+      if (action.verdict !== "dropped" && action.grounds.length === 0) {
+        return refuseAction(
+          actionId,
+          `bad_grounds: at least one ground is required. Valid grounds under ${action.id}: ${validGroundsText(openSeq)}.`,
+        );
+      }
+      if (action.verdict !== "dropped") {
+        for (const ground of action.grounds) {
+          const node = state.nodes.get(ground);
+          const valid = validGroundsText(openSeq);
+          if (node === undefined) {
+            return refuseAction(
+              actionId,
+              `bad_grounds: ${ground} is not a result in this journal. Valid grounds under ${action.id}: ${valid}.`,
+            );
+          }
+          if (node.seq <= openSeq) {
+            const recall =
+              node.kind === "observation"
+                ? ` For an earlier result, recall ${ground} by id.`
+                : "";
+            return refuseAction(
+              actionId,
+              `bad_grounds: ${ground} was recorded before ${action.id} opened. Valid grounds under ${action.id}: ${valid}.${recall}`,
+            );
+          }
+          if (node.kind !== "observation") {
+            return refuseAction(
+              actionId,
+              `bad_grounds: ${ground} is not an observation. Valid grounds under ${action.id}: ${valid}.`,
+            );
+          }
+          if ((node.payload as { refused?: unknown } | undefined)?.refused === true) {
+            return refuseAction(
+              actionId,
+              `bad_grounds: ${ground} is a refusal, not a fact. Valid grounds under ${action.id}: ${valid}.`,
+            );
+          }
+        }
+      }
+      const openChildren = claimChildrenOf(state, action.id).filter(
+        (child) => claimVerdictOf(state, child.claimId) === undefined,
+      );
+      if (openChildren.length > 0) {
+        const active = activeClaim(state);
+        const path = activeClaimPath(state)
+          .map((claim) => claim.claimId)
+          .join(" > ");
+        return refuseAction(
+          actionId,
+          `children_open: close the active ${active?.claimId ?? "hypothesis"} first. Path: ${path || action.id}.`,
+        );
+      }
+      const seq = next();
+      const verdictId = `w:verdict:${seq}`;
+      const verdictPayload: ClaimVerdictPayload = {
+        claimId: action.id,
+        verdict: action.verdict,
+        grounds: action.grounds,
+        turn,
+      };
+      events.push({
+        type: "add_node",
+        node: {
+          id: verdictId,
+          space: "work",
+          kind: "claim_verdict",
+          label,
+          payload: verdictPayload,
+          seq,
+        },
+      });
+      const claimNode = claimNodeOf(state, action.id);
+      if (claimNode !== undefined) addEdge({ kind: "llm" }, claimNode.id, verdictId, "verdict");
+      return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
+    }
+
     case "move": {
       // Declare the state: a `move` node (carrying the state's goal text) hung off the
       // request as a flat child (`move` relation). The states are siblings, never nested;
@@ -1190,6 +1413,19 @@ export function executeAction(
         addEdge({ kind: "llm" }, actionId, id, "result");
         return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
       };
+      // Inquiry: a side-effecting call needs an open hypothesis; a write needs a change.
+      if (claimRules) {
+        const active = activeClaim(state);
+        if ((apply.tool === "bash" || apply.tool === "fetch") && active === undefined) {
+          return failed("no_open: open a hypothesis before a side-effecting command.");
+        }
+        if (
+          (apply.tool === "write" || apply.tool === "edit" || apply.tool === "apply_patch") &&
+          active?.kind !== "change"
+        ) {
+          return failed("not_a_change: writing requires an open change hypothesis");
+        }
+      }
       // Non-execution of a command is an observation with a reason, not a refusal without a
       // node (docs/en/ir.md §2.7, §4).
       const refusal = commandRefusal(state, apply, command);

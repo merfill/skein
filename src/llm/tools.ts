@@ -428,6 +428,24 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
     case "decline":
       action = { operator: "decline", ...pick("why") };
       break;
+    case "open_hypothesis":
+      action = {
+        operator: "claim_open",
+        kind: a.kind,
+        label: a.label,
+        suppose: a.suppose,
+        ifTrue: a.if_true,
+        ifFalse: a.if_false,
+      };
+      break;
+    case "close_hypothesis":
+      action = {
+        operator: "claim_close",
+        id: a.id,
+        verdict: a.verdict,
+        grounds: Array.isArray(a.grounds) ? a.grounds : [],
+      };
+      break;
     default:
       if (APPLY_TOOL_NAMES.has(name)) {
         action = { operator: "apply", action: toApply(name, a) };

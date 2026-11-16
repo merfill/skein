@@ -1,5 +1,5 @@
 import type { Event } from "./events";
-import type { Edge, Node, WitnessEntry } from "./types";
+import type { ClaimPayload, ClaimVerdictPayload, Edge, Node, WitnessEntry } from "./types";
 
 export interface RejectionRecord {
   seq: number;
@@ -76,6 +76,81 @@ export function childrenOf(state: State, containerId: string): string[] {
 export function witnessOf(state: State, nodeId: string): WitnessEntry[] | undefined {
   const payload = state.nodes.get(nodeId)?.payload as { witness?: WitnessEntry[] } | undefined;
   return payload?.witness;
+}
+
+// The `inquiry` unit's hypotheses, in append order. A claim is open until a `claim_verdict`
+// node with its id exists; the open claims of a well-formed unit always form one path.
+export function claimNodes(state: State): Node[] {
+  return [...state.nodes.values()]
+    .filter((node) => node.kind === "claim")
+    .sort((a, b) => a.seq - b.seq);
+}
+
+export function claimPayloadOf(state: State, claimId: string): ClaimPayload | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "claim") continue;
+    const payload = node.payload as ClaimPayload | undefined;
+    if (payload?.claimId === claimId) return payload;
+  }
+  return undefined;
+}
+
+export function claimNodeOf(state: State, claimId: string): Node | undefined {
+  return claimNodes(state).find(
+    (node) => (node.payload as ClaimPayload | undefined)?.claimId === claimId,
+  );
+}
+
+export function claimVerdictOf(state: State, claimId: string): ClaimVerdictPayload | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "claim_verdict") continue;
+    const payload = node.payload as ClaimVerdictPayload | undefined;
+    if (payload?.claimId === claimId) return payload;
+  }
+  return undefined;
+}
+
+export function claimChildrenOf(state: State, claimId: string): ClaimPayload[] {
+  const children: ClaimPayload[] = [];
+  for (const node of claimNodes(state)) {
+    const payload = node.payload as ClaimPayload | undefined;
+    if (payload?.parentId === claimId) children.push(payload);
+  }
+  return children;
+}
+
+// The active hypothesis: the latest open claim. With the single-path invariant it is the
+// leaf; a parent is still "open" while a child is open but is never active.
+export function activeClaim(state: State): ClaimPayload | undefined {
+  const open = claimNodes(state).filter((node) => {
+    const payload = node.payload as ClaimPayload | undefined;
+    return payload !== undefined && claimVerdictOf(state, payload.claimId) === undefined;
+  });
+  const leaf = open[open.length - 1];
+  return leaf?.payload as ClaimPayload | undefined;
+}
+
+export function activeClaimId(state: State): string | undefined {
+  return activeClaim(state)?.claimId;
+}
+
+// The open path from the root hypothesis to the active leaf. Empty when nothing is open.
+export function activeClaimPath(state: State): ClaimPayload[] {
+  const leaf = activeClaim(state);
+  if (leaf === undefined) return [];
+  const path: ClaimPayload[] = [];
+  let current: ClaimPayload | undefined = leaf;
+  const seen = new Set<string>();
+  while (current !== undefined && !seen.has(current.claimId)) {
+    seen.add(current.claimId);
+    path.unshift(current);
+    current = current.parentId !== undefined ? claimPayloadOf(state, current.parentId) : undefined;
+  }
+  return path;
+}
+
+export function claimOpenSeq(state: State, claimId: string): number | undefined {
+  return claimNodeOf(state, claimId)?.seq;
 }
 
 // The `stop` node a state is closed by (`stop` relation, move → stop), if any. This is a

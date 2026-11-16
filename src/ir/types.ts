@@ -24,6 +24,10 @@ export const WORK_KINDS = [
   // session-level artifact (the session agent's execution list), never task knowledge.
   "plan",
   "plan_item",
+  // The `inquiry` unit's hypotheses: an open `claim` and its `claim_verdict` closure. They
+  // hang off the request/another claim by `claim` edges and are not state turns.
+  "claim",
+  "claim_verdict",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -92,6 +96,28 @@ export interface PlanPayload {
   summary?: string;
 }
 
+// One hypothesis of the `inquiry` unit. The model declares it, the engine records it; the
+// expectations are stored, never parsed. A `claim` node hangs off its parent claim (or the
+// request) by a `claim` edge; `parentId` is the parent's claim id (absent for a root).
+export interface ClaimPayload {
+  claimId: string;
+  kind: "probe" | "change";
+  label: string;
+  suppose: string;
+  ifTrue: string;
+  ifFalse: string;
+  parentId?: string;
+  turn?: number;
+}
+
+// The closure of a claim: a separate immutable node, so the open claim is never rewritten.
+export interface ClaimVerdictPayload {
+  claimId: string;
+  verdict: "confirmed" | "refuted" | "done" | "dropped";
+  grounds: string[];
+  turn?: number;
+}
+
 // Relation names are the role the child plays for its owner (docs/en/ir.md §2.2):
 // a request's states hang off it via `move`; a state's turns container hangs off the `move`
 // via `turns`; each turn (action) hangs off the container via `turn`; a state's (the terminal
@@ -109,6 +135,9 @@ export const EDGE_KINDS = [
   // them out of the `move`/`turn` ordered-children maps.
   "plan",
   "plan_item",
+  // `inquiry`: request/claim → claim, and claim → claim_verdict.
+  "claim",
+  "verdict",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 

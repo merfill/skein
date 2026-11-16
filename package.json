@@ -34,6 +34,8 @@
     "prepublishOnly": "npm run build",
     "cli": "tsx src/cli.ts",
     "bench": "tsx bench/run.ts",
+    "inquiry": "tsx bench/inquiry.ts",
+    "inquiry:docker": "tsx tests/sandbox/inquiry-task.ts",
     "bench:gate": "tsx bench/gate.ts",
     "campaign": "tsx tests/sandbox/campaign.ts",
     "replay": "tsx bench/replay.ts"
