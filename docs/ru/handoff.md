@@ -67,10 +67,10 @@
 - Проверки: `npm run typecheck` — чисто; офлайн-тесты — **666 passed / 40 skipped**
   (`no_open`, `one_open`, `close_goal`, `no_close`, `no_goal`, `hypothesis_tool_alone`,
   `open_predicate`, `bad_summary`, `bad_hypothesis`, allowed-surface).
-- **Документация:** `docs/ru/inquiry.md` обновлён под H-контейнер/`grounds`/`done`, но в
-  этот коммит **не включён** (на вычитку). `docs/ru/tools.md`, `docs/en/tools.md`,
+- **Документация:** `docs/ru/inquiry.md` обновлён под H-контейнер/без grounds/`done`;
+  включён отдельным коммитом. `docs/ru/tools.md`, `docs/en/tools.md`,
   `docs/ru/ir_operations.md`, `docs/en/ir_operations.md` — предсуществующие правки,
-  не трогались. Коммитится только `docs/ru/handoff.md`.
+  не трогались.
 - Файлы этой итерации: `src/inquiry.ts`, `src/tools/index.ts`, `src/llm/inquiry.ts`,
   `src/llm/structured.ts`, `src/llm/schemas.ts`, `src/llm/tools.ts`, `src/ir/types.ts`,
   `src/ir/graph.ts`, `src/loop/graph.ts`; `tests/inquiry_unit.test.ts`,
