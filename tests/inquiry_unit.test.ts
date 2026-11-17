@@ -8,25 +8,32 @@ import { inquiryMessages, runInquiryUnit, seedInquiry, type InquiryDeps } from "
 import type { Event } from "../src/ir/events";
 import { fold } from "../src/ir/graph";
 import type { Action, Proposals } from "../src/llm/schemas";
+import { toProposal } from "../src/llm/tools";
 import { executeAction } from "../src/tools";
 import { fsWorkspace, type Workspace } from "../src/tools/workspace";
 
 function open(
-  kind: "probe" | "change",
   label: string,
   suppose: string,
   ifTrue = "yes",
   ifFalse = "no",
 ): Action {
-  return { operator: "open_hypothesis", kind, label, suppose, ifTrue, ifFalse };
+  return { operator: "open_hypothesis", label, suppose, ifTrue, ifFalse };
 }
 
 function close(
   id: string,
-  verdict: "confirmed" | "refuted" | "done" | "dropped",
-  grounds: string[],
+  verdict: "confirmed" | "refuted" | "dropped",
+  summary = "summary of the work",
 ): Action {
-  return { operator: "close_hypothesis", id, verdict, grounds };
+  return { operator: "close_hypothesis", id, verdict, summary };
+}
+
+function closeGoal(
+  outcome: "achieved" | "not_achieved",
+  summary = "final report",
+): Action {
+  return { operator: "close_goal", outcome, summary };
 }
 
 function read(path: string): Action {
@@ -52,23 +59,6 @@ function step(
   return { events: [...events, ...outcome.events], text: outcome.turn.text };
 }
 
-function payloadOfKind(events: readonly Event[], kind: string): unknown {
-  for (const event of events) {
-    if (event.type === "add_node" && event.node.kind === kind) return event.node.payload;
-  }
-  return undefined;
-}
-
-function observationId(events: readonly Event[]): string {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event?.type !== "add_node" || event.node.kind !== "observation") continue;
-    if ((event.node.payload as { failed?: unknown } | undefined)?.failed === true) continue;
-    return event.node.id;
-  }
-  throw new Error("no observation");
-}
-
 function textOf(message: ModelMessage): string {
   if (typeof message.content === "string") return message.content;
   return message.content
@@ -81,14 +71,6 @@ function textOf(message: ModelMessage): string {
       return "";
     })
     .join("\n");
-}
-
-function lastObservationInMessages(messages: readonly ModelMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const match = textOf(messages[index] as ModelMessage).match(/\[(obs:\d+)\]/);
-    if (match?.[1] !== undefined) return match[1];
-  }
-  throw new Error("no observation id in messages");
 }
 
 describe("inquiry", () => {
@@ -106,209 +88,251 @@ describe("inquiry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("runs a hypothesis to a grounded stop through the model loop", async () => {
+  it("runs a hypothesis and closes the goal with its summary", async () => {
     let stepNo = 0;
-    const propose = async (
-      messages: ModelMessage[],
-      options?: { final?: boolean },
-    ): Promise<Proposals> => {
-      if (options?.final === true) return { thought: "budget", actions: [] };
+    const propose = async (): Promise<Proposals> => {
       stepNo += 1;
-      if (stepNo === 1) {
-        return { thought: "", actions: [open("probe", "file", "a.txt exists")] };
-      }
-      if (stepNo === 2) {
-        return { thought: "", actions: [read("a.txt")] };
-      }
-      if (stepNo === 3) {
-        return {
-          thought: "",
-          actions: [close("C1", "confirmed", [lastObservationInMessages(messages)])],
-        };
-      }
-      return { thought: "done", actions: [] };
+      if (stepNo === 1) return { thought: "", actions: [open("file", "a.txt exists")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return { thought: "", actions: [close("C1", "confirmed", "a.txt exists")] };
+      if (stepNo === 4) return { thought: "done", actions: [] };
+      if (stepNo === 5) return { thought: "", actions: [closeGoal("achieved", "the final report")] };
+      throw new Error("unexpected turn");
     };
     const deps: InquiryDeps = { propose, workspace, maxTurns: 10 };
     const result = await runInquiryUnit(deps, {
       request: { id: "r1", text: "check a.txt" },
     });
 
-    expect(result.final).toBe("done");
+    expect(result.final).toBe("the final report");
+    expect(result.turns).toBe(5);
     expect(result.done).toBe(true);
-    expect(result.stopReason).toBe("answered");
+    expect(result.stopReason).toBe("achieved");
     expect(result.unresolved).toEqual([]);
-    const hypothesis = result.events.find(
-      (event) => event.type === "add_node" && event.node.kind === "hypothesis",
-    );
-    expect(hypothesis).toBeDefined();
-    const verdict = result.events.find(
-      (event) =>
-        event.type === "add_node" &&
-        event.node.kind === "hypothesis_verdict" &&
-        (event.node.payload as { verdict?: string }).verdict === "confirmed",
-    );
-    expect(verdict).toBeDefined();
+    const tape = inquiryMessages(fold(result.events), { id: "r1", text: "check a.txt" })
+      .map(textOf)
+      .join("\n");
+    expect(tape).toContain("Opening hypothesis C1: file.");
+    expect(tape).toContain("Closing hypothesis C1: confirmed");
+    expect(tape).toContain("Closing formula H: achieved.");
+    expect(tape).toContain("Summary: the final report");
+    expect(tape).not.toContain("step under");
   });
 
-  it("refuses side effects without a hypothesis and writes without a change", () => {
-    let events = seedInquiry({ id: "r1", text: "t" });
-    const noHypothesis = step(events, workspace, bash("echo hi"));
-    expect(noHypothesis.text).toContain("no_open");
+  it("refuses a malformed open_hypothesis instead of throwing", () => {
+    const events = seedInquiry({ id: "r1", text: "t" });
+    const proposal = toProposal(
+      "open_hypothesis",
+      { suppose: "s", if_true: "y", if_false: "n" },
+      "",
+    );
+    const outcome = executeAction(proposal.action, fold(events), workspace, 0, undefined, {
+      hypothesisRules: true,
+    });
+    expect(outcome.turn.text).toContain("bad_hypothesis");
 
-    events = step(events, workspace, open("probe", "p", "s")).events;
-    const probeWrite = step(events, workspace, write("c.txt", "x"));
-    expect(probeWrite.text).toContain("not_a_change");
-
-    const emptyExpectation = step(events, workspace, open("probe", "q", "s", "", ""));
-    expect(emptyExpectation.text).toContain("bad_expectation");
+    const empty = step(events, workspace, open("", "s"));
+    expect(empty.text).toContain("bad_hypothesis");
   });
 
-  it("enforces grounds and verdicts for a change", () => {
+  it("records a model error instead of crashing", async () => {
+    const propose = async (): Promise<Proposals> => {
+      throw new Error("invalid tool call");
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 5 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.done).toBe(false);
+    expect(result.stopReason).toBe("model_error");
+    expect(result.final).toBe("");
+  });
+
+  it("requires an open hypothesis for actions and keeps one open at a time", () => {
     let events = seedInquiry({ id: "r1", text: "t" });
-    events = step(events, workspace, open("probe", "p", "s")).events;
-    const readStep = step(events, workspace, read("a.txt"));
-    events = readStep.events;
-    const obs = observationId(readStep.events);
+    expect(step(events, workspace, bash("echo hi")).text).toContain("no_open");
 
-    const noGrounds = step(events, workspace, close("C1", "confirmed", []));
-    expect(noGrounds.text).toContain("bad_grounds");
+    const empty = step(events, workspace, open("q", "s", "", ""));
+    expect(empty.text).toContain("bad_expectation");
 
-    const badVerdict = step(events, workspace, close("C1", "done", [obs]));
-    expect(badVerdict.text).toContain("bad_verdict");
+    events = step(events, workspace, open("p", "s")).events;
+    expect(step(events, workspace, open("q", "s")).text).toContain("one_open");
+    const written = step(events, workspace, write("c.txt", "x"));
+    expect(written.text).toContain("wrote c.txt");
+  });
 
-    const notOpen = step(events, workspace, close("C9", "confirmed", [obs]));
+  it("enforces the open state and a non-empty summary", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("p", "s")).events;
+    events = step(events, workspace, read("a.txt")).events;
+
+    const notOpen = step(events, workspace, close("C9", "confirmed"));
     expect(notOpen.text).toContain("not_open");
+    expect(notOpen.text).toContain("Open: C1");
 
-    const closed = step(events, workspace, close("C1", "confirmed", [obs]));
+    const empty = step(events, workspace, close("C1", "confirmed", "   "));
+    expect(empty.text).toContain("bad_summary");
+
+    const closed = step(events, workspace, close("C1", "confirmed"));
     expect(closed.text).toContain("close_hypothesis C1 confirmed");
 
-    let change = seedInquiry({ id: "r2", text: "t" });
-    change = step(change, workspace, open("change", "c", "change it")).events;
-    const changeRead = step(change, workspace, read("a.txt"));
-    change = changeRead.events;
-    const changeObs = observationId(changeRead.events);
-
-    const written = step(change, workspace, write("a.txt", "changed\n"));
-    expect(written.text).toContain("wrote a.txt");
-    const done = step(written.events, workspace, close("C1", "done", [changeObs]));
-    expect(done.text).toContain("close_hypothesis C1 done");
-  });
-
-  it("names valid grounds and the recall bridge", () => {
-    let events = seedInquiry({ id: "r1", text: "t" });
-    const before = step(events, workspace, read("a.txt"));
-    events = before.events;
-    const beforeObs = observationId(before.events);
-    events = step(events, workspace, open("probe", "p", "s")).events;
-    const bad = step(events, workspace, close("C1", "confirmed", [beforeObs]));
-    expect(bad.text).toContain("was recorded before C1 opened");
-    expect(bad.text).toContain(`recall ${beforeObs} by id`);
-    expect(bad.text).toContain("Valid grounds under C1:");
-  });
-
-  it("does not close a parent while a child is open", () => {
-    let events = seedInquiry({ id: "r1", text: "t" });
-    events = step(events, workspace, open("probe", "parent", "p")).events;
-    events = step(events, workspace, open("probe", "child", "c")).events;
-    const childRead = step(events, workspace, read("a.txt"));
-    events = childRead.events;
-    const obs = observationId(childRead.events);
-
-    const openBlock = inquiryMessages(fold(events), { id: "r1", text: "t" })
-      .map(textOf)
-      .find((text) => text.startsWith("OPEN")) ?? "";
-    const c1Line = openBlock.split("\n").find((line) => line.startsWith("C1 ")) ?? "";
-    const c2Line = openBlock.split("\n").find((line) => line.startsWith("C2 ")) ?? "";
-    expect(c1Line).not.toContain("[ACTIVE]");
-    expect(c2Line).toContain("[ACTIVE]");
-
-    const parent = step(events, workspace, close("C1", "confirmed", [obs]));
-    expect(parent.text).toContain("children_open");
-    expect(parent.text).toContain("close the active C2 first");
-    expect(parent.text).toContain("C1 > C2");
-
-    const child = step(events, workspace, close("C2", "confirmed", [obs]));
-    expect(child.text).toContain("close_hypothesis C2 confirmed");
-    const parentAfter = step(child.events, workspace, close("C1", "confirmed", [obs]));
-    expect(parentAfter.text).toContain("close_hypothesis C1 confirmed");
+    const again = step(closed.events, workspace, close("C1", "confirmed"));
+    expect(again.text).toContain("already closed");
   });
 
   it("scopes repeated actions to the current hypothesis", () => {
     let events = seedInquiry({ id: "r1", text: "t" });
-    events = step(events, workspace, open("probe", "first", "f")).events;
-    const firstRead = step(events, workspace, read("a.txt"));
-    events = firstRead.events;
-    const firstObs = observationId(firstRead.events);
-    events = step(events, workspace, close("C1", "confirmed", [firstObs])).events;
+    events = step(events, workspace, open("first", "f")).events;
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("C1", "confirmed")).events;
+    events = step(events, workspace, open("second", "s")).events;
 
-    events = step(events, workspace, open("probe", "second", "s")).events;
     const secondRead = step(events, workspace, read("a.txt"));
     expect(secondRead.text).not.toContain("repeated_action");
     const repeated = step(secondRead.events, workspace, read("a.txt"));
     expect(repeated.text).toContain("repeated_action");
   });
 
-  it("keeps a child verdict out of the parent summary", () => {
-    let events = seedInquiry({ id: "r1", text: "t" });
-    events = step(events, workspace, open("change", "parent", "alpha")).events;
-    const parentRead = step(events, workspace, read("a.txt"));
-    events = parentRead.events;
-    const parentObs = observationId(parentRead.events);
-    events = step(events, workspace, open("probe", "child", "beta")).events;
-    const childRead = step(events, workspace, read("b.txt"));
-    events = childRead.events;
-    const childObs = observationId(childRead.events);
-    events = step(events, workspace, close("C2", "confirmed", [childObs])).events;
-    events = step(events, workspace, write("a.txt", "alpha2\n")).events;
-    events = step(events, workspace, close("C1", "done", [parentObs])).events;
-
-    const state = fold(events);
-    const messages = inquiryMessages(state, { id: "r1", text: "t" });
-    const closed = messages.map(textOf).find((text) => text.startsWith("CLOSED"));
-    expect(closed).toBeDefined();
-    const lines = (closed ?? "").split("\n");
-    const parentLine = lines.find((line) => line.trimStart().startsWith("C1 ")) ?? "";
-    const childLine = lines.find((line) => line.trimStart().startsWith("C2 ")) ?? "";
-    expect(parentLine).toContain("a.txt");
-    expect(parentLine).not.toContain("b.txt");
-    expect(childLine).toContain("b.txt");
-  });
-
   it("keeps a successful open and close on the tape", () => {
     let events = seedInquiry({ id: "r1", text: "t" });
-    events = step(events, workspace, open("change", "root", "make a.txt change")).events;
-    const readStep = step(events, workspace, read("a.txt"));
-    events = readStep.events;
-    const obs = observationId(readStep.events);
-    events = step(events, workspace, close("C1", "done", [obs])).events;
+    events = step(events, workspace, open("root", "make a.txt change")).events;
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("C1", "confirmed")).events;
 
-    const all = inquiryMessages(fold(events), { id: "r1", text: "t" })
-      .map(textOf)
-      .join("\n");
-    expect(all).toContain("open_hypothesis");
-    expect(all).toContain("C1 opened change: root");
-    expect(all).toContain("close_hypothesis");
-    expect(all).toContain(`C1 done (${obs})`);
+    const all = inquiryMessages(fold(events), { id: "r1", text: "t" }).map(textOf).join("\n");
+    expect(all).toContain("Opening hypothesis C1: root.");
+    expect(all).toContain("Closing hypothesis C1: confirmed.");
+    expect(all).toContain("Summary: summary of the work");
+    expect(all).not.toContain("All hypotheses are closed");
+    expect(all).not.toContain('"hypothesis_id"');
+    expect(all).not.toContain("w:hypothesis");
+    expect(all).not.toContain("[obs:");
   });
 
-  it("records an unresolved hypothesis at a text stop", async () => {
+  it("closes the goal and uses its summary as the final answer", async () => {
     let stepNo = 0;
     const propose = async (): Promise<Proposals> => {
       stepNo += 1;
-      if (stepNo === 1) {
-        return { thought: "", actions: [open("probe", "p", "unknown")] };
+      if (stepNo === 1) return { thought: "", actions: [open("root", "p")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return { thought: "", actions: [close("C1", "confirmed", "the cause")] };
+      if (stepNo === 4) return { thought: "complete", actions: [] };
+      if (stepNo === 5) return { thought: "", actions: [closeGoal("achieved", "the root report")] };
+      throw new Error("the engine must not call the model after the goal closes");
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.final).toBe("the root report");
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("achieved");
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it("closes the goal as not achieved after a refuted hypothesis", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("H", "the cause")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return { thought: "", actions: [close("C1", "refuted", "not the cause")] };
+      if (stepNo === 4) return { thought: "exhausted", actions: [] };
+      if (stepNo === 5) {
+        return { thought: "", actions: [closeGoal("not_achieved", "ruled out: a.txt is not the cause")] };
       }
+      throw new Error("the engine must not call the model after the goal closes");
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.final).toBe("ruled out: a.txt is not the cause");
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("not_achieved");
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it("validates close_goal", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("p", "s")).events;
+    expect(step(events, workspace, closeGoal("achieved")).text).toContain("open_predicate");
+
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("C1", "confirmed")).events;
+    expect(step(events, workspace, closeGoal("achieved", "   ")).text).toContain("bad_summary");
+    const ok = step(events, workspace, closeGoal("achieved", "final"));
+    expect(ok.text).toContain("close_goal achieved");
+  });
+
+  it("refuses an action after the hypothesis closes", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("p", "s")).events;
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("C1", "confirmed")).events;
+    expect(step(events, workspace, bash("echo hi")).text).toContain("no_open");
+  });
+
+  it("rejects a reply that mixes a hypothesis tool with other calls", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("H", "the cause"), read("a.txt")] };
+      if (stepNo === 2) return { thought: "", actions: [open("H", "the cause")] };
+      if (stepNo === 3) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 4) return { thought: "", actions: [close("C1", "confirmed", "the cause held")] };
+      if (stepNo === 5) return { thought: "complete", actions: [] };
+      if (stepNo === 6) {
+        return { thought: "", actions: [closeGoal("achieved", "the cause held")] };
+      }
+      throw new Error("the engine must not call the model after the goal closes");
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.final).toBe("the cause held");
+    expect(result.stopReason).toBe("achieved");
+    const tape = inquiryMessages(fold(result.events), { id: "r1", text: "t" })
+      .map(textOf)
+      .join("\n");
+    expect(tape).toContain("hypothesis_tool_alone");
+  });
+
+  it("treats a reply without tool calls while a hypothesis is open as an error", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("p", "unknown")] };
       return { thought: "cannot resolve", actions: [] };
     };
     const result = await runInquiryUnit(
       { propose, workspace, maxTurns: 10 },
       { request: { id: "r1", text: "t" } },
     );
-    expect(result.final).toBe("cannot resolve");
+    expect(result.final).toBe("");
+    expect(result.done).toBe(false);
+    expect(result.stopReason).toBe("no_close");
     expect(result.unresolved).toHaveLength(1);
     expect(result.unresolved[0]?.id).toBe("C1");
-    expect(
-      (payloadOfKind(result.events, "stop") as { unresolved?: unknown[] } | undefined)?.unresolved,
-    ).toHaveLength(1);
+  });
+
+  it("requires close_goal after the model stops", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("p", "s")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return { thought: "", actions: [close("C1", "confirmed", "done")] };
+      return { thought: "stop", actions: [] };
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.final).toBe("");
+    expect(result.done).toBe(false);
+    expect(result.stopReason).toBe("no_goal");
+    expect(result.unresolved).toEqual([]);
   });
 });

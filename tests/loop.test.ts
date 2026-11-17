@@ -136,23 +136,6 @@ describe("classify", () => {
     expect(verdict.reason).toContain("constraint_violation");
   });
 
-  it("refuses an edit on a stale read basis", () => {
-    const events: Event[] = [
-      ...open(),
-      { type: "add_node", node: { id: "file:src/a.ts", space: "artifact", kind: "file", label: "src/a.ts", seq: 1 } },
-      {
-        type: "add_node",
-        node: { id: "o1", space: "work", kind: "observation", label: "read src/a.ts", payload: { ref: "file:src/a.ts", version: "v1" }, seq: 2 },
-      },
-      { type: "mutate", ref: "file:src/a.ts", version: "v2", actionId: "a1" },
-    ];
-    const verdict = runApply(
-      { operator: "apply", action: { tool: "edit", path: "src/a.ts", find: "a", replace: "b" } },
-      events,
-    );
-    expect(verdict.reason).toBe("stale_base");
-  });
-
   it("refuses a repeated run with no change since it ran", () => {
     const events: Event[] = [
       ...open(),

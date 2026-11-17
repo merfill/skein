@@ -111,43 +111,39 @@ export function hypothesisVerdictOf(state: State, hypothesisId: string): Hypothe
   return undefined;
 }
 
-export function hypothesisChildrenOf(state: State, hypothesisId: string): HypothesisPayload[] {
-  const children: HypothesisPayload[] = [];
-  for (const node of hypothesisNodes(state)) {
-    const payload = node.payload as HypothesisPayload | undefined;
-    if (payload?.parentId === hypothesisId) children.push(payload);
+// The engine-owned formula H, if the unit has one.
+export function formulaNode(state: State): Node | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind === "formula") return node;
   }
-  return children;
+  return undefined;
 }
 
-// The active hypothesis: the latest open hypothesis. With the single-path invariant it is the
-// leaf; a parent is still "open" while a child is open but is never active.
+// The closure of H, if the model has closed the goal.
+export function goalVerdictOf(state: State): Node | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind === "goal_verdict") return node;
+  }
+  return undefined;
+}
+
+// The open hypothesis, if any. Hypotheses are flat conjuncts of H, so at most one is open.
 export function activeHypothesis(state: State): HypothesisPayload | undefined {
   const open = hypothesisNodes(state).filter((node) => {
     const payload = node.payload as HypothesisPayload | undefined;
     return payload !== undefined && hypothesisVerdictOf(state, payload.hypothesisId) === undefined;
   });
-  const leaf = open[open.length - 1];
-  return leaf?.payload as HypothesisPayload | undefined;
+  return open[open.length - 1]?.payload as HypothesisPayload | undefined;
 }
 
 export function activeHypothesisId(state: State): string | undefined {
   return activeHypothesis(state)?.hypothesisId;
 }
 
-// The open path from the root hypothesis to the active leaf. Empty when nothing is open.
+// The open hypotheses form a single-element list in the flat model; empty when nothing is open.
 export function activeHypothesisPath(state: State): HypothesisPayload[] {
-  const leaf = activeHypothesis(state);
-  if (leaf === undefined) return [];
-  const path: HypothesisPayload[] = [];
-  let current: HypothesisPayload | undefined = leaf;
-  const seen = new Set<string>();
-  while (current !== undefined && !seen.has(current.hypothesisId)) {
-    seen.add(current.hypothesisId);
-    path.unshift(current);
-    current = current.parentId !== undefined ? hypothesisPayloadOf(state, current.parentId) : undefined;
-  }
-  return path;
+  const active = activeHypothesis(state);
+  return active !== undefined ? [active] : [];
 }
 
 export function hypothesisOpenSeq(state: State, hypothesisId: string): number | undefined {

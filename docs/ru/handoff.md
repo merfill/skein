@@ -3,6 +3,207 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-17 — `inquiry`: H-контейнер, `close_goal`, live
+
+> Эта запись новее 2026-11-16. «Root = H-гипотеза» заменён на **H-контейнер**: H создаёт
+> движок, модель выдвигает предикаты-гипотезы; финал — `close_goal`. Live-прогоны ниже.
+
+### Итог одной фразой
+
+`T` — запрос и reference. `H` — контейнер формулы (`H = h₁ ∧ h₂ ∧ …`), создаётся движком,
+не гипотеза и не пишется моделью. Модель выдвигает предикаты `hᵢ` (утверждение с
+`if_true`/`if_false`), по одному открытому; действия идут только под открытым предикатом.
+После закрытия предиката — следующий или остановка. Остановка → движок просит `close_goal`,
+его `outcome`+`summary` — результат. Журнал монотонен; формула и проекция немонотонны.
+
+### Концепция (реализована)
+
+- `T` — цель/наблюдение пользователя; запрос и reference, не гипотеза.
+- `H` — контейнер: `h₁ ∧ h₂ ∧ …`, создаётся движком, своего `suppose` не имеет.
+- Предикат `hᵢ` — настоящая гипотеза: `suppose`, `if_true`, `if_false`, вердикт.
+- Один открытый предикат; действие без него — `no_open`; второй open — `one_open`.
+- `refuted`/`dropped` предикат остаётся в журнале, выпадает из формулы; модель открывает
+  замену или останавливается.
+- **Остановка.** После close — либо следующий предикат, либо stop (ответ без вызовов).
+  Stop при открытом предикате — ошибка `no_close`. При stop движок просит `close_goal`.
+- **`close_goal(outcome, summary)`** закрывает H: `outcome` — `achieved`/`not_achieved`,
+  `summary` — финальный ответ. Списка оснований нет.
+- Работа закрытого предиката уходит с ленты; summary — её единственный след.
+- Журнал монотонен; формула/проекция немонотонны; `refuted` — отрицательное знание, а не
+  потеря.
+
+### Что уже сделано в коде
+
+- Убран `kind` (`probe`/`change`) из `open_hypothesis`, `HypothesisPayload`, схем,
+  проекции, промпта, тестов и доков. Инструменты:
+  `open_hypothesis(label, suppose, if_true, if_false)`,
+  `close_hypothesis(hypothesis_id, verdict, summary)`; `grounds` убраны и у предикатов.
+- Вердикты предиката: `confirmed`/`refuted`/`dropped`. **`done` убран**: это слово про
+  завершённость задачи, а не про claim; итог запроса — `outcome` цели (`achieved`/
+  `not_achieved`). Смешение `confirmed`/`done` в одном поле путало модель. Убраны `bad_verdict` по kind,
+  `not_a_change`, `root_closed`, read-before-write и `stale_base` для `write`/`edit`.
+- **H-контейнер реализован.** `T` — запрос/reference; H — узел `formula`, создаётся
+  `seedInquiry`, не гипотеза. Предикаты — плоские `hypothesis` под H; итог — `goal_verdict`.
+  Рёбра: `formula` (request→H), `hypothesis` (H→предикат), `verdict`, `goal`.
+- **Action-binding:** `apply`/`recall`/`search` без открытого предиката — `no_open`;
+  второй `open_hypothesis` — `one_open`.
+- **`close_goal`** (`outcome`, `summary`) закрывает H и завершает работу. Проверки:
+  `open_predicate`, `bad_summary`.
+- **Фазы в `runInquiryUnit`:** `open` (только `open_hypothesis`), `work` (рабочие +
+  `close_hypothesis`), `finish` (только `close_goal`). Stop при открытом предикате —
+  `no_close`; stop в `finish` без `close_goal` — `no_goal`. `FINISH_INSTRUCTION`,
+  `OPEN_INSTRUCTION` (критерий остановки) — system-сообщения.
+- Гипотезные вызовы — одиночные; смешанный ответ — `hypothesis_tool_alone`.
+- Лента: `Opening hypothesis …` / `Closing hypothesis …` + `Summary: …`; финал —
+  `Closing formula H: <outcome>. Summary: …` (без grounds, без `(step under …)`).
+- **Промпт v8/v9:** задача первой; имена инструментов убраны из общей части и из
+  описаний, где инструмент недоступен; `request is the goal`; вердикт предиката — про
+  claim, итог запроса — `outcome` цели; `done` убран; stop/`close_goal` — по результату.
+- **Строгая поверхность:** `invokeTools` проверяет `toolName` против `allowedTools`;
+  вызов вне набора — repair с перечнем доступных, повтор — `model_error` (без крэша и без
+  исполнения). Тест в `tests/structured.test.ts`.
+- **Кривые вызовы:** `open_hypothesis` без `label`/`suppose` → `bad_hypothesis`, пустые
+  ожидания → `bad_expectation`; `model_error` — safety net `runInquiryUnit`.
+- Проверки: `npm run typecheck` — чисто; офлайн-тесты — **666 passed / 40 skipped**
+  (`no_open`, `one_open`, `close_goal`, `no_close`, `no_goal`, `hypothesis_tool_alone`,
+  `open_predicate`, `bad_summary`, `bad_hypothesis`, allowed-surface).
+- **Документация:** `docs/ru/inquiry.md` обновлён под H-контейнер/`grounds`/`done`, но в
+  этот коммит **не включён** (на вычитку). `docs/ru/tools.md`, `docs/en/tools.md`,
+  `docs/ru/ir_operations.md`, `docs/en/ir_operations.md` — предсуществующие правки,
+  не трогались. Коммитится только `docs/ru/handoff.md`.
+- Файлы этой итерации: `src/inquiry.ts`, `src/tools/index.ts`, `src/llm/inquiry.ts`,
+  `src/llm/structured.ts`, `src/llm/schemas.ts`, `src/llm/tools.ts`, `src/ir/types.ts`,
+  `src/ir/graph.ts`, `src/loop/graph.ts`; `tests/inquiry_unit.test.ts`,
+  `tests/structured.test.ts`, `tests/sandbox/inquiry-task.ts`, `bench/inquiry.ts`;
+  обновления тестов под no-kind/no-gates: `tests/loop.test.ts`, `tests/ops/apply.test.ts`,
+  `tests/prompt.test.ts`, `tests/tape_contract.test.ts`; доки: `docs/ru/handoff.md`.
+
+### Эксперименты
+
+Все артефакты — в `bench/runs/…` (durable). Старый `/tmp/skein-inquiry-docker-k3d`
+потерян при очистке `/tmp`.
+
+| прогон | код/промпт | solved | ходов | цена | гипотезы |
+|---|---|---:|---:|---:|---|
+| `inquiry-k3d` | старый код, root-цель | 3/3 | 64 | 3.03₽ | — |
+| `inquiry-k3d-v2` | JSON/summary, до lifecycle/root | 2/3 | 40 | 2.13₽ | — (r1 fail, r2 open=1) |
+| `inquiry-k3d-v3` | lifecycle/root gate | 3/3 | 36 | 0.99₽ | — (edge collision, closing missing) |
+| `inquiry-k3d-v4` | + edge fix | 3/3 | 32 | 0.85₽ | — |
+| `inquiry-custom-memory-heap-crash-k1` | старый код, report call | 1/1 | 40 | 1.61₽ | 1 (C1); final DSML |
+| `…-k1-v2` | no-kind/no-gates/auto-end + permissive prompt | 1/1 | 22 | 1.11₽ | 1 (C1) |
+| `…-k1-v3` | + next-action-explanation prompt | 1/1 | 30 | 1.40₽ | 1 (C1) |
+| `…-k1-v4` | + plan-step prompt | 1/1 | 32 | 1.73₽ | 1 (C1) |
+| `inquiry-db-wal-recovery-k1` | старый код | 1/1 | 7 | 0.54₽ | 1 (C1) |
+| `inquiry-abduction-fix-git-k3` | **абдуктивный v5 + `no_open`** | 3/3 | 38 | 1.22₽ | 1/1/1 (C1, детей нет) |
+| `inquiry-abduction-custom-memory-k1` | **абдуктивный v5 + `no_open`** | 1/1 | 20 | 1.05₽ | 1 (C1, детей нет) |
+| `inquiry-v7-fix-git-k3` | абдуктивный v7, root=H-гипотеза | **2/3** | 33 | 0.94₽ | 1–2 C1; r3 закрыл без merge |
+| `inquiry-v7-custom-memory-k1` | абдуктивный v7 | 1/1 | 37 | 2.02₽ | C1→C2, без `refuted` |
+| `inquiry-container-fix-git-k3` | **H-контейнер, без stop-cue** | 3/3 | 63 | 2.02₽ | 2–4 предиката |
+| `inquiry-container-custom-memory-k1` | **H-контейнер, без stop-cue** | 1/1* | **60 (cap)** | 2.18₽ | C1–C9, цикл проверок, `final=""` |
+| `inquiry-container2-fix-git-k3` | **H-контейнер + stop-cue** | 3/3 | 50 | 1.37₽ | 1–2 предиката |
+| `inquiry-container2-custom-memory-k1` | **H-контейнер + stop-cue** | 1/1 | 38 | 1.91₽ | C1 refuted → C2 done → `close_goal` |
+| `inquiry-container3-fix-git-k3` | + prompt v7 (1 фраза на место) | 3/3 | 46 | 1.32₽ | 1–3 предиката; 0 отказов |
+| `inquiry-container3-custom-memory-k1` | то же | — | — | — | крэш: `open_hypothesis` без `label` |
+| `inquiry-container4-custom-memory-k1` | + `bad_hypothesis`/`model_error` | 1/1 | 53 | 2.49₽ | C1→C2→C3 verify; 3 `no_open` |
+| `inquiry-container5-fix-git-k3` | **промпт без имён инструментов** | 3/3 | 45 | 1.27₽ | 1–2 предиката; 0 отказов |
+| `inquiry-container5-custom-memory-k1` | **промпт без имён инструментов** | 1/1 | 39 | 1.90₽ | C1 refuted → C2; 0 отказов |
+| `inquiry-v9-fix-code-vulnerability-k1` | **`done` убран: verdict=claim, outcome=goal** | 1/1 | 15 | 0.49₽ | 1 C1 confirmed → `close_goal`; verify исчез |
+| `inquiry-v9-fix-git-k1` | то же | 1/1 | 22 | 0.58₽ | C1 locate → C2 refuted → C3 merge |
+| `inquiry-v9-fix-git-k3` | **`done` убран, K=3** | 3/3 | 41 (11/13/17) | 1.24₽ | 1/1/2 предиката; 0 отказов |
+| `inquiry-v9-password-recovery-k1` | то же | 1/1 | 23 | 1.34₽ | 1 C1 confirmed; дубль C2 исчез |
+
+- `fix-git` v4: r1 9, r2 12, r3 11 ходов; avg 10.7 vs opencode 8.3; input 65.0k vs
+  78.2k; fresh 5.9k vs 4.1k; output 2.2k vs 1.35k; цена 0.283₽ vs 0.20₽; cache 90.9%
+  vs 94.8%.
+- **`fix-git` v5 (абдукция):** r1 11/0.28₽, r2 11/0.37₽, r3 16/0.57₽; avg 12.7 хода,
+  0.407₽. Чуть хуже v4 (10.7 / 0.283₽): +19% ходов, +44% цены. Root — настоящая `H`
+  (где лежат правки и как их вернуть), а не пересказ T.
+- **`custom-memory` v5:** 20 ходов, 1.05₽, решено; лучше v2 (22/1.11₽), v3 (30/1.40₽),
+  v4 (32/1.73₽). Root — причинная `H` про libstdc++/custom heap, не пересказ T. Финал —
+  нормальный `summary` из закрытия C1.
+- **v7 (root=H-гипотеза):** `fix-git` 2/3 — r3 закрыл корень `confirmed`, не сделав
+  merge (слабый `if_true` «можно слить»); `custom-memory` 37/2.02₽, C1→C2, без `refuted`.
+- **H-контейнер без stop-cue:** `fix-git` 3/3 (63 хода), `custom-memory` упёрся в 60
+  ходов с открытым C9: после фикса (C3 done) модель открыла C4–C9 — повторные проверки;
+  `final=""`, `max_turns`. Причина: после close доступен только `open_hypothesis`, а
+  «stop» — ответ без вызовов; стёртая работа закрытого предиката вызывала недоверие.
+- **H-контейнер + stop-cue:** цикл исчез. `custom-memory` 38/1.91₽: C1 `refuted`
+  (неверная причина), C2 `done` (фикс), `close_goal`; финал есть. `fix-git` 3/3,
+  50/1.37₽, все реально мержат и проверяют. Цена всё ещё выше v5 (`custom-memory`
+  1.91 vs 1.05; `fix-git` 50 vs 38 ходов).
+- **Промпт v8 (container5):** имена `open_hypothesis`/`close_hypothesis`/`close_goal` убраны из общей части (остались в описаниях инструментов и phase-сообщении), убран абзац про стирание, задача поставлена первой, `request is the goal` вместо `reference`. Эффект: `custom-memory` 53→39 ходов, 2.49→1.90₽, 3→0 отказов, 3→2 гипотезы, C3-верификация исчезла; `fix-git` 3/3, 45/1.27₽.
+- **`grounds` убраны полностью:** и у `close_hypothesis`, и у `close_goal`. Это был
+  механический список, который движок не проверял по смыслу; `summary` — единственный
+  след. `bad_grounds` и `validGroundsText` удалены.
+- `custom-memory` v2/v3/v4 решены, но **всегда одна гипотеза C1**, без детей и
+  `refuted`. v4 выбрала `ostringstream`-фикс вместо прямого `_Facet_Register_impl`;
+  лишние ~10 ходов (T12–T27) — gdb/заголовки/препроцессор, а не сдвиг цели и не влияние
+  plan-step. В v2 финал уже был нормальным `summary`; v1 — DSML.
+- `db-wal-recovery`: 7 ходов, 0.54₽, одна гипотеза, XOR-ключ `0x42`; финал нормальный.
+- T0 в `custom-memory`: reasoning `open_hypothesis` — «Let me start by exploring the
+  workspace». Это **гипотеза/шаг**, а не формальность: модель открыла root-контейнер
+  (пересказ T), потому что промпт требует root в начале, а её настоящий claim (осмотр,
+  затем причина) остался в reasoning. Это ключевое доказательство ошибки root=цель.
+
+### Проблемы и наблюдения
+
+- **Закрыто этой итерацией:** root-as-goal/H-гипотеза (теперь H-контейнер), авто-завершение
+  (теперь `close_goal`), цикл повторных проверок (stop-cue + запрет re-verify).
+- **H-контейнер работает:** `custom-memory` 38/1.91₽, C1 `refuted` → C2 `done` →
+  `close_goal`, финал есть; `fix-git` 3/3, 50/1.37₽, все реально мержат и проверяют
+  (в отличие от v7 r3, где корень был закрыт без merge).
+- **`refuted` теперь используется:** в `custom-memory` C1 (неверная причина) закрыт
+  `refuted`, C2 — фикс. Отрицательное знание работает.
+- **Цена выше v5:** `custom-memory` 1.91 vs 1.05; `fix-git` 50 vs 38 ходов. Причина —
+  больше предикатов (C1 refuted + C2 fix) и отдельный ход на `close_goal`.
+- **Повторные проверки побеждены stop-cue:** без него `custom-memory` ушёл в 60-ходовой
+  цикл; с cue — остановился после C2. Но cue — костыль-подсказка; следить, не исчезнет ли
+  эффект на других задачах.
+- `grounds` удалены: `summary` несёт всё, что нужно; движок его не разбирает.
+- **`done` убран (v9):** вердикт предиката — только `confirmed`/`refuted`/`dropped`; итог запроса — `outcome` цели. Эффект: `fix-code` 27→15 ходов, 0.90→0.49₽, verify-гипотеза исчезла; `password` 29→23, дубль C2 исчез; `fix-git` K=3 — 3/3, 41/1.24₽ (11/13/17), r1/r2 одна гипотеза, r3 — 2 (locate + verify merge), 0 отказов. Против v8 K=3 45/1.27 — небольшое улучшение, стабильно.
+- **Якорь протокола:** reasoning на `custom-memory` был перегружен open/close/one-open/
+  stop; opencode думает только о задаче. Минимальный промпт v8 убрал этот слой:
+  `custom-memory` 53→39 ходов, 3→0 отказов, C3-верификация исчезла. Остаточная цена —
+  39 vs 19 шагов opencode, 30 bash vs 16: это gdb/исследование libstdc++, а не протокол.
+- `no_open` стоит 1–2 хода (T0 «Let me inspect…» → отказ → open).
+- `fix-git` K=5 и `fix-ocaml-gc`/`fix-code-vulnerability` не пробовались; `db-wal` слишком
+  прост.
+- Рабочее дерево: в коммите — inquiry-код/тесты/handoff; `docs/ru/inquiry.md` и
+  предсуществующие правки `tests/sandbox/{campaign,matrix,opencode-run,sandbox-run,tasks/registry}.ts`,
+  LHTB-задачи и dotfiles оставлены вне коммита.
+
+### План следующей сессии
+
+1. ~~**H-контейнер + `close_goal`**~~ — сделано: `formula`/`goal_verdict`, фазы,
+   `one_open`/`no_open`/`no_close`/`no_goal`, `hypothesis_tool_alone`.
+2. ~~**Промпт v8: без имён инструментов в общей части**~~ — сделано; якорь протокола
+   снят. `custom-memory` 53→39 ходов, 2.49→1.90₽, 0 отказов; `fix-git` 3/3, 45/1.27₽.
+3. **Цена:** `custom-memory` 39 vs opencode 19 шагов, 30 vs 16 bash; `fix-git` 45 vs 8.
+   Остаток — gdb/исследование libstdc++ и ходы протокола (open/close/stop/`close_goal`),
+   не якорь. Решить, что оптимизировать дальше.
+4. **Другие задачи:** `fix-code-vulnerability` K=1, `fix-ocaml-gc` K=1 (60 ходов) — там
+   декомпозиция естественна; `fix-git` K=5 после стабилизации.
+5. **Коммит** текущего состояния после вычитки.
+
+### Команды и артефакты
+
+- Офлайн: `npm run typecheck`;
+  `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — 664/40.
+- Inquiry Docker:
+  `SKEIN_INQUIRY_TASK=<id> SKEIN_INQUIRY_REPEAT=1 SKEIN_INQUIRY_SAVE=bench/runs/<dir>
+  npm run inquiry:docker`. Тяжёлый live — только с разрешения владельца; не запускать
+  голый `vitest`; батчи — параллельно, без wall-clock timeout.
+- Артефакты: `bench/runs/inquiry-k3d`, `-v2`, `-v3`, `-v4`;
+  `bench/runs/inquiry-custom-memory-heap-crash-k1`, `-v2`, `-v3`, `-v4`;
+  `bench/runs/inquiry-db-wal-recovery-k1`; `inquiry-abduction-*` (v5);
+  `inquiry-v7-*` (root=H); `inquiry-container-*` (без stop-cue);
+  `inquiry-container2-*` (с stop-cue).
+- Образы/кэш есть для: `fix-git`, `custom-memory-heap-crash`, `db-wal-recovery`,
+  `fix-code-vulnerability`, `fix-ocaml-gc`, `cobol-modernization`, `regex-log`,
+  `log-summary-date-ranges` и др.
+- Текущий промпт — H-контейнер v6 в `src/inquiry.ts`; live container2 — см. таблицу.
+  Текущая лента/`close_goal`/тесты/доки — в рабочем дереве, не закоммичены.
+
 ## 2026-11-16 — `inquiry`: корень-цель, структурированные инструменты, Docker K=3 (k3d)
 
 ### Что сделано

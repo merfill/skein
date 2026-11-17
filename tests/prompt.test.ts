@@ -257,11 +257,12 @@ describe("system prompt: stream discipline", () => {
     expect(BASE_PROMPT).not.toMatch(/From a failure to its cause/);
   });
 
-  it("keeps the stale-read safeguard in the edit/write descriptions, no localize->edit trigger", () => {
+  it("does not carry a stale-read safeguard in the edit/write descriptions, no localize->edit trigger", () => {
     const edit = PROPOSAL_TOOLS.find((tool) => tool.function.name === "edit")?.function.description;
     const write = PROPOSAL_TOOLS.find((tool) => tool.function.name === "write")?.function.description;
-    expect(edit).toMatch(/stale_base/);
-    expect(write).toMatch(/stale_base/);
+    expect(edit).not.toMatch(/stale_base/);
+    expect(write).not.toMatch(/stale_base/);
+    expect(write).not.toMatch(/read it before overwriting/);
     const prompt = BASE_PROMPT;
     expect(prompt).not.toMatch(/LOCALIZED|NAMED SUSPECT/);
   });

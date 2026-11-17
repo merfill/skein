@@ -8,7 +8,7 @@ import type { ExtraToolDefinition } from "./tools";
 
 export type InquiryProposer = (
   messages: ModelMessage[],
-  options?: { signal?: AbortSignal; final?: boolean },
+  options?: { signal?: AbortSignal; allowedTools?: readonly string[] },
 ) => Promise<Proposals>;
 
 export interface InquiryModelOptions {
@@ -16,17 +16,21 @@ export interface InquiryModelOptions {
 }
 
 const hypothesisOpenParams = z.object({
-  kind: z.enum(["probe", "change"]),
-  label: z.string(),
-  suppose: z.string(),
-  if_true: z.string(),
-  if_false: z.string(),
+  label: z.string().min(1),
+  suppose: z.string().min(1),
+  if_true: z.string().min(1),
+  if_false: z.string().min(1),
 });
 
 const hypothesisCloseParams = z.object({
-  id: z.string(),
-  verdict: z.enum(["confirmed", "refuted", "done", "dropped"]),
-  grounds: z.array(z.number().int().nonnegative()),
+  hypothesis_id: z.string().min(1),
+  verdict: z.enum(["confirmed", "refuted", "dropped"]),
+  summary: z.string().min(1),
+});
+
+const goalCloseParams = z.object({
+  outcome: z.enum(["achieved", "not_achieved"]),
+  summary: z.string().min(1),
 });
 
 // Tools that exist only in the inquiry unit. They are bound through `extraTools`, so the task
@@ -35,33 +39,50 @@ export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   open_hypothesis: {
     description: [
       "Opens a hypothesis. Arguments:",
-      "- kind: one of",
-      '  - "change": the request asks for a result in the workspace (fix, merge, create); the result is the changed workspace.',
-      '  - "probe": the request asks for an answer (find out what is true); the result is the answer.',
       "- label: a short name.",
       "- suppose: what you put forward.",
       "- if_true: the observation that confirms it.",
       "- if_false: the observation that refutes it.",
+      "",
+      "The engine keeps the main formula H: the conjunction of the hypotheses you open. H is not a hypothesis and you do not write its conjunction. Each hypothesis you open is a top-level conjunct of H. Available only when no hypothesis is open; close the open one first.",
+      "Call this alone, with no other tool calls in the same reply.",
+      "The engine records the hypothesis and shows it on the tape as:",
+      "Opening hypothesis C1: <label>.",
+      "Suppose: ...",
+      "If true: ...",
+      "If false: ...",
+      "Use the C-number (e.g. \"C1\") when you close the hypothesis. The internal journal address (`w:hypothesis:<n>`) is not a hypothesis id.",
     ].join("\n"),
     schema: hypothesisOpenParams,
   },
   close_hypothesis: {
     description: [
-      "Closes the active hypothesis and only it. Arguments:",
-      "- id: the active hypothesis's id.",
-      "- verdict: one of",
-      '  - "confirmed", "refuted" or "dropped": for a probe.',
-      '  - "done" or "dropped": for a change.',
-      "- grounds: the numbers from the brackets of observations recorded after it opened (e.g. 42 for [obs:42]).",
-      "A change is done when its observed effect holds.",
+      "Closes the open hypothesis and only it. Arguments:",
+      "- hypothesis_id: the id you got when you opened the hypothesis, e.g. \"C1\". Use it exactly; never the internal journal address (`w:hypothesis:<n>`) or a bare number.",
+      "- verdict: \"confirmed\" (the claim held), \"refuted\" (it did not), or \"dropped\" (abandoned). Choose the word that fits the claim; the request's result is the goal's outcome, not a hypothesis verdict.",
+      "- summary: a detailed, human-readable account of what was done and achieved: the concrete result (commit, branch, files, answer), the checks that show it, and why the verdict holds. Write 2-4 sentences, not a bare word. It is this hypothesis's outcome, not the final answer; the final answer is written when you close the goal. For \"dropped\", say why.",
+      "",
+      "A refuted hypothesis stays in the journal as a failed attempt; open a corrected or different one if you can. After a hypothesis closes, either open the next one or stop; its summary is the record, so build on it instead of re-deriving it. When you stop, the engine asks you to close the goal H.",
+      "Call this alone, with no other tool calls in the same reply.",
+      "The engine shows the close as: Closing hypothesis C1: confirmed. Summary: ...",
     ].join("\n"),
     schema: hypothesisCloseParams,
   },
+  close_goal: {
+    description: [
+      "Closes the goal H with the final result. Arguments:",
+      "- outcome: \"achieved\" (the request's result is reached) or \"not_achieved\" (it is not; say what blocked it).",
+      "- summary: the final answer to the user, derived from the whole tape: what was done, the evidence, and the result.",
+      "Call this alone; it is the only call in that reply, and it ends the work.",
+    ].join("\n"),
+    schema: goalCloseParams,
+  },
 };
 
-// The inquiry surface: the workspace tools plus the two hypothesis tools. `allowedTools` is
-// passed explicitly, so the task registry's per-state surface is unchanged.
-export const INQUIRY_TOOL_NAMES: readonly string[] = [
+// The tools available while a hypothesis is open: the workspace surface plus `close_hypothesis`.
+// The run passes one of these lists explicitly per turn, so the surface follows the phase:
+// `open` → open_hypothesis only; `work` → this list; `finish` → close_goal only.
+export const INQUIRY_WORK_TOOL_NAMES: readonly string[] = [
   "read",
   "grep",
   "list",
@@ -72,8 +93,13 @@ export const INQUIRY_TOOL_NAMES: readonly string[] = [
   "webfetch",
   "recall",
   "search",
-  "open_hypothesis",
   "close_hypothesis",
+];
+
+export const INQUIRY_TOOL_NAMES: readonly string[] = [
+  ...INQUIRY_WORK_TOOL_NAMES,
+  "open_hypothesis",
+  "close_goal",
 ];
 
 export function modelInquiryProposer(
@@ -83,8 +109,9 @@ export function modelInquiryProposer(
   return (messages, callOptions) =>
     invokeTools(model, messages, {
       ...(options.settings !== undefined ? { settings: options.settings } : {}),
-      allowedTools:
-        callOptions?.final === true ? [] : [...INQUIRY_TOOL_NAMES],
+      allowedTools: callOptions?.allowedTools !== undefined
+        ? [...callOptions.allowedTools]
+        : [...INQUIRY_TOOL_NAMES],
       extraTools: INQUIRY_TOOLS,
       allowText: true,
       ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),

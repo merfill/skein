@@ -103,7 +103,6 @@ export const actionSchema = z.discriminatedUnion("operator", [
   // and (for `close_hypothesis`) checks the structural rules (src/tools/index.ts).
   z.object({
     operator: z.literal("open_hypothesis"),
-    kind: z.enum(["probe", "change"]),
     label: z.string(),
     suppose: z.string(),
     ifTrue: z.string(),
@@ -112,8 +111,14 @@ export const actionSchema = z.discriminatedUnion("operator", [
   z.object({
     operator: z.literal("close_hypothesis"),
     id: z.string(),
-    verdict: z.enum(["confirmed", "refuted", "done", "dropped"]),
-    grounds: z.array(z.string()),
+    verdict: z.enum(["confirmed", "refuted", "dropped"]),
+    summary: z.string(),
+  }),
+  // Close the formula H itself: the model's final result, derived from the whole tape.
+  z.object({
+    operator: z.literal("close_goal"),
+    outcome: z.enum(["achieved", "not_achieved"]),
+    summary: z.string(),
   }),
 ]);
 
@@ -218,7 +223,6 @@ export function modelCall(action: Action): ModelCall {
       return {
         name: "open_hypothesis",
         args: {
-          kind: action.kind,
           label: action.label,
           suppose: action.suppose,
           if_true: action.ifTrue,
@@ -229,12 +233,17 @@ export function modelCall(action: Action): ModelCall {
       return {
         name: "close_hypothesis",
         args: {
-          id: action.id,
+          hypothesis_id: action.id,
           verdict: action.verdict,
-          grounds: action.grounds.map((ground) => {
-            const match = /^obs:(\d+)$/.exec(ground);
-            return match?.[1] !== undefined ? Number(match[1]) : ground;
-          }),
+          summary: action.summary,
+        },
+      };
+    case "close_goal":
+      return {
+        name: "close_goal",
+        args: {
+          outcome: action.outcome,
+          summary: action.summary,
         },
       };
   }

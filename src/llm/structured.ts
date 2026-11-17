@@ -496,6 +496,17 @@ export async function invokeTools(
     // `allowText` is set.
     if (reply.toolCalls.length > 0) {
       try {
+        // The provider can return a call to a tool that was not bound (the base prompt names
+        // tools, and hallucinated names still arrive). Enforce the surface here: an unallowed
+        // call is a malformed move, repaired once and never executed.
+        if (allowed !== undefined) {
+          const outside = reply.toolCalls.find((call) => !allowed.has(call.toolName));
+          if (outside !== undefined) {
+            throw new Error(
+              `tool ${outside.toolName} is not available; call one of: ${[...allowed].join(", ")}`,
+            );
+          }
+        }
         // Every call in the message is a move; the engine decides and runs them in order.
         const actions = reply.toolCalls.map(
           (call) => toProposal(call.toolName, call.input, "").action,

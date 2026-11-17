@@ -382,6 +382,19 @@ describe("tool calling", () => {
     expect(proposal.actions[0]).toEqual({ operator: "move", state: "patch", what: "" });
   });
 
+  it("invokeTools repairs a call outside the allowed surface", async () => {
+    const model = mockModel((call) =>
+      call === 1
+        ? toolReply([{ name: "read", args: { filePath: "a" } }])
+        : toolReply([{ name: "move", args: { state: "patch" } }]),
+    );
+    const proposal = await agent(model, [{ role: "user", content: "go" }], {
+      allowedTools: ["move"],
+    });
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(proposal.actions[0]).toEqual({ operator: "move", state: "patch", what: "" });
+  });
+
   it("invokeTools repairs once when the model called no tool", async () => {
     const model = mockModel((call) =>
       call === 1 ? textReply("thinking") : toolReply([{ name: "list", args: {} }]),

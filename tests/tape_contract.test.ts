@@ -294,19 +294,17 @@ describe("apply — mutation: before GOAL_PREFIX -> delta -> after", () => {
     expect(after).toContain("return a - b;");
   });
 
-  it("write create / unread overwrite", async () => {
+  it("write create / overwrite", async () => {
     const create = goalStep(write("new.txt", "hi"), ws());
     expect(kinds(create.res)).toEqual(["action", "file"]);
     expect((await tapeOf(create.after)).at(-1)).toMatchObject({
       role: "tool",
       content: expect.stringMatching(/^\[w:action:\d+\] mutated new\.txt$/),
     });
-    const unread = goalStep(write("src/sum.mjs", "x"), ws());
-    expect((await tapeOf(unread.after)).at(-1)).toMatchObject({
+    const overwrite = goalStep(write("src/sum.mjs", "x"), ws());
+    expect((await tapeOf(overwrite.after)).at(-1)).toMatchObject({
       role: "tool",
-      content: expect.stringMatching(
-        /^\[obs:\d+\] write failed: src\/sum\.mjs exists; read it before overwriting \(use edit for a small change\)$/,
-      ),
+      content: expect.stringMatching(/^\[w:action:\d+\] mutated src\/sum\.mjs$/),
     });
   });
 

@@ -3,45 +3,40 @@ import type { ModelMessage } from "ai";
 import { isAborted } from "./abort";
 import type { Event } from "./ir/events";
 import {
+  activeHypothesis,
   activeHypothesisPath,
   childrenOf,
-  hypothesisChildrenOf,
-  hypothesisNodes,
-  hypothesisVerdictOf,
+  goalVerdictOf,
   fold,
   turnsOf,
   type State,
 } from "./ir/graph";
-import { actionResultText, observationText, type TapeMessage } from "./ir/project";
+import { actionResultText, type TapeMessage } from "./ir/project";
 import { historyMessages } from "./loop/propose";
-import type { InquiryProposer } from "./llm/inquiry";
-import type { HypothesisPayload, HypothesisVerdictPayload, Node } from "./ir/types";
+import { INQUIRY_WORK_TOOL_NAMES, type InquiryProposer } from "./llm/inquiry";
+import type { Proposals } from "./llm/schemas";
+import type { GoalVerdictPayload, HypothesisPayload, HypothesisVerdictPayload } from "./ir/types";
 import { executeAction } from "./tools";
 import type { Workspace } from "./tools/workspace";
 
 export const INQUIRY_BASE_PROMPT = [
   "# Role",
   "You are a software engineering agent with access to the user's filesystem. You solve the user's tasks.",
-  "You work by hypotheses: you put a hypothesis forward and close it when its outcome is observed. This uses the `open_hypothesis` and `close_hypothesis` tools. A hypothesis is a claim together with what you expect to see if you are right and if you are wrong.",
-  "At the start of the work, call `open_hypothesis` to formulate the user's request as the root hypothesis: the result that must hold when the work is done, with the observation that shows it. Work inside the root, and close it last, once the hypotheses you opened under it are closed.",
-  "An expectation is an observation that holds when you close the hypothesis, after the work it describes.",
-  "Develop the active hypothesis: run the checks and actions the work needs, and close it when the outcome is observed. Open a new hypothesis only when you consider it different from the hypotheses already shown in OPEN and CLOSED and justified as new work; if an open hypothesis already asks the question, develop that one. A text reply ends the work when the result is observed or you cannot continue.",
-  "Each turn you reply with tool calls; the engine runs them in order and returns the results. Batch calls that do not depend on another call's result. The engine records a tool-free reply as the result and marks open hypotheses unresolved.",
-  "Context markers: CLOSED — settled hypotheses with their verdicts; OPEN — the hypotheses currently open.",
+  "Solve the user's request. You work under one hypothesis at a time: a claim that can be true or false, with the observation you expect if it is true (`if_true`) and if it is false (`if_false`). An action runs only under an open hypothesis: before it, state the claim the action tests; after the result, close the hypothesis.",
+  "The request is the goal. The engine keeps H, the conjunction of the hypotheses you open; you do not write H. Open a hypothesis for each distinct claim; one claim can take several actions.",
+  "If `if_true` holds, close it `confirmed`; if `if_false` holds, close it `refuted`. A refuted hypothesis stays in the journal; open a corrected or different one, or stop. A hypothesis verdict is about its claim; the request's result is the goal's outcome. A reply without tool calls is allowed only when no hypothesis is open; with one open, it is an error.",
+  "Stop when the request's result is reached; do not open a hypothesis only to check what a closed one already reported. When you stop, close the goal with the outcome and the final summary; that summary is the report.",
   "## General instructions for the work",
   "Follow the project. Mimic its style, structure, naming, typing and architectural patterns; make the change idiomatic to the surrounding code. Add comments sparingly (why, not what), and never use comments to talk to the user.",
-  "Work only the active hypothesis: plan the step, make small changes, and debug from evidence. Do not do work outside the active hypothesis or expand the scope.",
-  "Prefer the dedicated tools: read, grep and list to inspect, edit, write and apply_patch to change files. Use bash only for work they cannot do — running builds, tests, or other shell operations.",
-  "Inspect narrowly: ask for the smallest result that decides the next step — a targeted grep, or a small window around a known offset. Do not dump a whole file or binary region; a large output stays on the tape and costs context. When the hypothesis is settled, stop: do not re-run a check that already passed or widen the search for its own sake.",
+  "Work only the active hypothesis: decide the next step, make small changes, and debug from evidence. Do not do work outside the active hypothesis or expand the scope.",
+  "Prefer the dedicated inspection and editing tools for files; use the shell only for builds, tests, or other shell operations.",
+  "Inspect narrowly: ask for the smallest result that decides the next step — a targeted search, or a small window around a known offset. Do not dump a whole file or binary region; a large output stays on the tape and costs context. When the hypothesis is settled, stop: do not re-run a check that already passed or widen the search for its own sake.",
   "Work from the material in this workspace. The result must come from that material or from the request's specification. Do not invent values or fabricate results to fit a count, a form, or an expected answer. Acceptance is decided by the material or the specification, not by your own output.",
   "Do not reconstruct an external or upstream version from memory. If a reference is available — on disk or fetched — treat it as a lead to verify, not as the oracle.",
   "Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
-  "The workspace root is the current directory; the context already shows the request. Inspect only what you need; the tree is not indexed, so list what you need.",
-  "Never expose or commit secrets or keys. Report concisely and to the point: the shortest answer that serves the request, with extra detail only when the user asked for it. No preamble or summary unless asked.",
+  "The workspace root is the current directory; the context already shows the request. Inspect only what you need; the tree is not indexed, so look up what you need.",
+  "Never expose or commit secrets or keys. The goal summary is the final report: complete enough to stand alone, without padding or a separate preamble.",
 ].join("\n\n");
-
-const FINAL_INSTRUCTION =
-  "The turn limit is reached. Write the final answer now as text only, from what you have established; do not call tools. The OPEN block lists the hypotheses still open: name them by id and say what is unresolved; do not present it as proven.";
 
 export interface InquiryDeps {
   propose: InquiryProposer;
@@ -57,7 +52,6 @@ export interface InquiryInput {
 
 export interface UnresolvedHypothesis {
   id: string;
-  kind: HypothesisPayload["kind"];
   suppose: string;
   ifTrue: string;
   ifFalse: string;
@@ -75,6 +69,7 @@ export interface InquiryResult {
 
 export function seedInquiry(request: { id: string; text: string }): Event[] {
   const turnsId = `${request.id}:turns`;
+  const formulaId = `${request.id}:H`;
   return [
     {
       type: "add_node",
@@ -98,12 +93,33 @@ export function seedInquiry(request: { id: string; text: string }): Event[] {
       },
     },
     {
+      type: "add_node",
+      node: {
+        id: formulaId,
+        space: "work",
+        kind: "formula",
+        label: "H",
+        payload: { formulaId: "H" },
+        seq: 2,
+      },
+    },
+    {
       type: "add_edge",
       edge: {
         id: `${request.id}:turns:edge`,
         from: request.id,
         to: turnsId,
         kind: "turns",
+        provenance: { kind: "llm" },
+      },
+    },
+    {
+      type: "add_edge",
+      edge: {
+        id: `${request.id}:formula:edge`,
+        from: request.id,
+        to: formulaId,
+        kind: "formula",
         provenance: { kind: "llm" },
       },
     },
@@ -117,94 +133,52 @@ function resultOf(state: State, actionId: string): string | undefined {
   return undefined;
 }
 
-// A ground is an observation; the summary is what it showed. The engine does not track the
-// files a change touched — a change is closed by the observation that shows its effect.
-function groundSummary(state: State, ref: string): string {
-  const node = state.nodes.get(ref);
-  if (node?.kind !== "observation") return ref;
-  const lines = observationText(node)
-    .split("\n")
-    .filter((part) => part.trim() !== "");
-  const joined = lines.slice(0, 2).join(": ");
-  return joined.length > 160 ? `${joined.slice(0, 160)}…` : joined;
+function openingMessage(hypothesis: HypothesisPayload): string {
+  return [
+    `Opening hypothesis ${hypothesis.hypothesisId}: ${hypothesis.label}.`,
+    `Suppose: ${hypothesis.suppose}`,
+    `If true: ${hypothesis.ifTrue}`,
+    `If false: ${hypothesis.ifFalse}`,
+  ].join("\n");
 }
 
-function closedLine(state: State, hypothesis: HypothesisPayload): string {
-  const verdict = hypothesisVerdictOf(state, hypothesis.hypothesisId);
-  if (verdict === undefined) return `${hypothesis.hypothesisId} ${hypothesis.kind}: ${hypothesis.suppose}`;
-  const seen = new Set<string>();
-  const summaries: string[] = [];
-  for (const ref of verdict.grounds) {
-    const text = groundSummary(state, ref);
-    if (seen.has(text)) continue;
-    seen.add(text);
-    summaries.push(text);
-    if (summaries.length === 2) break;
+function verdictWords(verdict: HypothesisVerdictPayload["verdict"]): string {
+  switch (verdict) {
+    case "confirmed":
+      return "confirmed";
+    case "refuted":
+      return "refuted";
+    case "dropped":
+      return "dropped";
   }
-  const grounds = verdict.grounds.length > 0 ? ` (${verdict.grounds.join(", ")})` : "";
-  return `${hypothesis.hypothesisId} ${hypothesis.kind} «${hypothesis.suppose}» — ${verdict.verdict}: ${summaries.join("; ")}${grounds}`;
 }
 
-function closedTree(state: State): string {
-  const roots = hypothesisNodes(state)
-    .map((node) => node.payload as HypothesisPayload | undefined)
-    .filter(
-      (hypothesis): hypothesis is HypothesisPayload =>
-        hypothesis !== undefined && hypothesis.parentId === undefined && hypothesisVerdictOf(state, hypothesis.hypothesisId) !== undefined,
-    );
-  if (roots.length === 0) return "";
-  const lines: string[] = ["CLOSED"];
-  const render = (hypothesis: HypothesisPayload, depth: number): void => {
-    lines.push(`${"  ".repeat(depth)}${closedLine(state, hypothesis)}`);
-    for (const child of hypothesisChildrenOf(state, hypothesis.hypothesisId)) {
-      if (hypothesisVerdictOf(state, child.hypothesisId) !== undefined) render(child, depth + 1);
-    }
-  };
-  for (const root of roots) render(root, 1);
-  return lines.join("\n");
+function verdictSummary(verdict: HypothesisVerdictPayload): string {
+  const summary = verdict.summary?.replace(/\s+/g, " ").trim();
+  return summary !== undefined && summary !== "" ? summary : "(no summary recorded)";
 }
 
-function openPath(state: State): string {
-  const path = activeHypothesisPath(state);
-  if (path.length === 0) return "OPEN: none";
-  const lines: string[] = ["OPEN"];
-  const activeId = path[path.length - 1]?.hypothesisId;
-  for (const hypothesis of path) {
-    const marker = hypothesis.hypothesisId === activeId ? " [ACTIVE]" : "";
-    lines.push(`${hypothesis.hypothesisId} ${hypothesis.kind}: ${hypothesis.suppose}${marker}`);
-    lines.push(`  if true: ${hypothesis.ifTrue}`);
-    lines.push(`  if false: ${hypothesis.ifFalse}`);
-    for (const child of hypothesisChildrenOf(state, hypothesis.hypothesisId)) {
-      if (hypothesisVerdictOf(state, child.hypothesisId) !== undefined) {
-        lines.push(`  closed ${closedLine(state, child)}`);
-      }
-    }
-  }
-  return lines.join("\n");
+function closingMessage(verdict: HypothesisVerdictPayload): string {
+  return [
+    `Closing hypothesis ${verdict.hypothesisId}: ${verdictWords(verdict.verdict)}.`,
+    `Summary: ${verdictSummary(verdict)}`,
+  ].join("\n");
 }
 
-function hypothesisResultText(callName: string | undefined, result: Node | undefined): string | undefined {
-  if (callName === "close_hypothesis" && result?.kind === "hypothesis_verdict") {
-    const verdict = result.payload as HypothesisVerdictPayload | undefined;
-    if (verdict !== undefined) {
-      const grounds = verdict.grounds.length > 0 ? ` (${verdict.grounds.join(", ")})` : "";
-      return `${verdict.hypothesisId} ${verdict.verdict}${grounds}`;
-    }
-  }
-  if (callName === "open_hypothesis" && result?.kind === "hypothesis") {
-    const hypothesis = result.payload as HypothesisPayload | undefined;
-    if (hypothesis !== undefined) {
-      return `${hypothesis.hypothesisId} opened ${hypothesis.kind}: ${hypothesis.label}`;
-    }
-  }
-  return undefined;
+function goalClosingMessage(verdict: GoalVerdictPayload): string {
+  return [
+    `Closing formula H: ${verdict.outcome}.`,
+    `Summary: ${verdict.summary?.replace(/\s+/g, " ").trim() || "(no summary recorded)"}`,
+  ].join("\n");
 }
 
-function activeHistory(state: State, requestId: string): TapeMessage[] {
+// The tape is chronological: an Opening message, the work under that hypothesis, and a Closing
+// message. When a hypothesis closes, its work is erased and only the Opening/Closing pair remains.
+function inquiryTape(state: State, requestId: string): TapeMessage[] {
   const turns = turnsOf(state, requestId);
   if (turns === undefined) return [];
   const active = new Set(activeHypothesisPath(state).map((hypothesis) => hypothesis.hypothesisId));
-  const history: TapeMessage[] = [];
+  const tape: TapeMessage[] = [];
   for (const actionId of childrenOf(state, turns)) {
     const action = state.nodes.get(actionId);
     if (action === undefined || action.kind !== "action") continue;
@@ -218,13 +192,39 @@ function activeHistory(state: State, requestId: string): TapeMessage[] {
     const callName = typeof payload?.call?.name === "string" ? payload.call.name : undefined;
     const resultId = resultOf(state, actionId);
     const result = resultId !== undefined ? state.nodes.get(resultId) : undefined;
-    const refused =
-      (result?.payload as { refused?: unknown } | undefined)?.refused === true;
+    const failed = (result?.payload as { failed?: unknown } | undefined)?.failed === true;
     const hypothesisId = typeof payload?.hypothesisId === "string" ? payload.hypothesisId : undefined;
-    const isHypothesisTool = callName === "open_hypothesis" || callName === "close_hypothesis";
-    if (!isHypothesisTool && !refused && (hypothesisId === undefined || !active.has(hypothesisId))) {
-      continue;
+    const isHypothesisTool =
+      callName === "open_hypothesis" ||
+      callName === "close_hypothesis" ||
+      callName === "close_goal";
+
+    if (callName === "open_hypothesis" && result?.kind === "hypothesis") {
+      const hypothesis = result.payload as HypothesisPayload | undefined;
+      if (hypothesis !== undefined) {
+        tape.push({ role: "system", text: openingMessage(hypothesis) });
+        continue;
+      }
     }
+    if (callName === "close_hypothesis" && result?.kind === "hypothesis_verdict") {
+      const verdict = result.payload as HypothesisVerdictPayload | undefined;
+      if (verdict !== undefined) {
+        tape.push({ role: "system", text: closingMessage(verdict) });
+        continue;
+      }
+    }
+    if (callName === "close_goal" && result?.kind === "goal_verdict") {
+      const verdict = result.payload as GoalVerdictPayload | undefined;
+      if (verdict !== undefined) {
+        tape.push({ role: "system", text: goalClosingMessage(verdict) });
+        continue;
+      }
+    }
+
+    // The work of a closed hypothesis is erased; its Opening/Closing pair is the record.
+    // Refused hypothesis calls stay visible so the model can correct them.
+    if (!isHypothesisTool && hypothesisId !== undefined && !active.has(hypothesisId)) continue;
+
     const reasoning =
       typeof payload?.reasoning === "string" && payload.reasoning !== ""
         ? { reasoning: payload.reasoning }
@@ -241,18 +241,17 @@ function activeHistory(state: State, requestId: string): TapeMessage[] {
           }
         : undefined;
     if (call !== undefined) {
-      history.push({ role: "assistant", text: "", call, ...reasoning });
+      tape.push({ role: "assistant", text: "", call, ...reasoning });
     } else {
-      history.push({ role: "assistant", text: action.label, ...reasoning });
+      tape.push({ role: "assistant", text: action.label, ...reasoning });
     }
     const written = callName === "write" || callName === "edit" || callName === "apply_patch";
-    const text =
-      hypothesisResultText(callName, result) ??
-      (written ? action.label : actionResultText(state, actionId));
+    const text = written && !failed ? action.label : actionResultText(state, actionId);
     const ref = resultId ?? actionId;
-    history.push({ role: "tool", text: `[${ref}] ${text}`, callId: actionId });
+    tape.push({ role: "tool", text: `[${ref}] ${text}`, callId: actionId });
   }
-  return history;
+
+  return tape;
 }
 
 export function inquiryMessages(
@@ -260,15 +259,11 @@ export function inquiryMessages(
   request: { id: string; text: string },
   basePrompt: string = INQUIRY_BASE_PROMPT,
 ): ModelMessage[] {
-  const messages: ModelMessage[] = [
+  return [
     { role: "system", content: basePrompt },
     { role: "user", content: request.text },
+    ...historyMessages(inquiryTape(state, request.id)),
   ];
-  const closed = closedTree(state);
-  if (closed !== "") messages.push({ role: "system", content: closed });
-  messages.push({ role: "system", content: openPath(state) });
-  messages.push(...historyMessages(activeHistory(state, request.id)));
-  return messages;
 }
 
 function nextNodeSeq(state: State): number {
@@ -286,7 +281,6 @@ function endInquiry(
   const path = activeHypothesisPath(state);
   const unresolved: UnresolvedHypothesis[] = path.map((hypothesis) => ({
     id: hypothesis.hypothesisId,
-    kind: hypothesis.kind,
     suppose: hypothesis.suppose,
     ifTrue: hypothesis.ifTrue,
     ifFalse: hypothesis.ifFalse,
@@ -312,7 +306,7 @@ function endInquiry(
     out.push({
       type: "add_edge",
       edge: {
-        id: `e:${seq + 1}`,
+        id: `e:stop:${seq}`,
         from: root,
         to: stopId,
         kind: "stop",
@@ -322,6 +316,12 @@ function endInquiry(
   }
   return { events: out, unresolved };
 }
+
+const FINISH_INSTRUCTION =
+  "All hypotheses are closed. Close the goal H now with `close_goal`: the outcome, the closed hypothesis ids that form H, and the final summary for the user.";
+
+const OPEN_INSTRUCTION =
+  "Formula check: if the request's result is reached and no further hypothesis is needed, stop now (no tool call); the engine will ask you to close the goal H. Otherwise open the next hypothesis.";
 
 export async function runInquiryUnit(
   deps: InquiryDeps,
@@ -335,7 +335,18 @@ export async function runInquiryUnit(
   let stopReason: string | null = null;
   let final = "";
   let unresolved: UnresolvedHypothesis[] = [];
+  // `open`: only open_hypothesis; `work`: an open hypothesis; `finish`: only close_goal.
+  let phase: "open" | "work" | "finish" = "open";
   const maxTurns = deps.maxTurns;
+
+  const stopWithError = (state: State, reason: string, text: string): void => {
+    const stop = endInquiry(state, events, text, turn);
+    events = stop.events;
+    unresolved = stop.unresolved;
+    final = "";
+    done = false;
+    stopReason = reason;
+  };
 
   while (turn < maxTurns) {
     if (isAborted(input.signal)) {
@@ -343,23 +354,77 @@ export async function runInquiryUnit(
       break;
     }
     const state = fold(events);
-    const messages = inquiryMessages(state, input.request);
-    const proposals = await deps.propose(
-      messages,
-      input.signal !== undefined ? { signal: input.signal } : undefined,
+    const active = activeHypothesis(state);
+    const allowedTools =
+      phase === "finish"
+        ? ["close_goal"]
+        : active !== undefined
+          ? [...INQUIRY_WORK_TOOL_NAMES]
+          : ["open_hypothesis"];
+    const hasClosedHypothesis = [...state.nodes.values()].some(
+      (node) => node.kind === "hypothesis_verdict",
     );
-
-    if (proposals.actions.length === 0) {
-      final = proposals.thought.trim();
-      const stop = endInquiry(state, events, final !== "" ? final : "(no decision)", turn);
-      events = stop.events;
-      unresolved = stop.unresolved;
-      done = true;
-      stopReason = final !== "" ? "answered" : "no_decision";
+    const transition =
+      phase === "finish"
+        ? FINISH_INSTRUCTION
+        : phase === "open" && hasClosedHypothesis
+          ? OPEN_INSTRUCTION
+          : undefined;
+    const messages: ModelMessage[] =
+      transition !== undefined
+        ? [...inquiryMessages(state, input.request), { role: "system", content: transition }]
+        : inquiryMessages(state, input.request);
+    let proposals: Proposals;
+    try {
+      proposals = await deps.propose(messages, {
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        allowedTools,
+      });
+    } catch (error) {
+      if (isAborted(input.signal)) {
+        paused = true;
+        break;
+      }
+      // A malformed model call must not crash the unit: record it as an error and stop.
+      const message = error instanceof Error ? error.message : String(error);
+      stopWithError(state, "model_error", `(model error: ${message})`);
       turn += 1;
       break;
     }
 
+    if (proposals.actions.length === 0) {
+      const text = proposals.thought.trim();
+      if (active !== undefined) {
+        // A hypothesis is open: stopping is not a result.
+        stopWithError(state, "no_close", text !== "" ? text : "(no tool calls)");
+        turn += 1;
+        break;
+      }
+      if (phase === "finish") {
+        // Asked to close the goal, but sent nothing.
+        stopWithError(state, "no_goal", text !== "" ? text : "(no tool calls)");
+        turn += 1;
+        break;
+      }
+      // No open hypothesis and not yet finishing: the model stopped, so the formula is
+      // complete. The next turn asks it to close H.
+      phase = "finish";
+      turn += 1;
+      continue;
+    }
+
+    const hasHypothesisTool = proposals.actions.some(
+      (action) =>
+        action.operator === "open_hypothesis" ||
+        action.operator === "close_hypothesis" ||
+        action.operator === "close_goal",
+    );
+    const batchViolation =
+      proposals.actions.length > 1 && hasHypothesisTool
+        ? "hypothesis_tool_alone: open_hypothesis, close_hypothesis and close_goal must be the only tool call in a reply"
+        : undefined;
+
+    let ended = false;
     for (const action of proposals.actions) {
       if (isAborted(input.signal)) {
         paused = true;
@@ -372,37 +437,42 @@ export async function runInquiryUnit(
         deps.workspace,
         turn,
         proposals.reasoning,
-        { hypothesisRules: true },
+        {
+          hypothesisRules: true,
+          ...(batchViolation !== undefined ? { batchViolation } : {}),
+        },
       );
       events.push(...outcome.events);
+      // Closing the goal H ends the work: its summary is the result.
+      const after = fold(events);
+      const goal = goalVerdictOf(after);
+      if (goal !== undefined) {
+        const payload = goal.payload as GoalVerdictPayload;
+        final = payload.summary?.trim() ?? "";
+        unresolved = [];
+        done = true;
+        stopReason = payload.outcome === "achieved" ? "achieved" : "not_achieved";
+        ended = true;
+        break;
+      }
+      // Between predicates the surface is only `open_hypothesis`; while one is open it is the
+      // work surface. `close_goal` is reached only after the model has stopped.
+      if (action.operator === "open_hypothesis" && activeHypothesis(after) !== undefined) {
+        phase = "work";
+      }
+      if (action.operator === "close_hypothesis" && activeHypothesis(after) === undefined) {
+        phase = "open";
+      }
     }
     if (paused) break;
     turn += 1;
+    if (ended) break;
   }
 
-  if (!done && !paused) {
+  if (!done && !paused && stopReason === null) {
+    // The turn budget is a stand limit, not a result: the formula is not closed.
     const state = fold(events);
-    const messages: ModelMessage[] = [
-      ...inquiryMessages(state, input.request),
-      { role: "system", content: FINAL_INSTRUCTION },
-    ];
-    try {
-      const proposals = await deps.propose(messages, {
-        ...(input.signal !== undefined ? { signal: input.signal } : {}),
-        final: true,
-      });
-      final = proposals.thought.trim();
-    } catch (error) {
-      if (!isAborted(input.signal)) throw error;
-      paused = true;
-    }
-    if (!paused) {
-      const stop = endInquiry(state, events, final !== "" ? final : "(turn budget exhausted)", turn);
-      events = stop.events;
-      unresolved = stop.unresolved;
-      done = true;
-      stopReason = "max_turns";
-    }
+    stopWithError(state, "max_turns", "(turn budget exhausted)");
   }
 
   return {

@@ -109,7 +109,12 @@ function treeText(result: InquiryResult, request: { id: string; text: string }):
   return messages
     .filter((message) => message.role === "system")
     .map((message) => messageText(message))
-    .filter((text) => text.startsWith("CLOSED") || text.startsWith("OPEN"))
+    .filter(
+      (text) =>
+        text.startsWith("Opening hypothesis") ||
+        text.startsWith("Closing hypothesis") ||
+        text.startsWith("Closing formula H"),
+    )
     .join("\n\n");
 }
 
@@ -172,7 +177,7 @@ async function main(): Promise<void> {
   console.log(`stop=${result.stopReason ?? "none"} turns=${result.turns}`);
   if (result.unresolved.length > 0) {
     console.log("unresolved:");
-    for (const hypothesis of result.unresolved) console.log(`  ${hypothesis.id} ${hypothesis.kind}: ${hypothesis.suppose}`);
+    for (const hypothesis of result.unresolved) console.log(`  ${hypothesis.id}: ${hypothesis.suppose}`);
   }
   console.log(
     `tokens in=${usage.inputTokens} out=${usage.outputTokens} cache=${usage.cachedInputTokens} cost=${usage.cost.toFixed(2)}`,

@@ -1,11 +1,12 @@
 // Manual Docker run of the inquiry unit on a real terminal-bench task.
 //
 // Usage:
-//   npm run inquiry:docker
+//   SKEIN_INQUIRY_TASK=<id> npm run inquiry:docker
 //
-// Runs `fix-git` K=3 in parallel (cells, not a shell loop), network off, maxTurns 60, and
-// saves events/result/tree/check per run under SKEIN_INQUIRY_SAVE. This is a live, heavy run:
-// Docker image + task cache + provider key are required.
+// Runs the selected task K=3 in parallel (cells, not a shell loop), network off, and saves
+// events/result/tree/check per run under SKEIN_INQUIRY_SAVE. This is a live, heavy run:
+// Docker image + task cache + provider key are required. `SKEIN_INQUIRY_TASK` defaults to
+// `fix-git`; `SKEIN_INQUIRY_MAX_TURNS` overrides the task's own cap.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ModelMessage } from "ai";
@@ -17,12 +18,20 @@ import { createChatModel } from "../../src/llm/client";
 import { modelInquiryProposer, type InquiryProposer } from "../../src/llm/inquiry";
 import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
 import { runInquiryTask, taskAvailable } from "./harness";
-import { fixGit } from "./tasks/fix-git";
+import { TASKS } from "./tasks/registry";
 import { cleanupSandboxes } from "./workspace";
 
-const SAVE = resolve(process.env.SKEIN_INQUIRY_SAVE ?? "/tmp/skein-inquiry-docker-k3");
+const TASK_ID = process.env.SKEIN_INQUIRY_TASK ?? "fix-git";
+const task = (() => {
+  const found = TASKS[TASK_ID];
+  if (found === undefined) throw new Error(`unknown task: ${TASK_ID}`);
+  return found;
+})();
+const SAVE = resolve(process.env.SKEIN_INQUIRY_SAVE ?? `/tmp/skein-inquiry-docker-${TASK_ID}`);
 const REPEAT = Number(process.env.SKEIN_INQUIRY_REPEAT ?? 3);
-const MAX_TURNS = Number(process.env.SKEIN_INQUIRY_MAX_TURNS ?? 60);
+const MAX_TURNS = process.env.SKEIN_INQUIRY_MAX_TURNS !== undefined
+  ? Number(process.env.SKEIN_INQUIRY_MAX_TURNS)
+  : undefined;
 
 interface UsageTotals {
   inputTokens: number;
@@ -40,7 +49,12 @@ function treeText(result: InquiryResult, request: { id: string; text: string }):
   return messages
     .filter((message) => message.role === "system")
     .map(messageText)
-    .filter((text) => text.startsWith("CLOSED") || text.startsWith("OPEN"))
+    .filter(
+      (text) =>
+        text.startsWith("Opening hypothesis") ||
+        text.startsWith("Closing hypothesis") ||
+        text.startsWith("Closing formula H"),
+    )
     .join("\n\n");
 }
 
@@ -66,7 +80,10 @@ async function runOne(
     return proposals;
   };
 
-  const run = await runInquiryTask(fixGit, propose, { maxTurns: MAX_TURNS, network: "off" });
+  const run = await runInquiryTask(task, propose, {
+    maxTurns: MAX_TURNS ?? task.maxTurns ?? 60,
+    network: "off",
+  });
   const dir = join(SAVE, `r${index + 1}`);
   mkdirSync(dir, { recursive: true });
   const tree = treeText(run.result, { id: "r1", text: run.request });
@@ -106,10 +123,10 @@ async function runOne(
 }
 
 async function main(): Promise<void> {
-  const image = fixGit.image ?? "";
+  const image = task.image ?? "";
   if (!dockerAvailable()) throw new Error("Docker is not available");
   if (!dockerImageAvailable(image)) throw new Error(`Docker image is not available: ${image}`);
-  if (!taskAvailable("fix-git")) throw new Error("the fix-git task cache is not available");
+  if (!taskAvailable(TASK_ID)) throw new Error(`the ${TASK_ID} task cache is not available`);
   const settings = loadSettings();
   if (settings.apiKey === "") throw new Error("SKEIN_API_KEY is empty");
 
@@ -130,6 +147,7 @@ async function main(): Promise<void> {
     console.log(
       `K=${REPEAT} solved=${solved}/${REPEAT} turns=${turns} open=${open} in=${input} out=${output} cache=${cache} cost=${cost.toFixed(2)}`,
     );
+    console.log(`task=${TASK_ID}`);
     console.log(`saved=${SAVE}`);
   } finally {
     cleanupContainers();

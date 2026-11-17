@@ -114,7 +114,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "edit",
     description:
-      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique. Creates no file. Refused if: oldString is not found; the file was modified since its last read (stale_base); a constraint forbids the path; or the file does not exist.",
+      "Performs exact string replacements in an EXISTING file (filePath, oldString, newString). Only the first occurrence of oldString is replaced, so make oldString unique. Creates no file. Refused if: oldString is not found; a constraint forbids the path; or the file does not exist.",
     schema: editParams,
   },
   {
@@ -126,7 +126,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "write",
     description:
-      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. Overwriting requires that the file was read and has not been modified since (stale_base otherwise). Refused if a constraint forbids the path.",
+      "Writes a file to the workspace (filePath, content): creates a NEW file or fully overwrites an existing one. The content is written as given; no prior read is required. Refused if a constraint forbids the path.",
     schema: writeParams,
   },
   {
@@ -429,26 +429,29 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       action = { operator: "decline", ...pick("why") };
       break;
     case "open_hypothesis":
+      // A missing field is the model's malformed call, not a crash: coerce to "" and let the
+      // executor refuse it with a clear `bad_hypothesis`/`bad_expectation`.
       action = {
         operator: "open_hypothesis",
-        kind: a.kind,
-        label: a.label,
-        suppose: a.suppose,
-        ifTrue: a.if_true,
-        ifFalse: a.if_false,
+        label: typeof a.label === "string" ? a.label : "",
+        suppose: typeof a.suppose === "string" ? a.suppose : "",
+        ifTrue: typeof a.if_true === "string" ? a.if_true : "",
+        ifFalse: typeof a.if_false === "string" ? a.if_false : "",
       };
       break;
     case "close_hypothesis":
       action = {
         operator: "close_hypothesis",
-        id: a.id,
+        id: typeof (a.hypothesis_id ?? a.id) === "string" ? String(a.hypothesis_id ?? a.id) : "",
         verdict: a.verdict,
-        grounds: Array.isArray(a.grounds)
-          ? a.grounds.map((ground) => {
-              const text = String(ground);
-              return text.startsWith("obs:") ? text : `obs:${text}`;
-            })
-          : [],
+        summary: typeof a.summary === "string" ? a.summary : "",
+      };
+      break;
+    case "close_goal":
+      action = {
+        operator: "close_goal",
+        outcome: a.outcome === "not_achieved" ? "not_achieved" : "achieved",
+        summary: typeof a.summary === "string" ? a.summary : "",
       };
       break;
     default:

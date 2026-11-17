@@ -7,15 +7,15 @@ import {
   actionSucceeded,
   activeHypothesis,
   activeHypothesisId,
-  activeHypothesisPath,
   childrenOf,
-  hypothesisChildrenOf,
+  formulaNode,
+  goalVerdictOf,
   hypothesisNodeOf,
+  hypothesisNodes,
   hypothesisOpenSeq,
   hypothesisPayloadOf,
   hypothesisVerdictOf,
   currentFocus,
-  currentVersion,
   fold,
   turnsOf,
   type State,
@@ -23,6 +23,8 @@ import {
 import { isTerminalIsland } from "../ir/islands";
 import { moveIsland } from "../ir/traversal";
 import type {
+  GoalVerdictPayload,
+  HypothesisPayload,
   HypothesisVerdictPayload,
   EdgeKind,
   MovePayload,
@@ -412,19 +414,6 @@ function changedMutations(
   return mutations;
 }
 
-// The version of the last read of `ref` (an observation carries it). Used to refuse a
-// `write` over content the model never read or that changed since (mirrors classify).
-function latestReadVersion(state: State, ref: string): string | undefined {
-  let best: { seq: number; version: string } | undefined;
-  for (const node of state.nodes.values()) {
-    if (node.kind !== "observation") continue;
-    const payload = node.payload as { ref?: unknown; version?: unknown } | undefined;
-    if (payload?.ref !== ref || typeof payload.version !== "string") continue;
-    if (best === undefined || node.seq > best.seq) best = { seq: node.seq, version: payload.version };
-  }
-  return best?.version;
-}
-
 function actionCommand(payload: unknown): string | undefined {
   const value = payload as { signature?: unknown; command?: unknown } | undefined;
   if (typeof value?.signature === "string") return value.signature;
@@ -433,7 +422,7 @@ function actionCommand(payload: unknown): string | undefined {
 }
 
 // The latest executed action with this command signature, if any. A refused attempt (a
-// command that did not run: repeat/stale/forbidden/empty) does not become the baseline, so
+// command that did not run: repeat/forbidden/empty) does not become the baseline, so
 // repeated refusals keep naming the same original result and read as no new knowledge.
 function latestAction(state: State, command: string): { seq: number; id: string } | undefined {
   let best: { seq: number; id: string } | undefined;
@@ -499,21 +488,20 @@ function actionExtra(apply: Apply): Record<string, unknown> {
   }
 }
 
-// A refusal has two forms: a plain reason, and — for a stale base — the current file the model
-// needs to act on (`stale`, absent when the file is gone).
+// A refusal is a plain reason: the command did not run, and the engine records it as an
+// observation rather than refusing without a node.
 export interface CommandRefusal {
   reason: string;
-  stale?: { path: string; ref: string; version: string };
 }
 
-// Non-execution of a command (docs/en/ir.md §2.7, §4): a repeat, a stale base, a
-// forbidden path or an empty command is a reason, returned here so the engine records it as
-// an observation rather than refusing without a node. The checks are state-only.
+// Non-execution of a command (docs/en/ir.md §2.7, §4): a repeat, a forbidden path or an
+// empty command is a reason, returned here so the engine records it as an observation rather
+// than refusing without a node. The checks are state-only.
 function commandRefusal(state: State, apply: Apply, command: string): CommandRefusal | undefined {
   // A repeat is scoped to the hypothesis that made the earlier call: a new hypothesis may
-  // re-run what a closed one (or an ancestor) ran, because its grounds must come from after
-  // its own opening. Units without hypotheses have no hypothesisId, so both sides are undefined and
-  // the original unit-wide behavior is unchanged.
+  // re-run what a closed one ran, because its claim is a different assertion. Units without
+  // hypotheses have no hypothesisId, so both sides are undefined and the original unit-wide
+  // behavior is unchanged.
   const sameHypothesis = (found: { id: string }): boolean => {
     const prior = (state.nodes.get(found.id)?.payload as { hypothesisId?: string } | undefined)?.hypothesisId;
     return prior === activeHypothesisId(state);
@@ -540,15 +528,6 @@ function commandRefusal(state: State, apply: Apply, command: string): CommandRef
   if (apply.tool === "edit" || apply.tool === "write") {
     for (const { id, pattern } of forbiddenConstraints(state)) {
       if (matchesPath(pattern, apply.path)) return { reason: `constraint_violation:${pattern}:${id}` };
-    }
-    const ref = `file:${apply.path}`;
-    const readVersion = latestReadVersion(state, ref);
-    const version = currentVersion(state, ref);
-    if (readVersion !== undefined && version !== readVersion) {
-      return {
-        reason: "stale_base",
-        ...(version !== undefined ? { stale: { path: apply.path, ref, version } } : {}),
-      };
     }
   }
   if (apply.tool === "fetch" && apply.path !== undefined) {
@@ -732,9 +711,9 @@ export function executeAction(
   // The model's hidden reasoning for this turn (`Proposals.reasoning`): stored on the turn's
   // action nodes so the projection can show it back on the tape next turn (`docs/en/ir.md §7`).
   reasoning?: string,
-  // Inquiry only: enforce the hypothesis rules (side-effect gate and hypothesis open/close
-  // validation). Other units pass nothing and keep their behavior.
-  options?: { hypothesisRules?: boolean },
+  // Inquiry only: enforce the hypothesis rules and, when a reply mixed a hypothesis tool with
+  // other calls, refuse the whole batch. Other units pass nothing and keep their behavior.
+  options?: { hypothesisRules?: boolean; batchViolation?: string },
 ): ExecOutcome {
   const hypothesisRules = options?.hypothesisRules === true;
   const hypothesisId = activeHypothesisId(state);
@@ -791,6 +770,17 @@ export function executeAction(
     return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
   };
 
+  // In the inquiry unit every action is an experiment for an open hypothesis: without one there
+  // is no claim the observation belongs to, so the action is refused. This is a journal
+  // invariant, not a per-kind policy; `open_hypothesis`/`close_hypothesis` are not actions.
+  const noOpen = (actionId: string, verb: string): ExecOutcome | undefined => {
+    if (!hypothesisRules || activeHypothesisId(state) !== undefined) return undefined;
+    return refuseAction(
+      actionId,
+      `no_open: ${verb} runs under an open hypothesis; call open_hypothesis first`,
+    );
+  };
+
   // Hypothesis ids are monotone even after a refused open: count the ids already recorded on
   // hypothesis nodes and on actions, so a failed opening does not reuse its id for the next one.
   const nextHypothesisId = (): string => {
@@ -805,23 +795,6 @@ export function executeAction(
       note((node.payload as { hypothesisId?: unknown } | undefined)?.hypothesisId);
     }
     return `C${max + 1}`;
-  };
-
-  // The ids a hypothesis may actually cite: observations recorded after it opened, excluding
-  // refusals. The refusal names them so the model can close instead of guessing; an older,
-  // still relevant result can be brought in with `recall`.
-  const validGroundsText = (openSeq: number): string => {
-    const refs: string[] = [];
-    for (const node of state.nodes.values()) {
-      if (node.seq <= openSeq) continue;
-      if (node.kind !== "observation") continue;
-      if ((node.payload as { refused?: unknown } | undefined)?.refused === true) continue;
-      refs.push(node.id);
-    }
-    refs.sort((a, b) => (state.nodes.get(a)?.seq ?? 0) - (state.nodes.get(b)?.seq ?? 0));
-    const shown = refs.slice(-6);
-    const more = refs.length > shown.length ? ` (+${refs.length - shown.length} earlier)` : "";
-    return shown.length > 0 ? `${shown.join(", ")}${more}` : "none";
   };
 
   const ensureFile = (path: string, ref: string): void => {
@@ -1099,6 +1072,17 @@ export function executeAction(
     return { events, turn: proposalTurn(text, resultId, errorShown), done: false, stopReason: null };
   };
 
+  // A hypothesis tool must be the only call in its reply. A mixed batch is refused whole: every
+  // call is paired with the same reason, so the model sees the rule instead of a partial run.
+  if (hypothesisRules && options?.batchViolation !== undefined) {
+    const focus = currentFocus(state) ?? state.rootId;
+    if (focus === undefined) return fail(options.batchViolation);
+    const call = modelCall(action);
+    const actionId = buildActionItem(call.name, call.name, { call });
+    appendTurn(focus, actionId);
+    return refuseAction(actionId, options.batchViolation);
+  }
+
   switch (action.operator) {
     case "recall":
     case "search": {
@@ -1114,6 +1098,8 @@ export function executeAction(
       const command = action.operator === "recall" ? recallCall(action) : searchCall(action);
       const actionId = buildActionItem(command, command, { call: modelCall(action) });
       appendTurn(focus, actionId);
+      const gate = noOpen(actionId, action.operator);
+      if (gate !== undefined) return gate;
       const observationSeq = next();
       const observationId = `obs:${observationSeq}`;
       events.push({
@@ -1136,14 +1122,25 @@ export function executeAction(
       const focus = currentFocus(state) ?? state.rootId;
       if (focus === undefined) return fail("open_hypothesis failed: no current state");
       const id = nextHypothesisId();
-      const label = `open_hypothesis ${id} ${action.kind}: ${action.label}`;
+      const label = `open_hypothesis ${id}: ${action.label}`;
       const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: id });
       appendTurn(focus, actionId);
+      const open = activeHypothesis(state);
+      if (open !== undefined) {
+        return refuseAction(
+          actionId,
+          `one_open: ${open.hypothesisId} is still open; close it before opening another`,
+        );
+      }
+      if (action.label.trim() === "" || action.suppose.trim() === "") {
+        return refuseAction(
+          actionId,
+          "bad_hypothesis: label and suppose must be non-empty; re-call open_hypothesis with label, suppose, if_true and if_false",
+        );
+      }
       if (action.ifTrue.trim() === "" || action.ifFalse.trim() === "") {
         return refuseAction(actionId, "bad_expectation: both if_true and if_false must be non-empty");
       }
-      const parent = activeHypothesis(state);
-      const parentNode = parent !== undefined ? hypothesisNodeOf(state, parent.hypothesisId)?.id : state.rootId;
       const seq = next();
       const nodeId = `w:hypothesis:${seq}`;
       events.push({
@@ -1155,18 +1152,17 @@ export function executeAction(
           label: action.label,
           payload: {
             hypothesisId: id,
-            kind: action.kind,
             label: action.label,
             suppose: action.suppose,
             ifTrue: action.ifTrue,
             ifFalse: action.ifFalse,
-            ...(parent !== undefined ? { parentId: parent.hypothesisId } : {}),
             turn,
           },
           seq,
         },
       });
-      if (parentNode !== undefined) addEdge({ kind: "llm" }, parentNode, nodeId, "hypothesis");
+      const container = formulaNode(state)?.id ?? state.rootId;
+      if (container !== undefined) addEdge({ kind: "llm" }, container, nodeId, "hypothesis");
       addEdge({ kind: "llm" }, actionId, nodeId, "result");
       return { events, turn: proposalTurn(label, nodeId), done: false, stopReason: null };
     }
@@ -1179,78 +1175,29 @@ export function executeAction(
       const label = `close_hypothesis ${action.id} ${action.verdict}`;
       const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: action.id });
       appendTurn(focus, actionId);
-      if (hypothesis === undefined) return refuseAction(actionId, "not_open: no such hypothesis");
+      if (hypothesis === undefined) {
+        const openIds = hypothesisNodes(state)
+          .map((node) => node.payload as HypothesisPayload | undefined)
+          .filter(
+            (candidate): candidate is HypothesisPayload =>
+              candidate !== undefined && hypothesisVerdictOf(state, candidate.hypothesisId) === undefined,
+          )
+          .map((candidate) => candidate.hypothesisId);
+        const hint = openIds.length > 0 ? `. Open: ${openIds.join(", ")}` : ". No hypothesis is open";
+        return refuseAction(actionId, `not_open: no such hypothesis${hint}`);
+      }
       if (hypothesisVerdictOf(state, action.id) !== undefined) {
         return refuseAction(actionId, "not_open: the hypothesis is already closed");
       }
-      const probeVerdicts = ["confirmed", "refuted", "dropped"] as const;
-      const changeVerdicts = ["done", "dropped"] as const;
-      if (hypothesis.kind === "probe" && !(probeVerdicts as readonly string[]).includes(action.verdict)) {
-        return refuseAction(actionId, "bad_verdict: a probe closes confirmed/refuted/dropped");
-      }
-      if (hypothesis.kind === "change" && !(changeVerdicts as readonly string[]).includes(action.verdict)) {
-        return refuseAction(actionId, "bad_verdict: a change closes done/dropped");
-      }
-      const openSeq = hypothesisOpenSeq(state, action.id) ?? 0;
-      if (action.verdict !== "dropped" && action.grounds.length === 0) {
-        return refuseAction(
-          actionId,
-          `bad_grounds: at least one ground is required. Valid grounds under ${action.id}: ${validGroundsText(openSeq)}.`,
-        );
-      }
-      if (action.verdict !== "dropped") {
-        for (const ground of action.grounds) {
-          const node = state.nodes.get(ground);
-          const valid = validGroundsText(openSeq);
-          if (node === undefined) {
-            return refuseAction(
-              actionId,
-              `bad_grounds: ${ground} is not a result in this journal. Valid grounds under ${action.id}: ${valid}.`,
-            );
-          }
-          if (node.seq <= openSeq) {
-            const recall =
-              node.kind === "observation"
-                ? ` For an earlier result, recall ${ground} by id.`
-                : "";
-            return refuseAction(
-              actionId,
-              `bad_grounds: ${ground} was recorded before ${action.id} opened. Valid grounds under ${action.id}: ${valid}.${recall}`,
-            );
-          }
-          if (node.kind !== "observation") {
-            return refuseAction(
-              actionId,
-              `bad_grounds: ${ground} is not an observation. Valid grounds under ${action.id}: ${valid}.`,
-            );
-          }
-          if ((node.payload as { refused?: unknown } | undefined)?.refused === true) {
-            return refuseAction(
-              actionId,
-              `bad_grounds: ${ground} is a refusal, not a fact. Valid grounds under ${action.id}: ${valid}.`,
-            );
-          }
-        }
-      }
-      const openChildren = hypothesisChildrenOf(state, action.id).filter(
-        (child) => hypothesisVerdictOf(state, child.hypothesisId) === undefined,
-      );
-      if (openChildren.length > 0) {
-        const active = activeHypothesis(state);
-        const path = activeHypothesisPath(state)
-          .map((hypothesis) => hypothesis.hypothesisId)
-          .join(" > ");
-        return refuseAction(
-          actionId,
-          `children_open: close the active ${active?.hypothesisId ?? "hypothesis"} first. Path: ${path || action.id}.`,
-        );
+      if (action.summary.trim() === "") {
+        return refuseAction(actionId, "bad_summary: record what was done and why the verdict holds");
       }
       const seq = next();
       const verdictId = `w:verdict:${seq}`;
       const verdictPayload: HypothesisVerdictPayload = {
         hypothesisId: action.id,
         verdict: action.verdict,
-        grounds: action.grounds,
+        summary: action.summary,
         turn,
       };
       events.push({
@@ -1266,6 +1213,53 @@ export function executeAction(
       });
       const hypothesisNode = hypothesisNodeOf(state, action.id);
       if (hypothesisNode !== undefined) addEdge({ kind: "llm" }, hypothesisNode.id, verdictId, "verdict");
+      addEdge({ kind: "llm" }, actionId, verdictId, "result");
+      return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
+    }
+
+    case "close_goal": {
+      if (!hypothesisRules) return fail("close_goal is not available in this unit");
+      const focus = currentFocus(state) ?? state.rootId;
+      if (focus === undefined) return fail("close_goal failed: no current state");
+      const label = `close_goal ${action.outcome}`;
+      const actionId = buildActionItem(label, label, { call: modelCall(action) });
+      appendTurn(focus, actionId);
+      if (goalVerdictOf(state) !== undefined) {
+        return refuseAction(actionId, "not_open: the goal is already closed");
+      }
+      const open = activeHypothesis(state);
+      if (open !== undefined) {
+        return refuseAction(
+          actionId,
+          `open_predicate: close ${open.hypothesisId} before closing the goal`,
+        );
+      }
+      if (action.summary.trim() === "") {
+        return refuseAction(
+          actionId,
+          "bad_summary: the goal summary is the final answer; it must be non-empty",
+        );
+      }
+      const seq = next();
+      const verdictId = `w:goal:${seq}`;
+      const payload: GoalVerdictPayload = {
+        outcome: action.outcome,
+        summary: action.summary,
+        turn,
+      };
+      events.push({
+        type: "add_node",
+        node: {
+          id: verdictId,
+          space: "work",
+          kind: "goal_verdict",
+          label,
+          payload,
+          seq,
+        },
+      });
+      const formula = formulaNode(state);
+      if (formula !== undefined) addEdge({ kind: "llm" }, formula.id, verdictId, "goal");
       addEdge({ kind: "llm" }, actionId, verdictId, "result");
       return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
     }
@@ -1398,6 +1392,8 @@ export function executeAction(
         call: modelCall(action),
       });
       appendTurn(focus, actionId);
+      const gate = noOpen(actionId, apply.tool);
+      if (gate !== undefined) return gate;
       const failed = (text: string): ExecOutcome => {
         const seq = next();
         const id = `obs:${seq}`;
@@ -1415,66 +1411,10 @@ export function executeAction(
         addEdge({ kind: "llm" }, actionId, id, "result");
         return { events, turn: proposalTurn(text, id), done: false, stopReason: null };
       };
-      // Inquiry: a side-effecting call needs an open hypothesis; a write needs a change.
-      if (hypothesisRules) {
-        const active = activeHypothesis(state);
-        if ((apply.tool === "bash" || apply.tool === "fetch") && active === undefined) {
-          return failed("no_open: open a hypothesis before a side-effecting command.");
-        }
-        if (
-          (apply.tool === "write" || apply.tool === "edit" || apply.tool === "apply_patch") &&
-          active?.kind !== "change"
-        ) {
-          return failed("not_a_change: writing requires an open change hypothesis");
-        }
-      }
       // Non-execution of a command is an observation with a reason, not a refusal without a
       // node (docs/en/ir.md §2.7, §4).
       const refusal = commandRefusal(state, apply, command);
-      if (refusal !== undefined) {
-        const stale = refusal.stale;
-        if (stale === undefined) return failed(refusal.reason);
-        // The base went stale under the model: a bash write, or another action, changed the
-        // file after its read. A bare `stale_base` costs a read turn before the change can be
-        // retried, so the observation carries the current content — the same move a failed
-        // `edit` makes (tools §4.3) — and the current version, which `fold` records as the
-        // observed one, so the retry is legitimate instead of refused again.
-        let content: string | undefined;
-        try {
-          content = workspace.read(stale.path);
-        } catch {
-          content = undefined;
-        }
-        const label = `stale_base: ${stale.path} changed since it was read`;
-        const header = `--- current content of ${stale.path} (re-read it; your change did not apply) ---`;
-        const full =
-          content === undefined ? label : `${label}\n${header}\n${content}\n--- end ---`;
-        const observationSeq = next();
-        const observationId = `obs:${observationSeq}`;
-        events.push({
-          type: "add_node",
-          node: {
-            id: observationId,
-            space: "work",
-            kind: "observation",
-            label: refusal.reason,
-            payload: {
-              failed: true,
-              ref: stale.ref,
-              version: stale.version,
-              ...storeOutput(observationId, full, QUERY_BODY_LIMIT),
-            },
-            seq: observationSeq,
-          },
-        });
-        addEdge({ kind: "llm" }, actionId, observationId, "result");
-        return {
-          events,
-          turn: proposalTurn(bounded(full), observationId),
-          done: false,
-          stopReason: null,
-        };
-      }
+      if (refusal !== undefined) return failed(refusal.reason);
 
       if (apply.tool === "read") {
         // A path outside the workspace is a recorded refusal, not a crash: `exists`
@@ -1741,24 +1681,6 @@ export function executeAction(
 
       if (apply.tool === "write") {
         const ref = `file:${apply.path}`;
-        // Overwriting unseen or changed content is refused: the model must have read the
-        // file (a new file has no version, so creation is allowed) and it must be fresh.
-        let present: boolean;
-        try {
-          present = workspace.exists(apply.path);
-        } catch (error) {
-          return failed(`write failed: ${(error as Error).message}`);
-        }
-        if (present) {
-          const readVersion = latestReadVersion(state, ref);
-          if (readVersion === undefined) {
-            return failed(
-              `write failed: ${apply.path} exists; read it before overwriting (use edit for a small change)`,
-            );
-          }
-          // A stale base never reaches here: `commandRefusal` returns it first, with the
-          // current content in the observation.
-        }
         const before = readForDiff(workspace, apply.path);
         try {
           workspace.write(apply.path, apply.content);

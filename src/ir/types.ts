@@ -24,11 +24,13 @@ export const WORK_KINDS = [
   // session-level artifact (the session agent's execution list), never task knowledge.
   "plan",
   "plan_item",
-  // The `inquiry` unit's hypotheses: an open `hypothesis` and its `hypothesis_verdict`
-  // closure. They hang off the request/another hypothesis by `hypothesis` edges and are not
-  // state turns.
+  // The `inquiry` unit: the engine-owned formula container `formula` (H) is the conjunction of
+  // the model's `hypothesis` nodes; each hypothesis has an immutable `hypothesis_verdict`
+  // closure. The `goal_verdict` closes the formula itself. None of these are state turns.
+  "formula",
   "hypothesis",
   "hypothesis_verdict",
+  "goal_verdict",
 ] as const;
 export type WorkKind = (typeof WORK_KINDS)[number];
 
@@ -97,27 +99,38 @@ export interface PlanPayload {
   summary?: string;
 }
 
+// The engine-owned formula container H of the `inquiry` unit. It is not a hypothesis: its
+// content is the conjunction of the model's hypotheses, recomputed from the `hypothesis`
+// edges. The model never writes H itself.
+export interface FormulaPayload {
+  formulaId: string;
+}
+
 // One hypothesis of the `inquiry` unit. The model declares it, the engine records it; the
-// expectations are stored, never parsed. A `hypothesis` node hangs off its parent hypothesis
-// (or the request) by a `hypothesis` edge; `parentId` is the parent's hypothesis id (absent for
-// a root).
+// expectations are stored, never parsed. Hypotheses are top-level conjuncts of H (flat), linked
+// by `hypothesis` edges from the formula node.
 export interface HypothesisPayload {
   hypothesisId: string;
-  kind: "probe" | "change";
   label: string;
   suppose: string;
   ifTrue: string;
   ifFalse: string;
-  parentId?: string;
   turn?: number;
 }
 
 // The closure of a hypothesis: a separate immutable node, so the open hypothesis is never
-// rewritten.
+// rewritten. The summary is the record of the work; the engine does not parse or check it.
 export interface HypothesisVerdictPayload {
   hypothesisId: string;
-  verdict: "confirmed" | "refuted" | "done" | "dropped";
-  grounds: string[];
+  verdict: "confirmed" | "refuted" | "dropped";
+  summary?: string;
+  turn?: number;
+}
+
+// The closure of the formula H: the model's final result, derived from the whole tape.
+export interface GoalVerdictPayload {
+  outcome: "achieved" | "not_achieved";
+  summary?: string;
   turn?: number;
 }
 
@@ -138,9 +151,12 @@ export const EDGE_KINDS = [
   // them out of the `move`/`turn` ordered-children maps.
   "plan",
   "plan_item",
-  // `inquiry`: request/hypothesis → hypothesis, and hypothesis → hypothesis_verdict.
+  // `inquiry`: request → formula (H), formula → hypothesis, hypothesis → hypothesis_verdict,
+  // and formula → goal_verdict.
+  "formula",
   "hypothesis",
   "verdict",
+  "goal",
 ] as const;
 export type EdgeKind = (typeof EDGE_KINDS)[number];
 
