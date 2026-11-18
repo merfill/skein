@@ -16,7 +16,8 @@ export interface RejectionRecord {
 export interface State {
   nodes: Map<string, Node>;
   edges: Map<string, Edge>;
-  // Ordered children of the request (`move`) and of a state's turns container (`turn`).
+  // Ordered children: a request's states (`move`), a state's turns (`turn`), and a
+  // hypothesis's sub-hypotheses (`hypothesis`).
   children: Map<string, string[]>;
   rejections: RejectionRecord[];
   // The node in focus when each node was added, keyed by node id; derived during
@@ -127,23 +128,103 @@ export function goalVerdictOf(state: State): Node | undefined {
   return undefined;
 }
 
-// The open hypothesis, if any. Hypotheses are flat conjuncts of H, so at most one is open.
-export function activeHypothesis(state: State): HypothesisPayload | undefined {
-  const open = hypothesisNodes(state).filter((node) => {
+// The open hypotheses form one path from a root conjunct to the active leaf. A hypothesis is
+// open until a `hypothesis_verdict` node with its id exists.
+export function openHypothesisNodes(state: State): Node[] {
+  return hypothesisNodes(state).filter((node) => {
     const payload = node.payload as HypothesisPayload | undefined;
     return payload !== undefined && hypothesisVerdictOf(state, payload.hypothesisId) === undefined;
   });
-  return open[open.length - 1]?.payload as HypothesisPayload | undefined;
+}
+
+// A hypothesis's parent node: the `hypothesis` edge into it (H or another hypothesis). Root
+// conjuncts hang off H.
+export function hypothesisParentOf(state: State, hypothesisId: string): Node | undefined {
+  const node = hypothesisNodeOf(state, hypothesisId);
+  if (node === undefined) return undefined;
+  for (const edge of state.edges.values()) {
+    if (edge.kind === "hypothesis" && edge.to === node.id) return state.nodes.get(edge.from);
+  }
+  return undefined;
+}
+
+// The sub-hypotheses opened under a hypothesis, in append order. Actions are not here: they
+// stay in the request's linear turns container and are bound by `hypothesisId`.
+export function hypothesisChildrenOf(state: State, hypothesisId: string): Node[] {
+  const node = hypothesisNodeOf(state, hypothesisId);
+  if (node === undefined) return [];
+  return childrenOf(state, node.id)
+    .map((id) => state.nodes.get(id))
+    .filter((child): child is Node => child?.kind === "hypothesis");
+}
+
+// The actions recorded under a hypothesis id, in append order.
+export function hypothesisActionsOf(state: State, hypothesisId: string): Node[] {
+  const actions: Node[] = [];
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "action") continue;
+    const payload = node.payload as
+      | { hypothesisId?: unknown; call?: { name?: unknown } }
+      | undefined;
+    if (payload?.hypothesisId !== hypothesisId) continue;
+    // The hypothesis tools carry a hypothesis id but are protocol, not work under it.
+    const callName = payload.call?.name;
+    if (
+      callName === "open_hypothesis" ||
+      callName === "close_hypothesis" ||
+      callName === "close_goal"
+    ) {
+      continue;
+    }
+    actions.push(node);
+  }
+  return actions.sort((a, b) => a.seq - b.seq);
+}
+
+export type HypothesisMode = "undecided" | "work" | "formula" | "mixed";
+
+// The mode is fixed by the first child: actions make a work leaf, sub-hypotheses make a
+// formula. A node with no children is undecided; mixing both kinds is malformed.
+export function hypothesisMode(state: State, hypothesisId: string): HypothesisMode {
+  const hasActions = hypothesisActionsOf(state, hypothesisId).length > 0;
+  const hasChildren = hypothesisChildrenOf(state, hypothesisId).length > 0;
+  if (hasActions && hasChildren) return "mixed";
+  if (hasChildren) return "formula";
+  if (hasActions) return "work";
+  return "undecided";
+}
+
+// The active hypothesis: the deepest open node. The open set is a single path, so the active
+// node is the one open hypothesis with no open child.
+export function activeHypothesis(state: State): HypothesisPayload | undefined {
+  const open = openHypothesisNodes(state);
+  if (open.length === 0) return undefined;
+  const openIds = new Set(open.map((node) => node.id));
+  const deepest = open.filter((node) => {
+    const payload = node.payload as HypothesisPayload;
+    return hypothesisChildrenOf(state, payload.hypothesisId).every((child) => !openIds.has(child.id));
+  });
+  const node = deepest[deepest.length - 1] ?? open[open.length - 1];
+  return node?.payload as HypothesisPayload | undefined;
 }
 
 export function activeHypothesisId(state: State): string | undefined {
   return activeHypothesis(state)?.hypothesisId;
 }
 
-// The open hypotheses form a single-element list in the flat model; empty when nothing is open.
+// The open path from a root conjunct to the active hypothesis (root first). Empty when
+// nothing is open.
 export function activeHypothesisPath(state: State): HypothesisPayload[] {
   const active = activeHypothesis(state);
-  return active !== undefined ? [active] : [];
+  if (active === undefined) return [];
+  const path: HypothesisPayload[] = [];
+  let current: Node | undefined = hypothesisNodeOf(state, active.hypothesisId);
+  while (current !== undefined && current.kind === "hypothesis") {
+    const payload = current.payload as HypothesisPayload;
+    path.push(payload);
+    current = hypothesisParentOf(state, payload.hypothesisId);
+  }
+  return path.reverse();
 }
 
 export function hypothesisOpenSeq(state: State, hypothesisId: string): number | undefined {
@@ -266,8 +347,13 @@ function applyEvent(state: State, event: Event): void {
     }
     case "add_edge": {
       state.edges.set(event.edge.id, event.edge);
-      // Ordered children: a request's states (`move`) and a state's turns (`turn`).
-      if (event.edge.kind === "move" || event.edge.kind === "turn") {
+      // Ordered children: a request's states (`move`), a state's turns (`turn`), and a
+      // hypothesis's sub-hypotheses (`hypothesis`).
+      if (
+        event.edge.kind === "move" ||
+        event.edge.kind === "turn" ||
+        event.edge.kind === "hypothesis"
+      ) {
         const list = state.children.get(event.edge.from);
         if (list) list.push(event.edge.to);
         else state.children.set(event.edge.from, [event.edge.to]);

@@ -3,6 +3,129 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-18 — `inquiry`: короткие задачи K=3, причины дублей/перепроверок
+
+### Поправка (важно)
+
+- **Причинное объяснение «модель переформулирует/перепроверяет из-за стирания ленты» —
+  неверно.** Не использовать. Ранее это уже подтверждалось (неоднократно). Модель работает
+  по промту; всё, что она видит, — промт (включая то, какие ходы проекция в него кладёт).
+  Дубли и перепроверки — **проблемы промта**, а не следствие «магии стирания».
+- Откуда я это взял (факт о промте, не причина): `src/inquiry.ts:176,224` — проекция не
+  рендерит ходы закрытой гипотезы; `docs/ru/inquiry.md:138,325,367`. Это описание того,
+  что попадает в промт; выводить из этого поведение модели нельзя.
+
+### Прогоны (2026-11-18, H-контейнер v9, `SKEIN_INQUIRY_REPEAT=3`)
+
+| задача | solved | ходы r1/r2/r3 | in | fresh | out | ₽ |
+|---|---:|---|---:|---:|---:|---:|
+| modernize-scientific-stack | 3/3 | 21/18/14 | 80.6k | 12.5k | 4.3k | 3.30 |
+| git-leak-recovery | 3/3 | 21/15/18 | 80.3k | 9.2k | 4.8k | 3.15 |
+| log-summary-date-ranges | 3/3 | 11/17/13 | 60.2k | 10.0k | 3.8k | 2.77 |
+
+- Артефакты: `bench/runs/inquiry-v9-<task>-k3/`.
+- **Тариф:** три сегодняшних прогона считаются ровно по **2×** ставкам кампании и
+  вчерашнего `fix-git-v9` (`reported/fitted ≈ 1.987` против `0.994`); прогоны — 18 ноя
+  06:5x, вчерашние — 17 ноя 22:2x. По старому тарифу цена: 0.55 / 0.53 / 0.46₽, т.е.
+  +20% / +35% / −10% к task-режиму, а не 2×. Сравнивать ₽ между датами нельзя.
+- Структура ходов: доля protocol (`open`/`close`/`stop`/`close_goal`) — 45% / 33% / 44%.
+  Минимум для одной гипотезы — 4 непродуктивных хода, каждая следующая +2.
+- Отказы: 3 хода на 9 прогонов (`bad_expectation` в modernize r2; `hypothesis_tool_alone`
+  ×2 в modernize r3, t0). `no_open`/`one_open`/`max_turns` нет.
+
+### Разбор рассуждений на ходах с дублями/перепроверкой
+
+Факты из `payload.reasoning` (events.ndjson):
+
+- **modernize r1, t3→t4.** На close (t3) модель рассуждает: «Close C1… Open hypothesis C2:
+  creating modern script». На t4 emit'ит **дословно C1** («inspect legacy») с reasoning
+  «Let me inspect the files first.» Позже (t13) сама: «I had opened a duplicate hypothesis
+  C2 that was already answered… I opened C2 before doing work — mistake.»
+- **modernize r2, t2→t3→t4.** На t3 кладёт `if_true`/`if_false` **внутрь `suppose`**,
+  оставляя поля пустыми → `bad_expectation`; t4: «I need to provide non-empty if_true &
+  if_false.» — потерянный ход на форму вызова.
+- **modernize r3, t0.** Два `open_hypothesis` в одном ответе (второй — `placeholder`
+  x/x/x) → `hypothesis_tool_alone` ×2; в reasoning: «It seems the tool call must be alone —
+  I did call it alone… Strange.» C1 открывается только в t1.
+- **git-leak r3, t3→t4.** C1 реально сделала 2 bash (t1–t2), но на t4: «I didn't actually
+  run any tools! … the summary I gave may be fabricated» → открывает C2 и повторяет осмотр.
+- **log-summary r1/r3, после close.** «The summary claims it was done. But I need to
+  verify? … I should ensure summary.csv is correct» → verify-гипотеза (3–5 ходов).
+- **modernize r1/r2, verify-tail.** C3 «verify state» (5 ходов), C4 «verify final
+  artifacts» (5 ходов) уже после готового результата.
+
+### Промт-причины (не «стирание»)
+
+1. **В промте нет запрета переоткрывать ту же claim.** Есть только `each distinct claim`
+   (`src/inquiry.ts:26`), `do not open … only to check` (`:28`) и в описании close —
+   «either open the next one or stop … build on it instead of re-deriving it». Ни одна
+   строка не говорит «не повторяй C1» / «следующая claim должна отличаться».
+2. **Reasoning хода `open`/`close` не попадает на ленту:** гипотезные вызовы рендерятся
+   как `system` Opening/Closing и `continue` (`src/inquiry.ts:202–220`), assistant-reasoning
+   отбрасывается. Поэтому намерение из t3 («open creating-files») не видно на t4.
+3. **Единственный Opening-пример на ленте — только что закрытая C1**, а
+   `OPEN_INSTRUCTION` (`:323`) общий: «open the next hypothesis» — без id закрытой и без
+   «new/different». Модель копирует единственный образец.
+4. **Форма вызова не удерживается:** схема/описание не мешают положить ожидания в
+   `suppose` (r2) и прислать второй `placeholder`-вызов (r3).
+5. **`Summary` не объявлен авторитетным:** модель видит только Opening/Closing, не видит
+   своих наблюдений и сомневается (git-leak r3) → verify-гипотеза.
+
+### Сделано после разбора (Phases 0–6)
+
+- **Phase 0 (точка решения).** Убраны `OPEN_INSTRUCTION`/`FINISH_INSTRUCTION` и фаза
+  `finish`; текстовый stop удалён. Нет открытой гипотезы → поверхность
+  `["open_hypothesis","close_goal"]`; текст без tool-call — ошибка (`no_close`/`no_goal`).
+  Tape-проба: «результат не достигнут» (modernize r2, log-summary r1) — **10/10
+  `open_hypothesis`**, `not_achieved` нет; «достигнут» — 5/10 `close_goal`, 5/10 verify
+  (модель не доверяет Summary — отдельный промт-вопрос).
+- **Дерево гипотез (v11).** Гипотеза — `work`-лист (дети — действия) или `formula`
+  (дети — подгипотезы); режим фиксируется первым ребёнком; смешение —
+  `not_leaf`/`not_formula`; пустой лист — `empty_hypothesis`; `formula` закрывается
+  после детей; вердикт+summary пишет модель. Иерархические id (`C1`, `C1.1`). Открытые
+  гипотезы — один путь; активная — самая глубокая; поверхность по режиму:
+  `undecided` — `open` + work без `close`; `work` — work + `close`; `formula` — `open` +
+  `close`; нет открытых — `open` + `close_goal`.
+- Файлы: `src/ir/graph.ts` (дерево: `hypothesis` в children, `hypothesisParentOf`,
+  `hypothesisChildrenOf`, `hypothesisActionsOf`, `hypothesisMode`, `activeHypothesisPath`),
+  `src/tools/index.ts` (иерархические id, open под активной, close только активной,
+  `not_formula`/`not_leaf`/`empty_hypothesis`), `src/inquiry.ts` (поверхность по режиму,
+  промт, проекция активного пути), `src/llm/inquiry.ts` (описания), `tests/inquiry_unit.test.ts`,
+  `docs/ru/inquiry.md`.
+- Проверки: `npm run typecheck` — чисто; офлайн — **672 passed / 40 skipped**.
+- **Live K=3 (v11):** `modernize` 3/3 (39 ходов), `git-leak` 3/3 (49), `log-summary`
+  3/3 (38); 0 дублей, 0 отказов. Артефакты `bench/runs/inquiry-v11-<task>-k3/`.
+  Вложенность на этих задачах **не использовалась**: модель вела плоские C1/C2/C3
+  (корневые). Сравнение ₽ с v9 — только через старый тариф (сегодня 2×).
+
+### Финальный промт (v12): `follows_from` + work tools
+
+- `cites` переименован в **`follows_from`** (payload `followsFrom`, ребро `follows_from`,
+  лента `Follows from: C1.2, C3`). Поле required; `[]` — только когда предшественников нет.
+- Правило «real data» — **только в базовом промте**: «The summaries of earlier hypotheses
+  are real data: trust them and use them in the next claim and its expected observation.»
+  Описание инструмента — минимальное (только смысл поля), без дубля и без «do not».
+- В базовый промт добавлена граница: «Work tools — the tools that inspect or change the
+  workspace — can be used only while a hypothesis is open; opening a hypothesis makes them
+  available.» Без имён инструментов (после утренней чистки). Лечит `no shell tool` →
+  `not_achieved` после close: модель открывает следующую гипотезу, а не сдаётся.
+- Результаты (сегодня 2× тариф; ₽ сравнивать по старому):
+  - `log-summary` K=3: **3/3**, ходы 11/11/15, 0.45/0.53/0.59₽. Во всех ровно
+    C1 (осмотр) → C2 (счёт+запись) с `follows_from: ["C1"]`; без verify-хвоста и без
+    повторного счёта. До этого v11e — 2/3 (один провал на границе).
+  - `modernize` K=1: **1/1**, 17 ходов, 0.73₽; C1 → C2 (`["C1"]`) → C3 (`["C1","C2"]`).
+  - `custom-memory` K=1: **1/1, achieved, 42 хода, 2.29₽**; C1 → C2 (`["C1"]`), без cap,
+    без открытой C3 (было 60/cap/пустой финал). По старому тарифу ≈1.15₽.
+- Артефакты: `bench/runs/inquiry-v11f-*`. Не гоняли: K=3 для modernize/custom-memory;
+  live-вложенность (`C1.1`) всё ещё не проверена — модель ведёт плоские C1→C2.
+- **Сравнение с opencode** (медианы `campaign-k5`, ₽ — оценка по старому тарифу; inquiry
+  ₽ пересчитаны со сегодняшнего 2×): `log-summary` 4 хода / ~11k fresh / ~0.85k out /
+  ~0.32₽ vs inquiry 11–15 / ~12.7k / ~4.0k / ~0.26₽; `modernize` 5–6 / ~4.7k / ~1.6k /
+  ~0.23 vs 17 / ~18.5k / ~5.4k / ~0.37; `custom-memory` ~19–27 / ~27k / ~10k / ~1.38 vs
+  42 / ~47.7k / ~17k / ~1.15. Ходов 1.8–3×; на коротких почти весь разрыв — протокол
+  (open/close/close_goal). По старому тарифу ₽ сопоставимы, на `custom-memory` inquiry
+  дешевле оценки opencode.
+
 ## 2026-11-17 — `inquiry`: H-контейнер, `close_goal`, live
 
 > Эта запись новее 2026-11-16. «Root = H-гипотеза» заменён на **H-контейнер**: H создаёт

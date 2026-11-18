@@ -20,6 +20,7 @@ const hypothesisOpenParams = z.object({
   suppose: z.string().min(1),
   if_true: z.string().min(1),
   if_false: z.string().min(1),
+  follows_from: z.array(z.string()),
 });
 
 const hypothesisCloseParams = z.object({
@@ -38,31 +39,33 @@ const goalCloseParams = z.object({
 export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   open_hypothesis: {
     description: [
-      "Opens a hypothesis. Arguments:",
+      "Opens a hypothesis under the active hypothesis, or under H when none is open. Arguments:",
       "- label: a short name.",
       "- suppose: what you put forward.",
       "- if_true: the observation that confirms it.",
       "- if_false: the observation that refutes it.",
+      "- follows_from: required. The ids of the earlier hypotheses this step follows from. Use [] only when there is no earlier hypothesis to depend on.",
       "",
-      "The engine keeps the main formula H: the conjunction of the hypotheses you open. H is not a hypothesis and you do not write its conjunction. Each hypothesis you open is a top-level conjunct of H. Available only when no hypothesis is open; close the open one first.",
+      "The engine keeps the main formula H: the conjunction of the hypotheses you open. H is not a hypothesis and you do not write its conjunction. A hypothesis is either a work leaf or a formula, fixed by its first child: an action makes it a work leaf, a sub-hypothesis makes it a formula. Do not mix the two under one hypothesis. A hypothesis with no child cannot be closed.",
       "Call this alone, with no other tool calls in the same reply.",
       "The engine records the hypothesis and shows it on the tape as:",
       "Opening hypothesis C1: <label>.",
       "Suppose: ...",
       "If true: ...",
       "If false: ...",
+      "Follows from: C1.2, C3",
       "Use the C-number (e.g. \"C1\") when you close the hypothesis. The internal journal address (`w:hypothesis:<n>`) is not a hypothesis id.",
     ].join("\n"),
     schema: hypothesisOpenParams,
   },
   close_hypothesis: {
     description: [
-      "Closes the open hypothesis and only it. Arguments:",
-      "- hypothesis_id: the id you got when you opened the hypothesis, e.g. \"C1\". Use it exactly; never the internal journal address (`w:hypothesis:<n>`) or a bare number.",
+      "Closes the active hypothesis and only it. Arguments:",
+      "- hypothesis_id: the id you got when you opened the hypothesis, e.g. \"C1\" or \"C1.2\". Use it exactly; never the internal journal address (`w:hypothesis:<n>`) or a bare number.",
       "- verdict: \"confirmed\" (the claim held), \"refuted\" (it did not), or \"dropped\" (abandoned). Choose the word that fits the claim; the request's result is the goal's outcome, not a hypothesis verdict.",
       "- summary: a detailed, human-readable account of what was done and achieved: the concrete result (commit, branch, files, answer), the checks that show it, and why the verdict holds. Write 2-4 sentences, not a bare word. It is this hypothesis's outcome, not the final answer; the final answer is written when you close the goal. For \"dropped\", say why.",
       "",
-      "A refuted hypothesis stays in the journal as a failed attempt; open a corrected or different one if you can. After a hypothesis closes, either open the next one or stop; its summary is the record, so build on it instead of re-deriving it. When you stop, the engine asks you to close the goal H.",
+      "A work leaf closes after its actions; a formula closes after all its sub-hypotheses are closed (its verdict synthesizes them). A hypothesis with no child cannot be closed. A refuted hypothesis stays in the journal as a failed attempt; open a corrected or different one if you can. Build on a closed hypothesis's summary instead of re-deriving it.",
       "Call this alone, with no other tool calls in the same reply.",
       "The engine shows the close as: Closing hypothesis C1: confirmed. Summary: ...",
     ].join("\n"),

@@ -7,6 +7,7 @@ import {
   activeHypothesisPath,
   childrenOf,
   goalVerdictOf,
+  hypothesisMode,
   fold,
   turnsOf,
   type State,
@@ -23,9 +24,11 @@ export const INQUIRY_BASE_PROMPT = [
   "# Role",
   "You are a software engineering agent with access to the user's filesystem. You solve the user's tasks.",
   "Solve the user's request. You work under one hypothesis at a time: a claim that can be true or false, with the observation you expect if it is true (`if_true`) and if it is false (`if_false`). An action runs only under an open hypothesis: before it, state the claim the action tests; after the result, close the hypothesis.",
-  "The request is the goal. The engine keeps H, the conjunction of the hypotheses you open; you do not write H. Open a hypothesis for each distinct claim; one claim can take several actions.",
-  "If `if_true` holds, close it `confirmed`; if `if_false` holds, close it `refuted`. A refuted hypothesis stays in the journal; open a corrected or different one, or stop. A hypothesis verdict is about its claim; the request's result is the goal's outcome. A reply without tool calls is allowed only when no hypothesis is open; with one open, it is an error.",
-  "Stop when the request's result is reached; do not open a hypothesis only to check what a closed one already reported. When you stop, close the goal with the outcome and the final summary; that summary is the report.",
+  "A hypothesis is either a work leaf or a formula, fixed by its first child: an action makes it a work leaf, a sub-hypothesis makes it a formula. Do not mix actions and sub-hypotheses under one hypothesis. A work leaf takes actions and is closed after them; a formula is closed after its sub-hypotheses are closed. A hypothesis with no child cannot be closed.",
+  "The request is the goal. The engine keeps H, the conjunction of the hypotheses you open; you do not write H. Open a hypothesis for each distinct claim; a work leaf can take several actions, and a formula splits its claim into sub-hypotheses. Never open a hypothesis that is a restatement or reformulation of one already opened, whether it is still open or closed.",
+  "The summaries of earlier hypotheses are real data: trust them and use them in the next claim and its expected observation.",
+  "If `if_true` holds, close it `confirmed`; if `if_false` holds, close it `refuted`. A refuted hypothesis stays in the journal; open a corrected or different one. A hypothesis verdict is about its claim; the request's result is the goal's outcome.",
+  "Every reply calls a tool. Work tools — the tools that inspect or change the workspace — can be used only while a hypothesis is open; opening a hypothesis makes them available. With a hypothesis open, act under it or close it. With no hypothesis open, open the next distinct claim; if the request's result is reached and no distinct claim remains, close the goal H with `close_goal` — the outcome and the final summary. That summary is the report.",
   "## General instructions for the work",
   "Follow the project. Mimic its style, structure, naming, typing and architectural patterns; make the change idiomatic to the surrounding code. Add comments sparingly (why, not what), and never use comments to talk to the user.",
   "Work only the active hypothesis: decide the next step, make small changes, and debug from evidence. Do not do work outside the active hypothesis or expand the scope.",
@@ -139,6 +142,9 @@ function openingMessage(hypothesis: HypothesisPayload): string {
     `Suppose: ${hypothesis.suppose}`,
     `If true: ${hypothesis.ifTrue}`,
     `If false: ${hypothesis.ifFalse}`,
+    ...(hypothesis.followsFrom !== undefined && hypothesis.followsFrom.length > 0
+      ? [`Follows from: ${hypothesis.followsFrom.join(", ")}`]
+      : []),
   ].join("\n");
 }
 
@@ -173,7 +179,8 @@ function goalClosingMessage(verdict: GoalVerdictPayload): string {
 }
 
 // The tape is chronological: an Opening message, the work under that hypothesis, and a Closing
-// message. When a hypothesis closes, its work is erased and only the Opening/Closing pair remains.
+// message. Only the active path's work is selected; a closed hypothesis renders its
+// Opening/Closing pair, and its work stays addressable in the journal (recall/search).
 function inquiryTape(state: State, requestId: string): TapeMessage[] {
   const turns = turnsOf(state, requestId);
   if (turns === undefined) return [];
@@ -221,8 +228,9 @@ function inquiryTape(state: State, requestId: string): TapeMessage[] {
       }
     }
 
-    // The work of a closed hypothesis is erased; its Opening/Closing pair is the record.
-    // Refused hypothesis calls stay visible so the model can correct them.
+    // Only work on the active path is selected; a closed hypothesis keeps its Opening/Closing
+    // pair in the view and its work in the journal. Refused hypothesis calls stay visible so
+    // the model can correct them.
     if (!isHypothesisTool && hypothesisId !== undefined && !active.has(hypothesisId)) continue;
 
     const reasoning =
@@ -317,12 +325,6 @@ function endInquiry(
   return { events: out, unresolved };
 }
 
-const FINISH_INSTRUCTION =
-  "All hypotheses are closed. Close the goal H now with `close_goal`: the outcome, the closed hypothesis ids that form H, and the final summary for the user.";
-
-const OPEN_INSTRUCTION =
-  "Formula check: if the request's result is reached and no further hypothesis is needed, stop now (no tool call); the engine will ask you to close the goal H. Otherwise open the next hypothesis.";
-
 export async function runInquiryUnit(
   deps: InquiryDeps,
   input: InquiryInput,
@@ -335,8 +337,6 @@ export async function runInquiryUnit(
   let stopReason: string | null = null;
   let final = "";
   let unresolved: UnresolvedHypothesis[] = [];
-  // `open`: only open_hypothesis; `work`: an open hypothesis; `finish`: only close_goal.
-  let phase: "open" | "work" | "finish" = "open";
   const maxTurns = deps.maxTurns;
 
   const stopWithError = (state: State, reason: string, text: string): void => {
@@ -355,25 +355,23 @@ export async function runInquiryUnit(
     }
     const state = fold(events);
     const active = activeHypothesis(state);
-    const allowedTools =
-      phase === "finish"
-        ? ["close_goal"]
-        : active !== undefined
-          ? [...INQUIRY_WORK_TOOL_NAMES]
-          : ["open_hypothesis"];
-    const hasClosedHypothesis = [...state.nodes.values()].some(
-      (node) => node.kind === "hypothesis_verdict",
-    );
-    const transition =
-      phase === "finish"
-        ? FINISH_INSTRUCTION
-        : phase === "open" && hasClosedHypothesis
-          ? OPEN_INSTRUCTION
-          : undefined;
-    const messages: ModelMessage[] =
-      transition !== undefined
-        ? [...inquiryMessages(state, input.request), { role: "system", content: transition }]
-        : inquiryMessages(state, input.request);
+    // The surface follows the active node's mode. No open node: open the next claim or close
+    // the goal. Undecided: act (making it a work leaf) or open a sub-hypothesis (making it a
+    // formula), but not close it yet. Work leaf: act or close it. Formula: open another
+    // sub-hypothesis or, once they are closed, close it. Every reply is a tool call.
+    const allowedTools = (() => {
+      if (active === undefined) return ["open_hypothesis", "close_goal"];
+      const mode = hypothesisMode(state, active.hypothesisId);
+      if (mode === "formula" || mode === "mixed") return ["open_hypothesis", "close_hypothesis"];
+      if (mode === "undecided") {
+        return [
+          "open_hypothesis",
+          ...INQUIRY_WORK_TOOL_NAMES.filter((name) => name !== "close_hypothesis"),
+        ];
+      }
+      return [...INQUIRY_WORK_TOOL_NAMES];
+    })();
+    const messages: ModelMessage[] = inquiryMessages(state, input.request);
     let proposals: Proposals;
     try {
       proposals = await deps.propose(messages, {
@@ -393,24 +391,12 @@ export async function runInquiryUnit(
     }
 
     if (proposals.actions.length === 0) {
+      // A reply always calls a tool: close the open hypothesis or act under it; with none
+      // open, open the next hypothesis or close the goal.
       const text = proposals.thought.trim();
-      if (active !== undefined) {
-        // A hypothesis is open: stopping is not a result.
-        stopWithError(state, "no_close", text !== "" ? text : "(no tool calls)");
-        turn += 1;
-        break;
-      }
-      if (phase === "finish") {
-        // Asked to close the goal, but sent nothing.
-        stopWithError(state, "no_goal", text !== "" ? text : "(no tool calls)");
-        turn += 1;
-        break;
-      }
-      // No open hypothesis and not yet finishing: the model stopped, so the formula is
-      // complete. The next turn asks it to close H.
-      phase = "finish";
+      stopWithError(state, active !== undefined ? "no_close" : "no_goal", text !== "" ? text : "(no tool calls)");
       turn += 1;
-      continue;
+      break;
     }
 
     const hasHypothesisTool = proposals.actions.some(
@@ -454,14 +440,6 @@ export async function runInquiryUnit(
         stopReason = payload.outcome === "achieved" ? "achieved" : "not_achieved";
         ended = true;
         break;
-      }
-      // Between predicates the surface is only `open_hypothesis`; while one is open it is the
-      // work surface. `close_goal` is reached only after the model has stopped.
-      if (action.operator === "open_hypothesis" && activeHypothesis(after) !== undefined) {
-        phase = "work";
-      }
-      if (action.operator === "close_hypothesis" && activeHypothesis(after) === undefined) {
-        phase = "open";
       }
     }
     if (paused) break;

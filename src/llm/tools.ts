@@ -437,6 +437,13 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         suppose: typeof a.suppose === "string" ? a.suppose : "",
         ifTrue: typeof a.if_true === "string" ? a.if_true : "",
         ifFalse: typeof a.if_false === "string" ? a.if_false : "",
+        ...(Array.isArray(a.follows_from)
+          ? {
+              followsFrom: a.follows_from.filter(
+                (value): value is string => typeof value === "string",
+              ),
+            }
+          : {}),
       };
       break;
     case "close_hypothesis":

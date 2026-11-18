@@ -107,6 +107,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     suppose: z.string(),
     ifTrue: z.string(),
     ifFalse: z.string(),
+    followsFrom: z.array(z.string()).optional(),
   }),
   z.object({
     operator: z.literal("close_hypothesis"),
@@ -227,6 +228,9 @@ export function modelCall(action: Action): ModelCall {
           suppose: action.suppose,
           if_true: action.ifTrue,
           if_false: action.ifFalse,
+          ...(action.followsFrom !== undefined && action.followsFrom.length > 0
+            ? { follows_from: action.followsFrom }
+            : {}),
         },
       };
     case "close_hypothesis":

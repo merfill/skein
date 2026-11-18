@@ -107,14 +107,17 @@ export interface FormulaPayload {
 }
 
 // One hypothesis of the `inquiry` unit. The model declares it, the engine records it; the
-// expectations are stored, never parsed. Hypotheses are top-level conjuncts of H (flat), linked
-// by `hypothesis` edges from the formula node.
+// expectations are stored, never parsed. Hypotheses form a tree under H: a `hypothesis` edge
+// links a parent hypothesis (or H) to a sub-hypothesis. `followsFrom` names the earlier
+// hypotheses whose findings this step follows from; it is provenance/navigation, not a
+// checked claim.
 export interface HypothesisPayload {
   hypothesisId: string;
   label: string;
   suppose: string;
   ifTrue: string;
   ifFalse: string;
+  followsFrom?: string[];
   turn?: number;
 }
 
@@ -151,10 +154,11 @@ export const EDGE_KINDS = [
   // them out of the `move`/`turn` ordered-children maps.
   "plan",
   "plan_item",
-  // `inquiry`: request → formula (H), formula → hypothesis, hypothesis → hypothesis_verdict,
-  // and formula → goal_verdict.
+  // `inquiry`: request → formula (H), H/гипотеза → гипотеза, гипотеза → гипотеза_вердикт,
+  // и H → итог. `follows_from` — шаг вытекает из findings предыдущей гипотезы.
   "formula",
   "hypothesis",
+  "follows_from",
   "verdict",
   "goal",
 ] as const;
