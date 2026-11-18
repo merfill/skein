@@ -3,6 +3,129 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-18 — `inquiry`: `observed` вместо предсказания (doc-задача, K=3)
+
+### Что сделано
+
+- **`close_hypothesis` получил `observed`** — реальное окончание (что фактически увидели),
+  обязательное и непустое; пустое → отказ `bad_observation`. Лента:
+  `Closing hypothesis C1: verdict.` / `Observed: …` / `Summary: …`.
+- **`if_true`/`if_false` удалены полностью** — артефакт подхода с предикатами. Основания:
+  заполнялись как план, а не как различающее наблюдение; модель их не соблюдала (закрывала
+  `confirmed` без обещанного наблюдения, а в одном прогоне написала файл не под той claim);
+  `refuted` по `if_false` на коротких задачах не встречался; движок их не проверяет; с
+  `observed` они стали лишним слоем.
+- Промт: гипотеза — claim, который может быть истинным или ложным; «Close with what you
+  actually observed, not with what you expected». Гейт `bad_expectation` убран; описания
+  инструментов, схемы, IR, доки и тесты обновлены.
+- Файлы: `src/ir/types.ts`, `src/llm/{inquiry,schemas,tools}.ts`, `src/tools/index.ts`,
+  `src/inquiry.ts`, `tests/inquiry_unit.test.ts`, `docs/ru/inquiry.md`.
+
+### Баг двух схем (исправлен)
+
+- `observed` добавили в `actionSchema` (`src/llm/schemas.ts`), но забыли в нативную
+  `hypothesisCloseParams` (`src/llm/inquiry.ts`) — модель видит именно её и не могла прислать
+  поле. Прогон v12b: **22 отказа `bad_observation` подряд** и `max_turns`.
+- Исправлено; добавлен регрессионный тест «requires the observed field in the close tool
+  schema». Урок: wire-схема и внутренняя `actionSchema` могут молча разойтись.
+
+### Doc-задача (не sandbox: `--dir`, оценки по журналу)
+
+Задача: «задокументируй публичный API `src/ir/graph.ts` в `docs/ru/api-graph.md`» (31 экспорт).
+Гонялась `npm run inquiry -- @<task.txt> --dir <snapshot> --max-turns 40 --save …` на снимке
+репозитория; verifier нет — качество сверялось вручную.
+
+| прогон | конфиг | ходы | гипотезы | итог | ₽ |
+|---|---|---:|---|---|---:|
+| v12 | `if_true/if_false`, без `observed` | 26 | 3 | achieved | 1.47 |
+| v12b | `observed`, wire-схема не обновлена | 40 | — | max_turns | 1.85 |
+| v12c | `observed` + предсказание | 40 | 4 | max_turns | 1.73 |
+| **v13, K=3** | **без предсказания + `observed`** | **30/26/29** | **2/2/2** | **3/3 achieved** | 1.27/1.07/1.34 |
+
+- v13: во всех трёх C1 = осмотр+запись (r2/r3 ещё правят `docs/ru/README.md`), C2 = verify.
+  `observed` в C1 называет созданный файл — в v12c этого не было: предсказание, похоже,
+  привязывало `observed` к ожиданию и вытесняло из записи артефакт.
+- Качество: 31/31 заголовков во всех трёх, сигнатуры дословные (r3 — `HypothesisMode` без
+  `export`/`;`), пример на TypeScript есть.
+- Осталось: verify-хвост (C2 в каждом прогоне, ~9–12 действий); r3 открыл C2 с тем же
+  label/suppose, что C1 (дубль claim; промт запрещает, движок не проверяет); r2/r3 правили
+  README — выход за задачу.
+- Артефакты: `bench/runs/inquiry-v12-docs-skein-k1`, `inquiry-v12b-docs-skein-observed-k1`,
+  `inquiry-v12c-docs-skein-observed-k1`, `inquiry-v13-docs-skein-nopredict-k3/r{1,2,3}`.
+
+### Graded-задачи после удаления предсказания (v14)
+
+`npm run inquiry:docker`, тариф дня 2× — ₽ сравнивать только между сегодняшними прогонами.
+
+| задача | K | solved | ходы | ₽ |
+|---|---:|---|---:|---:|
+| `log-summary-date-ranges` | 3 | **3/3** | 17/13/12 (42) | 1.75 |
+| `custom-memory-heap-crash` | 1 | **1/1** | 36 | 2.22 |
+| `modernize-scientific-stack` | 3 | **3/3** | 11/17/15 (43) | 1.65 |
+
+- Против баз: `log-summary` (v11f 3/3, 11/11/15 = 37 ходов, 1.57₽) — 42 хода, 1.75₽, не
+  регресс, но чуть длиннее; `custom-memory` (v11f 42, 2.29₽) — 36, 2.22₽, лучше;
+  `modernize` (v9 21/18/14 = 53) — 43, лучше.
+- **`refuted` за 14 прогонов не встретился** — все claim подтверждались. Риск «без `if_false`
+  негативное знание пропадёт» не проверен: кейса, где модель обязана ошибиться, не было.
+- **Вложенности (`C1.1`) по-прежнему нет** — везде плоские C1/C2/C3.
+- **Verify-хвост жив, но цепочки нет:** ровно одна проверочная гипотеза в 3 из 7 прогонов
+  (doc r1–r3, `log-summary` r1/r3, `modernize` r3); чаще всего C1 = осмотр(+запись), C2 =
+  verify. В `modernize` r2 — C1 осмотр → C2 повторный осмотр → C3 запись («осмотр не
+  переиспользуется», как раньше).
+- Артефакты: `bench/runs/inquiry-v14-log-summary-nopredict-k3`,
+  `inquiry-v14-custom-memory-nopredict-k1`, `inquiry-v14-modernize-nopredict-k3`.
+
+### Найдено round-trip тестом и проверка `refuted`
+
+- **`modelCall` не был обратным `toProposal`:** у `close_hypothesis` отсутствовал `observed`,
+  у `open_hypothesis` пропадал `follows_from` при пустом списке (схема требует `[]`). Оба
+  исправлены. Добавлен тест `inquiry tools: modelCall is the wire-inverse of toProposal`
+  (4 образца: open с `[]`/с id, close, close_goal), пинящий wire-схему и `actionSchema`.
+- Добавлен тест на старый журнал: вердикт без `observed` рендерится как
+  `(no observation recorded)`. Старые записи (v11/v12) фолдятся и рендерятся (проверено).
+- `docs/ru/inquiry.md` §9: убран шаг «(без вызовов)» — остаток удалённого текстового stop;
+  `close_goal` теперь шаг 8.
+- **`fix-code-vulnerability` K=1:** 1/1, 12 ходов, 0.38₽; одна claim, `confirmed`.
+- **`custom-memory-heap-crash` K=3:** **2/3**, ходы 47/20/45, 6.19₽. r1 (47) и r3 (45) —
+  achieved (r1 с verify-хвостом). **r2 — `no_goal`:** две claim `confirmed` (анализ
+  `main.cpp`/libstdc++), **ни одной записи** в `/app/user.cpp`, затем текстовый ответ без
+  вызова → `no_goal`, пустой финал, reward 0.
+- **`refuted` за 14 прогонов после удаления предсказания так и не встретился.** Риск
+  «негативное знание пропадёт» остаётся непроверенным: нужен кейс, где модель обязана
+  ошибиться. Наблюдаемый провал другой — аналитический цикл + текстовый stop (`no_goal`,
+  без repair).
+- Артефакты: `bench/runs/inquiry-v14-fix-code-vulnerability-nopredict-k1`,
+  `inquiry-v14-custom-memory-nopredict-k3/r{1,2,3}`.
+
+### Итог и с чего начать завтра
+
+- **После смены (без предсказания + `observed`): 13/14 solved** (doc K=3, `log-summary` K=3,
+  `custom-memory` K=1 и K=3, `modernize` K=3, `fix-code` K=1). Единственный провал —
+  `custom-memory` r2: `no_goal` (текст без вызова). Ранние v12b/v12c падали на `max_turns`
+  (баг wire-схемы и одиночная проба с предсказанием) — это до смены, в счёт не входят.
+- **Открытые вопросы:**
+  1. **`refuted` не наблюдался ни разу (14 прогонов).** Движок его поддерживает (офлайн-тест
+     есть), открыт вопрос склонности модели: нужен кейс с заведомо неверной claim или
+     сравнение с до-`if_false`-поведением (v9: `fix-code`/`password` давали `refuted`/дубли).
+  2. **Verify-хвост:** ровно одна проверочная гипотеза в 7 из 14 прогонов; изредка дубль
+     осмотра (`modernize` r2: C1 осмотр → C2 повторный осмотр) и дубль claim (`doc` r3:
+     C2 с тем же label/suppose, что C1). Промт запрещает restatement, движок не проверяет.
+  3. **`no_goal` без repair:** текстовый ответ без tool-call при отсутствии открытой
+     гипотезы завершает работу с reward 0 (`custom-memory` r2). Решить: repair/allowText
+     или оставить как ошибку.
+  4. **Вложенность (`C1.1`) не появляется** — везде плоские C1/C2/C3.
+  5. **Две схемы:** для inquiry теперь пинятся round-trip тестом; проверить, нет ли той же
+     рассинхронизации у остальных (`session`-инструменты, `start_document` и т.п.).
+- **Не трогали:** `fix-ocaml-gc` (60 ходов), LHTB-задачи.
+- **Не закоммичено** (см. `git status`): `src/{inquiry.ts,ir/types.ts,llm/{inquiry,schemas,tools}.ts,tools/index.ts}`,
+  `tests/{inquiry_unit,structured}.test.ts`, `docs/ru/{inquiry,handoff}.md`. Предсуществующие
+  правки `tests/sandbox/*` и `lhtb-*` не трогались.
+
+### Проверки
+
+- `npm run typecheck` — чисто; офлайн — **678 passed / 40 skipped**.
+
 ## 2026-11-18 — `inquiry`: короткие задачи K=3, причины дублей/перепроверок
 
 ### Поправка (важно)

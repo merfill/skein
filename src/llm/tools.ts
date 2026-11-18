@@ -430,13 +430,11 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       break;
     case "open_hypothesis":
       // A missing field is the model's malformed call, not a crash: coerce to "" and let the
-      // executor refuse it with a clear `bad_hypothesis`/`bad_expectation`.
+      // executor refuse it with a clear `bad_hypothesis`.
       action = {
         operator: "open_hypothesis",
         label: typeof a.label === "string" ? a.label : "",
         suppose: typeof a.suppose === "string" ? a.suppose : "",
-        ifTrue: typeof a.if_true === "string" ? a.if_true : "",
-        ifFalse: typeof a.if_false === "string" ? a.if_false : "",
         ...(Array.isArray(a.follows_from)
           ? {
               followsFrom: a.follows_from.filter(
@@ -451,6 +449,7 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         operator: "close_hypothesis",
         id: typeof (a.hypothesis_id ?? a.id) === "string" ? String(a.hypothesis_id ?? a.id) : "",
         verdict: a.verdict,
+        observed: typeof a.observed === "string" ? a.observed : "",
         summary: typeof a.summary === "string" ? a.summary : "",
       };
       break;

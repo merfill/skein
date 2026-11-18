@@ -17,7 +17,8 @@ import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { GENERAL_TOOLS } from "../src/llm/general";
 import { invokeStructured, invokeTools, type ToolsOptions } from "../src/llm/structured";
-import { modelCall } from "../src/llm/schemas";
+import { INQUIRY_TOOLS } from "../src/llm/inquiry";
+import { modelCall, type Action } from "../src/llm/schemas";
 import { proposalTools, toolNamesFor, toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { propose } from "../src/loop/propose";
@@ -574,6 +575,35 @@ describe("modelCall: IR -> native call", () => {
       args: { url: "http://u" },
     });
   });
+});
+
+// The wire schema the model sees (`INQUIRY_TOOLS`) and the internal `actionSchema` are two
+// layers; this round-trip pins them together so a field added to one cannot silently miss the
+// other (the `observed` bug).
+describe("inquiry tools: modelCall is the wire-inverse of toProposal", () => {
+  const samples: Action[] = [
+    { operator: "open_hypothesis", label: "C1", suppose: "root cause", followsFrom: [] },
+    { operator: "open_hypothesis", label: "C1.1", suppose: "sub-claim", followsFrom: ["C1"] },
+    {
+      operator: "close_hypothesis",
+      id: "C1",
+      verdict: "refuted",
+      observed: "the file is absent",
+      summary: "checked the workspace",
+    },
+    { operator: "close_goal", outcome: "achieved", summary: "done" },
+  ];
+
+  for (const action of samples) {
+    it(`round-trips ${action.operator}`, () => {
+      const call = modelCall(action);
+      const definition = INQUIRY_TOOLS[call.name]!;
+      expect(definition).toBeDefined();
+      const parsed = definition.schema.safeParse(call.args);
+      expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+      expect(toProposal(call.name, call.args, "").action).toEqual(action);
+    });
+  }
 });
 
 // Live smoke test (skipped offline): a real call is the only way to confirm the JSON path

@@ -106,26 +106,25 @@ export interface FormulaPayload {
   formulaId: string;
 }
 
-// One hypothesis of the `inquiry` unit. The model declares it, the engine records it; the
-// expectations are stored, never parsed. Hypotheses form a tree under H: a `hypothesis` edge
-// links a parent hypothesis (or H) to a sub-hypothesis. `followsFrom` names the earlier
-// hypotheses whose findings this step follows from; it is provenance/navigation, not a
-// checked claim.
+// One hypothesis of the `inquiry` unit: a claim the model declares and the engine records.
+// Hypotheses form a tree under H: a `hypothesis` edge links a parent hypothesis (or H) to a
+// sub-hypothesis. `followsFrom` names the earlier hypotheses whose findings this step follows
+// from; it is provenance/navigation, not a checked claim.
 export interface HypothesisPayload {
   hypothesisId: string;
   label: string;
   suppose: string;
-  ifTrue: string;
-  ifFalse: string;
   followsFrom?: string[];
   turn?: number;
 }
 
 // The closure of a hypothesis: a separate immutable node, so the open hypothesis is never
-// rewritten. The summary is the record of the work; the engine does not parse or check it.
+// rewritten. `observed` is the real ending — what was actually seen; `summary` is the account
+// of the work and why the verdict holds. The engine records both without parsing them.
 export interface HypothesisVerdictPayload {
   hypothesisId: string;
   verdict: "confirmed" | "refuted" | "dropped";
+  observed: string;
   summary?: string;
   turn?: number;
 }

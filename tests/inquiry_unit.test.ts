@@ -7,26 +7,23 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { inquiryMessages, runInquiryUnit, seedInquiry, type InquiryDeps } from "../src/inquiry";
 import type { Event } from "../src/ir/events";
 import { fold, hypothesisPayloadOf } from "../src/ir/graph";
+import { INQUIRY_TOOLS } from "../src/llm/inquiry";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toProposal } from "../src/llm/tools";
 import { executeAction } from "../src/tools";
 import { fsWorkspace, type Workspace } from "../src/tools/workspace";
 
-function open(
-  label: string,
-  suppose: string,
-  ifTrue = "yes",
-  ifFalse = "no",
-): Action {
-  return { operator: "open_hypothesis", label, suppose, ifTrue, ifFalse };
+function open(label: string, suppose: string): Action {
+  return { operator: "open_hypothesis", label, suppose };
 }
 
 function close(
   id: string,
   verdict: "confirmed" | "refuted" | "dropped",
   summary = "summary of the work",
+  observed = "observed fact",
 ): Action {
-  return { operator: "close_hypothesis", id, verdict, summary };
+  return { operator: "close_hypothesis", id, verdict, observed, summary };
 }
 
 function closeGoal(
@@ -88,6 +85,17 @@ describe("inquiry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("requires the observed field in the close tool schema", () => {
+    const schema = INQUIRY_TOOLS["close_hypothesis"]!.schema;
+    expect(
+      schema.safeParse({ hypothesis_id: "C1", verdict: "confirmed", summary: "s" }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ hypothesis_id: "C1", verdict: "confirmed", observed: "o", summary: "s" })
+        .success,
+    ).toBe(true);
+  });
+
   it("runs a hypothesis and closes the goal with its summary", async () => {
     let stepNo = 0;
     const propose = async (): Promise<Proposals> => {
@@ -120,11 +128,7 @@ describe("inquiry", () => {
 
   it("refuses a malformed open_hypothesis instead of throwing", () => {
     const events = seedInquiry({ id: "r1", text: "t" });
-    const proposal = toProposal(
-      "open_hypothesis",
-      { suppose: "s", if_true: "y", if_false: "n" },
-      "",
-    );
+    const proposal = toProposal("open_hypothesis", { suppose: "s" }, "");
     const outcome = executeAction(proposal.action, fold(events), workspace, 0, undefined, {
       hypothesisRules: true,
     });
@@ -150,9 +154,6 @@ describe("inquiry", () => {
   it("requires an open hypothesis for actions", () => {
     let events = seedInquiry({ id: "r1", text: "t" });
     expect(step(events, workspace, bash("echo hi")).text).toContain("no_open");
-
-    const empty = step(events, workspace, open("q", "s", "", ""));
-    expect(empty.text).toContain("bad_expectation");
 
     events = step(events, workspace, open("p", "s")).events;
     const written = step(events, workspace, write("c.txt", "x"));
@@ -257,6 +258,9 @@ describe("inquiry", () => {
     const empty = step(events, workspace, close("C1", "confirmed", "   "));
     expect(empty.text).toContain("bad_summary");
 
+    const noObservation = step(events, workspace, close("C1", "confirmed", "summary", "  "));
+    expect(noObservation.text).toContain("bad_observation");
+
     const closed = step(events, workspace, close("C1", "confirmed"));
     expect(closed.text).toContain("close_hypothesis C1 confirmed");
 
@@ -286,8 +290,6 @@ describe("inquiry", () => {
       operator: "open_hypothesis",
       label: "second",
       suppose: "b",
-      ifTrue: "y",
-      ifFalse: "n",
       followsFrom: ["C1", "C9"],
     };
     events = step(events, workspace, cited).events;
@@ -308,11 +310,30 @@ describe("inquiry", () => {
     const all = inquiryMessages(fold(events), { id: "r1", text: "t" }).map(textOf).join("\n");
     expect(all).toContain("Opening hypothesis C1: root.");
     expect(all).toContain("Closing hypothesis C1: confirmed.");
+    expect(all).toContain("Observed: observed fact");
     expect(all).toContain("Summary: summary of the work");
     expect(all).not.toContain("All hypotheses are closed");
     expect(all).not.toContain('"hypothesis_id"');
     expect(all).not.toContain("w:hypothesis");
     expect(all).not.toContain("[obs:");
+  });
+
+  it("renders a verdict from an older journal without observed", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("root", "make a.txt change")).events;
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("C1", "confirmed")).events;
+
+    const legacy = JSON.parse(JSON.stringify(events)) as Event[];
+    for (const event of legacy) {
+      if (event.type === "add_node" && event.node.kind === "hypothesis_verdict") {
+        delete (event.node.payload as { observed?: string }).observed;
+      }
+    }
+
+    const tape = inquiryMessages(fold(legacy), { id: "r1", text: "t" }).map(textOf).join("\n");
+    expect(tape).toContain("Closing hypothesis C1: confirmed.");
+    expect(tape).toContain("(no observation recorded)");
   });
 
   it("closes the goal and uses its summary as the final answer", async () => {

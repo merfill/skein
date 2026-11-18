@@ -23,11 +23,11 @@ import type { Workspace } from "./tools/workspace";
 export const INQUIRY_BASE_PROMPT = [
   "# Role",
   "You are a software engineering agent with access to the user's filesystem. You solve the user's tasks.",
-  "Solve the user's request. You work under one hypothesis at a time: a claim that can be true or false, with the observation you expect if it is true (`if_true`) and if it is false (`if_false`). An action runs only under an open hypothesis: before it, state the claim the action tests; after the result, close the hypothesis.",
+  "Solve the user's request. You work under one hypothesis at a time: a claim that can be true or false. An action runs only under an open hypothesis: before it, state the claim the action tests; after the result, close the hypothesis.",
   "A hypothesis is either a work leaf or a formula, fixed by its first child: an action makes it a work leaf, a sub-hypothesis makes it a formula. Do not mix actions and sub-hypotheses under one hypothesis. A work leaf takes actions and is closed after them; a formula is closed after its sub-hypotheses are closed. A hypothesis with no child cannot be closed.",
   "The request is the goal. The engine keeps H, the conjunction of the hypotheses you open; you do not write H. Open a hypothesis for each distinct claim; a work leaf can take several actions, and a formula splits its claim into sub-hypotheses. Never open a hypothesis that is a restatement or reformulation of one already opened, whether it is still open or closed.",
-  "The summaries of earlier hypotheses are real data: trust them and use them in the next claim and its expected observation.",
-  "If `if_true` holds, close it `confirmed`; if `if_false` holds, close it `refuted`. A refuted hypothesis stays in the journal; open a corrected or different one. A hypothesis verdict is about its claim; the request's result is the goal's outcome.",
+  "The summaries of earlier hypotheses are real data: trust them and use them in the next claim.",
+  "Close with what you actually observed, not with what you expected: `confirmed` when the work showed the claim held, `refuted` when it did not. A refuted hypothesis stays in the journal; open a corrected or different one. A hypothesis verdict is about its claim; the request's result is the goal's outcome.",
   "Every reply calls a tool. Work tools — the tools that inspect or change the workspace — can be used only while a hypothesis is open; opening a hypothesis makes them available. With a hypothesis open, act under it or close it. With no hypothesis open, open the next distinct claim; if the request's result is reached and no distinct claim remains, close the goal H with `close_goal` — the outcome and the final summary. That summary is the report.",
   "## General instructions for the work",
   "Follow the project. Mimic its style, structure, naming, typing and architectural patterns; make the change idiomatic to the surrounding code. Add comments sparingly (why, not what), and never use comments to talk to the user.",
@@ -56,8 +56,6 @@ export interface InquiryInput {
 export interface UnresolvedHypothesis {
   id: string;
   suppose: string;
-  ifTrue: string;
-  ifFalse: string;
 }
 
 export interface InquiryResult {
@@ -140,8 +138,6 @@ function openingMessage(hypothesis: HypothesisPayload): string {
   return [
     `Opening hypothesis ${hypothesis.hypothesisId}: ${hypothesis.label}.`,
     `Suppose: ${hypothesis.suppose}`,
-    `If true: ${hypothesis.ifTrue}`,
-    `If false: ${hypothesis.ifFalse}`,
     ...(hypothesis.followsFrom !== undefined && hypothesis.followsFrom.length > 0
       ? [`Follows from: ${hypothesis.followsFrom.join(", ")}`]
       : []),
@@ -164,9 +160,15 @@ function verdictSummary(verdict: HypothesisVerdictPayload): string {
   return summary !== undefined && summary !== "" ? summary : "(no summary recorded)";
 }
 
+function verdictObserved(verdict: HypothesisVerdictPayload): string {
+  const observed = verdict.observed?.replace(/\s+/g, " ").trim();
+  return observed !== undefined && observed !== "" ? observed : "(no observation recorded)";
+}
+
 function closingMessage(verdict: HypothesisVerdictPayload): string {
   return [
     `Closing hypothesis ${verdict.hypothesisId}: ${verdictWords(verdict.verdict)}.`,
+    `Observed: ${verdictObserved(verdict)}`,
     `Summary: ${verdictSummary(verdict)}`,
   ].join("\n");
 }
@@ -290,8 +292,6 @@ function endInquiry(
   const unresolved: UnresolvedHypothesis[] = path.map((hypothesis) => ({
     id: hypothesis.hypothesisId,
     suppose: hypothesis.suppose,
-    ifTrue: hypothesis.ifTrue,
-    ifFalse: hypothesis.ifFalse,
   }));
   const seq = nextNodeSeq(state);
   const stopId = `w:stop:${seq}`;

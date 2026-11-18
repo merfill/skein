@@ -1153,11 +1153,8 @@ export function executeAction(
       if (action.label.trim() === "" || action.suppose.trim() === "") {
         return refuseAction(
           actionId,
-          "bad_hypothesis: label and suppose must be non-empty; re-call open_hypothesis with label, suppose, if_true and if_false",
+          "bad_hypothesis: label and suppose must be non-empty; re-call open_hypothesis with label and suppose",
         );
-      }
-      if (action.ifTrue.trim() === "" || action.ifFalse.trim() === "") {
-        return refuseAction(actionId, "bad_expectation: both if_true and if_false must be non-empty");
       }
       const seq = next();
       const nodeId = `w:hypothesis:${seq}`;
@@ -1172,8 +1169,6 @@ export function executeAction(
             hypothesisId: id,
             label: action.label,
             suppose: action.suppose,
-            ifTrue: action.ifTrue,
-            ifFalse: action.ifFalse,
             ...(action.followsFrom !== undefined && action.followsFrom.length > 0
               ? { followsFrom: action.followsFrom }
               : {}),
@@ -1239,6 +1234,9 @@ export function executeAction(
           );
         }
       }
+      if (action.observed.trim() === "") {
+        return refuseAction(actionId, "bad_observation: record what you actually observed at the end");
+      }
       if (action.summary.trim() === "") {
         return refuseAction(actionId, "bad_summary: record what was done and why the verdict holds");
       }
@@ -1247,6 +1245,7 @@ export function executeAction(
       const verdictPayload: HypothesisVerdictPayload = {
         hypothesisId: action.id,
         verdict: action.verdict,
+        observed: action.observed,
         summary: action.summary,
         turn,
       };

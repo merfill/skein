@@ -105,14 +105,13 @@ export const actionSchema = z.discriminatedUnion("operator", [
     operator: z.literal("open_hypothesis"),
     label: z.string(),
     suppose: z.string(),
-    ifTrue: z.string(),
-    ifFalse: z.string(),
     followsFrom: z.array(z.string()).optional(),
   }),
   z.object({
     operator: z.literal("close_hypothesis"),
     id: z.string(),
     verdict: z.enum(["confirmed", "refuted", "dropped"]),
+    observed: z.string(),
     summary: z.string(),
   }),
   // Close the formula H itself: the model's final result, derived from the whole tape.
@@ -226,11 +225,7 @@ export function modelCall(action: Action): ModelCall {
         args: {
           label: action.label,
           suppose: action.suppose,
-          if_true: action.ifTrue,
-          if_false: action.ifFalse,
-          ...(action.followsFrom !== undefined && action.followsFrom.length > 0
-            ? { follows_from: action.followsFrom }
-            : {}),
+          follows_from: action.followsFrom ?? [],
         },
       };
     case "close_hypothesis":
@@ -239,6 +234,7 @@ export function modelCall(action: Action): ModelCall {
         args: {
           hypothesis_id: action.id,
           verdict: action.verdict,
+          observed: action.observed,
           summary: action.summary,
         },
       };
