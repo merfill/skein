@@ -704,6 +704,71 @@ function buildGrepWindow(
   return { text, total, returned: kept };
 }
 
+// Why a hypothesis cannot be closed, or undefined when it can. Shared by the close tool (kept
+// for direct callers) and the text close reply.
+export function hypothesisCloseProblem(state: State, hypothesisId: string): string | undefined {
+  const mode = hypothesisMode(state, hypothesisId);
+  if (mode === "mixed") {
+    return `mixed_children: ${hypothesisId} has both actions and sub-hypotheses`;
+  }
+  if (mode === "formula") {
+    const openChildren = hypothesisChildrenOf(state, hypothesisId)
+      .map((child) => child.payload as HypothesisPayload)
+      .filter((child) => hypothesisVerdictOf(state, child.hypothesisId) === undefined)
+      .map((child) => child.hypothesisId);
+    if (openChildren.length > 0) {
+      return `children_open: close ${openChildren.join(", ")} before ${hypothesisId}`;
+    }
+  }
+  return undefined;
+}
+
+// The verdict node and its `verdict` edge: the same record whether the model closed by a tool
+// call (legacy) or by the text JSON. The caller supplies the seq, so the tool path can keep the
+// action and the verdict in one execution.
+export function hypothesisVerdictEvents(
+  hypothesisId: string,
+  hypothesisNodeId: string | undefined,
+  close: { verdict: HypothesisVerdictPayload["verdict"]; observed: string; summary: string },
+  turn: number,
+  seq: number,
+): { events: Event[]; verdictId: string; label: string } {
+  const verdictId = `w:verdict:${seq}`;
+  const label = `close_hypothesis ${hypothesisId} ${close.verdict}`;
+  const events: Event[] = [
+    {
+      type: "add_node",
+      node: {
+        id: verdictId,
+        space: "work",
+        kind: "hypothesis_verdict",
+        label,
+        payload: {
+          hypothesisId,
+          verdict: close.verdict,
+          observed: close.observed,
+          summary: close.summary,
+          turn,
+        },
+        seq,
+      },
+    },
+  ];
+  if (hypothesisNodeId !== undefined) {
+    events.push({
+      type: "add_edge",
+      edge: {
+        id: `e:verdict:${seq}`,
+        from: hypothesisNodeId,
+        to: verdictId,
+        kind: "verdict",
+        provenance: { kind: "llm" },
+      },
+    });
+  }
+  return { events, verdictId, label };
+}
+
 export function executeAction(
   action: Action,
   state: State,
@@ -793,14 +858,14 @@ export function executeAction(
     return undefined;
   };
 
-  // Hypothesis ids are hierarchical (`C1`, `C1.2`, `C2`): a child id extends its parent's id.
+  // Hypothesis ids are hierarchical (`H1`, `H1.2`, `H2`): a child id extends its parent's id.
   // Ids are monotone even after a refused open: count the ids already recorded on hypothesis
   // nodes and on actions, so a failed opening does not reuse its id for the next one.
   const nextHypothesisId = (parentId: string | undefined): string => {
-    const prefix = parentId === undefined ? "C" : `${parentId}.`;
+    const prefix = parentId === undefined ? "H" : `${parentId}.`;
     const pattern =
       parentId === undefined
-        ? /^C(\d+)$/
+        ? /^H(\d+)$/
         : new RegExp(`^${parentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\d+)$`);
     let max = 0;
     const note = (value: unknown): void => {
@@ -1141,7 +1206,7 @@ export function executeAction(
       if (focus === undefined) return fail("open_hypothesis failed: no current state");
       const parent = activeHypothesis(state);
       const id = nextHypothesisId(parent?.hypothesisId);
-      const label = `open_hypothesis ${id}: ${action.label}`;
+      const label = `open_hypothesis ${id}`;
       const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: id });
       appendTurn(focus, actionId);
       if (parent !== undefined && hypothesisMode(state, parent.hypothesisId) === "work") {
@@ -1150,10 +1215,17 @@ export function executeAction(
           `not_formula: ${parent.hypothesisId} is a work hypothesis; it takes actions, not sub-hypotheses`,
         );
       }
-      if (action.label.trim() === "" || action.suppose.trim() === "") {
+      if (action.claim.trim() === "" || action.done.trim() === "") {
         return refuseAction(
           actionId,
-          "bad_hypothesis: label and suppose must be non-empty; re-call open_hypothesis with label and suppose",
+          "bad_hypothesis: claim and done must be non-empty; re-call open_hypothesis with claim and done",
+        );
+      }
+      const badFollow = action.followsFrom?.find((id) => !/^H\d+(?:\.\d+)*$/.test(id));
+      if (badFollow !== undefined) {
+        return refuseAction(
+          actionId,
+          `bad_hypothesis: follows_from must contain only hypothesis ids (e.g. H1, H1.1); got "${badFollow}"`,
         );
       }
       const seq = next();
@@ -1164,11 +1236,11 @@ export function executeAction(
           id: nodeId,
           space: "work",
           kind: "hypothesis",
-          label: action.label,
+          label: id,
           payload: {
             hypothesisId: id,
-            label: action.label,
-            suppose: action.suppose,
+            claim: action.claim,
+            done: action.done,
             ...(action.followsFrom !== undefined && action.followsFrom.length > 0
               ? { followsFrom: action.followsFrom }
               : {}),
@@ -1194,46 +1266,22 @@ export function executeAction(
       if (!hypothesisRules) return fail("close_hypothesis is not available in this unit");
       const focus = currentFocus(state) ?? state.rootId;
       if (focus === undefined) return fail("close_hypothesis failed: no current state");
-      const hypothesis = hypothesisPayloadOf(state, action.id);
-      const label = `close_hypothesis ${action.id} ${action.verdict}`;
-      const actionId = buildActionItem(label, label, { call: modelCall(action), hypothesisId: action.id });
-      appendTurn(focus, actionId);
       const active = activeHypothesis(state);
-      const hint = active !== undefined ? `. Open: ${active.hypothesisId}` : ". No hypothesis is open";
-      if (hypothesis === undefined) {
-        return refuseAction(actionId, `not_open: no such hypothesis${hint}`);
+      const id = active?.hypothesisId;
+      const label =
+        id !== undefined
+          ? `close_hypothesis ${id} ${action.verdict}`
+          : `close_hypothesis ${action.verdict}`;
+      const actionId = buildActionItem(label, label, {
+        call: modelCall(action),
+        ...(id !== undefined ? { hypothesisId: id } : {}),
+      });
+      appendTurn(focus, actionId);
+      if (active === undefined || id === undefined) {
+        return refuseAction(actionId, "not_open: no hypothesis is open");
       }
-      if (hypothesisVerdictOf(state, action.id) !== undefined) {
-        return refuseAction(actionId, "not_open: the hypothesis is already closed");
-      }
-      if (active === undefined || active.hypothesisId !== action.id) {
-        return refuseAction(actionId, `not_open: close the active hypothesis${hint}`);
-      }
-      const mode = hypothesisMode(state, action.id);
-      if (mode === "undecided") {
-        return refuseAction(
-          actionId,
-          `empty_hypothesis: ${action.id} has no child; act under it or open a sub-hypothesis first`,
-        );
-      }
-      if (mode === "mixed") {
-        return refuseAction(
-          actionId,
-          `mixed_children: ${action.id} has both actions and sub-hypotheses`,
-        );
-      }
-      if (mode === "formula") {
-        const openChildren = hypothesisChildrenOf(state, action.id)
-          .map((child) => child.payload as HypothesisPayload)
-          .filter((child) => hypothesisVerdictOf(state, child.hypothesisId) === undefined)
-          .map((child) => child.hypothesisId);
-        if (openChildren.length > 0) {
-          return refuseAction(
-            actionId,
-            `children_open: close ${openChildren.join(", ")} before ${action.id}`,
-          );
-        }
-      }
+      const problem = hypothesisCloseProblem(state, id);
+      if (problem !== undefined) return refuseAction(actionId, problem);
       if (action.observed.trim() === "") {
         return refuseAction(actionId, "bad_observation: record what you actually observed at the end");
       }
@@ -1241,29 +1289,17 @@ export function executeAction(
         return refuseAction(actionId, "bad_summary: record what was done and why the verdict holds");
       }
       const seq = next();
-      const verdictId = `w:verdict:${seq}`;
-      const verdictPayload: HypothesisVerdictPayload = {
-        hypothesisId: action.id,
-        verdict: action.verdict,
-        observed: action.observed,
-        summary: action.summary,
+      const hypothesisNode = hypothesisNodeOf(state, id);
+      const built = hypothesisVerdictEvents(
+        id,
+        hypothesisNode?.id,
+        { verdict: action.verdict, observed: action.observed, summary: action.summary },
         turn,
-      };
-      events.push({
-        type: "add_node",
-        node: {
-          id: verdictId,
-          space: "work",
-          kind: "hypothesis_verdict",
-          label,
-          payload: verdictPayload,
-          seq,
-        },
-      });
-      const hypothesisNode = hypothesisNodeOf(state, action.id);
-      if (hypothesisNode !== undefined) addEdge({ kind: "llm" }, hypothesisNode.id, verdictId, "verdict");
-      addEdge({ kind: "llm" }, actionId, verdictId, "result");
-      return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
+        seq,
+      );
+      events.push(...built.events);
+      addEdge({ kind: "llm" }, actionId, built.verdictId, "result");
+      return { events, turn: proposalTurn(built.label, built.verdictId), done: false, stopReason: null };
     }
 
     case "close_goal": {

@@ -177,7 +177,7 @@ async function main(): Promise<void> {
   console.log(`stop=${result.stopReason ?? "none"} turns=${result.turns}`);
   if (result.unresolved.length > 0) {
     console.log("unresolved:");
-    for (const hypothesis of result.unresolved) console.log(`  ${hypothesis.id}: ${hypothesis.suppose}`);
+    for (const hypothesis of result.unresolved) console.log(`  ${hypothesis.id}: ${hypothesis.claim}`);
   }
   console.log(
     `tokens in=${usage.inputTokens} out=${usage.outputTokens} cache=${usage.cachedInputTokens} cost=${usage.cost.toFixed(2)}`,

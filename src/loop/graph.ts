@@ -110,10 +110,10 @@ function describeTarget(action: Action): string {
       target = "decline";
       break;
     case "open_hypothesis":
-      target = `hypothesis:${action.label}`;
+      target = `hypothesis:${action.claim}`;
       break;
     case "close_hypothesis":
-      target = `hypothesis:${action.id}:${action.verdict}`;
+      target = `hypothesis:close:${action.verdict}`;
       break;
     case "close_goal":
       target = `goal:${action.outcome}`;

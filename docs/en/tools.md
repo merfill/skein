@@ -33,7 +33,7 @@ The tool names, parameters and descriptions ship in the request's `tools` field,
 | `grep` | `{ pattern, path?, include?, from? }` | searches file contents by regular expression; `path`/`include` scope the search | line-numbered plain text (`path:line:match`, context `path-line-text`, default 3/3); `from` is the 1-based start, default 50 and max 100 matches |
 | `list` | `{ path?, include?, from? }` | lists workspace files; `path`/`include` scope the listing | JSON; 100 files by default, 200 maximum; the window is kept near 8K |
 | `edit` | `{ filePath, oldString, newString }` | replaces the first occurrence of `oldString` in an existing file | mutates the file; the tape shows `mutated <path>` |
-| `write` | `{ filePath, content }` | creates a new file or fully overwrites an existing one | mutates the file; overwriting needs a fresh read of the file |
+| `write` | `{ filePath, content }` | creates a new file or fully overwrites an existing one | mutates the file; the content is written as given |
 | `bash` | `{ command, workdir?, timeout? }` | runs one synchronous command from the workspace root; `workdir` selects a subdirectory; `timeout` is in milliseconds | `exitCode` and output; stdout and stderr are captured separately; the shown output is the tail (~8K), the full stream is stored |
 | `webfetch` | `{ url, path? }` | fetches a URL into the workspace, or to the executor-owned ref path when `path` is absent | a read-only file; the IR records `fetch` |
 | `apply_patch` | `{ patch, strip? }` | applies a unified diff (`patch -p<strip>`, default 1) | mutates the changed files |
@@ -41,9 +41,9 @@ The tool names, parameters and descriptions ship in the request's `tools` field,
 | `search` | `{ id, pattern, before?, after? }` | searches inside a stored result by id with a regular expression; searches stdout and stderr | matching line windows as plain text, with context (default 3/3) |
 | `decline` | `{ why? }` | declines a request whose intent is not actionable | records `unactionable` and ends the run; available only while the request has no state |
 
-`edit` refuses when `oldString` is absent, the file changed since the last read (`stale_base`), a
-constraint forbids the path, or the file does not exist. `write` refuses an unseen file or a stale
-base. `bash` refuses an identical repeat against an unchanged world; a timeout carries no exit
+`edit` refuses when `oldString` is absent, a constraint forbids the path, or the file does not
+exist. `write` overwrites an existing file as given; it refuses only when a constraint forbids the
+path. `bash` refuses an identical repeat against an unchanged world; a timeout carries no exit
 code. `grep`, `list` and `read` also refuse an identical repeat against an unchanged world. A bare
 `recall` of a body already in view is refused; a windowed `recall` is new content. `search` has no
 paging: a broad pattern is bounded with a note to narrow it.
@@ -75,7 +75,7 @@ node is created, and the reason reaches the tape as a one-off `rejected <move>: 
 next turn.
 
 A **command** is not refused as a structural move. Its non-execution is recorded as an action and
-an observation with a reason: `repeated_action`, `stale_base`, a forbidden path, an empty `bash`, or
+an observation with a reason: `repeated_action`, a forbidden path, an empty `bash`, or
 a path outside the workspace. A tool failure is a failed observation: a missing file, a bad
 `grep`/`list` scope, an absent `oldString`, or a non-zero exit, a timeout or a signal.
 

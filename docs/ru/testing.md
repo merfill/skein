@@ -257,7 +257,7 @@ checkIn?, checkSetup?, network?, maxTurns? }`. `request` по умолчанию
 
 ### 5.1 `bench/live-step.ts` — реальный цикл, один ход за раз
 
-Это единственный пошаговый драйвер. Исполнитель и проекция работают на хосте; файловые
+Это пошаговый драйвер для state-машины. Исполнитель и проекция работают на хосте; файловые
 инструменты, `bash`, фоновые задачи и checkpoint — в долгоживущем контейнере задачи. Каждый шаг
 продолжает `runAgent` через `seed`/`startTurn`, поэтому переходы, отказы, откаты и рассуждения на
 ленте принадлежат исполнителю.
@@ -287,6 +287,22 @@ touch /tmp/opencode/<run>/quit       # остановиться
 
 Этот драйвер нужен для поведения: в каком состоянии закрылся ход, куда перешёл, сколько потратил
 рассуждений, что вызвал, какой дифф дерева.
+
+### 5.1.1 `tests/sandbox/inquiry-step.ts` — inquiry, один ход за раз
+
+Тот же контейнерный драйвер для единицы `inquiry`. Открывает задачу один раз и держит
+контейнер живым; перед каждым вызовом модели пишет `contexts/tNNN.txt` (точные сообщения),
+`turns.ndjson` (`allowedTools` и реальные wire-тулы из `transformRequestBody`) и
+`reasoning.ndjson`; после хода — `journal/tNNN.json` и `journal.ndjson`. Без `--auto` ждёт
+`<dir>/continue` или `<dir>/quit`; `--turn N` останавливается после N-го хода unit'а;
+`--net`, `--dir`, `--signal`. В конце — `result.json`, `tree.txt`, `reward.txt`. Один ход =
+один вызов модели, без K=3.
+
+```sh
+npx tsx tests/sandbox/inquiry-step.ts custom-memory-heap-crash --net off --dir /tmp/opencode/inq-step
+touch /tmp/opencode/inq-step/continue   # следующий вызов
+touch /tmp/opencode/inq-step/quit       # остановиться
+```
 
 ### 5.2 `bench/turn.ts` — один записанный ход, без контейнера
 

@@ -112,8 +112,10 @@ export interface FormulaPayload {
 // from; it is provenance/navigation, not a checked claim.
 export interface HypothesisPayload {
   hypothesisId: string;
-  label: string;
-  suppose: string;
+  claim: string;
+  // The observation that decides the claim, supplied when the hypothesis opens. Optional only
+  // for journals recorded before this field; the per-turn `Done when` uses it when present.
+  done?: string;
   followsFrom?: string[];
   turn?: number;
 }

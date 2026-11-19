@@ -8,71 +8,107 @@ import type { ExtraToolDefinition } from "./tools";
 
 export type InquiryProposer = (
   messages: ModelMessage[],
-  options?: { signal?: AbortSignal; allowedTools?: readonly string[] },
+  options?: {
+    signal?: AbortSignal;
+    allowedTools?: readonly string[];
+    toolDescriptions?: Record<string, string>;
+    // The unit turn this proposal belongs to (a repair is the same turn). Drivers use it to
+    // label the exact request; the proposer itself ignores it.
+    turn?: number;
+  },
 ) => Promise<Proposals>;
 
 export interface InquiryModelOptions {
   settings?: Settings;
 }
 
+const hypothesisIdPattern = /^H\d+(?:\.\d+)*$/;
+
 const hypothesisOpenParams = z.object({
-  label: z.string().min(1),
-  suppose: z.string().min(1),
-  follows_from: z.array(z.string()),
+  claim: z.string().min(1),
+  done: z.string().min(1),
+  follows_from: z.array(z.string().regex(hypothesisIdPattern)),
 });
 
 const hypothesisCloseParams = z.object({
-  hypothesis_id: z.string().min(1),
   verdict: z.enum(["confirmed", "refuted", "dropped"]),
   observed: z.string().min(1),
   summary: z.string().min(1),
 });
+
+export type HypothesisClose = z.infer<typeof hypothesisCloseParams>;
+
+// The close reply is a text-only JSON object, so the model can stop without calling a tool.
+export const CLOSE_JSON_FORMAT =
+  '{"verdict":"confirmed|refuted|dropped","observed":"what is now true: the files changed and how, the checks run and their result","summary":"what was done, the checks that show it, and why the verdict is justified"}';
+
+export function parseCloseJson(text: string): HypothesisClose | undefined {
+  const trimmed = text.trim();
+  const fenced = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = fenced.indexOf("{");
+  const end = fenced.lastIndexOf("}");
+  const candidate = start >= 0 && end > start ? fenced.slice(start, end + 1) : fenced;
+  try {
+    const parsed: unknown = JSON.parse(candidate);
+    const result = hypothesisCloseParams.safeParse(parsed);
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const goalCloseParams = z.object({
   outcome: z.enum(["achieved", "not_achieved"]),
   summary: z.string().min(1),
 });
 
+// The close tool is bound with the open hypothesis's id, so the description names the hypothesis
+// it closes at the decision point.
+export function closeHypothesisDescription(hypothesisId: string): string {
+  return [
+    `Closes hypothesis ${hypothesisId}. A hypothesis is completed when the claim it was opened with is decided: confirmed if it holds, refuted if it does not, dropped if you abandon it. That claim is the criterion for closing, not the request; work beyond it belongs to another hypothesis.`,
+    "Arguments:",
+    "- verdict: \"confirmed\" (it worked), \"refuted\" (it did not), or \"dropped\" (abandoned). Choose the word that fits what you actually observed.",
+    "- observed: the state the work leaves behind — what is now true: the files mutated and what changed in them, the checks run and their result.",
+    "- summary: a detailed, human-readable account of the work: what was done, the checks that show it, and why the verdict is justified.",
+    "",
+    "This tool must be the only call in the reply.",
+  ].join("\n");
+}
+
 // Tools that exist only in the inquiry unit. They are bound through `extraTools`, so the task
 // registry and the generated base prompt never see them.
 export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   open_hypothesis: {
     description: [
-      "Opens a hypothesis under the active hypothesis, or under H when none is open. Arguments:",
-      "- label: a short name.",
-      "- suppose: what you put forward.",
-      "- follows_from: required. The ids of the earlier hypotheses this step follows from. Use [] only when there is no earlier hypothesis to depend on.",
+      "Opens a hypothesis. Arguments:",
+      "- claim: the next claim to establish, not the whole request; a single short, high-level declarative statement.",
+      "- done: the check that decides the claim — the observation or command result that would confirm or refute it.",
+      "- follows_from: the ids of earlier hypotheses this claim follows from (e.g. H1, H1.1); [] if none.",
+      "Write both as general statements about the work, not as first-person actions or plans.",
+      "Open one claim at a time: one claim, one goal. If the work needs several claims, split it into sub-hypotheses and open one per reply.",
       "",
-      "The engine keeps the main formula H: the conjunction of the hypotheses you open. H is not a hypothesis and you do not write its conjunction. A hypothesis is either a work leaf or a formula, fixed by its first child: an action makes it a work leaf, a sub-hypothesis makes it a formula. Do not mix the two under one hypothesis. A hypothesis with no child cannot be closed.",
-      "Call this alone, with no other tool calls in the same reply.",
-      "The engine records the hypothesis and shows it on the tape as:",
-      "Opening hypothesis C1: <label>.",
-      "Suppose: ...",
-      "Follows from: C1.2, C3",
-      "Use the C-number (e.g. \"C1\") when you close the hypothesis. The internal journal address (`w:hypothesis:<n>`) is not a hypothesis id.",
+      "Call this tool exactly once in a reply. It must be the only call: no other tool call and no second open_hypothesis.",
     ].join("\n"),
     schema: hypothesisOpenParams,
   },
   close_hypothesis: {
     description: [
-      "Closes the active hypothesis and only it. Arguments:",
-      "- hypothesis_id: the id you got when you opened the hypothesis, e.g. \"C1\" or \"C1.2\". Use it exactly; never the internal journal address (`w:hypothesis:<n>`) or a bare number.",
-      "- verdict: \"confirmed\" (the claim held), \"refuted\" (it did not), or \"dropped\" (abandoned). Choose the word that fits what you actually observed; the request's result is the goal's outcome, not a hypothesis verdict.",
-      "- observed: the real ending — what you actually saw when the work ended (commit, branch, files, answer). Write the fact itself, not an `obs:N` reference and not a raw output dump.",
-      "- summary: a detailed, human-readable account of the work: what was done, the checks that show it, and why the verdict holds. Write 2-4 sentences, not a bare word. It is this hypothesis's outcome, not the final answer; the final answer is written when you close the goal. For \"dropped\", say why.",
+      "Closes the open hypothesis. Arguments:",
+      "- verdict: \"confirmed\" (it worked), \"refuted\" (it did not), or \"dropped\" (abandoned). Choose the word that fits what you actually observed.",
+      "- observed: the state the work leaves behind — what is now true: the files mutated and what changed in them, the checks run and their result.",
+      "- summary: a detailed, human-readable account of the work: what was done, the checks that show it, and why the verdict is justified.",
       "",
-      "A work leaf closes after its actions; a formula closes after all its sub-hypotheses are closed (its verdict synthesizes them). A hypothesis with no child cannot be closed. A refuted hypothesis stays in the journal as a failed attempt; open a corrected or different one if you can. Build on a closed hypothesis's summary instead of re-deriving it.",
-      "Call this alone, with no other tool calls in the same reply.",
-      "The engine shows the close as: Closing hypothesis C1: confirmed. Observed: ... Summary: ...",
+      "Call this tool exactly once in a reply; it must be the only call.",
     ].join("\n"),
     schema: hypothesisCloseParams,
   },
   close_goal: {
     description: [
-      "Closes the goal H with the final result. Arguments:",
+      "Closes the goal with the final result. Arguments:",
       "- outcome: \"achieved\" (the request's result is reached) or \"not_achieved\" (it is not; say what blocked it).",
-      "- summary: the final answer to the user, derived from the whole tape: what was done, the evidence, and the result.",
-      "Call this alone; it is the only call in that reply, and it ends the work.",
+      "- summary: the final answer to the user: what was done, the evidence, and the result.",
+      "Call this tool exactly once in a reply; it must be the only call and it ends the work.",
     ].join("\n"),
     schema: goalCloseParams,
   },
@@ -92,7 +128,6 @@ export const INQUIRY_WORK_TOOL_NAMES: readonly string[] = [
   "webfetch",
   "recall",
   "search",
-  "close_hypothesis",
 ];
 
 export const INQUIRY_TOOL_NAMES: readonly string[] = [
@@ -114,5 +149,8 @@ export function modelInquiryProposer(
       extraTools: INQUIRY_TOOLS,
       allowText: true,
       ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),
+      ...(callOptions?.toolDescriptions !== undefined
+        ? { toolDescriptions: callOptions.toolDescriptions }
+        : {}),
     });
 }

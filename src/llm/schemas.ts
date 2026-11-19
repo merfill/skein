@@ -103,13 +103,12 @@ export const actionSchema = z.discriminatedUnion("operator", [
   // and (for `close_hypothesis`) checks the structural rules (src/tools/index.ts).
   z.object({
     operator: z.literal("open_hypothesis"),
-    label: z.string(),
-    suppose: z.string(),
-    followsFrom: z.array(z.string()).optional(),
+    claim: z.string(),
+    done: z.string(),
+    followsFrom: z.array(z.string().regex(/^H\d+(?:\.\d+)*$/)).optional(),
   }),
   z.object({
     operator: z.literal("close_hypothesis"),
-    id: z.string(),
     verdict: z.enum(["confirmed", "refuted", "dropped"]),
     observed: z.string(),
     summary: z.string(),
@@ -223,8 +222,8 @@ export function modelCall(action: Action): ModelCall {
       return {
         name: "open_hypothesis",
         args: {
-          label: action.label,
-          suppose: action.suppose,
+          claim: action.claim,
+          done: action.done,
           follows_from: action.followsFrom ?? [],
         },
       };
@@ -232,7 +231,6 @@ export function modelCall(action: Action): ModelCall {
       return {
         name: "close_hypothesis",
         args: {
-          hypothesis_id: action.id,
           verdict: action.verdict,
           observed: action.observed,
           summary: action.summary,

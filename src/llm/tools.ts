@@ -120,7 +120,7 @@ const DEFINITIONS: { name: string; description: string; schema: z.ZodTypeAny }[]
   {
     name: "bash",
     description:
-      "Executes a given bash command. Prefer the dedicated tools: read, grep and list to inspect; edit, write and apply_patch to change files. Use bash only when those cannot do the job — running builds, tests, or other shell operations. command is required and runs from the WORKSPACE ROOT; workdir runs it in a subdirectory; timeout (milliseconds) caps it. Blocks until the command exits or the engine's cap elapses; returns exit 0/non-zero. stdout and stderr are captured separately. The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id. Re-running an identical command when nothing has been modified is refused as a repeat.",
+      "Executes a given bash command. Prefer the dedicated tools: read, grep and list to read files; edit, write and apply_patch to change files. Use bash only when those cannot do the job — running builds, tests, or other shell operations. command is required and runs from the WORKSPACE ROOT; workdir runs it in a subdirectory; timeout (milliseconds) caps it. Blocks until the command exits or the engine's cap elapses; returns exit 0/non-zero. stdout and stderr are captured separately. The shown output is its TAIL (up to ~8K chars; the error and exit are at the end); the full stream is stored and retrievable by id. Re-running an identical command when nothing has been modified is refused as a repeat.",
     schema: bashParams,
   },
   {
@@ -433,8 +433,8 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       // executor refuse it with a clear `bad_hypothesis`.
       action = {
         operator: "open_hypothesis",
-        label: typeof a.label === "string" ? a.label : "",
-        suppose: typeof a.suppose === "string" ? a.suppose : "",
+        claim: typeof a.claim === "string" ? a.claim : "",
+        done: typeof a.done === "string" ? a.done : "",
         ...(Array.isArray(a.follows_from)
           ? {
               followsFrom: a.follows_from.filter(
@@ -447,7 +447,6 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
     case "close_hypothesis":
       action = {
         operator: "close_hypothesis",
-        id: typeof (a.hypothesis_id ?? a.id) === "string" ? String(a.hypothesis_id ?? a.id) : "",
         verdict: a.verdict,
         observed: typeof a.observed === "string" ? a.observed : "",
         summary: typeof a.summary === "string" ? a.summary : "",

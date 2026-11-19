@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,16 +13,18 @@ import { z } from "zod";
 
 import { TurnMeter } from "../bench/metrics";
 import { loadSettings } from "../src/config/settings";
+import { runInquiryUnit } from "../src/inquiry";
 import type { Context } from "../src/ir/project";
 import { createChatModel } from "../src/llm/client";
 import { GENERAL_TOOLS } from "../src/llm/general";
 import { invokeStructured, invokeTools, type ToolsOptions } from "../src/llm/structured";
-import { INQUIRY_TOOLS } from "../src/llm/inquiry";
+import { INQUIRY_TOOLS, INQUIRY_WORK_TOOL_NAMES, modelInquiryProposer } from "../src/llm/inquiry";
 import { modelCall, type Action } from "../src/llm/schemas";
 import { proposalTools, toolNamesFor, toProposal } from "../src/llm/tools";
 import { runAgent } from "../src/loop/graph";
 import { propose } from "../src/loop/propose";
 import { fsWorkspace } from "../src/tools/workspace";
+import { wireTools } from "./wire";
 
 // Structured output is plain JSON: the schema is in the prompt and the reply is parsed
 // manually, with a raised cap on a completion cut and one repair round on a schema
@@ -383,6 +385,53 @@ describe("tool calling", () => {
     expect(proposal.actions[0]).toEqual({ operator: "move", state: "patch", what: "" });
   });
 
+  it("binds the inquiry tool surface per step type through the real proposer", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "skein-inquiry-surface-"));
+    writeFileSync(join(dir, "a.txt"), "alpha\n");
+    const workspace = fsWorkspace(dir);
+    const WORK = [...INQUIRY_WORK_TOOL_NAMES];
+    const replies: LanguageModelV3GenerateResult[] = [
+      toolReply([{ name: "open_hypothesis", args: { claim: "s", done: "s is decided", follows_from: [] } }]),
+      toolReply([{ name: "open_hypothesis", args: { claim: "s", done: "s is decided", follows_from: [] } }]),
+      toolReply([{ name: "read", args: { filePath: "a.txt" } }]),
+      textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
+      textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
+      toolReply([{ name: "close_goal", args: { outcome: "achieved", summary: "final" } }]),
+    ];
+    const model = mockModel((call) => replies[call - 1]!);
+    const propose = modelInquiryProposer(model, { settings: offline });
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.done).toBe(true);
+    const surfaces = model.doGenerateCalls.map((call) =>
+      (call.tools ?? []).map((tool) => tool.name),
+    );
+    // The bound order is the registry's, not the surface array's; the set is what the model
+    // receives, so compare sorted names.
+    const expectSurface = (index: number, expected: string[]): void => {
+      expect([...(surfaces[index] ?? [])].sort()).toEqual([...expected].sort());
+      expect(surfaces[index] ?? []).not.toContain("close_hypothesis");
+    };
+    expectSurface(0, ["open_hypothesis"]);
+    expectSurface(1, ["open_hypothesis", ...WORK]);
+    expectSurface(2, ["open_hypothesis", ...WORK]);
+    expectSurface(3, WORK);
+    expectSurface(4, ["open_hypothesis"]);
+    expectSurface(5, ["open_hypothesis", "close_goal"]);
+  });
+
+  it("serializes the inquiry work surface to the provider wire", async () => {
+    const tools = proposalTools(
+      new Set(["open_hypothesis", ...INQUIRY_WORK_TOOL_NAMES]),
+      undefined,
+      INQUIRY_TOOLS,
+    );
+    const names = await wireTools([{ role: "user", content: "go" }], tools);
+    expect([...names].sort()).toEqual([...["open_hypothesis", ...INQUIRY_WORK_TOOL_NAMES]].sort());
+  });
+
   it("invokeTools repairs a call outside the allowed surface", async () => {
     const model = mockModel((call) =>
       call === 1
@@ -582,11 +631,10 @@ describe("modelCall: IR -> native call", () => {
 // other (the `observed` bug).
 describe("inquiry tools: modelCall is the wire-inverse of toProposal", () => {
   const samples: Action[] = [
-    { operator: "open_hypothesis", label: "C1", suppose: "root cause", followsFrom: [] },
-    { operator: "open_hypothesis", label: "C1.1", suppose: "sub-claim", followsFrom: ["C1"] },
+    { operator: "open_hypothesis", claim: "root cause", done: "the breakpoint fires", followsFrom: [] },
+    { operator: "open_hypothesis", claim: "sub-claim", done: "the sub-claim is decided", followsFrom: ["H1"] },
     {
       operator: "close_hypothesis",
-      id: "C1",
       verdict: "refuted",
       observed: "the file is absent",
       summary: "checked the workspace",

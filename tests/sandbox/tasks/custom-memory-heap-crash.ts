@@ -6,4 +6,5 @@ import type { SandboxTask } from "../task";
 export const customMemoryHeapCrash: SandboxTask = {
   id: "custom-memory-heap-crash",
   image: "alexgshaw/custom-memory-heap-crash:20251031",
+  maxTurns: 50,
 };

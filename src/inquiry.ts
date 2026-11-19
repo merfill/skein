@@ -8,54 +8,66 @@ import {
   childrenOf,
   goalVerdictOf,
   hypothesisMode,
+  hypothesisNodeOf,
+  hypothesisParentOf,
+  hypothesisVerdictOf,
   fold,
   turnsOf,
   type State,
 } from "./ir/graph";
 import { actionResultText, type TapeMessage } from "./ir/project";
 import { historyMessages } from "./loop/propose";
-import { INQUIRY_WORK_TOOL_NAMES, type InquiryProposer } from "./llm/inquiry";
+import {
+  CLOSE_JSON_FORMAT,
+  INQUIRY_WORK_TOOL_NAMES,
+  closeHypothesisDescription,
+  parseCloseJson,
+  type InquiryProposer,
+} from "./llm/inquiry";
 import type { Proposals } from "./llm/schemas";
 import type { GoalVerdictPayload, HypothesisPayload, HypothesisVerdictPayload } from "./ir/types";
-import { executeAction } from "./tools";
+import { executeAction, hypothesisCloseProblem, hypothesisVerdictEvents } from "./tools";
 import type { Workspace } from "./tools/workspace";
 
 export const INQUIRY_BASE_PROMPT = [
   "# Role",
   "You are a software engineering agent with access to the user's filesystem. You solve the user's tasks.",
-  "Solve the user's request. You work under one hypothesis at a time: a claim that can be true or false. An action runs only under an open hypothesis: before it, state the claim the action tests; after the result, close the hypothesis.",
-  "A hypothesis is either a work leaf or a formula, fixed by its first child: an action makes it a work leaf, a sub-hypothesis makes it a formula. Do not mix actions and sub-hypotheses under one hypothesis. A work leaf takes actions and is closed after them; a formula is closed after its sub-hypotheses are closed. A hypothesis with no child cannot be closed.",
-  "The request is the goal. The engine keeps H, the conjunction of the hypotheses you open; you do not write H. Open a hypothesis for each distinct claim; a work leaf can take several actions, and a formula splits its claim into sub-hypotheses. Never open a hypothesis that is a restatement or reformulation of one already opened, whether it is still open or closed.",
-  "The summaries of earlier hypotheses are real data: trust them and use them in the next claim.",
-  "Close with what you actually observed, not with what you expected: `confirmed` when the work showed the claim held, `refuted` when it did not. A refuted hypothesis stays in the journal; open a corrected or different one. A hypothesis verdict is about its claim; the request's result is the goal's outcome.",
-  "Every reply calls a tool. Work tools — the tools that inspect or change the workspace — can be used only while a hypothesis is open; opening a hypothesis makes them available. With a hypothesis open, act under it or close it. With no hypothesis open, open the next distinct claim; if the request's result is reached and no distinct claim remains, close the goal H with `close_goal` — the outcome and the final summary. That summary is the report.",
+  "The agent works on the given request. The work is a sequence of hypotheses.",
+  "A hypothesis is a claim. You open it before working on it and close it when everything necessary for this hypothesis is done; it closes as confirmed (it worked), refuted (it did not), or dropped (abandoned). The engine records the opening and the closing; the work of a closed hypothesis is an artifact you can read when you need it.",
+  "A hypothesis's scope is what it names: work outside it belongs to another hypothesis. The request is why the work exists and the criterion for the final outcome; it is not the goal of a hypothesis.",
   "## General instructions for the work",
   "Follow the project. Mimic its style, structure, naming, typing and architectural patterns; make the change idiomatic to the surrounding code. Add comments sparingly (why, not what), and never use comments to talk to the user.",
-  "Work only the active hypothesis: decide the next step, make small changes, and debug from evidence. Do not do work outside the active hypothesis or expand the scope.",
-  "Prefer the dedicated inspection and editing tools for files; use the shell only for builds, tests, or other shell operations.",
-  "Inspect narrowly: ask for the smallest result that decides the next step — a targeted search, or a small window around a known offset. Do not dump a whole file or binary region; a large output stays on the tape and costs context. When the hypothesis is settled, stop: do not re-run a check that already passed or widen the search for its own sake.",
+  "Work only the active hypothesis: decide the next step, make small changes, and debug from evidence. Its scope is its claim: anything outside the claim belongs to the next hypothesis — close this one, then open that claim.",
+  "Read and edit files with the dedicated tools, not the shell; use the shell only for builds, tests, or other shell operations.",
+  "Get the smallest result that decides the next step — a targeted lookup, or a small window around a known offset. Do not dump a whole file or binary region; a large output stays on the tape and costs context. When everything necessary for this hypothesis is done, close it: do not re-run a check that already passed or widen the lookup for its own sake.",
   "Work from the material in this workspace. The result must come from that material or from the request's specification. Do not invent values or fabricate results to fit a count, a form, or an expected answer. Acceptance is decided by the material or the specification, not by your own output.",
   "Do not reconstruct an external or upstream version from memory. If a reference is available — on disk or fetched — treat it as a lead to verify, not as the oracle.",
   "Keep the source material intact: copy raw artifacts before any command that may checkpoint, delete, or rewrite them.",
-  "The workspace root is the current directory; the context already shows the request. Inspect only what you need; the tree is not indexed, so look up what you need.",
-  "Never expose or commit secrets or keys. The goal summary is the final report: complete enough to stand alone, without padding or a separate preamble.",
+  "The workspace root is the current directory; the context already shows the request. Read only what you need; the tree is not indexed, so look up what you need.",
+  "Never expose or commit secrets or keys. The summary you write when you finish the investigation is the final report: complete enough to stand alone, without padding or a separate preamble.",
 ].join("\n\n");
 
 export interface InquiryDeps {
   propose: InquiryProposer;
   workspace: Workspace;
   maxTurns: number;
+  // Optional per-turn journal hook: called after each completed turn with the events so far.
+  // The step driver uses it to write the journal between pauses; the unit itself ignores it.
+  onTurn?: (events: readonly Event[], turn: number) => void;
 }
 
 export interface InquiryInput {
   request: { id: string; text: string };
+  // Resume from a recorded journal instead of seeding a fresh request (the step driver's H2
+  // continuation). The request is still the projection's head.
+  events?: Event[];
   startTurn?: number;
   signal?: AbortSignal;
 }
 
 export interface UnresolvedHypothesis {
   id: string;
-  suppose: string;
+  claim: string;
 }
 
 export interface InquiryResult {
@@ -136,11 +148,30 @@ function resultOf(state: State, actionId: string): string | undefined {
 
 function openingMessage(hypothesis: HypothesisPayload): string {
   return [
-    `Opening hypothesis ${hypothesis.hypothesisId}: ${hypothesis.label}.`,
-    `Suppose: ${hypothesis.suppose}`,
+    `Opening hypothesis ${hypothesis.hypothesisId}.`,
     ...(hypothesis.followsFrom !== undefined && hypothesis.followsFrom.length > 0
       ? [`Follows from: ${hypothesis.followsFrom.join(", ")}`]
       : []),
+  ].join("\n");
+}
+
+function claimMessage(hypothesis: HypothesisPayload): string {
+  return `Claim: ${hypothesis.claim}`;
+}
+
+function doneWhenMessage(hypothesis?: HypothesisPayload): string {
+  const done = hypothesis?.done?.trim();
+  if (done !== undefined && done !== "") {
+    return [
+      `Done when: ${done.replace(/\.\s*$/, "")}.`,
+      "When the criterion holds, reply with text only, no tool call, as a single JSON object (no markdown fences):",
+      CLOSE_JSON_FORMAT,
+    ].join("\n");
+  }
+  return [
+    "Done when: the claim is decided — confirmed if it holds, refuted if it does not, dropped if you abandon it.",
+    "When the claim is decided, reply with text only, no tool call, as a single JSON object (no markdown fences):",
+    CLOSE_JSON_FORMAT,
   ].join("\n");
 }
 
@@ -180,13 +211,35 @@ function goalClosingMessage(verdict: GoalVerdictPayload): string {
   ].join("\n");
 }
 
-// The tape is chronological: an Opening message, the work under that hypothesis, and a Closing
-// message. Only the active path's work is selected; a closed hypothesis renders its
-// Opening/Closing pair, and its work stays addressable in the journal (recall/search).
+// The tape is non-monotone: an open hypothesis renders its Opening, its Claim and Done when, and
+// its turns; a closed hypothesis is wiped to its Opening and the engine-written Closing (verdict,
+// observed, summary). Its turns stay in the journal (recall/search), not in the view.
 function inquiryTape(state: State, requestId: string): TapeMessage[] {
   const turns = turnsOf(state, requestId);
   if (turns === undefined) return [];
   const active = new Set(activeHypothesisPath(state).map((hypothesis) => hypothesis.hypothesisId));
+  const hypotheses: HypothesisPayload[] = [];
+  const closed = new Set<string>();
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "hypothesis") continue;
+    const hypothesis = node.payload as HypothesisPayload | undefined;
+    if (hypothesis === undefined) continue;
+    hypotheses.push(hypothesis);
+    if (hypothesisVerdictOf(state, hypothesis.hypothesisId) !== undefined) {
+      closed.add(hypothesis.hypothesisId);
+    }
+  }
+  // A hypothesis is visible when its parent is the formula/request or an open parent: the wipe
+  // of a closed parent also hides its whole subtree.
+  const visible = new Set<string>();
+  for (const hypothesis of hypotheses) {
+    const parent = hypothesisParentOf(state, hypothesis.hypothesisId);
+    const parentId =
+      parent?.kind === "hypothesis"
+        ? (parent.payload as HypothesisPayload | undefined)?.hypothesisId
+        : undefined;
+    if (parentId === undefined || active.has(parentId)) visible.add(hypothesis.hypothesisId);
+  }
   const tape: TapeMessage[] = [];
   for (const actionId of childrenOf(state, turns)) {
     const action = state.nodes.get(actionId);
@@ -210,17 +263,21 @@ function inquiryTape(state: State, requestId: string): TapeMessage[] {
 
     if (callName === "open_hypothesis" && result?.kind === "hypothesis") {
       const hypothesis = result.payload as HypothesisPayload | undefined;
-      if (hypothesis !== undefined) {
+      if (hypothesis !== undefined && visible.has(hypothesis.hypothesisId)) {
         tape.push({ role: "system", text: openingMessage(hypothesis) });
+        if (closed.has(hypothesis.hypothesisId)) {
+          const verdict = hypothesisVerdictOf(state, hypothesis.hypothesisId);
+          if (verdict !== undefined) tape.push({ role: "system", text: closingMessage(verdict) });
+        } else {
+          tape.push({ role: "user", text: claimMessage(hypothesis) });
+          tape.push({ role: "system", text: doneWhenMessage(hypothesis) });
+        }
         continue;
       }
     }
-    if (callName === "close_hypothesis" && result?.kind === "hypothesis_verdict") {
-      const verdict = result.payload as HypothesisVerdictPayload | undefined;
-      if (verdict !== undefined) {
-        tape.push({ role: "system", text: closingMessage(verdict) });
-        continue;
-      }
+    if (callName === "close_hypothesis") {
+      // The Closing is rendered at the Opening (the work between the two is wiped).
+      continue;
     }
     if (callName === "close_goal" && result?.kind === "goal_verdict") {
       const verdict = result.payload as GoalVerdictPayload | undefined;
@@ -291,7 +348,7 @@ function endInquiry(
   const path = activeHypothesisPath(state);
   const unresolved: UnresolvedHypothesis[] = path.map((hypothesis) => ({
     id: hypothesis.hypothesisId,
-    suppose: hypothesis.suppose,
+    claim: hypothesis.claim,
   }));
   const seq = nextNodeSeq(state);
   const stopId = `w:stop:${seq}`;
@@ -330,7 +387,7 @@ export async function runInquiryUnit(
   input: InquiryInput,
 ): Promise<InquiryResult> {
   const startTurn = input.startTurn ?? 0;
-  let events: Event[] = seedInquiry(input.request);
+  let events: Event[] = input.events !== undefined ? [...input.events] : seedInquiry(input.request);
   let turn = startTurn;
   let done = false;
   let paused = false;
@@ -348,6 +405,11 @@ export async function runInquiryUnit(
     stopReason = reason;
   };
 
+  const advance = (): void => {
+    turn += 1;
+    deps.onTurn?.(events, turn);
+  };
+
   while (turn < maxTurns) {
     if (isAborted(input.signal)) {
       paused = true;
@@ -357,26 +419,31 @@ export async function runInquiryUnit(
     const active = activeHypothesis(state);
     // The surface follows the active node's mode. No open node: open the next claim or close
     // the goal. Undecided: act (making it a work leaf) or open a sub-hypothesis (making it a
-    // formula), but not close it yet. Work leaf: act or close it. Formula: open another
-    // sub-hypothesis or, once they are closed, close it. Every reply is a tool call.
+    // formula). Work leaf: act, or reply with the close JSON (text, no tool call) to close it.
+    // Formula: open another sub-hypothesis, or reply with the close JSON once its children are
+    // closed.
     const allowedTools = (() => {
-      if (active === undefined) return ["open_hypothesis", "close_goal"];
-      const mode = hypothesisMode(state, active.hypothesisId);
-      if (mode === "formula" || mode === "mixed") return ["open_hypothesis", "close_hypothesis"];
-      if (mode === "undecided") {
-        return [
-          "open_hypothesis",
-          ...INQUIRY_WORK_TOOL_NAMES.filter((name) => name !== "close_hypothesis"),
-        ];
+      if (active === undefined) {
+        const anyHypothesis = [...state.nodes.values()].some((node) => node.kind === "hypothesis");
+        return anyHypothesis ? ["open_hypothesis", "close_goal"] : ["open_hypothesis"];
       }
+      const mode = hypothesisMode(state, active.hypothesisId);
+      if (mode === "formula" || mode === "mixed") return ["open_hypothesis"];
+      if (mode === "undecided") return ["open_hypothesis", ...INQUIRY_WORK_TOOL_NAMES];
       return [...INQUIRY_WORK_TOOL_NAMES];
     })();
     const messages: ModelMessage[] = inquiryMessages(state, input.request);
+    const toolDescriptions =
+      active !== undefined
+        ? { close_hypothesis: closeHypothesisDescription(active.hypothesisId) }
+        : undefined;
     let proposals: Proposals;
     try {
       proposals = await deps.propose(messages, {
         ...(input.signal !== undefined ? { signal: input.signal } : {}),
         allowedTools,
+        turn,
+        ...(toolDescriptions !== undefined ? { toolDescriptions } : {}),
       });
     } catch (error) {
       if (isAborted(input.signal)) {
@@ -386,17 +453,75 @@ export async function runInquiryUnit(
       // A malformed model call must not crash the unit: record it as an error and stop.
       const message = error instanceof Error ? error.message : String(error);
       stopWithError(state, "model_error", `(model error: ${message})`);
-      turn += 1;
+      advance();
       break;
     }
 
     if (proposals.actions.length === 0) {
-      // A reply always calls a tool: close the open hypothesis or act under it; with none
-      // open, open the next hypothesis or close the goal.
       const text = proposals.thought.trim();
-      stopWithError(state, active !== undefined ? "no_close" : "no_goal", text !== "" ? text : "(no tool calls)");
-      turn += 1;
-      break;
+      if (active === undefined) {
+        // With no hypothesis open the model must open the next one or close the goal.
+        stopWithError(state, "no_goal", text !== "" ? text : "(no tool calls)");
+        advance();
+        break;
+      }
+      // A text-only reply closes the hypothesis: it carries the verdict, observed and summary
+      // as JSON, and the engine records the same verdict node a close call would.
+      const attempt = (reply: string): string | undefined => {
+        const close = parseCloseJson(reply);
+        if (close === undefined) return "the reply is not the required JSON object";
+        const problem = hypothesisCloseProblem(state, active.hypothesisId);
+        if (problem !== undefined) return problem;
+        const seq = nextNodeSeq(state);
+        const built = hypothesisVerdictEvents(
+          active.hypothesisId,
+          hypothesisNodeOf(state, active.hypothesisId)?.id,
+          close,
+          turn,
+          seq,
+        );
+        events.push(...built.events);
+        return undefined;
+      };
+      const problem = attempt(text);
+      if (problem === undefined) {
+        advance();
+        continue;
+      }
+      const repair = [
+        `The last reply did not close hypothesis ${active.hypothesisId}: ${problem}.`,
+        "Reply with text only, no tool call, as a single JSON object (no markdown fences):",
+        CLOSE_JSON_FORMAT,
+      ].join("\n");
+      let retry: Proposals;
+      try {
+        retry = await deps.propose([...messages, { role: "user", content: repair }], {
+          ...(input.signal !== undefined ? { signal: input.signal } : {}),
+          allowedTools,
+          turn,
+          ...(toolDescriptions !== undefined ? { toolDescriptions } : {}),
+        });
+      } catch (error) {
+        if (isAborted(input.signal)) {
+          paused = true;
+          break;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        stopWithError(state, "model_error", `(model error: ${message})`);
+        advance();
+        break;
+      }
+      if (retry.actions.length === 0) {
+        const retryProblem = attempt(retry.thought.trim());
+        if (retryProblem !== undefined) {
+          stopWithError(state, "bad_close", retry.thought.trim() !== "" ? retry.thought.trim() : text);
+          advance();
+          break;
+        }
+        advance();
+        continue;
+      }
+      proposals = retry;
     }
 
     const hasHypothesisTool = proposals.actions.some(
@@ -443,7 +568,7 @@ export async function runInquiryUnit(
       }
     }
     if (paused) break;
-    turn += 1;
+    advance();
     if (ended) break;
   }
 

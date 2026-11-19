@@ -3,6 +3,90 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-19 — `inquiry`: H-id без label, обязательный `done`; K=3 custom-memory (v24)
+
+### Что сделано
+
+- **Идентификатор гипотезы — только движок:** `H1`, `H1.1`, `H2`; `nextHypothesisId`
+  генерирует иерархию с префиксом `H`. Модель id не передаёт.
+- **`label` удалён** из `open_hypothesis`, `Action` и `HypothesisPayload`: это был только
+  display-текст, модель писала в него `C1`, что путалось с id. Payload гипотезы:
+  `{ hypothesisId, claim, done, followsFrom, turn }`; `Opening hypothesis H1.` без имени.
+- **`done` обязателен** в `open_hypothesis` и записывается в payload при создании узла;
+  `Done when` рендерится из него. Схема, wire-схема, `toProposal`/`modelCall` и executor
+  синхронизированы.
+- **`follows_from` ограничен id-ами:** схема принимает только `H1`, `H1.1`, `H2`;
+  prose отклоняется как `bad_hypothesis`, в payload/рёбра не попадает.
+- **Поверхность первого хода:** пока не открыта ни одна гипотеза, доступен только
+  `open_hypothesis`; `close_goal` появляется после первой гипотезы. Это убрало
+  `close_goal("placeholder")` в батче с открытием.
+- Текущее описание `open_hypothesis` (для продолжения):
+  `claim` — короткое high-level декларативное утверждение, не весь request;
+  `done` — проверка, подтверждающая/опровергающая claim; `follows_from` — id-ы,
+  `[]` если нет; split — подгипотезами, по одному `open` в ответе.
+- Обновлены `docs/ru/inquiry.md`, `docs/{en,ru}/{ir_operations,tools}.md`,
+  `docs/ru/testing.md` (§5.1.1), тесты; добавлен контейнерный пошаговый драйвер
+  `tests/sandbox/inquiry-step.ts`.
+- `maxTurns` задачи `custom-memory-heap-crash` — 50.
+
+### K=3, 50 ходов, containers
+
+Команда:
+
+```sh
+SKEIN_INQUIRY_TASK=custom-memory-heap-crash SKEIN_INQUIRY_REPEAT=3 \
+SKEIN_INQUIRY_MAX_TURNS=50 \
+SKEIN_INQUIRY_SAVE=bench/runs/inquiry-v24-custom-memory-k3 \
+npm run inquiry:docker
+```
+
+| run | reward | stop | turns | гипотез | open | cost |
+|---|---:|---|---:|---:|---:|---:|
+| r1 | 1 | `achieved` | 45 | 1 | 0 | 2.61₽ |
+| r2 | 1 | `max_turns` | 50 | 7 | 1 | 2.10₽ |
+| r3 | 1 | `max_turns` | 50 | 3 | 1 | 2.21₽ |
+
+**Итог: verifier 3/3, чистое завершение 1/3, turns 145, cost 6.91₽.**
+Артефакты: `bench/runs/inquiry-v24-custom-memory-k3/r{1,2,3}`.
+
+### Проблемы
+
+- **Главная:** после уже проверенного fix модель не вызывает `close_goal`, а открывает
+  verification-гипотезы. r2 после H2 (`t30`) потратил ещё 20 ходов на H3–H7; r3 после H1
+  (`t37`) — ещё 13 ходов на H2–H3. Это 33 из 145 ходов.
+- r2: H1 заявлена как reproduction, но на `t11`/`t14` уже сделаны write/edit fix. H1
+  закрыта с `observed` «No files were modified», что **противоречит журналу действий**.
+- r2: H3–H6 — четыре почти одинаковые проверки «fix есть / всё ещё есть / всё ещё работает»;
+  H7 — «состояние можно установить чтением файлов», осталась open.
+- r3: H1 покрыла diagnosis+fix+verify; после неё H2 и H3 — повторные проверки final state.
+- Формулировки verification-claim мета-уровневые (`final state contains the fix`,
+  `can be established by reading`); `done` у них — чтение/пересборка, поэтому цикл не
+  упирается в критерий. `follows_from` работает механически (r2 H2–H6, r3 H2–H3), но
+  цикл не останавливает.
+- В консоли был один transient `APICallError: other side closed`; все три результата
+  записались, прогон не помечен error.
+- Описания `claim`/`done` всё ещё не гарантируют нужную форму: в первом ходе v24 claim
+  получался `high-level`, но `done` иногда оставался про чтение/пересборку.
+
+### Проверки
+
+- `npm run typecheck` — чисто.
+- `SKEIN_LIVE=false npx vitest run --exclude 'tests/sandbox/**'` — **685 passed / 40 skipped**.
+- K=3 Docker выше: reward 3/3, artifacts на месте.
+
+### С чего начать завтра
+
+1. **Лишние ходы после fix:** не открывать verification-гипотезу, если fix уже проверен;
+   закрывать goal. Смотреть `runInquiryUnit`/поверхность и промт, не только `done`.
+2. **Scope H1:** r2 сделал fix под claim «reproduce», затем открыл retrospective H2
+   «root cause». Проверить, почему claim не удерживает границу и можно ли это выразить
+   в промте/состоянии без костыля.
+3. **`observed` vs журнал:** r2 H1 закрыт с «No files were modified» после write/edit.
+   Решить, должен ли движок выводить/проверять мутации в `observed`.
+4. **`follows_from`:** ограничение id работает; r2 H7 всё равно открыт с `[]` после
+   закрытых H1–H6 — разобрать, почему цепочка обрывается.
+5. Повторить K=3 после изменения, сравнить turns/cost с v24.
+
 ## 2026-11-18 — `inquiry`: `observed` вместо предсказания (doc-задача, K=3)
 
 ### Что сделано
@@ -118,7 +202,7 @@
   5. **Две схемы:** для inquiry теперь пинятся round-trip тестом; проверить, нет ли той же
      рассинхронизации у остальных (`session`-инструменты, `start_document` и т.п.).
 - **Не трогали:** `fix-ocaml-gc` (60 ходов), LHTB-задачи.
-- **Не закоммичено** (см. `git status`): `src/{inquiry.ts,ir/types.ts,llm/{inquiry,schemas,tools}.ts,tools/index.ts}`,
+- **Закоммичено** 2026-11-19 (см. запись выше): `src/{inquiry.ts,ir/types.ts,llm/{inquiry,schemas,tools}.ts,tools/index.ts}`,
   `tests/{inquiry_unit,structured}.test.ts`, `docs/ru/{inquiry,handoff}.md`. Предсуществующие
   правки `tests/sandbox/*` и `lhtb-*` не трогались.
 

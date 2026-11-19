@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { generateText, type ModelMessage } from "ai";
+import { generateText, stepCountIs, type ModelMessage, type ToolSet } from "ai";
 
 import { transformBody } from "../src/llm/client";
 
@@ -48,6 +48,44 @@ export async function wire(messages: ModelMessage[]): Promise<WireMessage[]> {
   });
   if (captured === undefined) throw new Error("no request captured");
   return captured.messages;
+}
+
+// The tool names the provider actually serializes into the request body (`tools[].function.name`),
+// produced by the real AI SDK/provider path. `tools` is the same ToolSet `invokeTools` binds.
+export async function wireTools(messages: ModelMessage[], tools: ToolSet): Promise<string[]> {
+  let captured: { tools?: { type: string; function?: { name?: string } }[] } | undefined;
+  const fetchStub = (async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    captured = JSON.parse(String(init?.body ?? "{}"));
+    const body = {
+      id: "x",
+      object: "chat.completion",
+      created: 0,
+      model: "probe",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const provider = createOpenAICompatible({
+    name: "routerai",
+    apiKey: "probe",
+    baseURL: "http://127.0.0.1:1/v1",
+    fetch: fetchStub,
+    transformRequestBody: (body) => transformBody(body, "low"),
+  });
+  await generateText({
+    model: provider("probe"),
+    messages,
+    tools,
+    stopWhen: stepCountIs(1),
+    allowSystemInMessages: true,
+    maxRetries: 0,
+  });
+  if (captured === undefined) throw new Error("no request captured");
+  return (captured.tools ?? []).map((tool) => tool.function?.name ?? "");
 }
 
 // A compact, readable view of a wire message: the tape's own vocabulary (`role`, `call`,

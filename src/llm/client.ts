@@ -64,18 +64,30 @@ export function transformBody(
   return out;
 }
 
+export interface ChatModelOptions {
+  // The transformed request body, after the provider normalizations: the exact wire payload.
+  // The step driver uses it to record the tool list the model actually receives.
+  onWire?: (body: Record<string, unknown>) => void;
+}
+
 // The provider the model is called through. `includeUsage` asks the stream to carry usage;
 // reasoning arrives as an AI SDK `reasoning` part (both `reasoning` and `reasoning_content`
 // are read by `@ai-sdk/openai-compatible`). Temperature/token caps are per call
 // (`src/llm/structured.ts`), not model properties.
-export function createChatModel(settings: Settings = loadSettings()): LanguageModel {
+export function createChatModel(
+  settings: Settings = loadSettings(),
+  options: ChatModelOptions = {},
+): LanguageModel {
   const provider = createOpenAICompatible({
     name: PROVIDER_NAME,
     baseURL: settings.apiUrl,
     apiKey: settings.apiKey,
     includeUsage: true,
-    transformRequestBody: (body) =>
-      transformBody(body, settings.reasoningEffort, settings.providerId ?? "routerai"),
+    transformRequestBody: (body) => {
+      const out = transformBody(body, settings.reasoningEffort, settings.providerId ?? "routerai");
+      options.onWire?.(out);
+      return out;
+    },
   });
   return provider(settings.model);
 }

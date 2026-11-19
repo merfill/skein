@@ -124,10 +124,10 @@ renders a batch as one `assistant` message with N `tool_calls` followed by N `to
 
 | Case | Precondition | Effects | Derived facts | Refusals | ID |
 |---|---|---|---|---|---|
-| replacement | the file was read and is unchanged since that read, and is not forbidden | add an `action` with `find` and `replace`; emit `mutate` for each changed file | file versions change; dependent facts become stale | `stale_base`; a forbidden pattern | `OP-AP-EDIT-1` |
+| replacement | the path is not forbidden | add an `action` with `find` and `replace`; emit `mutate` for each changed file | file versions change; dependent facts become stale | a forbidden pattern | `OP-AP-EDIT-1` |
 | `find` absent | — | an action and a failed observation; the file is materialised and pinned | — | — | `OP-AP-EDIT-2` |
 | forbidden path | a constraint forbids the path | — | — | a forbidden pattern | `OP-AP-EDIT-3` |
-| stale base | the file changed after the last read | — | — | `stale_base` | `OP-AP-EDIT-4` |
+| changed after read | the file changed after the last read | the edit applies to the current content | file versions change | — | `OP-AP-EDIT-4` |
 | path outside the workspace | — | a failed observation, recorded as a refusal without a crash | — | — | `OP-AP-EDIT-5` |
 
 #### 2.2.5 `bash` (`OP-AP-RUN`)
@@ -150,10 +150,10 @@ so the same text under a different directory or cap counts as a new action.
 | Case | Precondition | Effects | Derived facts | Refusals | ID |
 |---|---|---|---|---|---|
 | create | the path does not exist | add an `action` with `path` and `content`; emit `mutate`; set the file version | — | — | `OP-AP-WRITE-1` |
-| overwrite | the file was read and is unchanged since that read, and is not forbidden | add an action; emit `mutate`; increment the version | dependent facts become stale | `stale_base`; a forbidden pattern | `OP-AP-WRITE-2` |
+| overwrite | the path is not forbidden | add an action; emit `mutate`; increment the version | dependent facts become stale | a forbidden pattern | `OP-AP-WRITE-2` |
 | forbidden path | a constraint forbids the path | — | — | a forbidden pattern | `OP-AP-WRITE-3` |
-| stale base | the file changed after the last read | — | — | `stale_base` | `OP-AP-WRITE-4` |
-| unseen file | the file exists but was never read | — | — | a failed observation with `read it first` | `OP-AP-WRITE-5` |
+| changed after read | the file changed after the last read | the overwrite applies as given | file versions change | — | `OP-AP-WRITE-4` |
+| unseen file | the file exists but was never read | the overwrite applies as given | file versions change | — | `OP-AP-WRITE-5` |
 | path outside the workspace | — | a failed observation, recorded as a refusal without a crash | — | — | `OP-AP-WRITE-6` |
 
 #### 2.2.7 `fetch` (`OP-AP-FETCH`)
@@ -354,9 +354,7 @@ registry tokens because separate test families cite them.
 | `repeated_action` | an identical `read`, `grep` or `bash` against an unchanged world | `read`, `grep`, `bash` | `REF-REPEAT` |
 | `no_state` | a `recall` or `search` outside an open state | `recall`, `search` | `REF-RC-STATE` |
 | an empty command | an empty `bash` | `bash` | `REF-RUN-EMPTY` |
-| `stale_base` | an `edit` of a file changed after it was read | `edit` | `REF-EDIT-STALE` |
 | a forbidden pattern | an `edit` of a forbidden path | `edit` | `REF-EDIT-CONSTRAINT` |
-| `stale_base` | a `write` over a file changed after it was read | `write` | `REF-WRITE-STALE` |
 | a forbidden pattern | a `write` to a forbidden path | `write` | `REF-WRITE-CONSTRAINT` |
 
 Tool failures, by contrast, are recorded as failed observations: a missing file in `read`, a bad
