@@ -12,8 +12,8 @@ projection function are the protocol.
 > (`skein-swe`), from Docker Hub, or from a checkout. A technical report and an OpenReview
 > submission are planned.
 >
-> Project page: <https://skein-swe.dev>. Preprint:
-> [10.5281/zenodo.24253692](https://doi.org/10.5281/zenodo.24253692).
+> Project page: <https://skein-swe.dev>. Preprint v2:
+> [10.5281/zenodo.24400661](https://doi.org/10.5281/zenodo.24400661).
 
 ## Contents
 
