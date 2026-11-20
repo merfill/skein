@@ -457,6 +457,13 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
         operator: "close_goal",
         outcome: a.outcome === "not_achieved" ? "not_achieved" : "achieved",
         summary: typeof a.summary === "string" ? a.summary : "",
+        ...(Array.isArray(a.follows_from)
+          ? {
+              followsFrom: a.follows_from.filter(
+                (value): value is string => typeof value === "string",
+              ),
+            }
+          : {}),
       };
       break;
     default:

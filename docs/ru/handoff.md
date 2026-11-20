@@ -3,6 +3,93 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-20 — `inquiry`: текстовый финал вместо `close_goal`; остановка; K=3/K=5 (v25)
+
+### Что сделано
+
+- **Финал — текст, не инструмент.** `close_goal` убран из `INQUIRY_TOOL_NAMES` (в
+  `INQUIRY_TOOLS`/исполнителе остаётся для прямых вызовов и старых журналов). Без
+  открытой гипотезы поверхность — только `open_hypothesis`; результат — текст JSON
+  `{outcome: achieved|not_achieved, summary}`. Литерала формы в базовом промте нет —
+  только «the outcome (achieved or not_achieved) and the summary».
+- **Восстановлены две строки** (distinct claim / no restatement; без открытой — следующая
+  claim или текст-финал) и добавлены три фразы остановки:
+  - goal: «When the closed hypotheses together establish the request's result, the task is
+    over: reply with the final JSON and stop. Open another hypothesis only for a claim the
+    request still needs.»
+  - hypothesis: «A hypothesis ends at the observation that decides its claim… a settled
+    claim needs no further check.»
+  - observed: «Before you close a hypothesis, review all the work you did under it… the
+    observation is the result of the whole hypothesis.»
+- **`close_goal.follows_from`** (id-ы гипотез, на которых держится итог) — схема/payload/
+  рёбра/рендер; на поверхность не подаётся (прямые вызовы).
+- **`runInquiryUnit`:** текст без открытой гипотезы парсится как goal-close
+  (`parseGoalCloseJson`), один repair, затем `bad_goal`; до первой гипотезы текст —
+  `no_goal`. `GOAL_CLOSE_JSON_FORMAT`/`parseGoalCloseJson` в `src/llm/inquiry.ts`.
+- **Харнесс:** `tests/sandbox/inquiry-task.ts` получил `SKEIN_INQUIRY_NET` (было жёстко
+  `off`).
+- Тесты/доки: `tests/inquiry_unit.test.ts`, `tests/structured.test.ts`,
+  `docs/ru/inquiry.md` (§5.2 список абзацев, §5/§5.1/§6.3/§7.4, пример).
+
+### Прогоны
+
+`custom-memory-heap-crash`, K=3 (v25, net off):
+
+| run | reward | stop | turns | cost |
+|---|---:|---|---:|---:|
+| r1 | 1 | `achieved` | 30 | 3.22₽ |
+| r2 | 1 | `achieved` | 39 | 3.71₽ |
+| r3 | 1 | `achieved` | 35 | 3.29₽ |
+| **итог** | **3/3** | **3/3 achieved** | **104** | **10.22₽** |
+
+Против v24: 3/3 verifier, но **1/3 achieved** (+2 `max_turns`), **145 ходов**, 33 хода
+verification-хвоста. В v25: 3/3 `achieved`, **0 open**, хвоста нет.
+
+`fix-git`, K=5 (v25):
+
+| net | solved | turns | runs | cost | open |
+|---|---:|---:|---|---:|---:|
+| off | **5/5** | 80 | 10/13/14/14/29 | 5.43₽ | 0 |
+| on | **5/5** | 77 | 14/15/15/16/17 | 4.89₽ | 0 |
+
+Сравнение с campaign-k5 (13 ноя): старый skein fix-git on 4/5, 10 turns, 0.584₽; off
+5/5, 13, 0.632₽; opencode 5/5, 8, ≈0.20₽ (est.). custom-memory: старый skein 28.68₽/10
+(patch 21.3 + verification 6.5 + end 0.9), opencode 13.78₽/10 (est.).
+
+- v25 fix-git 10/10 против 9/10 у старого skein; ходы 14–15 против 10/13; fresh
+  11.7k/run против 18–21k. На короткой задаче протокол open/close дороже по ходам.
+- ₽ через даты не сравнивать: за ход v25 ~0.064–0.098₽ против ~0.048–0.074₽ 13 ноя.
+
+### Наблюдения
+
+- **Input доминируется перечитыванием ленты открытой гипотезы** (cache): fresh — 5–9%.
+  custom r2: одна H1 на 37 ходов = 99.3% input; r3: H1 22 хода 78%, H2 10 ходов 20.3%
+  (лента сбрасывается при закрытии: 66.9k → 5.7k символов). fix-git: H1 69–95% input;
+  goal open/close 0.7–7.5% input, но 8–32% output (финальный отчёт).
+- Текстовый финал без литерала формы сначала ломал парс (`"outcome":"fixed"`); возврат
+  значений `achieved/not_achieved` вернул парс (8/10 на решении против 7/10 с шаблоном).
+- В custom r1 один transient `AI_APICallError: other side closed`; прогон всё равно
+  reward=1.
+- Осталось: на fix-git 2/10 прогонов добавляют verification-H2 (1 ход в on r1, 9 в
+  off r5); merge по-прежнему делается под H1 (scope). Текстовый финал делает
+  преждевременный stop возможным — старого `no_goal` после первой гипотезы нет.
+
+### Проверки
+
+- `npm run typecheck` — чисто; оффлайн **688 passed / 40 skipped**.
+- Артефакты: `bench/runs/inquiry-v25-custom-memory-k3`,
+  `bench/runs/inquiry-v25-fix-git-{on,off}-k5`.
+
+### С чего начать завтра
+
+1. fix-git: почему 2/10 добавляют verification-H2 и merge делается под H1; удержать
+   scope без движка.
+2. Проверить текстовый финал на других задачах (`fix-code-vulnerability`, `modernize`)
+   K=3.
+3. Точные per-turn токены — через `tests/sandbox/inquiry-step.ts` (`turns.ndjson`); сейчас
+   доли — реконструкция по `inquiryMessages`.
+4. Решить судьбу `close_goal.follows_from` (сейчас не на поверхности).
+
 ## 2026-11-19 — `inquiry`: H-id без label, обязательный `done`; K=3 custom-memory (v24)
 
 ### Что сделано

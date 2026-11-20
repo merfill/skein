@@ -1325,11 +1325,21 @@ export function executeAction(
           "bad_summary: the goal summary is the final answer; it must be non-empty",
         );
       }
+      const badFollow = action.followsFrom?.find((id) => !/^H\d+(?:\.\d+)*$/.test(id));
+      if (badFollow !== undefined) {
+        return refuseAction(
+          actionId,
+          `bad_goal: follows_from must contain only hypothesis ids (e.g. H1, H1.1); got "${badFollow}"`,
+        );
+      }
       const seq = next();
       const verdictId = `w:goal:${seq}`;
       const payload: GoalVerdictPayload = {
         outcome: action.outcome,
         summary: action.summary,
+        ...(action.followsFrom !== undefined && action.followsFrom.length > 0
+          ? { followsFrom: action.followsFrom }
+          : {}),
         turn,
       };
       events.push({
@@ -1345,6 +1355,10 @@ export function executeAction(
       });
       const formula = formulaNode(state);
       if (formula !== undefined) addEdge({ kind: "llm" }, formula.id, verdictId, "goal");
+      for (const cited of action.followsFrom ?? []) {
+        const citedNode = hypothesisNodeOf(state, cited);
+        if (citedNode !== undefined) addEdge({ kind: "llm" }, verdictId, citedNode.id, "follows_from");
+      }
       addEdge({ kind: "llm" }, actionId, verdictId, "result");
       return { events, turn: proposalTurn(label, verdictId), done: false, stopReason: null };
     }

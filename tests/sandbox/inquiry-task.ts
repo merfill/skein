@@ -3,10 +3,11 @@
 // Usage:
 //   SKEIN_INQUIRY_TASK=<id> npm run inquiry:docker
 //
-// Runs the selected task K=3 in parallel (cells, not a shell loop), network off, and saves
-// events/result/tree/check per run under SKEIN_INQUIRY_SAVE. This is a live, heavy run:
-// Docker image + task cache + provider key are required. `SKEIN_INQUIRY_TASK` defaults to
-// `fix-git`; `SKEIN_INQUIRY_MAX_TURNS` overrides the task's own cap.
+// Runs the selected task K=3 in parallel (cells, not a shell loop), network off by default,
+// and saves events/result/tree/check per run under SKEIN_INQUIRY_SAVE. This is a live, heavy
+// run: Docker image + task cache + provider key are required. `SKEIN_INQUIRY_TASK` defaults
+// to `fix-git`; `SKEIN_INQUIRY_NET` sets the agent network (`on`/`off`); and
+// `SKEIN_INQUIRY_MAX_TURNS` overrides the task's own cap.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ModelMessage } from "ai";
@@ -18,6 +19,7 @@ import { createChatModel } from "../../src/llm/client";
 import { modelInquiryProposer, type InquiryProposer } from "../../src/llm/inquiry";
 import { cleanupContainers, dockerAvailable, dockerImageAvailable } from "./docker";
 import { runInquiryTask, taskAvailable } from "./harness";
+import { parseNetworkMode } from "./network";
 import { TASKS } from "./tasks/registry";
 import { cleanupSandboxes } from "./workspace";
 
@@ -32,6 +34,7 @@ const REPEAT = Number(process.env.SKEIN_INQUIRY_REPEAT ?? 3);
 const MAX_TURNS = process.env.SKEIN_INQUIRY_MAX_TURNS !== undefined
   ? Number(process.env.SKEIN_INQUIRY_MAX_TURNS)
   : undefined;
+const NET = parseNetworkMode(process.env.SKEIN_INQUIRY_NET ?? "off");
 
 interface UsageTotals {
   inputTokens: number;
@@ -82,7 +85,7 @@ async function runOne(
 
   const run = await runInquiryTask(task, propose, {
     maxTurns: MAX_TURNS ?? task.maxTurns ?? 60,
-    network: "off",
+    network: NET,
   });
   const dir = join(SAVE, `r${index + 1}`);
   mkdirSync(dir, { recursive: true });

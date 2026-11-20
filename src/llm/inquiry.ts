@@ -42,25 +42,49 @@ export type HypothesisClose = z.infer<typeof hypothesisCloseParams>;
 export const CLOSE_JSON_FORMAT =
   '{"verdict":"confirmed|refuted|dropped","observed":"what is now true: the files changed and how, the checks run and their result","summary":"what was done, the checks that show it, and why the verdict is justified"}';
 
-export function parseCloseJson(text: string): HypothesisClose | undefined {
+// With no open hypothesis the work ends by a text reply too, so finishing is not a tool choice.
+export const GOAL_CLOSE_JSON_FORMAT =
+  '{"outcome":"achieved|not_achieved","summary":"the final report: what was done, the evidence, and the hypotheses that led to the result"}';
+
+function parseJsonObject(text: string): unknown {
   const trimmed = text.trim();
   const fenced = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const start = fenced.indexOf("{");
   const end = fenced.lastIndexOf("}");
   const candidate = start >= 0 && end > start ? fenced.slice(start, end + 1) : fenced;
   try {
-    const parsed: unknown = JSON.parse(candidate);
-    const result = hypothesisCloseParams.safeParse(parsed);
-    return result.success ? result.data : undefined;
+    return JSON.parse(candidate);
   } catch {
     return undefined;
   }
 }
 
+export function parseCloseJson(text: string): HypothesisClose | undefined {
+  const parsed = parseJsonObject(text);
+  if (parsed === undefined) return undefined;
+  const result = hypothesisCloseParams.safeParse(parsed);
+  return result.success ? result.data : undefined;
+}
+
 const goalCloseParams = z.object({
   outcome: z.enum(["achieved", "not_achieved"]),
   summary: z.string().min(1),
+  follows_from: z.array(z.string().regex(hypothesisIdPattern)),
 });
+
+const goalTextCloseParams = z.object({
+  outcome: z.enum(["achieved", "not_achieved"]),
+  summary: z.string().min(1),
+});
+
+export type GoalClose = z.infer<typeof goalTextCloseParams>;
+
+export function parseGoalCloseJson(text: string): GoalClose | undefined {
+  const parsed = parseJsonObject(text);
+  if (parsed === undefined) return undefined;
+  const result = goalTextCloseParams.safeParse(parsed);
+  return result.success ? result.data : undefined;
+}
 
 // The close tool is bound with the open hypothesis's id, so the description names the hypothesis
 // it closes at the decision point.
@@ -105,9 +129,11 @@ export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   },
   close_goal: {
     description: [
-      "Closes the goal with the final result. Arguments:",
+      "Closes the goal with the final result. Choose it when you consider the original goal achieved, or when all hypotheses are worked out and no new claim is needed.",
+      "Arguments:",
       "- outcome: \"achieved\" (the request's result is reached) or \"not_achieved\" (it is not; say what blocked it).",
       "- summary: the final answer to the user: what was done, the evidence, and the result.",
+      "- follows_from: the ids of the earlier hypotheses the result rests on (e.g. H1, H2); [] only if none.",
       "Call this tool exactly once in a reply; it must be the only call and it ends the work.",
     ].join("\n"),
     schema: goalCloseParams,
@@ -130,10 +156,11 @@ export const INQUIRY_WORK_TOOL_NAMES: readonly string[] = [
   "search",
 ];
 
+// `close_goal` stays in `INQUIRY_TOOLS` for direct calls and old journals, but it is never part
+// of the surface: the work ends by a text reply, not by choosing a tool.
 export const INQUIRY_TOOL_NAMES: readonly string[] = [
   ...INQUIRY_WORK_TOOL_NAMES,
   "open_hypothesis",
-  "close_goal",
 ];
 
 export function modelInquiryProposer(

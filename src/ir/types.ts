@@ -132,9 +132,12 @@ export interface HypothesisVerdictPayload {
 }
 
 // The closure of the formula H: the model's final result, derived from the whole tape.
+// `followsFrom` names the earlier hypotheses the result rests on; it is provenance/navigation,
+// not a checked claim.
 export interface GoalVerdictPayload {
   outcome: "achieved" | "not_achieved";
   summary?: string;
+  followsFrom?: string[];
   turn?: number;
 }
 

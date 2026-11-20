@@ -118,6 +118,7 @@ export const actionSchema = z.discriminatedUnion("operator", [
     operator: z.literal("close_goal"),
     outcome: z.enum(["achieved", "not_achieved"]),
     summary: z.string(),
+    followsFrom: z.array(z.string().regex(/^H\d+(?:\.\d+)*$/)).optional(),
   }),
 ]);
 
@@ -242,6 +243,7 @@ export function modelCall(action: Action): ModelCall {
         args: {
           outcome: action.outcome,
           summary: action.summary,
+          follows_from: action.followsFrom ?? [],
         },
       };
   }

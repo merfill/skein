@@ -28,8 +28,14 @@ function close(
 function closeGoal(
   outcome: "achieved" | "not_achieved",
   summary = "final report",
+  followsFrom?: string[],
 ): Action {
-  return { operator: "close_goal", outcome, summary };
+  return {
+    operator: "close_goal",
+    outcome,
+    summary,
+    ...(followsFrom !== undefined ? { followsFrom } : {}),
+  };
 }
 
 function read(path: string): Action {
@@ -46,6 +52,13 @@ function textClose(
   summary = "summary of the work",
 ): Proposals {
   return { thought: JSON.stringify({ verdict, observed, summary }), actions: [] };
+}
+
+function textGoal(
+  outcome: "achieved" | "not_achieved" = "achieved",
+  summary = "final report",
+): Proposals {
+  return { thought: JSON.stringify({ outcome, summary }), actions: [] };
 }
 
 function bash(command: string): Action {
@@ -127,7 +140,7 @@ describe("inquiry", () => {
       if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
       if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
       if (stepNo === 3) return { thought: "", actions: [close("confirmed", "a.txt exists")] };
-      if (stepNo === 4) return { thought: "", actions: [closeGoal("achieved", "the final report")] };
+      if (stepNo === 4) return textGoal("achieved", "the final report");
       throw new Error("unexpected turn");
     };
     const deps: InquiryDeps = { propose, workspace, maxTurns: 10 };
@@ -367,8 +380,8 @@ describe("inquiry", () => {
       if (stepNo === 4) return textClose("confirmed", "child done", "child done");
       // The root is a formula with its child closed: only open (or close by text).
       if (stepNo === 5) return textClose("confirmed", "formula done", "formula done");
-      // No active again: open or close the goal.
-      if (stepNo === 6) return { thought: "", actions: [closeGoal("achieved", "final")] };
+      // No active again: open the next claim, or finish by text.
+      if (stepNo === 6) return textGoal("achieved", "final");
       throw new Error("the engine must not call the model after the goal closes");
     };
     const result = await runInquiryUnit(
@@ -381,8 +394,11 @@ describe("inquiry", () => {
     expect(seen[2]).toEqual(["open_hypothesis", ...WORK]);
     expect(seen[3]).toEqual(WORK);
     expect(seen[4]).toEqual(["open_hypothesis"]);
-    expect(seen[5]).toEqual(["open_hypothesis", "close_goal"]);
-    for (const surface of seen) expect(surface).not.toContain("close_hypothesis");
+    expect(seen[5]).toEqual(["open_hypothesis"]);
+    for (const surface of seen) {
+      expect(surface).not.toContain("close_hypothesis");
+      expect(surface).not.toContain("close_goal");
+    }
   });
 
   it("passes the work surface again on the repair call", async () => {
@@ -404,7 +420,7 @@ describe("inquiry", () => {
         repairSeen = last !== undefined && last.role === "user" && textOf(last).includes("JSON");
         return textClose("confirmed", "a.txt read", "read a.txt");
       }
-      if (stepNo === 5) return { thought: "", actions: [closeGoal("achieved", "final")] };
+      if (stepNo === 5) return textGoal("achieved", "final");
       throw new Error("unexpected turn");
     };
     const result = await runInquiryUnit(
@@ -415,7 +431,7 @@ describe("inquiry", () => {
     expect(result.done).toBe(true);
     expect(seen[2]).toEqual(WORK);
     expect(seen[3]).toEqual(WORK);
-    expect(seen[4]).toEqual(["open_hypothesis", "close_goal"]);
+    expect(seen[4]).toEqual(["open_hypothesis"]);
   });
 
   it("enforces the open state and a non-empty summary", () => {
@@ -514,7 +530,7 @@ describe("inquiry", () => {
       if (stepNo === 1) return { thought: "", actions: [open("p")] };
       if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
       if (stepNo === 3) return { thought: "", actions: [close("confirmed", "the cause")] };
-      if (stepNo === 4) return { thought: "", actions: [closeGoal("achieved", "the root report")] };
+      if (stepNo === 4) return textGoal("achieved", "the root report");
       throw new Error("the engine must not call the model after the goal closes");
     };
     const result = await runInquiryUnit(
@@ -534,9 +550,7 @@ describe("inquiry", () => {
       if (stepNo === 1) return { thought: "", actions: [open("the cause")] };
       if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
       if (stepNo === 3) return { thought: "", actions: [close("refuted", "not the cause")] };
-      if (stepNo === 4) {
-        return { thought: "", actions: [closeGoal("not_achieved", "ruled out: a.txt is not the cause")] };
-      }
+      if (stepNo === 4) return textGoal("not_achieved", "ruled out: a.txt is not the cause");
       throw new Error("the engine must not call the model after the goal closes");
     };
     const result = await runInquiryUnit(
@@ -557,8 +571,26 @@ describe("inquiry", () => {
     events = step(events, workspace, read("a.txt")).events;
     events = step(events, workspace, close("confirmed")).events;
     expect(step(events, workspace, closeGoal("achieved", "   ")).text).toContain("bad_summary");
+    expect(step(events, workspace, closeGoal("achieved", "final", ["not-an-id"])).text).toContain(
+      "bad_goal",
+    );
     const ok = step(events, workspace, closeGoal("achieved", "final"));
     expect(ok.text).toContain("close_goal achieved");
+  });
+
+  it("records the goal's follows_from and renders it", () => {
+    let events = seedInquiry({ id: "r1", text: "t" });
+    events = step(events, workspace, open("s")).events;
+    events = step(events, workspace, read("a.txt")).events;
+    events = step(events, workspace, close("confirmed")).events;
+    events = step(events, workspace, closeGoal("achieved", "final", ["H1", "H9"])).events;
+
+    const state = fold(events);
+    const goal = [...state.nodes.values()].find((node) => node.kind === "goal_verdict");
+    expect((goal?.payload as { followsFrom?: string[] }).followsFrom).toEqual(["H1", "H9"]);
+    expect([...state.edges.values()].some((edge) => edge.kind === "follows_from")).toBe(true);
+    const tape = inquiryMessages(state, { id: "r1", text: "t" }).map(textOf).join("\n");
+    expect(tape).toContain("Follows from: H1, H9");
   });
 
   it("refuses an action after the hypothesis closes", () => {
@@ -577,9 +609,7 @@ describe("inquiry", () => {
       if (stepNo === 2) return { thought: "", actions: [open("the cause")] };
       if (stepNo === 3) return { thought: "", actions: [read("a.txt")] };
       if (stepNo === 4) return { thought: "", actions: [close("confirmed", "the cause held")] };
-      if (stepNo === 5) {
-        return { thought: "", actions: [closeGoal("achieved", "the cause held")] };
-      }
+      if (stepNo === 5) return textGoal("achieved", "the cause held");
       throw new Error("the engine must not call the model after the goal closes");
     };
     const result = await runInquiryUnit(
@@ -612,7 +642,7 @@ describe("inquiry", () => {
     expect(result.unresolved[0]?.id).toBe("H1");
   });
 
-  it("treats a reply without tool calls while no hypothesis is open as an error", async () => {
+  it("treats a non-JSON text reply with no hypothesis open as a goal-close error", async () => {
     let stepNo = 0;
     const propose = async (): Promise<Proposals> => {
       stepNo += 1;
@@ -621,6 +651,18 @@ describe("inquiry", () => {
       if (stepNo === 3) return { thought: "", actions: [close("confirmed", "done")] };
       return { thought: "stop", actions: [] };
     };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10 },
+      { request: { id: "r1", text: "t" } },
+    );
+    expect(result.final).toBe("");
+    expect(result.done).toBe(false);
+    expect(result.stopReason).toBe("bad_goal");
+    expect(result.unresolved).toEqual([]);
+  });
+
+  it("requires the first reply to open a hypothesis, not a text reply", async () => {
+    const propose = async (): Promise<Proposals> => textGoal("achieved", "no work done");
     const result = await runInquiryUnit(
       { propose, workspace, maxTurns: 10 },
       { request: { id: "r1", text: "t" } },

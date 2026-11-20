@@ -396,7 +396,7 @@ describe("tool calling", () => {
       toolReply([{ name: "read", args: { filePath: "a.txt" } }]),
       textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
       textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
-      toolReply([{ name: "close_goal", args: { outcome: "achieved", summary: "final" } }]),
+      textReply(JSON.stringify({ outcome: "achieved", summary: "final" })),
     ];
     const model = mockModel((call) => replies[call - 1]!);
     const propose = modelInquiryProposer(model, { settings: offline });
@@ -419,7 +419,7 @@ describe("tool calling", () => {
     expectSurface(2, ["open_hypothesis", ...WORK]);
     expectSurface(3, WORK);
     expectSurface(4, ["open_hypothesis"]);
-    expectSurface(5, ["open_hypothesis", "close_goal"]);
+    expectSurface(5, ["open_hypothesis"]);
   });
 
   it("serializes the inquiry work surface to the provider wire", async () => {
@@ -639,7 +639,8 @@ describe("inquiry tools: modelCall is the wire-inverse of toProposal", () => {
       observed: "the file is absent",
       summary: "checked the workspace",
     },
-    { operator: "close_goal", outcome: "achieved", summary: "done" },
+    { operator: "close_goal", outcome: "achieved", summary: "done", followsFrom: [] },
+    { operator: "close_goal", outcome: "achieved", summary: "done", followsFrom: ["H1"] },
   ];
 
   for (const action of samples) {

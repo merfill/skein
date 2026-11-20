@@ -19,9 +19,11 @@ import { actionResultText, type TapeMessage } from "./ir/project";
 import { historyMessages } from "./loop/propose";
 import {
   CLOSE_JSON_FORMAT,
+  GOAL_CLOSE_JSON_FORMAT,
   INQUIRY_WORK_TOOL_NAMES,
   closeHypothesisDescription,
   parseCloseJson,
+  parseGoalCloseJson,
   type InquiryProposer,
 } from "./llm/inquiry";
 import type { Proposals } from "./llm/schemas";
@@ -35,6 +37,11 @@ export const INQUIRY_BASE_PROMPT = [
   "The agent works on the given request. The work is a sequence of hypotheses.",
   "A hypothesis is a claim. You open it before working on it and close it when everything necessary for this hypothesis is done; it closes as confirmed (it worked), refuted (it did not), or dropped (abandoned). The engine records the opening and the closing; the work of a closed hypothesis is an artifact you can read when you need it.",
   "A hypothesis's scope is what it names: work outside it belongs to another hypothesis. The request is why the work exists and the criterion for the final outcome; it is not the goal of a hypothesis.",
+  "Open a hypothesis for each distinct claim. Never open a hypothesis that is a restatement or reformulation of one already opened, whether it is still open or closed.",
+  "With a hypothesis open, act under it or close it. With no hypothesis open, open the next distinct claim. When the request's result is reached and no distinct claim remains, reply with text only — no tool call — as a single JSON object (no markdown fences): the outcome (achieved or not_achieved) and the summary.",
+  "When the closed hypotheses together establish the request's result, the task is over: reply with the final JSON and stop. Open another hypothesis only for a claim the request still needs.",
+  "A hypothesis ends at the observation that decides its claim. When that observation is in hand, the claim is settled: close the hypothesis with the result; a settled claim needs no further check.",
+  "Before you close a hypothesis, review all the work you did under it — the files you changed and what changed in them, the checks you ran and their result — including changes made earlier, not only the last step. Report all of it in the closing: the observation is the result of the whole hypothesis.",
   "## General instructions for the work",
   "Follow the project. Mimic its style, structure, naming, typing and architectural patterns; make the change idiomatic to the surrounding code. Add comments sparingly (why, not what), and never use comments to talk to the user.",
   "Work only the active hypothesis: decide the next step, make small changes, and debug from evidence. Its scope is its claim: anything outside the claim belongs to the next hypothesis — close this one, then open that claim.",
@@ -207,6 +214,9 @@ function closingMessage(verdict: HypothesisVerdictPayload): string {
 function goalClosingMessage(verdict: GoalVerdictPayload): string {
   return [
     `Closing formula H: ${verdict.outcome}.`,
+    ...(verdict.followsFrom !== undefined && verdict.followsFrom.length > 0
+      ? [`Follows from: ${verdict.followsFrom.join(", ")}`]
+      : []),
     `Summary: ${verdict.summary?.replace(/\s+/g, " ").trim() || "(no summary recorded)"}`,
   ].join("\n");
 }
@@ -423,10 +433,9 @@ export async function runInquiryUnit(
     // Formula: open another sub-hypothesis, or reply with the close JSON once its children are
     // closed.
     const allowedTools = (() => {
-      if (active === undefined) {
-        const anyHypothesis = [...state.nodes.values()].some((node) => node.kind === "hypothesis");
-        return anyHypothesis ? ["open_hypothesis", "close_goal"] : ["open_hypothesis"];
-      }
+      // With no open hypothesis the only tool is opening the next claim. Finishing is a text
+      // reply, so `close_goal` is never offered and the decision is not a tool choice.
+      if (active === undefined) return ["open_hypothesis"];
       const mode = hypothesisMode(state, active.hypothesisId);
       if (mode === "formula" || mode === "mixed") return ["open_hypothesis"];
       if (mode === "undecided") return ["open_hypothesis", ...INQUIRY_WORK_TOOL_NAMES];
@@ -460,68 +469,135 @@ export async function runInquiryUnit(
     if (proposals.actions.length === 0) {
       const text = proposals.thought.trim();
       if (active === undefined) {
-        // With no hypothesis open the model must open the next one or close the goal.
-        stopWithError(state, "no_goal", text !== "" ? text : "(no tool calls)");
-        advance();
-        break;
-      }
-      // A text-only reply closes the hypothesis: it carries the verdict, observed and summary
-      // as JSON, and the engine records the same verdict node a close call would.
-      const attempt = (reply: string): string | undefined => {
-        const close = parseCloseJson(reply);
-        if (close === undefined) return "the reply is not the required JSON object";
-        const problem = hypothesisCloseProblem(state, active.hypothesisId);
-        if (problem !== undefined) return problem;
-        const seq = nextNodeSeq(state);
-        const built = hypothesisVerdictEvents(
-          active.hypothesisId,
-          hypothesisNodeOf(state, active.hypothesisId)?.id,
-          close,
-          turn,
-          seq,
-        );
-        events.push(...built.events);
-        return undefined;
-      };
-      const problem = attempt(text);
-      if (problem === undefined) {
-        advance();
-        continue;
-      }
-      const repair = [
-        `The last reply did not close hypothesis ${active.hypothesisId}: ${problem}.`,
-        "Reply with text only, no tool call, as a single JSON object (no markdown fences):",
-        CLOSE_JSON_FORMAT,
-      ].join("\n");
-      let retry: Proposals;
-      try {
-        retry = await deps.propose([...messages, { role: "user", content: repair }], {
-          ...(input.signal !== undefined ? { signal: input.signal } : {}),
-          allowedTools,
-          turn,
-          ...(toolDescriptions !== undefined ? { toolDescriptions } : {}),
-        });
-      } catch (error) {
-        if (isAborted(input.signal)) {
-          paused = true;
-          break;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        stopWithError(state, "model_error", `(model error: ${message})`);
-        advance();
-        break;
-      }
-      if (retry.actions.length === 0) {
-        const retryProblem = attempt(retry.thought.trim());
-        if (retryProblem !== undefined) {
-          stopWithError(state, "bad_close", retry.thought.trim() !== "" ? retry.thought.trim() : text);
+        // With no hypothesis open a text reply is the goal's close: it carries the outcome and
+        // the final report as JSON, and the engine records the same goal verdict a call would.
+        // Before the first hypothesis a text reply is still an error: the request starts in a
+        // productive state.
+        const anyHypothesis = [...state.nodes.values()].some((node) => node.kind === "hypothesis");
+        if (!anyHypothesis) {
+          stopWithError(state, "no_goal", text !== "" ? text : "(no tool calls)");
           advance();
           break;
         }
-        advance();
-        continue;
+        const attemptGoal = (reply: string): string | undefined => {
+          const close = parseGoalCloseJson(reply);
+          if (close === undefined) return "the reply is not the required JSON object";
+          const outcome = executeAction(
+            { operator: "close_goal", outcome: close.outcome, summary: close.summary },
+            fold(events),
+            deps.workspace,
+            turn,
+            undefined,
+            { hypothesisRules: true },
+          );
+          events.push(...outcome.events);
+          const goal = goalVerdictOf(fold(events));
+          if (goal === undefined) return outcome.turn.text;
+          const payload = goal.payload as GoalVerdictPayload;
+          final = payload.summary?.trim() ?? "";
+          unresolved = [];
+          done = true;
+          stopReason = payload.outcome === "achieved" ? "achieved" : "not_achieved";
+          return undefined;
+        };
+        const problem = attemptGoal(text);
+        if (problem === undefined) {
+          advance();
+          break;
+        }
+        const repair = [
+          `The last reply did not close the goal: ${problem}.`,
+          "Reply with text only, no tool call, as a single JSON object (no markdown fences):",
+          GOAL_CLOSE_JSON_FORMAT,
+        ].join("\n");
+        let retry: Proposals;
+        try {
+          retry = await deps.propose([...messages, { role: "user", content: repair }], {
+            ...(input.signal !== undefined ? { signal: input.signal } : {}),
+            allowedTools,
+            turn,
+            ...(toolDescriptions !== undefined ? { toolDescriptions } : {}),
+          });
+        } catch (error) {
+          if (isAborted(input.signal)) {
+            paused = true;
+            break;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          stopWithError(state, "model_error", `(model error: ${message})`);
+          advance();
+          break;
+        }
+        if (retry.actions.length === 0) {
+          const retryProblem = attemptGoal(retry.thought.trim());
+          if (retryProblem !== undefined) {
+            stopWithError(state, "bad_goal", retry.thought.trim() !== "" ? retry.thought.trim() : text);
+            advance();
+            break;
+          }
+          advance();
+          break;
+        }
+        proposals = retry;
+      } else {
+        // A text-only reply closes the hypothesis: it carries the verdict, observed and summary
+        // as JSON, and the engine records the same verdict node a close call would.
+        const attempt = (reply: string): string | undefined => {
+          const close = parseCloseJson(reply);
+          if (close === undefined) return "the reply is not the required JSON object";
+          const problem = hypothesisCloseProblem(state, active.hypothesisId);
+          if (problem !== undefined) return problem;
+          const seq = nextNodeSeq(state);
+          const built = hypothesisVerdictEvents(
+            active.hypothesisId,
+            hypothesisNodeOf(state, active.hypothesisId)?.id,
+            close,
+            turn,
+            seq,
+          );
+          events.push(...built.events);
+          return undefined;
+        };
+        const problem = attempt(text);
+        if (problem === undefined) {
+          advance();
+          continue;
+        }
+        const repair = [
+          `The last reply did not close hypothesis ${active.hypothesisId}: ${problem}.`,
+          "Reply with text only, no tool call, as a single JSON object (no markdown fences):",
+          CLOSE_JSON_FORMAT,
+        ].join("\n");
+        let retry: Proposals;
+        try {
+          retry = await deps.propose([...messages, { role: "user", content: repair }], {
+            ...(input.signal !== undefined ? { signal: input.signal } : {}),
+            allowedTools,
+            turn,
+            ...(toolDescriptions !== undefined ? { toolDescriptions } : {}),
+          });
+        } catch (error) {
+          if (isAborted(input.signal)) {
+            paused = true;
+            break;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          stopWithError(state, "model_error", `(model error: ${message})`);
+          advance();
+          break;
+        }
+        if (retry.actions.length === 0) {
+          const retryProblem = attempt(retry.thought.trim());
+          if (retryProblem !== undefined) {
+            stopWithError(state, "bad_close", retry.thought.trim() !== "" ? retry.thought.trim() : text);
+            advance();
+            break;
+          }
+          advance();
+          continue;
+        }
+        proposals = retry;
       }
-      proposals = retry;
     }
 
     const hasHypothesisTool = proposals.actions.some(
