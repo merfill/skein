@@ -30,12 +30,19 @@
 - Сайт: EN/RU паритет секций/h2/TOC, HTML-парсер без незакрытых тегов; числа сверены
   с `handoff.md` и `paper/ru/skein.tex`.
 
+### Публикация
+
+- Коммит `88b4352` («Release: 0.2.0; hypothesis mode, site, changelog»), тег `v0.2.0`,
+  push в `origin/main`.
+- `npm publish` → `skein-swe@0.2.0` (latest); tarball 4 файла, shasum `d495c921…`.
+- Docker: `mefrill/skein-swe:0.2.0` и `:latest` (digest `sha256:dabb3729…`); образ
+  проверен `--version` → `skein 0.2.0`.
+- Сайт задеплоен (`skein-swe.dev`): v0.2, «Two modes», таблица v0.2, Docker `0.2.0`.
+
 ### С чего начать
 
-1. Публикация 0.2.0 (npm publish, Docker build/push, тег `v0.2.0`, push) — только после
-   явного «да» на конкретные команды.
-2. Сайт: версия `v0.2.0` уже в файлах; DOI v2 на Zenodo обновить, когда появится.
-3. `procedure.tex` — у владельца; со стороны Skein — числа и выверка.
+1. DOI v2 на Zenodo и обновить ссылку (README/сайт) — когда появится.
+2. `procedure.tex` — у владельца; со стороны Skein — числа и выверка.
 
 ## 2026-11-20 — препринт Skein v2: динамические гипотезы, статья, ревью
 
