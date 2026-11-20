@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelMessage } from "ai";
@@ -10,6 +10,8 @@ import { fold, hypothesisPayloadOf } from "../src/ir/graph";
 import { INQUIRY_TOOLS, INQUIRY_WORK_TOOL_NAMES } from "../src/llm/inquiry";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toProposal } from "../src/llm/tools";
+import type { ProgressEvent } from "../src/session/progress";
+import { createSessionLog, logTelemetry } from "../src/session/session_log";
 import { memoryTelemetry } from "../src/session/telemetry";
 import { executeAction } from "../src/tools";
 import { fsWorkspace, type Workspace } from "../src/tools/workspace";
@@ -682,6 +684,130 @@ describe("inquiry", () => {
     expect(result.done).toBe(false);
     expect(result.stopReason).toBe("no_goal");
     expect(result.unresolved).toEqual([]);
+  });
+
+  it("emits hypothesis progress when closed by a tool call", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return { thought: "", actions: [close("confirmed", "read a.txt", "alpha")] };
+      return textGoal("achieved", "done");
+    };
+    const progress: ProgressEvent[] = [];
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10, onProgress: (event) => progress.push(event) },
+      { request: { id: "r1", text: "check a.txt" } },
+    );
+    expect(result.done).toBe(true);
+    expect(
+      progress.some((event) => event.type === "turn_started" && event.agent === "inquiry"),
+    ).toBe(true);
+    expect(
+      progress.some((event) => event.type === "turn_finished" && event.agent === "inquiry"),
+    ).toBe(true);
+    expect(progress.find((event) => event.type === "hypothesis" && !event.closed)).toMatchObject({
+      id: "H1",
+      claim: "a.txt exists",
+      done: "the claim is decided",
+      closed: false,
+    });
+    expect(progress.find((event) => event.type === "hypothesis" && event.closed)).toMatchObject({
+      id: "H1",
+      claim: "a.txt exists",
+      closed: true,
+      verdict: "confirmed",
+      observed: "alpha",
+      summary: "read a.txt",
+    });
+  });
+
+  it("emits hypothesis progress when closed by text", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return textClose("confirmed", "alpha", "read a.txt");
+      return textGoal("achieved", "done");
+    };
+    const progress: ProgressEvent[] = [];
+    await runInquiryUnit(
+      { propose, workspace, maxTurns: 10, onProgress: (event) => progress.push(event) },
+      { request: { id: "r1", text: "check a.txt" } },
+    );
+    expect(progress.find((event) => event.type === "hypothesis" && event.closed)).toMatchObject({
+      id: "H1",
+      claim: "a.txt exists",
+      closed: true,
+      verdict: "confirmed",
+      observed: "alpha",
+      summary: "read a.txt",
+    });
+  });
+
+  it("records hypothesis and tool events in the session log", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return textClose("confirmed", "alpha", "read a.txt");
+      return textGoal("achieved", "done");
+    };
+    const log = createSessionLog(dir, {});
+    const memory = memoryTelemetry();
+    const telemetry = {
+      record: (event: Parameters<typeof logTelemetry>[1]) => {
+        memory.sink.record(event);
+        logTelemetry(log, event);
+      },
+    };
+    await runInquiryUnit(
+      {
+        propose,
+        workspace,
+        maxTurns: 10,
+        telemetry,
+        onProgress: (event) => log.write({ record: "progress", ...event }),
+      },
+      { request: { id: "r1", text: "check a.txt" } },
+    );
+    log.close();
+    const lines = readFileSync(log.path, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(
+      lines.some(
+        (line) =>
+          line.record === "progress" &&
+          line.type === "hypothesis" &&
+          line.id === "H1" &&
+          line.closed === false,
+      ),
+    ).toBe(true);
+    expect(
+      lines.some(
+        (line) =>
+          line.record === "progress" && line.type === "hypothesis" && line.closed === true,
+      ),
+    ).toBe(true);
+    expect(
+      lines.some(
+        (line) =>
+          line.record === "telemetry" && line.type === "tool_call" && line.tool === "open_hypothesis",
+      ),
+    ).toBe(true);
+    expect(
+      lines.some(
+        (line) => line.record === "telemetry" && line.type === "tool_call" && line.tool === "read",
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((line) => line.record === "progress" && line.type === "events_added"),
+    ).toBe(true);
   });
 
   it("emits tool_call telemetry for inquiry actions", async () => {

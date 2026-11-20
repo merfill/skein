@@ -95,6 +95,20 @@ function closedTask(): Event[] {
   return [request(), ...move("m1", "end", 1), ...stop("m1", "make check passed", 2)];
 }
 
+function goal(outcome: "achieved" | "not_achieved"): Event {
+  return {
+    type: "add_node",
+    node: {
+      id: "g1",
+      space: "work",
+      kind: "goal_verdict",
+      label: outcome,
+      payload: { outcome, summary: "done" },
+      seq: 3,
+    },
+  };
+}
+
 describe("session attention: derived statuses", () => {
   it("marks the focus active and the deferred unit suspended", () => {
     const session = createSession();
@@ -121,6 +135,22 @@ describe("session attention: derived statuses", () => {
     openUnit(session, "r1", "task", closedTask());
     pushUnit(session, "r1", 0);
     expect(attentionOf(session, "r1")).toBe("completed");
+  });
+
+  it("derives completed from an inquiry goal verdict", () => {
+    const session = createSession();
+    const unit = openUnit(session, "r1", "task", [request(), goal("achieved")]);
+    unit.mode = "hypotheses";
+    pushUnit(session, "r1", 0);
+    expect(attentionOf(session, "r1")).toBe("completed");
+  });
+
+  it("keeps an open inquiry out of completed", () => {
+    const session = createSession();
+    const unit = openUnit(session, "r1", "task", [request()]);
+    unit.mode = "hypotheses";
+    pushUnit(session, "r1", 0);
+    expect(attentionOf(session, "r1")).not.toBe("completed");
   });
 
   it("does not derive completed from an engine error stop", () => {

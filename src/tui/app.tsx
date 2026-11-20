@@ -22,9 +22,10 @@ import {
   sessionSummary,
   usageTotals,
   type MemoryTelemetry,
+  type TelemetrySink,
 } from "../session/telemetry";
 import type { ProgressEvent } from "../session/progress";
-import { createSessionLog, type SessionLog } from "../session/session_log";
+import { createSessionLog, logTelemetry, type SessionLog } from "../session/session_log";
 import type { SessionState, TaskMode } from "../session/types";
 import { buildTuiView, type PlanView, type TaskTiming } from "./view_model";
 import { traceLines, traceWindow } from "./trace_lines";
@@ -528,8 +529,19 @@ export function TuiApp(props: TuiAppProps) {
 
   const runDeps = (): SessionTurnDeps => {
     const current = depsRef.current;
+    const telemetry = current.telemetry;
+    const loggedTelemetry: TelemetrySink | undefined =
+      telemetry === undefined
+        ? undefined
+        : {
+            record(event) {
+              telemetry.record(event);
+              logTelemetry(logRef.current, event);
+            },
+          };
     return {
       ...current,
+      ...(loggedTelemetry !== undefined ? { telemetry: loggedTelemetry } : {}),
       onProgress: handleProgress,
       sessionAgent: { ...current.sessionAgent, onProgress: handleProgress },
       task: {
@@ -550,6 +562,15 @@ export function TuiApp(props: TuiAppProps) {
         : {}),
       ...(current.document !== undefined
         ? { document: { ...current.document, onProgress: handleProgress } }
+        : {}),
+      ...(current.inquiry !== undefined
+        ? {
+            inquiry: {
+              ...current.inquiry,
+              onProgress: handleProgress,
+              ...(loggedTelemetry !== undefined ? { telemetry: loggedTelemetry } : {}),
+            },
+          }
         : {}),
     };
   };

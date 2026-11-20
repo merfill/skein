@@ -4,6 +4,23 @@ All notable changes to Skein are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-11-20
+
+### Added
+
+- Inquiry progress for the TUI and the session log: `turn_started`/`turn_finished`,
+  `events_added`, and `hypothesis` events with the claim, `done`, verdict, observation and
+  summary. The hypothesis journal now renders live in the task panel instead of arriving
+  only at the end.
+- Inquiry telemetry (`model_call` usage and `tool_call`) is written to
+  `.skein/session.log` as `record: "telemetry"`.
+- `--mode` is listed in `skein --help`.
+
+### Fixed
+
+- A hypothesis unit that closed its goal is now reported as `completed`, not
+  `abandoned`, so the session history no longer calls an achieved task abandoned.
+
 ## [0.2.0] - 2026-11-20
 
 ### Added

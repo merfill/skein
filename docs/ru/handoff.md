@@ -3,6 +3,36 @@
 > Рабочий документ передачи. Английского зеркала нет. История изменений по датам удалена:
 > она остаётся в git. Здесь — только текущее состояние и последняя выполненная работа.
 
+## 2026-11-20 — 0.2.1: живой журнал гипотез, телеметрия в лог, завершение inquiry
+
+### Что сделано
+
+- **Наблюдаемость гипотез.** `runInquiryUnit` эмитит `turn_started`/`turn_finished`,
+  `events_added` и `hypothesis` (claim/done/verdict/observed/summary); TUI получает
+  `onProgress` для `inquiry` и обновляет `unit.turn`, поэтому ряды гипотез и per-turn
+  детали растут вживую, а не появляются в конце.
+- **Лог.** Телеметрия inquiry (`model_call` с usage, `tool_call`) пишется в
+  `.skein/session.log` как `record: "telemetry"`; progress-события логируются как
+  раньше. Добавлен `logTelemetry`.
+- **Завершение inquiry.** `unitCompleted` для `task` с `mode: hypotheses` читает
+  `goal_verdict`: закрытая цель — `completed`, а не `abandoned`.
+- **CLI.** `--mode` добавлен в `skein --help`.
+- Тесты: прогресс open/close (tool и text), запись в session log, CLI help, attention
+  inquiry. Оффлайн **700 passed / 40 skipped**.
+
+### Проверки
+
+- `npm run typecheck` — чисто; `npm run build` — чисто.
+- Пет-проект `~/dev/skein-pet` (вне репозитория): прогон hypotheses 11 ходов,
+  `achieved`, H1 открыта/закрыта; в логе видны `hypothesis`, `events_added`, `telemetry`.
+
+### С чего начать
+
+1. Релиз `0.2.1` (npm/Docker/тег/push).
+2. Открытые наблюдения (не правили): H1 может быть мета-claim; правка `@README.md`
+   ушла в `general`, затем `document`; `document` вписал отчёт об изменениях в сам
+   README. Решение — за владельцем.
+
 ## 2026-11-20 — сайт v0.2 и подготовка релиза 0.2.0
 
 ### Что сделано

@@ -42,9 +42,9 @@ Offline (pack, install into an isolated HOME, no key):
 npm run build
 npm pack --pack-destination /tmp/skein-firstrun
 mkdir -p /tmp/skein-firstrun/install && cd /tmp/skein-firstrun/install
-npm init -y && npm install /tmp/skein-firstrun/skein-swe-0.2.0.tgz
+npm init -y && npm install /tmp/skein-firstrun/skein-swe-0.2.1.tgz
 export HOME=/tmp/skein-firstrun/home XDG_CONFIG_HOME=$HOME/.config XDG_DATA_HOME=$HOME/.local/share
-node_modules/.bin/skein --version      # skein 0.2.0
+node_modules/.bin/skein --version      # skein 0.2.1
 node_modules/.bin/skein --help
 node_modules/.bin/skein auth list      # no keys -> suggests `skein auth login`
 node_modules/.bin/skein doctor         # not ready: API key is not set; exit 1

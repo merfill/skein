@@ -10,6 +10,7 @@ import {
   hypothesisMode,
   hypothesisNodeOf,
   hypothesisParentOf,
+  hypothesisPayloadOf,
   hypothesisVerdictOf,
   fold,
   turnsOf,
@@ -27,6 +28,7 @@ import {
   type InquiryProposer,
 } from "./llm/inquiry";
 import { modelCall, type Proposals } from "./llm/schemas";
+import type { ProgressSink } from "./session/progress";
 import { LOCAL_SESSION_ID, type TelemetrySink } from "./session/telemetry";
 import type { GoalVerdictPayload, HypothesisPayload, HypothesisVerdictPayload } from "./ir/types";
 import { executeAction, hypothesisCloseProblem, hypothesisVerdictEvents } from "./tools";
@@ -63,6 +65,8 @@ export interface InquiryDeps {
   model?: string;
   // Side-channel telemetry: per-call model usage and per-action tool calls (the panel).
   telemetry?: TelemetrySink;
+  // Per-hypothesis progress for the session log and the TUI.
+  onProgress?: ProgressSink;
   // Optional per-turn journal hook: called after each completed turn with the events so far.
   // The step driver uses it to write the journal between pauses; the unit itself ignores it.
   onTurn?: (events: readonly Event[], turn: number) => void;
@@ -415,9 +419,16 @@ export async function runInquiryUnit(
   let unresolved: UnresolvedHypothesis[] = [];
   const maxTurns = deps.maxTurns;
 
+  const emitAdded = (added: readonly Event[]): void => {
+    if (added.length === 0) return;
+    deps.onProgress?.({ type: "events_added", unitId: input.request.id, events: added });
+  };
+
   const stopWithError = (state: State, reason: string, text: string): void => {
+    const before = events.length;
     const stop = endInquiry(state, events, text, turn);
     events = stop.events;
+    emitAdded(events.slice(before));
     unresolved = stop.unresolved;
     final = "";
     done = false;
@@ -425,8 +436,41 @@ export async function runInquiryUnit(
   };
 
   const advance = (): void => {
+    deps.onProgress?.({ type: "turn_finished", agent: "inquiry", unitId: input.request.id, turn });
     turn += 1;
     deps.onTurn?.(events, turn);
+  };
+
+  const hypothesisOpened = (payload: HypothesisPayload): void => {
+    deps.onProgress?.({
+      type: "hypothesis",
+      unitId: input.request.id,
+      turn,
+      id: payload.hypothesisId,
+      claim: payload.claim,
+      ...(payload.label !== undefined ? { label: payload.label } : {}),
+      ...(payload.done !== undefined ? { done: payload.done } : {}),
+      closed: false,
+    });
+  };
+
+  const hypothesisClosed = (
+    payload: HypothesisPayload | undefined,
+    verdict: HypothesisVerdictPayload,
+  ): void => {
+    deps.onProgress?.({
+      type: "hypothesis",
+      unitId: input.request.id,
+      turn,
+      id: verdict.hypothesisId,
+      claim: payload?.claim ?? "",
+      ...(payload?.label !== undefined ? { label: payload.label } : {}),
+      ...(payload?.done !== undefined ? { done: payload.done } : {}),
+      closed: true,
+      verdict: verdict.verdict,
+      observed: verdict.observed,
+      ...(verdict.summary !== undefined ? { summary: verdict.summary } : {}),
+    });
   };
 
   if (input.finalize === true) {
@@ -460,6 +504,7 @@ export async function runInquiryUnit(
         nextNodeSeq(current),
       );
       events.push(...built.events);
+      emitAdded(built.events);
     }
     const closed = executeAction(
       { operator: "close_goal", outcome: "not_achieved", summary },
@@ -470,6 +515,7 @@ export async function runInquiryUnit(
       { hypothesisRules: true },
     );
     events.push(...closed.events);
+    emitAdded(closed.events);
     const goal = goalVerdictOf(fold(events));
     final = (goal?.payload as GoalVerdictPayload | undefined)?.summary?.trim() ?? summary;
     unresolved = [];
@@ -484,6 +530,7 @@ export async function runInquiryUnit(
       paused = true;
       break;
     }
+    deps.onProgress?.({ type: "turn_started", agent: "inquiry", unitId: input.request.id, turn });
     const state = fold(events);
     const active = activeHypothesis(state);
     // The surface follows the active node's mode. No open node: open the next claim or close
@@ -550,6 +597,7 @@ export async function runInquiryUnit(
             { hypothesisRules: true },
           );
           events.push(...outcome.events);
+          emitAdded(outcome.events);
           const goal = goalVerdictOf(fold(events));
           if (goal === undefined) return outcome.turn.text;
           const payload = goal.payload as GoalVerdictPayload;
@@ -615,6 +663,14 @@ export async function runInquiryUnit(
             seq,
           );
           events.push(...built.events);
+          emitAdded(built.events);
+          hypothesisClosed(active, {
+            hypothesisId: active.hypothesisId,
+            verdict: close.verdict,
+            observed: close.observed,
+            summary: close.summary,
+            turn,
+          });
           return undefined;
         };
         const problem = attempt(text);
@@ -708,6 +764,16 @@ export async function runInquiryUnit(
           : "ok",
       });
       events.push(...outcome.events);
+      emitAdded(outcome.events);
+      for (const event of outcome.events) {
+        if (event.type !== "add_node") continue;
+        if (event.node.kind === "hypothesis") {
+          hypothesisOpened(event.node.payload as HypothesisPayload);
+        } else if (event.node.kind === "hypothesis_verdict") {
+          const verdict = event.node.payload as HypothesisVerdictPayload;
+          hypothesisClosed(hypothesisPayloadOf(current, verdict.hypothesisId), verdict);
+        }
+      }
       // Closing the goal H ends the work: its summary is the result.
       const after = fold(events);
       const goal = goalVerdictOf(after);

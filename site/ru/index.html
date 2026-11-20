@@ -739,12 +739,12 @@ sudo apt-get install -y nodejs</code></pre>
         </p>
         <h3>Docker</h3>
         <p>Готовый образ можно взять с Docker Hub:</p>
-        <pre><code>docker pull mefrill/skein-swe:0.2.0
+        <pre><code>docker pull mefrill/skein-swe:0.2.1
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.2.0</code></pre>
+  mefrill/skein-swe:0.2.1</code></pre>
         <p class="note">
           Провайдер задаётся переменными окружения; модель в образ не встроена. Тег
           <code>latest</code> указывает на последнюю версию. В Windows PowerShell для пути
@@ -752,7 +752,7 @@ docker run --rm -it \
           <code>--env-file</code> не убирает кавычки из значений.
         </p>
         <p>
-          Собрать из исходников: <code>docker build -t skein:0.2.0 .</code> в корне репозитория.
+          Собрать из исходников: <code>docker build -t skein:0.2.1 .</code> в корне репозитория.
         </p>
       </section>
 

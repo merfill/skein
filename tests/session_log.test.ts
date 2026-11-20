@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createSessionLog } from "../src/session/session_log";
+import { createSessionLog, logTelemetry } from "../src/session/session_log";
+import type { MetricEvent } from "../src/session/telemetry";
 
 const roots: string[] = [];
 
@@ -30,6 +31,34 @@ describe("session log", () => {
     expect(lines).toHaveLength(2);
     expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({ type: "session_start", model: "m" });
     expect(JSON.parse(lines[1] ?? "{}")).toMatchObject({ type: "user", text: "hello" });
+  });
+
+  it("logs inquiry telemetry and skips other agents", () => {
+    const root = makeRoot();
+    const log = createSessionLog(root, {});
+    const event: MetricEvent = {
+      type: "model_call",
+      sessionId: "local",
+      agent: "inquiry",
+      unitId: "r1",
+      turn: 1,
+      model: "m",
+      startedAt: 0,
+      endedAt: 1,
+      status: "ok",
+      usage: { inputTokens: 10, outputTokens: 2 },
+    };
+    logTelemetry(log, event);
+    logTelemetry(log, { ...event, agent: "session" });
+    log.close();
+    const lines = readFileSync(log.path, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0] ?? "{}")).toMatchObject({
+      record: "telemetry",
+      type: "model_call",
+      agent: "inquiry",
+      usage: { inputTokens: 10, outputTokens: 2 },
+    });
   });
 
   it("honours a custom path and the off switch", () => {

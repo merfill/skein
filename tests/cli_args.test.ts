@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveCliDir } from "../src/cli";
+import { printHelp } from "../src/providers/cli";
 
 const roots: string[] = [];
 
@@ -16,6 +17,16 @@ function makeRoot(): string {
 
 afterEach(() => {
   while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
+});
+
+describe("help", () => {
+  it("lists the task mode flag", () => {
+    const lines: string[] = [];
+    printHelp((line) => lines.push(line));
+    const text = lines.join("\n");
+    expect(text).toContain("--mode");
+    expect(text).toContain("hypotheses");
+  });
 });
 
 describe("resolveCliDir", () => {

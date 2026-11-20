@@ -9,7 +9,8 @@ export type ProgressAgent =
   | "revision"
   | "plan"
   | "document"
-  | "observer";
+  | "observer"
+  | "inquiry";
 
 export interface EditDetail {
   path: string;
@@ -67,6 +68,19 @@ export type ProgressEvent =
       state?: string;
       what?: string;
       closed?: boolean;
+    }
+  | {
+      type: "hypothesis";
+      unitId: string;
+      turn: number;
+      id: string;
+      claim: string;
+      label?: string;
+      done?: string;
+      closed: boolean;
+      verdict?: "confirmed" | "refuted" | "dropped";
+      observed?: string;
+      summary?: string;
     }
   | {
       type: "turn_finished";

@@ -145,15 +145,15 @@ Native PowerShell or cmd without bash is not supported.
 The image is published on Docker Hub:
 
 ```bash
-docker pull mefrill/skein-swe:0.2.0
+docker pull mefrill/skein-swe:0.2.1
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.2.0
+  mefrill/skein-swe:0.2.1
 ```
 
-Or build it from a checkout with `docker build -t skein:0.2.0 .`.
+Or build it from a checkout with `docker build -t skein:0.2.1 .`.
 
 The agent runs inside the container; the image is a minimal Node runtime with `git`, so extend it
 with the toolchain your project needs. Pass the provider explicitly when needed, for example

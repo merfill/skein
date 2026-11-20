@@ -739,12 +739,12 @@ sudo apt-get install -y nodejs</code></pre>
         </p>
         <h3>Docker</h3>
         <p>The published image is on Docker Hub:</p>
-        <pre><code>docker pull mefrill/skein-swe:0.2.0
+        <pre><code>docker pull mefrill/skein-swe:0.2.1
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.2.0</code></pre>
+  mefrill/skein-swe:0.2.1</code></pre>
         <p class="note">
           The provider is set with environment variables; no model is bundled. The
           <code>latest</code> tag points to the newest version. On Windows PowerShell use
@@ -752,7 +752,7 @@ docker run --rm -it \
           does not strip quotes from values.
         </p>
         <p>
-          Build from source: <code>docker build -t skein:0.2.0 .</code> in the repository root.
+          Build from source: <code>docker build -t skein:0.2.1 .</code> in the repository root.
         </p>
       </section>
 

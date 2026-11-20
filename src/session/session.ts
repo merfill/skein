@@ -1,5 +1,5 @@
 import type { Event } from "../ir/events";
-import { fold, stopOf, unactionableOf } from "../ir/graph";
+import { fold, goalVerdictOf, stopOf, unactionableOf } from "../ir/graph";
 import { isTerminalIsland } from "../ir/islands";
 import { currentMove, isMoveFinished, moveIsland } from "../ir/traversal";
 import type {
@@ -261,7 +261,10 @@ function lastAttentionEvent(session: SessionState, unitId: string): SessionEvent
 }
 
 function unitCompleted(session: SessionState, unit: Unit): boolean {
-  if (unit.type === "task") return taskEnded(unit.journal);
+  if (unit.type === "task") {
+    if (unit.mode === "hypotheses") return goalVerdictOf(fold(unit.journal)) !== undefined;
+    return taskEnded(unit.journal);
+  }
   // General, plan and document units have no `move`: their tape hangs off the request and the
   // unit closes on the request's `stop`.
   if (

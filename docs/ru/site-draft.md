@@ -486,15 +486,15 @@ sudo apt-get install -y nodejs
 Готовый образ можно взять с Docker Hub:
 
 ```
-docker pull mefrill/skein-swe:0.2.0
+docker pull mefrill/skein-swe:0.2.1
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.2.0
+  mefrill/skein-swe:0.2.1
 ```
 
-Собрать из исходников: `docker build -t skein:0.2.0 .` в корне репозитория.
+Собрать из исходников: `docker build -t skein:0.2.1 .` в корне репозитория.
 
 Ссылки: исходники на GitHub, документация в `docs/`, npm-пакет и Docker-образ на Hub; DOI — после
 релиза.

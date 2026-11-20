@@ -65,6 +65,7 @@ export function printHelp(output: (line: string) => void = console.log): void {
     "  --model <id>        model id",
     "  --base-url <url>    override the provider's OpenAI-compatible base URL",
     "  --max-turns <n>     turn budget (default: 80)",
+    "  --mode <mode>       task mode: states (default) or hypotheses",
     "  --plain             line REPL instead of the TUI",
     "  --verbose           expand reasoning and tool results in the plain REPL",
     "",
