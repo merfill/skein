@@ -26,12 +26,19 @@
 - Пет-проект `~/dev/skein-pet` (вне репозитория): прогон hypotheses 11 ходов,
   `achieved`, H1 открыта/закрыта; в логе видны `hypothesis`, `events_added`, `telemetry`.
 
-### С чего начать
+### Публикация
 
-1. Релиз `0.2.1` (npm/Docker/тег/push).
-2. Открытые наблюдения (не правили): H1 может быть мета-claim; правка `@README.md`
-   ушла в `general`, затем `document`; `document` вписал отчёт об изменениях в сам
-   README. Решение — за владельцем.
+- Коммит `af86ccd` («Release: 0.2.1; live hypothesis log, inquiry completion»),
+  тег `v0.2.1`, push в `origin/main`.
+- `npm publish` → `skein-swe@0.2.1` (latest).
+- Docker: `mefrill/skein-swe:0.2.1` и `:latest` (digest `sha256:8b79a1a8…`); образ
+  проверен `--version` → `skein 0.2.1`.
+
+### Открытые наблюдения (не правили)
+
+- H1 может быть мета-claim («test runner discoverable» вместо claim о дефекте).
+- Правка `@README.md` ушла в `general`, затем в `document`; `document` вписал отчёт
+  об изменениях в сам README. Решение — за владельцем.
 
 ## 2026-11-20 — сайт v0.2 и подготовка релиза 0.2.0
 
