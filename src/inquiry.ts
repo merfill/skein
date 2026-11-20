@@ -26,7 +26,8 @@ import {
   parseGoalCloseJson,
   type InquiryProposer,
 } from "./llm/inquiry";
-import type { Proposals } from "./llm/schemas";
+import { modelCall, type Proposals } from "./llm/schemas";
+import { LOCAL_SESSION_ID, type TelemetrySink } from "./session/telemetry";
 import type { GoalVerdictPayload, HypothesisPayload, HypothesisVerdictPayload } from "./ir/types";
 import { executeAction, hypothesisCloseProblem, hypothesisVerdictEvents } from "./tools";
 import type { Workspace } from "./tools/workspace";
@@ -58,6 +59,10 @@ export interface InquiryDeps {
   propose: InquiryProposer;
   workspace: Workspace;
   maxTurns: number;
+  // The model label for telemetry (the panel's per-call records). Optional.
+  model?: string;
+  // Side-channel telemetry: per-call model usage and per-action tool calls (the panel).
+  telemetry?: TelemetrySink;
   // Optional per-turn journal hook: called after each completed turn with the events so far.
   // The step driver uses it to write the journal between pauses; the unit itself ignores it.
   onTurn?: (events: readonly Event[], turn: number) => void;
@@ -70,6 +75,10 @@ export interface InquiryInput {
   events?: Event[];
   startTurn?: number;
   signal?: AbortSignal;
+  // The interactive session pauses at the turn cap for `continue`/`finish` (state-loop parity).
+  budgetPause?: boolean;
+  // The user chose `finish`: one report turn, then close the goal as `not_achieved`.
+  finalize?: boolean;
 }
 
 export interface UnresolvedHypothesis {
@@ -420,6 +429,56 @@ export async function runInquiryUnit(
     deps.onTurn?.(events, turn);
   };
 
+  if (input.finalize === true) {
+    // `finish`: one report turn, then close the goal as `not_achieved`. This mirrors the state
+    // loop's finalize (a final report and a terminal stop) without claiming the request
+    // succeeded. The report is Markdown; the engine records it as the goal summary.
+    const state = fold(events);
+    const messages = inquiryMessages(state, input.request);
+    const instruction =
+      "The turn budget is reached. Reply with text only, no tool call: a final report in Markdown of what was done and what remains. The engine records it and ends the work.";
+    let report = "";
+    try {
+      const proposal = await deps.propose([...messages, { role: "user", content: instruction }], {
+        ...(input.signal !== undefined ? { signal: input.signal } : {}),
+        allowedTools: [],
+        turn,
+      });
+      report = proposal.thought.trim();
+    } catch {
+      report = "";
+    }
+    const summary = report !== "" ? report : "(turn budget reached; no report produced)";
+    // Drop the open path first: the goal close requires no open hypotheses.
+    for (const hypothesis of [...activeHypothesisPath(state)].reverse()) {
+      const current = fold(events);
+      const built = hypothesisVerdictEvents(
+        hypothesis.hypothesisId,
+        hypothesisNodeOf(current, hypothesis.hypothesisId)?.id,
+        { verdict: "dropped", observed: "turn budget reached", summary: "closed at the turn cap" },
+        turn,
+        nextNodeSeq(current),
+      );
+      events.push(...built.events);
+    }
+    const closed = executeAction(
+      { operator: "close_goal", outcome: "not_achieved", summary },
+      fold(events),
+      deps.workspace,
+      turn,
+      undefined,
+      { hypothesisRules: true },
+    );
+    events.push(...closed.events);
+    const goal = goalVerdictOf(fold(events));
+    final = (goal?.payload as GoalVerdictPayload | undefined)?.summary?.trim() ?? summary;
+    unresolved = [];
+    done = true;
+    stopReason = "max_turns";
+    advance();
+    return { events, done, stopReason, turns: turn, final, unresolved };
+  }
+
   while (turn < maxTurns) {
     if (isAborted(input.signal)) {
       paused = true;
@@ -618,6 +677,7 @@ export async function runInquiryUnit(
         break;
       }
       const current = fold(events);
+      const startedAt = Date.now();
       const outcome = executeAction(
         action,
         current,
@@ -629,6 +689,24 @@ export async function runInquiryUnit(
           ...(batchViolation !== undefined ? { batchViolation } : {}),
         },
       );
+      deps.telemetry?.record({
+        type: "tool_call",
+        sessionId: LOCAL_SESSION_ID,
+        agent: "inquiry",
+        unitId: input.request.id,
+        turn,
+        tool: modelCall(action).name,
+        startedAt,
+        endedAt: Date.now(),
+        status: outcome.events.some(
+          (event) =>
+            event.type === "add_node" &&
+            event.node.kind === "observation" &&
+            (event.node.payload as { refused?: unknown } | undefined)?.refused === true,
+        )
+          ? "error"
+          : "ok",
+      });
       events.push(...outcome.events);
       // Closing the goal H ends the work: its summary is the result.
       const after = fold(events);
@@ -649,9 +727,16 @@ export async function runInquiryUnit(
   }
 
   if (!done && !paused && stopReason === null) {
-    // The turn budget is a stand limit, not a result: the formula is not closed.
-    const state = fold(events);
-    stopWithError(state, "max_turns", "(turn budget exhausted)");
+    if (input.budgetPause === true) {
+      // The interactive session pauses at the cap for `continue`/`finish`, like the state loop.
+      paused = true;
+      done = true;
+      stopReason = "budget";
+    } else {
+      // The turn budget is a stand limit, not a result: the formula is not closed.
+      const state = fold(events);
+      stopWithError(state, "max_turns", "(turn budget exhausted)");
+    }
   }
 
   return {

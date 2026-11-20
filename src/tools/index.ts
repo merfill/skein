@@ -1215,10 +1215,10 @@ export function executeAction(
           `not_formula: ${parent.hypothesisId} is a work hypothesis; it takes actions, not sub-hypotheses`,
         );
       }
-      if (action.claim.trim() === "" || action.done.trim() === "") {
+      if (action.label.trim() === "" || action.claim.trim() === "" || action.done.trim() === "") {
         return refuseAction(
           actionId,
-          "bad_hypothesis: claim and done must be non-empty; re-call open_hypothesis with claim and done",
+          "bad_hypothesis: label, claim and done must be non-empty; re-call open_hypothesis with label, claim and done",
         );
       }
       const badFollow = action.followsFrom?.find((id) => !/^H\d+(?:\.\d+)*$/.test(id));
@@ -1239,6 +1239,7 @@ export function executeAction(
           label: id,
           payload: {
             hypothesisId: id,
+            label: action.label,
             claim: action.claim,
             done: action.done,
             ...(action.followsFrom !== undefined && action.followsFrom.length > 0

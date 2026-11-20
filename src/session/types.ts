@@ -2,6 +2,11 @@ import type { Event } from "../ir/events";
 
 export type UnitType = "task" | "general" | "revision" | "plan" | "document" | "observer" | "session";
 
+// How a task unit works: the static state loop (default) or the dynamic hypothesis unit.
+// Engine scaffolding, not projection: it is snapshotted when the unit opens so a resumed
+// task keeps its own mode even after the setting changes.
+export type TaskMode = "states" | "hypotheses";
+
 export interface Unit {
   id: string;
   type: UnitType;
@@ -9,6 +14,8 @@ export interface Unit {
   turn: number;
   // The task-entry checkpoint id (task units only). Engine scaffolding, not the projection.
   checkpoint?: string;
+  // The task unit's working mode; absent means `states` (older sessions).
+  mode?: TaskMode;
   // The execution-plan item this unit was opened for (task/general units under a plan).
   planItem?: string;
 }

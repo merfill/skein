@@ -112,6 +112,9 @@ export interface FormulaPayload {
 // from; it is provenance/navigation, not a checked claim.
 export interface HypothesisPayload {
   hypothesisId: string;
+  // A short human-readable name for the task panel, supplied when the hypothesis opens.
+  // Optional only for journals recorded before this field; it is display-only, never an id.
+  label?: string;
   claim: string;
   // The observation that decides the claim, supplied when the hypothesis opens. Optional only
   // for journals recorded before this field; the per-turn `Done when` uses it when present.

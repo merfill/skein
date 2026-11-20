@@ -8,6 +8,7 @@ import { cleanupSandboxes } from "./workspace";
 
 // Live run of a ported terminal-bench task:
 //   npx tsx tests/sandbox/sandbox-run.ts <task-id> [--turns N] [--net on|off] [--dir <dir>]
+//                                                 [--mode states|hypotheses]
 // Writes bench/runs/sandbox-tasks/<ts>-<id>/ and prints the token breakdown.
 // For all tasks in parallel, use sandbox-smoke.ts. Cost discipline: docs/en/testing.md §3.6.
 
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
   const turns = arg("--turns", "");
   const dir = arg("--dir", "");
   const net = parseNetworkMode(arg("--net", "on"));
+  const mode = arg("--mode", "states") === "hypotheses" ? "hypotheses" : "states";
   // `off` removes the network from the agent container and, for the engine's host-side
   // tools (`fetch`, background `run`), routes their `curl` through an allowlist proxy that
   // permits only the model API. The verifier keeps its own network: every task's `test.sh`
@@ -43,12 +45,13 @@ async function main(): Promise<void> {
     const result = await runLiveTask(task, {
       maxTurns: turns === "" ? (task.maxTurns ?? 80) : Number(turns),
       network: net,
+      mode,
       ...(dir !== "" ? { dir } : {}),
     });
     const t = result.summary?.totals;
     if (t === undefined) throw new Error(`no metrics for ${task.id}`);
     console.info(
-      `\n=== ${task.id} (net=${net}) ===\nreward=${result.reward} stop=${result.stopReason} turns=${t.turns} ` +
+      `\n=== ${task.id} (net=${net}, mode=${mode}) ===\nreward=${result.reward} stop=${result.stopReason} turns=${t.turns} ` +
         `llm=${t.llmCalls} toolcalls=${t.toolCalls} (ok ${t.accepted}/refused ${t.refused}) ` +
         `in=${t.inputTokens} (fresh ${t.freshInput} + cacheR ${t.cacheRead}, hit ${((t.cacheHitRatio ?? 0) * 100).toFixed(0)}%) ` +
         `out=${t.outputTokens} (visible ${t.visibleOutput} + reason ${t.reasoningTokens}) ` +

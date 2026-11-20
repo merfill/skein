@@ -433,6 +433,7 @@ export function toProposal(name: string, args: unknown, thought: string): Propos
       // executor refuse it with a clear `bad_hypothesis`.
       action = {
         operator: "open_hypothesis",
+        label: typeof a.label === "string" ? a.label : "",
         claim: typeof a.claim === "string" ? a.claim : "",
         done: typeof a.done === "string" ? a.done : "",
         ...(Array.isArray(a.follows_from)

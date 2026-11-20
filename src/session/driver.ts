@@ -1,7 +1,9 @@
 import type { Event } from "../ir/events";
 import { fold } from "../ir/graph";
 import type { SessionProbe } from "../ir/session";
-import { runAgent, type AgentDeps, type AgentResult } from "../loop/graph";
+import { runInquiryUnit, seedInquiry, type InquiryDeps } from "../inquiry";
+import { runAgent, type AgentDeps, type AgentInput, type AgentResult } from "../loop/graph";
+import type { InquiryProposer } from "../llm/inquiry";
 import type { Workspace } from "../tools/workspace";
 import { applyReaction } from "./apply";
 import { LOCAL_SESSION_ID, type TelemetrySink } from "./telemetry";
@@ -32,7 +34,9 @@ import { runPlanner, type PlannerDeps, type PlannerResult } from "./planner";
 import {
   abandonUnit,
   attentionOf,
+  openUnit,
   popUnit,
+  pushUnit,
   recordNoDecision,
   recordPlanFinished,
   recordPlanStarted,
@@ -51,6 +55,7 @@ import type {
   NoDecisionReason,
   SessionOperation,
   SessionState,
+  TaskMode,
   Trigger,
   Unit,
 } from "./types";
@@ -62,6 +67,12 @@ import type {
 export interface SessionTurnDeps {
   sessionAgent: SessionAgentDeps;
   task: AgentDeps;
+  // The coding unit's alternate mode: present only when hypotheses mode is wired. Absent means
+  // the task always runs the state loop.
+  inquiry?: InquiryDeps;
+  // The current mode for new task units; the TUI toggles it live.
+  taskMode?: () => TaskMode;
+  setTaskMode?: (mode: TaskMode) => void;
   general?: GeneralDeps;
   revision?: RevisionDeps;
   planner?: PlannerDeps;
@@ -203,6 +214,123 @@ function settleAttention(
   if (!done || paused === true) return;
   if (attentionOf(session, unitId) === "completed") return;
   abandonUnit(session, unitId, unitOf(session, unitId).turn);
+}
+
+// Every task entry point (fresh, budget-resume, observer-resume) goes through here so the
+// mode decides the loop. A hypotheses run opens its own unit; `runAgent` does that for states.
+async function runTaskInMode(
+  deps: SessionTurnDeps,
+  input: AgentInput,
+  mode: TaskMode,
+  maxTurns?: number,
+): Promise<AgentResult> {
+  const effective =
+    mode === "hypotheses" && deps.inquiry !== undefined ? "hypotheses" : "states";
+  if (effective === "hypotheses") return runHypothesisTask(deps, input, maxTurns);
+  const taskDeps = maxTurns !== undefined ? { ...deps.task, maxTurns } : deps.task;
+  const result = await runAgent(taskDeps, input);
+  if (input.session !== undefined && input.open === true) {
+    unitOf(input.session, input.request.id).mode = "states";
+  }
+  return result;
+}
+
+async function runHypothesisTask(
+  deps: SessionTurnDeps,
+  input: AgentInput,
+  maxTurns?: number,
+): Promise<AgentResult> {
+  const session = input.session;
+  const inquiry = deps.inquiry;
+  if (session === undefined || inquiry === undefined) return runAgent(deps.task, input);
+  const startTurn = input.startTurn ?? 0;
+  let events = input.seed !== undefined ? [...input.seed] : undefined;
+  if (input.open === true) {
+    events = seedInquiry(input.request);
+    openUnit(session, input.request.id, "task", events, startTurn, input.planItem);
+    const unit = unitOf(session, input.request.id);
+    unit.mode = "hypotheses";
+    if (input.snapshot !== undefined) unit.checkpoint = input.snapshot;
+    pushUnit(session, input.request.id, startTurn);
+  }
+  const propose = withInquiryTelemetry(
+    inquiry.propose,
+    deps.telemetry,
+    input.request.id,
+    inquiry.model ?? "",
+  );
+  const run = await runInquiryUnit(
+    { ...inquiry, propose, ...(maxTurns !== undefined ? { maxTurns } : {}) },
+    {
+      request: input.request,
+      ...(events !== undefined ? { events } : {}),
+      startTurn,
+      ...(input.signal !== undefined ? { signal: input.signal } : {}),
+      ...(input.budgetPause !== undefined ? { budgetPause: input.budgetPause } : {}),
+      ...(input.finalize !== undefined ? { finalize: input.finalize } : {}),
+    },
+  );
+  const stopText =
+    run.final !== ""
+      ? run.final
+      : run.unresolved.length > 0
+        ? `unresolved: ${run.unresolved.map((item) => item.id).join(", ")}`
+        : null;
+  return {
+    events: run.events,
+    // A terminal stop of any kind closes the unit; only an abort pause leaves it open.
+    done: run.done || run.stopReason !== null,
+    ...(run.paused === true ? { paused: true } : {}),
+    stopReason: run.stopReason,
+    turns: run.turns,
+    stopText,
+  };
+}
+
+// The inquiry loop emits tool calls itself; the proposer wrapper records the model calls (the
+// loop has no other place to observe them). Both land in the panel's side channel.
+function withInquiryTelemetry(
+  base: InquiryProposer,
+  sink: TelemetrySink | undefined,
+  unitId: string,
+  model: string,
+): InquiryProposer {
+  return async (messages, options) => {
+    const startedAt = Date.now();
+    try {
+      const proposals = await base(messages, options);
+      if (sink !== undefined) {
+        sink.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "inquiry",
+          unitId,
+          turn: options?.turn ?? 0,
+          model,
+          startedAt,
+          endedAt: Date.now(),
+          status: "ok",
+          ...(proposals.usage !== undefined ? { usage: proposals.usage } : {}),
+        });
+      }
+      return proposals;
+    } catch (error) {
+      if (sink !== undefined) {
+        sink.record({
+          type: "model_call",
+          sessionId: LOCAL_SESSION_ID,
+          agent: "inquiry",
+          unitId,
+          turn: options?.turn ?? 0,
+          model,
+          startedAt,
+          endedAt: Date.now(),
+          status: options?.signal?.aborted === true ? "aborted" : "error",
+        });
+      }
+      throw error;
+    }
+  };
 }
 
 function requestText(journal: readonly Event[]): string {
@@ -531,15 +659,19 @@ async function dispatch(
 
   const unitId = nextRequestId(session);
   const snapshot = snapshotFor(deps, unitId);
-  const run = await runAgent(deps.task, {
-    request: { id: unitId, text: pending.text },
-    session,
-    open: true,
-    budgetPause: true,
-    ...(snapshot !== undefined ? { snapshot } : {}),
-    ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
-    ...(signal !== undefined ? { signal } : {}),
-  });
+  const run = await runTaskInMode(
+    deps,
+    {
+      request: { id: unitId, text: pending.text },
+      session,
+      open: true,
+      budgetPause: true,
+      ...(snapshot !== undefined ? { snapshot } : {}),
+      ...(pending.planItem !== undefined ? { planItem: pending.planItem } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    },
+    deps.taskMode?.() ?? "states",
+  );
   syncUnit(session, unitId, run);
   settleAttention(session, unitId, run.done, run.paused);
   result.task = { unitId, result: run };
@@ -1068,18 +1200,21 @@ export async function resumeTurn(
     paused.budget !== undefined && !finish
       ? Math.max(unit.turn, paused.budget) + extend
       : undefined;
-  const taskDeps =
-    effectiveMaxTurns !== undefined ? { ...deps.task, maxTurns: effectiveMaxTurns } : deps.task;
-  const run = await runAgent(taskDeps, {
-    request: { id: paused.unitId, text: requestText(unit.journal) },
-    seed: unit.journal,
-    startTurn: unit.turn,
-    session,
-    open: false,
-    budgetPause: true,
-    ...(finish ? { finalize: true } : {}),
-    ...(options.signal !== undefined ? { signal: options.signal } : {}),
-  });
+  const run = await runTaskInMode(
+    deps,
+    {
+      request: { id: paused.unitId, text: requestText(unit.journal) },
+      seed: unit.journal,
+      startTurn: unit.turn,
+      session,
+      open: false,
+      budgetPause: true,
+      ...(finish ? { finalize: true } : {}),
+      ...(options.signal !== undefined ? { signal: options.signal } : {}),
+    },
+    unit.mode ?? "states",
+    effectiveMaxTurns,
+  );
   syncUnit(session, paused.unitId, run);
   const result = makeResult(session, paused.utteranceTurn);
   result.task = { unitId: paused.unitId, result: run };

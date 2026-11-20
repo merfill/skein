@@ -25,6 +25,7 @@ export interface InquiryModelOptions {
 const hypothesisIdPattern = /^H\d+(?:\.\d+)*$/;
 
 const hypothesisOpenParams = z.object({
+  label: z.string().min(1),
   claim: z.string().min(1),
   done: z.string().min(1),
   follows_from: z.array(z.string().regex(hypothesisIdPattern)),
@@ -106,6 +107,7 @@ export const INQUIRY_TOOLS: Record<string, ExtraToolDefinition> = {
   open_hypothesis: {
     description: [
       "Opens a hypothesis. Arguments:",
+      "- label: a short human-readable name for this hypothesis (2-4 words) that distinguishes it in the task list; it names the claim and is not an id — never \"H1\", \"C1\" or a number.",
       "- claim: the next claim to establish, not the whole request; a single short, high-level declarative statement.",
       "- done: the check that decides the claim — the observation or command result that would confirm or refute it.",
       "- follows_from: the ids of earlier hypotheses this claim follows from (e.g. H1, H1.1); [] if none.",

@@ -17,7 +17,9 @@ import { TASKS } from "./tasks/registry";
 // a positive `--timeout` bounds a whole cell. Cost discipline: docs/en/testing.md §7.
 // Live runs need the owner's go-ahead.
 
-export type Agent = "skein" | "opencode";
+// `skein-hypotheses` is the same coding agent in the dynamic hypothesis mode: its cell runs
+// `sandbox-run.ts --mode hypotheses`, so the verifier/network/metrics line up with `skein`.
+export type Agent = "skein" | "skein-hypotheses" | "opencode";
 export type CellStatus = "pending" | "running" | "ok" | "reward0" | "error" | "timeout" | "unsupported";
 
 export interface Cell {
@@ -63,6 +65,8 @@ export interface AggregateRow {
 }
 
 const AGENTS: Agent[] = ["skein", "opencode"];
+// The default grid stays the two baselines; the hypothesis arm is opt-in via `--agents`.
+const ALL_AGENTS: Agent[] = ["skein", "skein-hypotheses", "opencode"];
 const NETS: NetworkMode[] = ["on", "off"];
 
 // A task that declares `network` needs it for the agent (crack-7z-hash); `off` is impossible,
@@ -294,7 +298,7 @@ function parseOptions(argv: string[]): Options {
     const value = flags.get(name);
     return typeof value === "string" ? value : undefined;
   };
-  const agents = (flag("--agents") === undefined ? AGENTS : parseList(flag("--agents") as string, AGENTS, "--agents")) as Agent[];
+  const agents = (flag("--agents") === undefined ? AGENTS : parseList(flag("--agents") as string, ALL_AGENTS, "--agents")) as Agent[];
   const nets = (flag("--nets") === undefined ? NETS : parseList(flag("--nets") as string, NETS, "--nets")) as NetworkMode[];
   const repeat = flag("--repeat") === undefined ? 1 : Math.floor(positive(flag("--repeat") as string, "--repeat"));
   const concurrency = flag("--concurrency") === undefined ? 5 : Math.floor(positive(flag("--concurrency") as string, "--concurrency"));
@@ -343,11 +347,12 @@ const running = new Set<ReturnType<typeof spawn>>();
 
 function cellArgs(task: SandboxTask, cell: CellResult, options: Options): string[] {
   const shared = ["--net", cell.network, "--dir", cell.dir];
-  if (cell.agent === "skein") {
+  if (cell.agent !== "opencode") {
     return [
       join("tests", "sandbox", "sandbox-run.ts"),
       task.id,
       ...shared,
+      ...(cell.agent === "skein-hypotheses" ? ["--mode", "hypotheses"] : []),
       ...(options.turns !== undefined ? ["--turns", String(options.turns)] : []),
     ];
   }

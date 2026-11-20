@@ -7,6 +7,11 @@ import {
   type State,
 } from "../ir/graph";
 import { currentMove } from "../ir/traversal";
+import type {
+  GoalVerdictPayload,
+  HypothesisPayload,
+  HypothesisVerdictPayload,
+} from "../ir/types";
 import {
   blockedItem,
   nextPendingItem,
@@ -71,6 +76,8 @@ export interface TaskView {
   request: string;
   attention: Attention;
   open: boolean;
+  // The unit's working mode; the panel labels the rows accordingly.
+  mode: "states" | "hypotheses";
   outcome: string;
   states: TaskState[];
   turns: number;
@@ -188,7 +195,7 @@ function usageFor(
   unitId: string,
   startTurn: number,
   endTurn: number,
-  agent: "task" | "general" | "revision" | "document",
+  agent: "task" | "inquiry" | "general" | "revision" | "document",
 ): {
   input: number;
   output: number;
@@ -226,7 +233,7 @@ function usageFor(
 function turnDetailsFor(
   events: readonly MetricEvent[],
   unitId: string,
-  agent: "task" | "general" | "revision" | "document",
+  agent: "task" | "inquiry" | "general" | "revision" | "document",
   startTurn: number,
   endTurn: number,
 ): TaskTurn[] {
@@ -252,9 +259,32 @@ function turnDetailsFor(
   return out;
 }
 
+function goalVerdictOf(state: State): GoalVerdictPayload | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind === "goal_verdict") return node.payload as GoalVerdictPayload;
+  }
+  return undefined;
+}
+
+function hypothesisVerdictOf(state: State, id: string): HypothesisVerdictPayload | undefined {
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "hypothesis_verdict") continue;
+    const payload = node.payload as HypothesisVerdictPayload;
+    if (payload.hypothesisId === id) return payload;
+  }
+  return undefined;
+}
+
 function outcomeOf(state: State, task: Unit): string {
   const move = currentMove(state);
   if (move === undefined) {
+    // The inquiry unit has no `move`: the goal verdict is its result, and while the goal is
+    // open it is still investigating.
+    const goal = goalVerdictOf(state);
+    if (goal !== undefined) return goal.outcome;
+    if ([...state.nodes.values()].some((node) => node.kind === "hypothesis")) {
+      return "investigating";
+    }
     // A request-anchored unit (general has no `move`): its closure is the request's `stop`.
     const root = state.rootId;
     const stopId = root !== undefined ? stopOf(state, root) : undefined;
@@ -275,66 +305,33 @@ function outcomeOf(state: State, task: Unit): string {
   return `open at ${label}`;
 }
 
-function buildTask(
-  session: SessionState,
+// Inquiry rows: one per hypothesis, ordered by opening turn. Turns are partitioned between
+// consecutive openings so the per-row token totals sum to the unit's, like state ranges.
+function hypothesisStates(
+  state: State,
   unit: Unit,
-  number: number,
   telemetry: readonly MetricEvent[],
-  timing: TaskTiming | undefined,
-  now: number,
-  liveJournal?: readonly Event[],
-): TaskView {
-  const state = fold(liveJournal ?? unit.journal);
-  const rawIds = moveIds(state);
-  const rootId = state.rootId;
-  // General has no `move`: its tape hangs off the request. Render that one tape as the unit's
-  // single state so the panel keeps its turns and token totals.
-  const requestAnchored =
-    rawIds.length === 0 &&
-    (unit.type === "general" || unit.type === "revision" || unit.type === "document") &&
-    rootId !== undefined &&
-    (turnsOf(state, rootId) !== undefined || stopOf(state, rootId) !== undefined);
-  const ids = requestAnchored && rootId !== undefined ? [rootId] : rawIds;
-  const states: TaskState[] = ids.map((id, index) => {
-    const payload =
-      requestAnchored && id === rootId
-        ? { state: unit.type, what: requestText(unit.journal), turn: 0 }
-        : movePayload(state, id);
+  agent: "task" | "inquiry" | "general" | "revision" | "document",
+): TaskState[] {
+  const items: HypothesisPayload[] = [];
+  for (const node of state.nodes.values()) {
+    if (node.kind !== "hypothesis") continue;
+    const payload = node.payload as HypothesisPayload | undefined;
+    if (payload?.hypothesisId !== undefined) items.push(payload);
+  }
+  items.sort((a, b) => (a.turn ?? 0) - (b.turn ?? 0));
+  return items.map((payload, index) => {
     const start = payload.turn ?? 0;
-    const next = ids[index + 1];
-    const nextStart = next !== undefined ? (movePayload(state, next).turn ?? start + 1) : undefined;
-    const end = nextStart !== undefined ? Math.max(start, nextStart - 1) : Math.max(start, unit.turn - 1);
-    const usage = usageFor(
-      telemetry,
-      unit.id,
-      start,
-      end,
-      unit.type === "revision"
-        ? "revision"
-        : unit.type === "general"
-          ? "general"
-          : unit.type === "document"
-            ? "document"
-            : "task",
-    );
-    const turnDetails = turnDetailsFor(
-      telemetry,
-      unit.id,
-      unit.type === "revision"
-        ? "revision"
-        : unit.type === "general"
-          ? "general"
-          : unit.type === "document"
-            ? "document"
-            : "task",
-      start,
-      end,
-    );
-    const stopId = stopOf(state, id);
+    const nextStart = items[index + 1]?.turn;
+    const end =
+      nextStart !== undefined ? Math.max(start, nextStart - 1) : Math.max(start, unit.turn - 1);
+    const verdict = hypothesisVerdictOf(state, payload.hypothesisId);
+    const usage = usageFor(telemetry, unit.id, start, end, agent);
+    const turnDetails = turnDetailsFor(telemetry, unit.id, agent, start, end);
     return {
-      id,
-      island: payload.state ?? "?",
-      what: payload.what ?? "",
+      id: payload.hypothesisId,
+      island: payload.label ?? payload.claim,
+      what: payload.claim,
       startTurn: start,
       endTurn: end,
       turns: Math.max(0, end - start + 1),
@@ -346,14 +343,86 @@ function buildTask(
       toolCalls: usage.toolCalls,
       durationMs: turnDetails.reduce((sum, turn) => sum + turn.durationMs, 0),
       turnDetails,
-      closed: stopId !== undefined,
-      current: index === ids.length - 1,
-      ...(stopId !== undefined
-        ? { stopWhy: state.nodes.get(stopId)?.label ?? "" }
-        : {}),
-      actions: actionsOf(state, id),
+      closed: verdict !== undefined,
+      current: index === items.length - 1,
+      ...(verdict !== undefined ? { stopWhy: verdict.verdict } : {}),
+      actions: [],
     };
   });
+}
+
+function buildTask(
+  session: SessionState,
+  unit: Unit,
+  number: number,
+  telemetry: readonly MetricEvent[],
+  timing: TaskTiming | undefined,
+  now: number,
+  liveJournal?: readonly Event[],
+): TaskView {
+  const state = fold(liveJournal ?? unit.journal);
+  const mode = unit.mode ?? "states";
+  const rawIds = moveIds(state);
+  const rootId = state.rootId;
+  // General has no `move`: its tape hangs off the request. Render that one tape as the unit's
+  // single state so the panel keeps its turns and token totals.
+  const requestAnchored =
+    rawIds.length === 0 &&
+    (unit.type === "general" || unit.type === "revision" || unit.type === "document") &&
+    rootId !== undefined &&
+    (turnsOf(state, rootId) !== undefined || stopOf(state, rootId) !== undefined);
+  const agent: "task" | "inquiry" | "general" | "revision" | "document" =
+    unit.type === "revision"
+      ? "revision"
+      : unit.type === "general"
+        ? "general"
+        : unit.type === "document"
+          ? "document"
+          : mode === "hypotheses"
+            ? "inquiry"
+            : "task";
+  const goal = mode === "hypotheses" ? goalVerdictOf(state) : undefined;
+  let states: TaskState[];
+  if (mode === "hypotheses") {
+    states = hypothesisStates(state, unit, telemetry, agent);
+  } else {
+    const ids = requestAnchored && rootId !== undefined ? [rootId] : rawIds;
+    states = ids.map((id, index) => {
+      const payload =
+        requestAnchored && id === rootId
+          ? { state: unit.type, what: requestText(unit.journal), turn: 0 }
+          : movePayload(state, id);
+      const start = payload.turn ?? 0;
+      const next = ids[index + 1];
+      const nextStart = next !== undefined ? (movePayload(state, next).turn ?? start + 1) : undefined;
+      const end = nextStart !== undefined ? Math.max(start, nextStart - 1) : Math.max(start, unit.turn - 1);
+      const usage = usageFor(telemetry, unit.id, start, end, agent);
+      const turnDetails = turnDetailsFor(telemetry, unit.id, agent, start, end);
+      const stopId = stopOf(state, id);
+      return {
+        id,
+        island: payload.state ?? "?",
+        what: payload.what ?? "",
+        startTurn: start,
+        endTurn: end,
+        turns: Math.max(0, end - start + 1),
+        tokensIn: usage.input,
+        tokensOut: usage.output,
+        reasoningTokens: usage.reasoning,
+        cachedInputTokens: usage.cached,
+        contextTokens: usage.context,
+        toolCalls: usage.toolCalls,
+        durationMs: turnDetails.reduce((sum, turn) => sum + turn.durationMs, 0),
+        turnDetails,
+        closed: stopId !== undefined,
+        current: index === ids.length - 1,
+        ...(stopId !== undefined
+          ? { stopWhy: state.nodes.get(stopId)?.label ?? "" }
+          : {}),
+        actions: actionsOf(state, id),
+      };
+    });
+  }
 
   const tokensIn = states.reduce((sum, item) => sum + item.tokensIn, 0);
   const tokensOut = states.reduce((sum, item) => sum + item.tokensOut, 0);
@@ -374,7 +443,11 @@ function buildTask(
     number,
     request: requestText(unit.journal),
     attention: attentionOf(session, unit.id),
-    open: ids.length > 0 && !states[states.length - 1]?.closed,
+    open:
+      mode === "hypotheses"
+        ? goal === undefined
+        : states.length > 0 && states[states.length - 1]?.closed !== true,
+    mode,
     outcome: outcomeOf(state, unit),
     states,
     turns: unit.turn,

@@ -89,7 +89,15 @@ function generalAnswer(events: readonly Event[]): string | undefined {
 function taskAnswer(events: readonly Event[]): string | undefined {
   let answer: string | undefined;
   for (const event of events) {
-    if (event.type === "add_node" && event.node.kind === "stop") answer = event.node.label;
+    if (event.type !== "add_node") continue;
+    if (event.node.kind === "stop") {
+      answer = event.node.label;
+    } else if (event.node.kind === "goal_verdict") {
+      const payload = event.node.payload as { summary?: unknown } | undefined;
+      if (typeof payload?.summary === "string" && payload.summary.trim() !== "") {
+        answer = payload.summary;
+      }
+    }
   }
   return answer;
 }
@@ -221,9 +229,16 @@ export function renderPlanDraft(draft: PlannerDraft): string {
 function stopText(events: readonly Event[]): string | undefined {
   let text: string | undefined;
   for (const event of events) {
-    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
-    const payload = event.node.payload as { answer?: unknown } | undefined;
-    text = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+    if (event.type !== "add_node") continue;
+    if (event.node.kind === "stop") {
+      const payload = event.node.payload as { answer?: unknown } | undefined;
+      text = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+    } else if (event.node.kind === "goal_verdict") {
+      const payload = event.node.payload as { summary?: unknown } | undefined;
+      if (typeof payload?.summary === "string" && payload.summary.trim() !== "") {
+        text = payload.summary;
+      }
+    }
   }
   return text;
 }

@@ -10,11 +10,12 @@ import { fold, hypothesisPayloadOf } from "../src/ir/graph";
 import { INQUIRY_TOOLS, INQUIRY_WORK_TOOL_NAMES } from "../src/llm/inquiry";
 import type { Action, Proposals } from "../src/llm/schemas";
 import { toProposal } from "../src/llm/tools";
+import { memoryTelemetry } from "../src/session/telemetry";
 import { executeAction } from "../src/tools";
 import { fsWorkspace, type Workspace } from "../src/tools/workspace";
 
-function open(claim: string, done = "the claim is decided"): Action {
-  return { operator: "open_hypothesis", claim, done };
+function open(claim: string, done = "the claim is decided", label = "claim"): Action {
+  return { operator: "open_hypothesis", label, claim, done };
 }
 
 function close(
@@ -105,16 +106,20 @@ describe("inquiry", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("requires done in the open tool schema", () => {
+  it("requires label and done in the open tool schema", () => {
     const schema = INQUIRY_TOOLS["open_hypothesis"]!.schema;
     expect(
-      schema.safeParse({ claim: "s", follows_from: [] }).success,
+      schema.safeParse({ label: "l", claim: "s", follows_from: [] }).success,
     ).toBe(false);
     expect(
       schema.safeParse({ claim: "s", done: "s is observed", follows_from: [] }).success,
+    ).toBe(false);
+    expect(
+      schema.safeParse({ label: "l", claim: "s", done: "s is observed", follows_from: [] }).success,
     ).toBe(true);
     expect(
       schema.safeParse({
+        label: "l",
         claim: "s",
         done: "s is observed",
         follows_from: ["the user reports a crash"],
@@ -245,8 +250,12 @@ describe("inquiry", () => {
     const noDone = step(events, workspace, open("s", ""));
     expect(noDone.text).toContain("bad_hypothesis");
 
+    const noLabel = step(events, workspace, open("s", "s is observed", ""));
+    expect(noLabel.text).toContain("bad_hypothesis");
+
     const badFollow = step(events, workspace, {
       operator: "open_hypothesis",
+      label: "claim",
       claim: "s",
       done: "s is observed",
       followsFrom: ["the user reports a crash"],
@@ -262,6 +271,7 @@ describe("inquiry", () => {
     ).events;
     const state = fold(events);
     expect(hypothesisPayloadOf(state, "H1")?.done).toBe("a.txt contains alpha");
+    expect(hypothesisPayloadOf(state, "H1")?.label).toBe("claim");
     const tape = inquiryMessages(state, { id: "r1", text: "t" }).map(textOf).join("\n");
     expect(tape).toContain("Done when: a.txt contains alpha.");
   });
@@ -475,6 +485,7 @@ describe("inquiry", () => {
     events = step(events, workspace, close("confirmed")).events;
     const cited: Action = {
       operator: "open_hypothesis",
+      label: "claim",
       claim: "b",
       done: "b is decided",
       followsFrom: ["H1", "H9"],
@@ -671,5 +682,61 @@ describe("inquiry", () => {
     expect(result.done).toBe(false);
     expect(result.stopReason).toBe("no_goal");
     expect(result.unresolved).toEqual([]);
+  });
+
+  it("emits tool_call telemetry for inquiry actions", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
+      if (stepNo === 2) return { thought: "", actions: [read("a.txt")] };
+      if (stepNo === 3) return textClose("confirmed", "alpha", "read a.txt");
+      return textGoal("achieved", "done");
+    };
+    const telemetry = memoryTelemetry();
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 10, telemetry: telemetry.sink },
+      { request: { id: "r1", text: "check a.txt" } },
+    );
+    expect(result.done).toBe(true);
+    const calls = telemetry.events.filter((event) => event.type === "tool_call");
+    const tools = calls.map((event) => (event as { tool: string }).tool);
+    expect(tools).toContain("open_hypothesis");
+    expect(tools).toContain("read");
+    expect(calls.every((event) => (event as { agent: string }).agent === "inquiry")).toBe(true);
+  });
+
+  it("pauses at the turn cap for continue/finish", async () => {
+    let stepNo = 0;
+    const propose = async (): Promise<Proposals> => {
+      stepNo += 1;
+      if (stepNo === 1) return { thought: "", actions: [open("a.txt exists")] };
+      return { thought: "", actions: [read("a.txt")] };
+    };
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 3 },
+      { request: { id: "r1", text: "check a.txt" }, budgetPause: true },
+    );
+    expect(result.done).toBe(true);
+    expect(result.paused).toBe(true);
+    expect(result.stopReason).toBe("budget");
+    expect(result.turns).toBe(3);
+  });
+
+  it("finalizes with a Markdown report and closes the goal as not_achieved", async () => {
+    const propose = async (): Promise<Proposals> => ({
+      thought: "## Report\n\n- did X\n- remains Y",
+      actions: [],
+    });
+    const result = await runInquiryUnit(
+      { propose, workspace, maxTurns: 1 },
+      { request: { id: "r1", text: "check a.txt" }, finalize: true },
+    );
+    expect(result.done).toBe(true);
+    expect(result.stopReason).toBe("max_turns");
+    expect(result.final).toContain("## Report");
+    const goal = [...fold(result.events).nodes.values()].find((node) => node.kind === "goal_verdict");
+    expect(goal).toBeDefined();
+    expect((goal?.payload as { outcome?: string }).outcome).toBe("not_achieved");
   });
 });

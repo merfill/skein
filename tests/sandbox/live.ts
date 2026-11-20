@@ -7,8 +7,14 @@ import type { Context } from "../../src/ir/project";
 import { createChatModel } from "../../src/llm/client";
 import { createObserverDeps } from "../../src/llm/observer";
 import type { Action, Proposals } from "../../src/llm/schemas";
+import {
+  INQUIRY_TOOLS,
+  INQUIRY_WORK_TOOL_NAMES,
+  type InquiryProposer,
+} from "../../src/llm/inquiry";
+import { invokeTools } from "../../src/llm/structured";
 import { buildMessages, promptText, propose as proposeModel } from "../../src/loop/propose";
-import { runTask } from "./harness";
+import { runInquiryTask, runTask } from "./harness";
 import { chargeTrailing, delta, snapshot, summarize, type MetricsSummary, type TurnMetric } from "./metrics";
 import type { NetworkMode } from "./network";
 import type { SandboxTask } from "./task";
@@ -32,6 +38,8 @@ export interface LiveTaskOptions {
   maxTurns: number;
   dir?: string;
   quiet?: boolean;
+  // The coding unit's loop: the static state machine (default) or the hypothesis unit.
+  mode?: "states" | "hypotheses";
   // `off` removes the network from the AGENT (and from the host-side tools via the CLI's
   // allowlist proxy); the verifier keeps its own network, so `test.sh` can install its
   // runtime. See `network.ts`.
@@ -168,15 +176,94 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     return proposal;
   };
 
+  // The inquiry proposer takes already-built messages instead of a `Context`; everything else
+  // (meter, trace dir, reasoning capture) matches the states proposer so the metrics line up.
+  const proposeInquiry: InquiryProposer = async (messages, callOptions) => {
+    currentTurn = turn;
+    const chars = messages.reduce(
+      (sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0),
+      0,
+    );
+    writeFileSync(
+      join(dir, "contexts.ndjson"),
+      `${JSON.stringify({ turn, chars, messages })}\n`,
+      { flag: "a" },
+    );
+    const before = consumed;
+    const modelStarted = Date.now();
+    const proposal = await invokeTools(model, messages, {
+      settings,
+      rebuild,
+      usageHandlers: [meter],
+      allowedTools:
+        callOptions?.allowedTools !== undefined
+          ? [...callOptions.allowedTools]
+          : [...INQUIRY_WORK_TOOL_NAMES, "open_hypothesis"],
+      extraTools: INQUIRY_TOOLS,
+      allowText: true,
+      ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),
+      ...(callOptions?.toolDescriptions !== undefined
+        ? { toolDescriptions: callOptions.toolDescriptions }
+        : {}),
+      onResponse: (response) => {
+        const reasoning = (response as { reasoning?: unknown }).reasoning;
+        if (typeof reasoning === "string") captureReasoning(reasoning);
+      },
+      onError: (error) => {
+        console.error(`[${task.id}] llm call failed: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    });
+    if (process.env.SKEIN_TIMINGS === "1") console.info(`[timing] model t${turn} ${Date.now() - modelStarted}ms`);
+    const usage = delta(snapshot(meter), before);
+    consumed = snapshot(meter);
+    const actions = proposal.actions;
+    const tools = actions.map((action) => (action.operator === "apply" ? action.action.tool : action.operator));
+    const tool = tools[0] ?? "text";
+    turns.push({
+      turn,
+      operator: actions[0]?.operator ?? "text",
+      tool,
+      tools,
+      chars,
+      refused: false,
+      ...usage,
+    });
+    if (options.quiet !== true) {
+      console.info(
+        `[${task.id}] t${turn} ${actions[0]?.operator ?? "text"}/${tools.join("+")} in=${usage.inputTokens} out=${usage.outputTokens} reason=${usage.reasoningTokens} chars=${chars}`,
+      );
+    }
+    turn += 1;
+    return proposal;
+  };
+
   const started = Date.now();
-  const run = await runTask(task, propose, {
-    maxTurns: options.maxTurns,
-    network: options.network ?? "on",
-    ...(settings.observer ? { observer: createObserverDeps(model, { settings, usageHandlers: [meter] }) } : {}),
-  });
+  const run =
+    options.mode === "hypotheses"
+      ? await runInquiryTask(task, proposeInquiry, {
+          maxTurns: options.maxTurns,
+          network: options.network ?? "on",
+        })
+      : await runTask(task, propose, {
+          maxTurns: options.maxTurns,
+          network: options.network ?? "on",
+          ...(settings.observer
+            ? { observer: createObserverDeps(model, { settings, usageHandlers: [meter] }) }
+            : {}),
+        });
   const elapsedMs = Date.now() - started;
-  const sessionJournal = run.result.session?.journal ?? [];
-  const advisories = run.result.events.flatMap((event) =>
+  const result = run.result;
+  const final = "final" in result ? result.final : "";
+  const unresolved = "unresolved" in result ? result.unresolved : [];
+  const stopText =
+    ("stopText" in result ? result.stopText : undefined) ??
+    (final !== ""
+      ? final
+      : unresolved.length > 0
+        ? `unresolved: ${unresolved.map((item) => item.id).join(", ")}`
+        : null);
+  const sessionJournal = "session" in result ? (result.session?.journal ?? []) : [];
+  const advisories = result.events.flatMap((event) =>
     event.type === "add_node" && (event.node.kind === "hint" || event.node.kind === "memo")
       ? [{ kind: event.node.kind, payload: event.node.payload }]
       : [],
@@ -195,7 +282,7 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
     );
   }
   const refused = new Set(
-    run.result.events
+    result.events
       .filter((event) => event.type === "record_rejection")
       .map((event) => (event as { turn?: number }).turn ?? -1),
   );
@@ -216,20 +303,20 @@ export async function runLiveTask(task: SandboxTask, options: LiveTaskOptions): 
   writeFileSync(join(dir, "reward.txt"), `${run.reward}\n`);
   writeFileSync(
     join(dir, "metrics.json"),
-    JSON.stringify({ task: task.id, ...network, reward: run.reward, stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, turns: turns.length, ...summary, perTurn: turns }, null, 2),
+    JSON.stringify({ task: task.id, ...network, reward: run.reward, stopReason: result.stopReason, stopText, turns: turns.length, ...summary, perTurn: turns }, null, 2),
   );
   writeFileSync(
     join(dir, "result.json"),
-    JSON.stringify({ stopReason: run.result.stopReason, stopText: run.result.stopText ?? null, reward: run.reward, ...network, check: run.check, events: run.result.events }, null, 2),
+    JSON.stringify({ stopReason: result.stopReason, stopText, reward: run.reward, ...network, check: run.check, events: result.events }, null, 2),
   );
   return {
     task: task.id,
     reward: run.reward,
-    stopReason: run.result.stopReason,
+    stopReason: result.stopReason,
     turns: turns.length,
     summary,
     elapsedMs,
     dir,
-    ...(run.result.stopText != null ? { error: run.result.stopText } : {}),
+    ...(stopText != null ? { error: stopText } : {}),
   };
 }

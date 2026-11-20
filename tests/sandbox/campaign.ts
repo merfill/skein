@@ -32,6 +32,7 @@ import { TASKS } from "./tasks/registry";
 // Owner's go-ahead required: this launches real containers and costs model calls.
 
 const AGENTS: Agent[] = ["skein", "opencode"];
+const ALL_AGENTS: Agent[] = ["skein", "skein-hypotheses", "opencode"];
 const NETS: NetworkMode[] = ["on", "off"];
 
 interface Options {
@@ -86,8 +87,8 @@ function optionsOf(): Options {
   const taskNames = Object.keys(TASKS);
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   return {
-    tasks: list(arg("--tasks", taskNames.join(",")), taskNames, "--tasks"),
-    agents: list(arg("--agents", AGENTS.join(",")), AGENTS, "--agents"),
+    tasks: list(arg("--tasks", taskNames.join(",")), Object.keys(TASKS), "--tasks"),
+    agents: list(arg("--agents", AGENTS.join(",")), ALL_AGENTS, "--agents"),
     nets: list(arg("--nets", NETS.join(",")), NETS, "--nets"),
     repeat: positive(arg("--repeat", "5"), "--repeat"),
     concurrency: positive(arg("--concurrency", "5"), "--concurrency"),

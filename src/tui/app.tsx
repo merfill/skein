@@ -25,7 +25,7 @@ import {
 } from "../session/telemetry";
 import type { ProgressEvent } from "../session/progress";
 import { createSessionLog, type SessionLog } from "../session/session_log";
-import type { SessionState } from "../session/types";
+import type { SessionState, TaskMode } from "../session/types";
 import { buildTuiView, type PlanView, type TaskTiming } from "./view_model";
 import { traceLines, traceWindow } from "./trace_lines";
 import { theme } from "./theme";
@@ -95,9 +95,17 @@ function taskOutcome(events: readonly Event[], stopReason: string | null): strin
 function answerOf(events: readonly Event[]): string | undefined {
   let answer: string | undefined;
   for (const event of events) {
-    if (event.type !== "add_node" || event.node.kind !== "stop") continue;
-    const payload = event.node.payload as { answer?: unknown } | undefined;
-    answer = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+    if (event.type !== "add_node") continue;
+    if (event.node.kind === "stop") {
+      const payload = event.node.payload as { answer?: unknown } | undefined;
+      answer = typeof payload?.answer === "string" ? payload.answer : event.node.label;
+    } else if (event.node.kind === "goal_verdict") {
+      // The inquiry unit's result is the goal verdict, not a `stop`.
+      const payload = event.node.payload as { summary?: unknown } | undefined;
+      if (typeof payload?.summary === "string" && payload.summary.trim() !== "") {
+        answer = payload.summary;
+      }
+    }
   }
   return answer;
 }
@@ -759,6 +767,28 @@ export function TuiApp(props: TuiAppProps) {
     appendNotice(`model: ${result.label}`);
   };
 
+  const runModeCommand = (args: string[]): void => {
+    const depsNow = depsRef.current;
+    if (depsNow.taskMode === undefined || depsNow.setTaskMode === undefined) {
+      appendNotice("mode: hypotheses mode is not available");
+      return;
+    }
+    const current = depsNow.taskMode();
+    const requested = args[0];
+    let next: TaskMode;
+    if (requested === undefined) {
+      next = current === "states" ? "hypotheses" : "states";
+    } else if (requested === "states" || requested === "hypotheses") {
+      next = requested;
+    } else {
+      appendNotice(`mode: expected states or hypotheses, got "${requested}"`);
+      return;
+    }
+    depsNow.setTaskMode(next);
+    appendNotice(`mode: ${next}`);
+    setTick((value) => value + 1);
+  };
+
   const submit = async (): Promise<void> => {
     const trimmed = input.trim();
     if (trimmed === "") return;
@@ -771,6 +801,10 @@ export function TuiApp(props: TuiAppProps) {
       }
       if (spec.name === "model") {
         void runModelCommand(args);
+        return;
+      }
+      if (spec.name === "mode") {
+        runModeCommand(args);
         return;
       }
       if (args.length > 0) {
@@ -1395,6 +1429,7 @@ export function TuiApp(props: TuiAppProps) {
     if (entryId !== undefined) toggleEntry(entryId);
   };
   const mode = running ? "working" : paused !== undefined ? "paused" : "idle";
+  const taskMode = depsRef.current.taskMode?.() ?? "states";
   const activityColor = running ? theme.warning : paused !== undefined ? theme.error : theme.success;
   const plan = view.plan;
   const showPlanPanel = showTask && plan !== undefined;
@@ -1408,7 +1443,13 @@ export function TuiApp(props: TuiAppProps) {
 
   return (
     <Box flexDirection="column" width={columns} height={rows}>
-      <HeaderBar workspace={workspace} model={modelLabel} mode={mode} totals={view.header} />
+      <HeaderBar
+        workspace={workspace}
+        model={modelLabel}
+        mode={mode}
+        taskMode={taskMode}
+        totals={view.header}
+      />
       <Box flexDirection="row" flexGrow={1} height={bodyRows}>
         <TracePanel
           lines={lines}

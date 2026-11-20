@@ -391,8 +391,8 @@ describe("tool calling", () => {
     const workspace = fsWorkspace(dir);
     const WORK = [...INQUIRY_WORK_TOOL_NAMES];
     const replies: LanguageModelV3GenerateResult[] = [
-      toolReply([{ name: "open_hypothesis", args: { claim: "s", done: "s is decided", follows_from: [] } }]),
-      toolReply([{ name: "open_hypothesis", args: { claim: "s", done: "s is decided", follows_from: [] } }]),
+      toolReply([{ name: "open_hypothesis", args: { label: "s", claim: "s", done: "s is decided", follows_from: [] } }]),
+      toolReply([{ name: "open_hypothesis", args: { label: "s", claim: "s", done: "s is decided", follows_from: [] } }]),
       toolReply([{ name: "read", args: { filePath: "a.txt" } }]),
       textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
       textReply(JSON.stringify({ verdict: "confirmed", observed: "o", summary: "s" })),
@@ -631,8 +631,8 @@ describe("modelCall: IR -> native call", () => {
 // other (the `observed` bug).
 describe("inquiry tools: modelCall is the wire-inverse of toProposal", () => {
   const samples: Action[] = [
-    { operator: "open_hypothesis", claim: "root cause", done: "the breakpoint fires", followsFrom: [] },
-    { operator: "open_hypothesis", claim: "sub-claim", done: "the sub-claim is decided", followsFrom: ["H1"] },
+    { operator: "open_hypothesis", label: "root cause", claim: "root cause", done: "the breakpoint fires", followsFrom: [] },
+    { operator: "open_hypothesis", label: "sub-claim", claim: "sub-claim", done: "the sub-claim is decided", followsFrom: ["H1"] },
     {
       operator: "close_hypothesis",
       verdict: "refuted",

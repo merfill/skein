@@ -2,6 +2,7 @@ import type { ModelMessage } from "ai";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Context } from "../src/ir/project";
+import type { InquiryProposer } from "../src/llm/inquiry";
 import type { Proposals } from "../src/llm/schemas";
 import type { Proposer } from "../src/loop/propose";
 import { runSessionTurn, type SessionTurnDeps } from "../src/session/driver";
@@ -60,6 +61,50 @@ describe("session driver: one utterance turn", () => {
     expect(
       session.units.get("r1")?.journal.some(
         (event) => event.type === "add_node" && event.node.kind === "stop",
+      ),
+    ).toBe(true);
+  });
+
+  it("runs the task in hypotheses mode when the setting selects it", async () => {
+    const session = createSession();
+    const { ws } = makeWorkspace();
+    let step = 0;
+    const propose: InquiryProposer = async () => {
+      step += 1;
+      if (step === 1) {
+        return {
+          thought: "",
+          actions: [
+            { operator: "open_hypothesis", label: "reproduce", claim: "it crashes", done: "it crashes" },
+          ],
+        };
+      }
+      if (step === 2) {
+        return {
+          thought: JSON.stringify({ verdict: "confirmed", observed: "it crashed", summary: "reproduced" }),
+          actions: [],
+        };
+      }
+      return {
+        thought: JSON.stringify({ outcome: "achieved", summary: "done" }),
+        actions: [],
+      };
+    };
+    const turnDeps: SessionTurnDeps = {
+      ...deps([{ kind: "task", text: "fix the crash" }]),
+      taskMode: () => "hypotheses",
+      inquiry: { propose, workspace: ws, maxTurns: 6 },
+    };
+
+    const result = await runSessionTurn(turnDeps, session, "fix the crash");
+
+    expect(result.task?.unitId).toBe("r1");
+    expect(result.task?.result.done).toBe(true);
+    expect(result.task?.result.stopReason).toBe("achieved");
+    expect(session.units.get("r1")?.mode).toBe("hypotheses");
+    expect(
+      session.units.get("r1")?.journal.some(
+        (event) => event.type === "add_node" && event.node.kind === "hypothesis",
       ),
     ).toBe(true);
   });

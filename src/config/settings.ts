@@ -29,6 +29,9 @@ export interface Settings {
   // non-streaming fallback / A/B arm.
   streaming: boolean;
   maxTurns: number;
+  // The coding unit's working mode: the static state loop (default) or the dynamic
+  // hypothesis unit. Only `task` uses it; the other units keep their own mechanism.
+  taskMode: "states" | "hypotheses";
   // The general unit's safety cap: it closes on its text answer, this only bounds a loop.
   generalMaxTurns: number;
   // The general unit's cap when it executes a plan item: a plan's investigation item needs
@@ -88,6 +91,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
     reasoningTape: (env.SKEIN_REASONING_TAPE ?? "true").toLowerCase() !== "false",
     streaming: (env.SKEIN_STREAMING ?? "true").toLowerCase() !== "false",
     maxTurns: num(env.SKEIN_MAX_TURNS, 80),
+    taskMode: env.SKEIN_TASK_MODE === "hypotheses" ? "hypotheses" : "states",
     generalMaxTurns: num(env.SKEIN_GENERAL_MAX_TURNS, 9),
     planGeneralMaxTurns: num(env.SKEIN_PLAN_GENERAL_MAX_TURNS, 30),
     plannerMaxTurns: num(env.SKEIN_PLANNER_MAX_TURNS, 24),

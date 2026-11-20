@@ -311,6 +311,86 @@ describe("TUI request-anchored document unit", () => {
     expect(view.current?.tokensIn).toBe(100);
     expect(view.current?.tokensOut).toBe(20);
   });
+
+  it("renders hypotheses as rows with their labels", () => {
+    const journal: Event[] = [
+      node("r1", "request", "fix the crash", { text: "fix the crash" }),
+      node("H", "formula", "H", { formulaId: "H" }),
+      edge("r1", "H", "formula"),
+      node("h1", "hypothesis", "H1", {
+        hypothesisId: "H1",
+        label: "reproduce",
+        claim: "the crash reproduces",
+        turn: 0,
+      }),
+      edge("H", "h1", "hypothesis"),
+      node("h2", "hypothesis", "H2", {
+        hypothesisId: "H2",
+        label: "isolate",
+        claim: "the cause is in the heap",
+        turn: 3,
+      }),
+      edge("H", "h2", "hypothesis"),
+      node("v2", "hypothesis_verdict", "H2 confirmed", {
+        hypothesisId: "H2",
+        verdict: "confirmed",
+        observed: "o",
+        summary: "s",
+        turn: 5,
+      }),
+      edge("h2", "v2", "verdict"),
+      node("g", "goal_verdict", "achieved", { outcome: "achieved", summary: "done", turn: 6 }),
+      edge("H", "g", "goal"),
+    ];
+    const session = createSession();
+    const unit = openUnit(session, "r1", "task", journal, 6);
+    unit.mode = "hypotheses";
+    const view = buildTuiView(
+      session,
+      [
+        {
+          type: "model_call",
+          sessionId: "local",
+          agent: "inquiry",
+          unitId: "r1",
+          turn: 0,
+          model: "m",
+          startedAt: 0,
+          endedAt: 1,
+          status: "ok",
+          usage: { inputTokens: 100, outputTokens: 10, reasoningTokens: 2, cachedInputTokens: 40 },
+        },
+        {
+          type: "model_call",
+          sessionId: "local",
+          agent: "inquiry",
+          unitId: "r1",
+          turn: 3,
+          model: "m",
+          startedAt: 1,
+          endedAt: 2,
+          status: "ok",
+          usage: { inputTokens: 200, outputTokens: 20, cachedInputTokens: 50 },
+        },
+      ],
+      { now: 10_000 },
+    );
+
+    expect(view.current?.mode).toBe("hypotheses");
+    expect(view.current?.states.map((state) => state.island)).toEqual(["reproduce", "isolate"]);
+    const [first, second] = view.current?.states ?? [];
+    expect(first).toMatchObject({ startTurn: 0, endTurn: 2, turns: 3, tokensIn: 100, closed: false });
+    expect(second).toMatchObject({
+      startTurn: 3,
+      endTurn: 5,
+      turns: 3,
+      tokensIn: 200,
+      closed: true,
+      stopWhy: "confirmed",
+      current: true,
+    });
+    expect(view.current?.outcome).toBe("achieved");
+  });
 });
 
 describe("TUI header usage", () => {

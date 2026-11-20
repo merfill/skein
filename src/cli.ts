@@ -11,6 +11,7 @@ import type { Action } from "./llm/schemas";
 import { createSessionAgentDeps } from "./llm/session_agent";
 import { modelDocumentPlanAgent, modelDocumentTextAgent } from "./llm/document";
 import { modelGeneralProposer } from "./llm/general";
+import { modelInquiryProposer } from "./llm/inquiry";
 import { modelRevisionProposer } from "./llm/revision";
 import { modelPlannerAgent } from "./llm/planner";
 import { modelProposer, type Proposer } from "./loop/propose";
@@ -18,6 +19,7 @@ import { probeSession } from "./loop/probe";
 import { runRepl } from "./session/repl";
 import { memoryTelemetry } from "./session/telemetry";
 import type { SessionTurnDeps } from "./session/driver";
+import type { TaskMode } from "./session/types";
 import { runTui } from "./tui/run";
 import { fsWorkspace, type Workspace } from "./tools/workspace";
 import { createTerminalIo, runAuthLogin } from "./providers/auth";
@@ -40,6 +42,7 @@ interface CliArgs {
   baseURL?: string;
   verbose?: boolean;
   plain?: boolean;
+  mode?: TaskMode;
 }
 
 function parseArgs(argv: readonly string[]): CliArgs {
@@ -62,6 +65,9 @@ function parseArgs(argv: readonly string[]): CliArgs {
       index += 1;
     } else if (flag === "--base-url" && value !== undefined) {
       args.baseURL = value;
+      index += 1;
+    } else if (flag === "--mode" && value !== undefined) {
+      args.mode = value === "hypotheses" ? "hypotheses" : "states";
       index += 1;
     } else if (flag === "--verbose") {
       args.verbose = true;
@@ -248,6 +254,10 @@ async function main(): Promise<void> {
     };
   })();
 
+  // The coding unit's mode is a live setting: the TUI toggles it and new task units pick it up.
+  // It lives outside `buildAgent` so a model switch does not reset it.
+  const taskMode = { value: (args.mode ?? settings.taskMode) as TaskMode };
+
   const buildAgent = (agentSettings: Settings): { deps: SessionTurnDeps } => {
     const model = createChatModel(agentSettings);
     const basePropose = modelProposer(model);
@@ -276,6 +286,17 @@ async function main(): Promise<void> {
         ...(agentSettings.observer
           ? { observer: createObserverDeps(model, { settings: agentSettings }) }
           : {}),
+      },
+      inquiry: {
+        propose: modelInquiryProposer(model, { settings: agentSettings }),
+        workspace,
+        maxTurns: args.maxTurns ?? agentSettings.maxTurns,
+        model: agentSettings.model,
+        telemetry: telemetry.sink,
+      },
+      taskMode: () => taskMode.value,
+      setTaskMode: (mode) => {
+        taskMode.value = mode;
       },
       general: {
         propose: modelGeneralProposer(model, { settings: agentSettings }),

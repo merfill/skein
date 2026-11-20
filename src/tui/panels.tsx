@@ -21,9 +21,10 @@ export function HeaderBar(props: {
   workspace: string;
   model: string;
   mode: "idle" | "working" | "paused";
+  taskMode: "states" | "hypotheses";
   totals: HeaderView;
 }) {
-  const { workspace, model, mode, totals } = props;
+  const { workspace, model, mode, taskMode, totals } = props;
   const modeColor = mode === "working" ? theme.warning : mode === "paused" ? theme.error : theme.success;
   const workspaceLabel = workspace.split("/").filter(Boolean).at(-1) ?? workspace;
   const modelLabel = model.split("/").filter(Boolean).at(-1) ?? model;
@@ -33,6 +34,7 @@ export function HeaderBar(props: {
         <T bold>skein</T>
         <T dimColor> · {oneLine(workspaceLabel, 16)}</T>
         <T dimColor> · {oneLine(modelLabel, 18)}</T>
+        <T dimColor> · {taskMode}</T>
         <T color={modeColor}> · {mode}</T>
         <T dimColor>
           {" "}
@@ -349,14 +351,14 @@ export function TaskPanel(props: {
         </T>
       ) : null}
       <T dimColor wrap="truncate-end">
-        {`${paused === true ? "paused" : task.attention} · ${compactDuration(task.elapsedMs)} · ${task.turns}t`}
+        {`${paused === true ? "paused" : task.attention} · ${task.mode} · ${compactDuration(task.elapsedMs)} · ${task.turns}t`}
       </T>
       <T dimColor wrap="truncate-end">
         {`in ${compactTokens(task.contextTokens)} · out ${compactTokens(task.tokensOut + task.reasoningTokens)} · ` +
           `cache ${compactTokens(task.cachedInputTokens)}`}
       </T>
       <T color={theme.state} bold>
-        States
+        {task.mode === "hypotheses" ? "Hypotheses" : "States"}
       </T>
       {states.map((state) => {
         const index = task.states.indexOf(state);
@@ -370,7 +372,9 @@ export function TaskPanel(props: {
           </T>
         );
       })}
-      {task.states.length === 0 ? <T dimColor>no states yet</T> : null}
+      {task.states.length === 0 ? (
+        <T dimColor>{task.mode === "hypotheses" ? "no hypotheses yet" : "no states yet"}</T>
+      ) : null}
       <T dimColor> </T>
       {detailIndicator ? <T dimColor>↑ {detailOffset} more (PgUp/PgDn)</T> : null}
       {detail.map((line, index) => (
