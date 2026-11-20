@@ -36,7 +36,7 @@
 
     <main class="wide">
       <section class="hero">
-        <p class="eyebrow">v0.1 · source</p>
+        <p class="eyebrow">v0.2 · source</p>
         <h1>Skein is a terminal coding agent</h1>
         <p class="lead">
           It helps you write code: it reads the project, makes changes, runs builds and tests. What
@@ -64,6 +64,7 @@
               <li><a href="#difference">How Skein is different</a></li>
               <li><a href="#example">One task end to end: fix-ocaml-gc</a></li>
               <li><a href="#mechanics">Mechanics</a></li>
+              <li><a href="#modes">Two modes: states and hypotheses</a></li>
               <li><a href="#evaluation">Evaluation and limitations</a></li>
               <li><a href="#install">Install</a></li>
               <li class="toc-sub"><a href="#windows">Windows</a></li>
@@ -479,6 +480,59 @@ skein doctor</code></pre>
         </p>
       </section>
 
+      <section id="modes">
+        <h2>Two modes: states and hypotheses</h2>
+        <p>
+          A <code>task</code> can run in one of two modes. The default is
+          <code>states</code>: the phases, their goals and transitions are fixed in advance,
+          and the model only decides when to move on. The other is <code>hypotheses</code>:
+          the model decides which steps the work consists of.
+        </p>
+        <p>
+          The mode is chosen explicitly: <code>--mode hypotheses</code> on the command line,
+          <code>SKEIN_TASK_MODE=hypotheses</code> in the environment, or <code>/mode</code> in
+          the TUI. It is shown in the header and stored with the unit of work, so a paused
+          task resumes in the same mode. <code>general</code>, <code>plan</code> and
+          <code>write_document</code> stay on states; hypotheses apply to
+          <code>task</code> only.
+        </p>
+
+        <h3>How a hypothesis works</h3>
+        <p>
+          A hypothesis is a statement that can be true or false. The model opens one with
+          <code>open_hypothesis</code>, writing a short <code>label</code> for the panel, a
+          <code>claim</code> (what exactly it is going to establish) and <code>done</code>
+          (what must be seen for the claim to be confirmed or refuted). The engine assigns the
+          id — <code>H1</code>, <code>H1.1</code> and so on — and records the opening in the
+          journal. While a hypothesis is open, actions run only under it; a hypothesis can be
+          simple (actions below it) or composite (split into sub-hypotheses).
+        </p>
+        <p>
+          A hypothesis closes not by a tool call but by a text reply: JSON with
+          <code>verdict</code>, <code>observed</code> and <code>summary</code> — whether the
+          claim was confirmed, refuted or dropped, what was actually seen, and the result. When
+          no hypothesis is open, a text reply closes the goal: JSON with
+          <code>outcome</code> and the final answer. It is the same mechanism as states: there
+          the model calls <code>move</code> and closes the state with text; here it calls
+          <code>open_hypothesis</code> and closes the hypothesis the same way.
+        </p>
+        <p>
+          The messages are assembled like the state loop, but hide more. While a hypothesis is
+          open, its work is visible. A closed hypothesis keeps only its opening and closing
+          lines: its turns disappear from the messages and stay in the journal, where
+          <code>recall</code> and <code>search</code> can find them. The more hypotheses are
+          closed, the shorter the tape; the journal still keeps everything.
+        </p>
+        <p>
+          The engine does not check either the claim or the model's decision. It records the
+          opening and closing and enforces the structure: fields are non-empty, one chain is
+          open, the needed tools are available. The check condition is written by the model,
+          not the engine, so its decision remains a judgment about what it saw. States have the
+          same limitation, but a hypothesis makes it visible immediately: both the check
+          condition and the observation are recorded, so a closing can be checked later.
+        </p>
+      </section>
+
       <section id="evaluation">
         <h2>Evaluation and limitations</h2>
         <p>
@@ -516,11 +570,93 @@ skein doctor</code></pre>
           salient at the decision point and making a step reproducible. These properties are harder
           to measure, and we did not measure them automatically.
         </p>
+        <h3>Hypothesis mode (v0.2)</h3>
+        <p class="note">
+          A separate series, run later than the one above and under a different daily rate.
+          Solved tasks, turns and new-input tokens are comparable; ruble costs only within
+          this table.
+        </p>
+        <p>
+          Seven tasks where a checkable claim is natural, five runs each, with and without
+          network, both modes in one series. Medians per run:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mode / network</th>
+                <th class="num">Solved</th>
+                <th class="num">Turns</th>
+                <th class="num">New input</th>
+                <th class="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>states, on</td>
+                <td class="num">35/35</td>
+                <td class="num">17</td>
+                <td class="num">34.5k</td>
+                <td class="num">2.42₽</td>
+              </tr>
+              <tr>
+                <td>states, off</td>
+                <td class="num">34/35</td>
+                <td class="num">15</td>
+                <td class="num">28.7k</td>
+                <td class="num">1.61₽</td>
+              </tr>
+              <tr>
+                <td>hypotheses, on</td>
+                <td class="num">34/35</td>
+                <td class="num">20</td>
+                <td class="num">19.6k</td>
+                <td class="num">1.88₽</td>
+              </tr>
+              <tr>
+                <td>hypotheses, off</td>
+                <td class="num">34/35</td>
+                <td class="num">22</td>
+                <td class="num">20.1k</td>
+                <td class="num">1.98₽</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Hypotheses solve the same number of tasks: 34–35 of 35 in each group. The only
+          failure is running out of turns on the long task. The main difference is in the
+          messages: closed hypothesis work leaves the tape, so hypotheses spend almost half as
+          many new input tokens (19.6–20.1k against 28.7–34.5k per run). They pay in turns —
+          20–22 against 15–17 — because opening and closing a hypothesis are separate steps.
+          In money the picture is mixed: cheaper on short tasks, more expensive on the long one.
+        </p>
+        <p>
+          <code>fix-ocaml-gc</code> shows the boundary. With a 60-turn cap hypotheses solve 8
+          of 10 (both failures are <code>max_turns</code>); with 80 they solve 10 of 10
+          (medians 44 and 68 turns). The 60-turn failure was a budget artifact, not a property
+          of the mode.
+        </p>
+        <p>
+          The control task <code>modernize-scientific-stack</code> is solved 9 of 10 times
+          (18 turns, about 0.58₽). The single failure is instructive: the script computed the
+          mean correctly (-15.5°C) but printed an extra line first, and the check took the
+          first number after “Station 101” — -4.3. The calculation was right; the answer was
+          not accepted. This is not a property of hypotheses but the general limitation below:
+          the model does not decide whether the result is accepted, and the check also looks
+          at the format. With hypotheses it is more visible: the model recorded that the goal
+          was achieved, and it was not the one accepting the result.
+        </p>
+
         <p>Limitations:</p>
         <ul>
           <li>
             the engine does not check a state's completion condition, so a premature stop is
             possible;
+          </li>
+          <li>
+            a hypothesis verdict is the model's judgment: the engine does not check it, and an
+            external verifier remains the arbiter of the result;
           </li>
           <li>isolation trades drift for repeated work and can cost more;</li>
           <li>the whole series used one provider, one model and low reasoning effort;</li>
@@ -530,8 +666,11 @@ skein doctor</code></pre>
           </li>
         </ul>
         <p class="note">
-          The protocol, all runs, tokens and per-state cost live in
-          <code>bench/results/campaign-k5/</code>; the raw data is published with the release.
+          The protocol, all runs, tokens and per-state cost for the states series live in
+          <code>bench/results/campaign-k5/</code>. The hypothesis series is in
+          <code>bench/runs/matrix/inquiry-v26-modes</code>,
+          <code>inquiry-v27-ocaml-80</code> and <code>inquiry-v28-modernize</code>. The raw
+          data is published with the release.
         </p>
       </section>
 
@@ -600,12 +739,12 @@ sudo apt-get install -y nodejs</code></pre>
         </p>
         <h3>Docker</h3>
         <p>The published image is on Docker Hub:</p>
-        <pre><code>docker pull mefrill/skein-swe:0.1.0
+        <pre><code>docker pull mefrill/skein-swe:0.2.0
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.1.0</code></pre>
+  mefrill/skein-swe:0.2.0</code></pre>
         <p class="note">
           The provider is set with environment variables; no model is bundled. The
           <code>latest</code> tag points to the newest version. On Windows PowerShell use
@@ -613,7 +752,7 @@ docker run --rm -it \
           does not strip quotes from values.
         </p>
         <p>
-          Build from source: <code>docker build -t skein:0.1.0 .</code> in the repository root.
+          Build from source: <code>docker build -t skein:0.2.0 .</code> in the repository root.
         </p>
       </section>
 

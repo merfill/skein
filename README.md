@@ -7,8 +7,10 @@ monotone typed journal, and what the model sees each turn is a deterministic pro
 journal. The model proposes; a deterministic executor records and derives. The journal and the
 projection function are the protocol.
 
-> **Status: v0.1.** The comparative evaluation is complete. Install from npm (`skein-swe`), from
-> Docker Hub, or from a checkout. A technical report and an OpenReview submission are planned.
+> **Status: v0.2.** The comparative evaluation is complete. The `task` unit runs states by
+> default and can opt into dynamic hypotheses with `--mode hypotheses`. Install from npm
+> (`skein-swe`), from Docker Hub, or from a checkout. A technical report and an OpenReview
+> submission are planned.
 >
 > Project page: <https://skein-swe.dev>. Preprint:
 > [10.5281/zenodo.24253692](https://doi.org/10.5281/zenodo.24253692).
@@ -143,15 +145,15 @@ Native PowerShell or cmd without bash is not supported.
 The image is published on Docker Hub:
 
 ```bash
-docker pull mefrill/skein-swe:0.1.0
+docker pull mefrill/skein-swe:0.2.0
 docker run --rm -it \
   -v "$PWD:/workspace" \
   -e ROUTERAI_API_KEY=... \
   -e SKEIN_MODEL=~deepseek/deepseek-v4-flash-latest \
-  mefrill/skein-swe:0.1.0
+  mefrill/skein-swe:0.2.0
 ```
 
-Or build it from a checkout with `docker build -t skein:0.1.0 .`.
+Or build it from a checkout with `docker build -t skein:0.2.0 .`.
 
 The agent runs inside the container; the image is a minimal Node runtime with `git`, so extend it
 with the toolchain your project needs. Pass the provider explicitly when needed, for example
