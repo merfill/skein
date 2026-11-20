@@ -46,3 +46,4 @@ English: [../en/README.md](../en/README.md).
 - [claims-spec.md](claims-spec.md) — спецификация claims: удостоверение гипотез и долг закрытия
   (RU-only, для обсуждения; не реализовано).
 - [handoff.md](handoff.md) — рабочий handoff-лог.
+- [roadmap-0.2.md](roadmap-0.2.md) — план v0.2: гипотезный режим, статья, сайт, релиз.

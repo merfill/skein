@@ -44,28 +44,24 @@
 \maketitle
 
 \begin{abstract}
-Agents built on large language models typically keep their work history as a growing tape of
-messages---a linear transcript replayed to the model---and reduce context management to
-truncation and compaction. We describe Skein, a coding agent built around two design decisions.
-First, history is stored in an append-only journal of typed events, and the model's context is
-recomputed from scratch on every turn by a deterministic projection of that journal. The
-projection is non-monotone: completed phases leave the visible context but remain addressable
-through the \texttt{recall} and \texttt{search} tools. Second, work is organized into states
-whose goal and stopping criterion are stored as journal data; admissible transitions are
-specified by a protocol, and the model decides when to transition. On 13 tasks ported from
-Terminal-Bench ($K=5$, network enabled and disabled, 250 executed runs), we compare Skein with
-opencode, a conventional tape-based agent, using the same model and verifiers. The solve rate is
-identical (123 of 125 each; 98.4\% overall), but the cost structure differs: Skein uses 33\%
-fewer total tokens, yet 1.87$\times$ more fresh (uncached) input, and is 1.42$\times$ more
-expensive on solved runs (1.32$\times$ across all runs). Fresh input costs 50$\times$ more than
-cache reads, and opencode has a higher cache share. We interpret the increase in fresh input as
-the cost of isolation as currently implemented---prefix instability and a higher turn count; at
-opencode's cache share the costs are nearly equal (127.4 vs 125.7 RUB, Russian rubles). Goal drift was not
-measured; explicit re-reads are rare (9 of 170 \texttt{read} calls), and re-reads performed via
-\texttt{bash} are not separately accounted for. The cost premium is specific to a 50$\times$
-price ratio: at ratios of 5$\times$ or less, Skein becomes cheaper. The potential benefits of the
-architecture---goal retention and controllability---are not measured here; we state them as
-hypotheses and outline the next phase of journal-based context management.
+A language-model agent reasons probabilistically: its conclusions are plausible but cannot be
+proved. Reliability therefore comes not from inside the model but from around it---from a
+procedure-discipline. It defines what the model must record, what it may rely on, and when a
+piece of work counts as closed. We describe Skein, a coding agent in which this procedure is
+built into the journal of work.
+
+The journal stores every action and its result and is never rewritten. The messages for the model
+are rebuilt from the journal on every turn, so anything no longer needed can leave the view
+without being lost. Two explicit ways of working sit on top of the journal. States fix the goal,
+the stopping condition, and the allowed transitions in advance. Dynamic hypotheses let the model
+propose checkable claims, work under them, and close them by recording what it actually saw. In
+both cases the engine records what was done and on what basis; it does not rely on the model's
+own account.
+
+We built the agent and tested it on ported Terminal-Bench tasks. States and hypotheses solve the
+same tasks; hypotheses use almost half as many fresh input tokens but take more turns. The main
+limitation is the same as for any such agent: the model's decision does not replace verification.
+An external check accepts the result, and it is the check that shows where the model went wrong.
 \end{abstract}
 
 \noindent\textbf{Keywords:} coding agent, LLM agents, context management, event journal, event
@@ -100,11 +96,15 @@ shrink when the focus changes; it is not non-monotonic logic, in which conclusio
 retracted.}: content leaves the context when the focus moves, without disappearing from the
 journal.
 
-The second decision is to organize work into states with an explicit goal and stopping
-criterion, stored as journal data rather than as constants in code. Admissible transitions are
-specified by the protocol; the model decides on a transition, and the executor records the
-transition fact. This distinguishes states both from one-shot subagents and from graphs hard-coded
-in the implementation (Section~\ref{sec:states}).
+The second decision is to make the steps of the work explicit and store them in the journal rather
+than in code. There are two ways to do this. In states, the steps (phases) are fixed in advance:
+each has a goal and a stopping condition, and the allowed transitions are described by the
+protocol; the model decides when to move on, and the executor records the transition in the
+journal. In dynamic hypotheses, the model chooses the steps as it goes: it proposes a checkable
+claim, works under it, and closes it by recording what it saw. In both cases the goal, the
+checking condition, and the facts of the work are stored in the journal, so they can be reopened
+and checked after the work is done. This is what distinguishes Skein from one-shot subagents and
+from graphs hard-coded in the implementation (Section~\ref{sec:states}).
 
 The contributions of this work are:
 \begin{enumerate}[leftmargin=1.4em,itemsep=0.2em]
@@ -116,6 +116,9 @@ The contributions of this work are:
   \item a controlled comparison with opencode on 13 ported Terminal-Bench tasks ($K=5$, two
   network modes), with a decomposition of tokens and cost by state and an analysis of the cost
   structure and the role of prefix caching in the economics of a long tape;
+  \item dynamic hypotheses---the next step beyond explicitly defined states---and their controlled
+  comparison with states on seven tasks ($K=5$, two network modes), including a long task and a
+  task written from scratch;
   \item an analysis of failures and a program for measuring the claimed but as yet unmeasured
   properties (goal retention and controllability).
 \end{enumerate}
@@ -125,13 +128,19 @@ repository \url{https://github.com/merfill/skein}, on the website
 \url{https://skein-swe.dev}, and as the npm package \texttt{skein-swe}
 (\url{https://www.npmjs.com/package/skein-swe}).
 
-This work is the first phase of the project. The implemented core is deliberately small and
-centered on the journal: history is stored as an append-only IR journal, and on top of it sit a
-single state graph inside \texttt{task}, six session operations, and two tools for accessing
-hidden history (\texttt{recall}, \texttt{search}). This is enough to measure the cost of context
-isolation and to implement the state contract as data, but not to draw conclusions about other modes
-of work or about the claimed benefits. We treat the reported numbers as a baseline, not as a
-final evaluation of the architecture.
+The work is built around one question: how to organize a model's reasoning so that it can be
+checked after it has been done. The core of Skein is small: an append-only journal, a projection
+into messages, and two ways of working on top of the journal---states and dynamic hypotheses. That
+is enough to measure the cost of separating context and to show what work with explicit steps
+looks like, as opposed to a free-growing tape.
+
+A broader assumption is attached to hypotheses. Models are currently trained mostly on direct
+reasoning---the chain of ``think and answer at once''---and such a chain is often unpredictable.
+Hypotheses set a different frame: first state a claim, then check it, and only then move on. In
+this sense they are a meta-organizer of reasoning. We do not claim that Skein already provides
+this organization in finished form; we show how it is built, and we hope that approaches like it
+will encourage training models to reason through hypotheses rather than only through direct
+chains.
 
 Non-goals: a claim of state-of-the-art performance on a benchmark, cost optimization, and a test
 of portability across models. With one API provider and one model, the comparison shows that
@@ -391,6 +400,47 @@ point, the model is less likely to take the request as a broader task. This is a
 outline how to test it in Section~\ref{sec:future}. The other side is that, as long as the criterion is not
 machine-checked, a premature stop is possible---we observed one
 (Section~\ref{sec:discussion}).
+
+\subsection{Dynamic Hypotheses: The Next Step Beyond States}
+\label{sec:hypotheses}
+
+In states, the work is planned in advance: the phases, their goals, and the transitions are known
+before the work starts, and the model only decides when to move on. The next step is to let the
+model decide the steps itself, as the work proceeds. For this, a \texttt{task} unit can work with
+dynamic hypotheses: the model proposes a checkable claim, works under it, closes it, and moves to
+the next one. The way of working is chosen explicitly---\texttt{states} or
+\texttt{hypotheses}---and remembered, so that after a pause the work continues in the same way.
+
+A hypothesis is a statement that can be true or false. It is opened by the
+\texttt{open\_hypothesis} tool. The model calls the tool with three fields: \texttt{label} (a short
+name for the panel), \texttt{claim} (what it is going to establish), and \texttt{done} (what must
+be seen for the claim to be confirmed or refuted). The hypothesis number---\texttt{H1},
+\texttt{H1.1}, and so on---is assigned by the engine; the model does not write it. The engine
+records the opening in the journal. While a hypothesis is open, actions run only under it. A
+hypothesis can be simple, with actions under it, or compound, split into sub-hypotheses. Open
+hypotheses always form a single chain. The formula container $H$ is created by the engine and is
+not written by the model.
+
+A hypothesis is closed not by a tool call but by a text reply with no calls---JSON with the fields
+\texttt{verdict}, \texttt{observed}, and \texttt{summary}. In it the model writes whether the
+claim was confirmed, refuted, or dropped, what it actually saw, and what the outcome is. When no
+hypothesis is open, text closes the goal---JSON with \texttt{outcome} and the final answer. The
+mechanism is the same as for states: there the model calls \texttt{move} to enter a state and
+closes it with text; here, instead of \texttt{move}, it calls \texttt{open\_hypothesis} and closes
+the hypothesis with the same kind of text. \texttt{follows\_from} references show which earlier
+hypotheses a step rests on; this is only a reference, not a checked inference.
+
+The messages for the model are assembled as for states but hide more. While a hypothesis is open,
+its work is visible. In a closed one, only the opening and closing lines remain; all its turns
+leave the messages and stay in the journal, where \texttt{recall} and \texttt{search} can find
+them. So the more hypotheses are closed, the shorter the tape, while the journal keeps everything.
+
+The engine checks neither the claim nor the model's decision. It records the opening and the
+closing and checks the structure: the fields are non-empty, one chain is open, and the needed
+tools are available. The checking condition is written by the model, not by the engine, so its
+decision remains an opinion about what it saw. States have the same limitation
+(Section~\ref{sec:limitations}), but in a hypothesis it is visible immediately: both the checking
+condition and the observation are recorded, so the closing can be checked later.
 
 \section{Experimental Setup}
 
@@ -696,6 +746,83 @@ State & Turns & Turn share & Cost \\
 \end{tabular}
 \end{table}
 
+\subsection{Hypotheses versus States}
+\label{sec:hyp-exp}
+
+We tested hypotheses on seven tasks where a checkable claim is natural: finding a cause and
+recovery (\texttt{fix-git}, \texttt{git-leak-recovery}, \texttt{custom-memory-heap-crash},
+\texttt{password-recovery}, \texttt{db-wal-recovery}, \texttt{fix-code-vulnerability},
+\texttt{fix-ocaml-gc}). The conditions are the same: $K=5$, network on and off, one model. Both
+ways of working run in one series, so solved tasks, turns, and fresh input are comparable; RUB
+costs are comparable only within this series, because the day's price differs from the states
+series. The limit is each task's own limit; on \texttt{fix-ocaml-gc} the hypotheses were also run
+with an 80-turn limit. The task written from scratch is \texttt{modernize-scientific-stack}.
+
+\begin{table}[t]
+\centering
+\small
+\caption{States and hypotheses on seven tasks ($K=5$, network on/off). Medians per run; cost is at
+the series-day price, comparable only within the table.}
+\label{tab:hyp}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Way of working / network & Solved & Turns & Fresh input, k & Cost, RUB \\
+\midrule
+States, on & 35/35 & 17 & 34.5 & 2.42 \\
+States, off & 34/35 & 15 & 28.7 & 1.61 \\
+Hypotheses, on & 34/35 & 20 & 19.6 & 1.88 \\
+Hypotheses, off & 34/35 & 22 & 20.1 & 1.98 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Hypotheses solve as many tasks as states: 34--35 of 35 in each group. The only failure is a lack
+of turns on the long task. The main difference is in the messages the model sees: hypotheses use
+almost half as many fresh input tokens (19.6--20.1k vs 28.7--34.5k per run), because the work of a
+closed hypothesis disappears from the tape. This is paid for in turns: 20--22 vs 15--17; opening
+and closing a hypothesis take separate steps. The cost picture is mixed: on short tasks
+hypotheses are cheaper (\texttt{fix-git} 0.79/0.98 vs 1.43/1.30 RUB, \texttt{custom-memory}
+3.2/3.5 vs 3.9/5.0, \texttt{fix-code} 1.6/0.83 vs 2.9/1.6), but on \texttt{db-wal-recovery}
+without the network and on the long task they cost more in turns.
+
+\texttt{fix-ocaml-gc} shows the boundary of the way of working. At a 60-turn limit hypotheses
+solve 8 of 10 (both failures are \texttt{max\_turns}), states 9 of 10. At 80 turns hypotheses
+solve 10 of 10 (medians 44 and 68 turns, 1.98 and 3.42 RUB). So the failure at 60 comes from the
+budget, not from the way of working: a long task needs spare turns.
+
+The control task \texttt{modernize-scientific-stack}: hypotheses solve 9 of 10 (18 turns, about
+0.58 RUB). The single failure is instructive. The script computed the mean correctly
+($-15.5^\circ$C) but printed an extra line with a range before it; the check looks for the first
+number after ``Station 101'' and takes $-4.3$. The computation is correct, but the answer was not
+accepted. This is not a property of hypotheses but a general limitation
+(Section~\ref{sec:limitations}): the model does not decide whether the result is accepted, and the
+check also looks at the format. With hypotheses this is more visible: the model recorded that the
+goal was reached, but someone else accepted the result.
+
+\subsection{What the Hypotheses Journals Show}
+\label{sec:hyp-journals}
+
+Hypotheses are not just a declaration: they are actually created and closed. In the 70 runs of the
+hypotheses way of working, every run has at least one hypothesis; there are 99 in total, most
+often one per run (47 runs), two in 19, and three or four in four. Of these, 95 are closed: 93
+confirmed, 2 refuted, 0 dropped. Another 4 remained open, all in four \texttt{fix-ocaml-gc} runs
+that hit the 60-turn limit; two of those runs passed the check anyway. Nested hypotheses
+(\texttt{H1.1}) are rare: only 4; \texttt{follows\_from} references are filled in for 21 of the 99
+hypotheses.
+
+Hypotheses reflect the progress of the solution. In each of the 66 runs where the goal is closed,
+it is closed after the last closed hypothesis: while one is open, the work is not considered
+finished. More hypotheses mean more turns: runs with one hypothesis have a median of 20 turns,
+runs with two or more have 28. On the long \texttt{fix-ocaml-gc}, raising the budget from 60 to 80
+turns increases both the number of hypotheses (16 $\rightarrow$ 21) and the number of closed goals
+(6 $\rightarrow$ 9 of 10): the extra turns go to new checkable steps, not to repeating what was
+already done.
+
+A closed goal does not mean that the result is accepted. In the control task \texttt{modernize},
+all 10 runs closed the goal as \texttt{achieved}, but the check accepted 9: in one case the
+computation was correct but the answer format was not. The journal shows that the model considers
+the work finished; the external check still decides whether the result is accepted.
+
 \section{Discussion}
 \label{sec:discussion}
 
@@ -797,6 +924,24 @@ At present a single state graph is implemented; the question of other topologies
 incident investigations, a document with fact checking) remains open---a separate direction,
 not the current phase of the project.
 
+\subsection{States and Hypotheses: Who Splits the Work into Steps}
+
+Both ways use one journal and the same messages. The difference is who splits the work into steps.
+States do this in advance: the phases, their goals, and the transitions are known before the work
+starts, and the model only decides when to move on. In hypotheses the model decides this itself as
+the work proceeds: it proposes checkable claims, and the messages show only the work of the open
+hypothesis. States therefore fit tasks with a ready specification or procedure, while hypotheses
+fit tasks where a cause must be found and something must be checked. The task written from scratch
+confirms this only partly: hypotheses solve it, but they take more turns and are sensitive to the
+result format.
+
+The common part is the checking condition at the moment of decision. For a state it is
+\texttt{Done when}; for a hypothesis it is \texttt{done} plus the recorded \texttt{observed}. In
+both cases the engine does not check the condition; it records the model's opinion. A model's
+decision is therefore not truth: it makes a step checkable later, but does not prove it. The
+difference is that a hypothesis has a condition and an observation at every step, while a state
+has them only at its boundary.
+
 \subsection{Failures}
 
 \texttt{fix-git}, Skein, network on, r4: the agent found a dangling commit but did not merge it
@@ -841,8 +986,8 @@ conclusion about the method.
   \item \textbf{Determinism of the projection $\neq$ reproducibility of behavior.} The projection
   was checked on 400 synthetic and 125 real journals (identical context); the agent's behavior
   is stochastic.
-  \item \textbf{The key benefits are not measured.} Goal retention and controllability are
-  hypotheses that motivate the architecture, not results.
+  \item \textbf{The key benefits are not measured.} That the agent keeps its goal and can be
+  controlled is still an assumption, not a result.
   \item \textbf{Repeated reads are not measured directly.} In the Skein journals,
   \texttt{read} appears 170 times, 9 of which (5.3\%) re-read a file in another state; most work
   goes through \texttt{bash}, so we do not isolate the cost of re-reading.
@@ -852,7 +997,8 @@ conclusion about the method.
   agent could in principle have changed system binaries; verifier isolation was not hardened.
   \item \textbf{Prompt injection.} \texttt{recall}/\texttt{search} return untrusted file text to
   the tape; for an agent working on third-party repositories this is an attack surface, and we
-  did not defend against it.
+  did not defend against it. For third-party documents (contracts, for example) it is also a risk
+  of taking text for an instruction.
   \item \textbf{Sampling parameters are not pinned.} Temperature and related parameters are not
   specified in the protocol.
   \item \textbf{Task selection.} The 13 tasks are the available ported Terminal-Bench tasks, not
@@ -864,6 +1010,19 @@ conclusion about the method.
   is lower; we do not interpret this.
   \item \textbf{Environment.} Only \texttt{/bin/bash} (Windows: WSL2/Docker); 13 ported tasks,
   not the full set.
+  \item \textbf{The hypothesis decision is not checked.} The engine checks only the closing
+  structure (non-empty fields, one open chain); the claim and the decision are the model's opinion.
+  \item \textbf{The hypotheses series is smaller.} Seven tasks, $K=5$, one model; the task written
+  from scratch is one task. RUB costs for hypotheses are comparable only within this series.
+  \item \textbf{The way of working is chosen explicitly.} The system does not decide on its own
+  where hypotheses are needed and where states are; the user chooses.
+  \item \textbf{\texttt{follows\_from} is not checked.} References are stored, but the engine does
+  not check that the conclusion really follows from the cited hypotheses.
+  \item \textbf{A long task needs more turns.} On \texttt{fix-ocaml-gc} hypotheses need an 80-turn
+  budget; at 60 they hit the limit although the task is solvable.
+  \item \textbf{The check also looks at the format.} On \texttt{modernize} a correct computation
+  failed because of an extra line in the output: the check is format-sensitive, and the model's
+  decision does not change that.
 \end{itemize}
 
 \section{Availability}
@@ -887,14 +1046,17 @@ difference for cache it is 1.42$\times$ more expensive. We interpret this as the
 current implementation of isolation: prefix instability and more turns; with opencode's cache
 share, the costs are nearly equal (127.4 vs 125.7 RUB). Goal drift was not measured; explicit
 repeated \texttt{read}s are rare (9 of 170), and reads through \texttt{bash} are not separately accounted for.
-The hypotheses that motivated the architecture (goal retention at the decision point and
-controllability through a contract as data) are not yet measured.
+We have not yet measured whether the agent keeps its goal at the decision point or how
+controllable it is.
 
 The next phase is the development of the journal as the basis of context, not an expansion of
 functionality for its own sake:
 \begin{enumerate}[leftmargin=1.4em,itemsep=0.2em]
-  \item non-monotone context: the projection from the journal should control what the model
-  sees and preserve addressable access to hidden history; this is the primary direction;
+  \item non-monotone context: the first step is already done---dynamic hypotheses, where the work
+  of a closed hypothesis leaves the tape and stays in the journal; next are automatic choice of
+  the way of working and machine-checked conditions: the model states \texttt{done} as a formal
+  specification (a predicate, a regular expression, an AST pattern), and the engine checks it
+  before closing; the same for \texttt{follows\_from} references;
   \item reasoning (the Ankyra project---a research project in which the journal is used as a
   store for reasoning traces): the journal should store not only actions and observations but
   also reasoning traces, and the projection should choose which of them to show;
@@ -902,7 +1064,13 @@ functionality for its own sake:
   continuing from another branch; this is an operation on the journal, not on the tape;
   \item the observer agent: it is currently non-operational; restoring it is again work on the
   journal, because the observer reads the journal and proposes hints or a stop.
+  \item a full hypotheses campaign on 13 tasks and a second model: the current series covers seven
+  tasks and one model, and the domain of building a program from scratch is measured on one task.
 \end{enumerate}
+
+An architecture with an immutable journal and checkable steps is especially apt where an audit
+trail is needed: in legal and formal texts, where it matters not only to get an answer but to show
+where it came from.
 
 \appendix
 
@@ -920,6 +1088,12 @@ The campaign is run through \texttt{tests/sandbox/campaign.ts}: \texttt{--repeat
 \texttt{--concurrency 10}, \texttt{--task-concurrency fix-ocaml-gc=3}, both network modes, and no
 wall-clock limit; a trial run without containers is \texttt{--dry}. Docker, the task cache, and
 the opencode binary are required; \texttt{SKEIN\_LIVE=true}.
+
+The series with hypotheses uses the same \texttt{campaign.ts}/\texttt{matrix.ts} with
+\texttt{--agents skein,skein-hypotheses}; the mode is selected by \texttt{--mode hypotheses}
+(harness) or \texttt{SKEIN\_TASK\_MODE=hypotheses} (agent). Artifacts:
+\texttt{bench/runs/matrix/inquiry-v26-modes}, \texttt{inquiry-v27-ocaml-80},
+\texttt{inquiry-v28-modernize}.
 
 \section{Per-Task Results}
 
